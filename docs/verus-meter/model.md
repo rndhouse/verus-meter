@@ -13,12 +13,14 @@ Functions without this clause receive ordinary Verus verification only.
 | --- | --- |
 | `mem_size(Type)` | The type's size in the memory model. |
 | `mem_size(value)` | The size of a named parameter or local's type, without copying or evaluating its value. |
-| `mem_peak(helper)` | A helper function's declared budget, including any unused allowance. |
+| `mem_peak(helper)` | A helper's declared budget, taking the maximum at each conditional. |
+| `mem_peak(helper(false))` | Its declared budget for these arguments, without executing the helper. |
 | `assert(current(mem_peak) <= bound)` | A check on the peak reached so far. |
 
 Bounds support nonnegative integer literals, these queries, addition,
 multiplication, and parentheses. Function bounds can also contain conditionals.
-Queries accept types or names, rather than field accesses or computed values.
+`mem_size` accepts types or names. Call queries accept scalar constants, immutable
+scalar inputs, comparisons, and Boolean operators.
 Formula arithmetic must fit in `u64`; arbitrary spec expressions and named
 numeric constants are not yet supported as budget operands.
 
@@ -51,7 +53,11 @@ already includes its parameters.
 Using `mem_peak(helper)` lets a caller follow changes to the helper's contract.
 It uses the declared allowance even when the helper currently needs less, so the
 helper can change within that allowance. Both functions are checked independently.
-See [calls](../../examples/resource/memory/calls.rs).
+For conditional helpers, actual calls use the allowance selected by their
+arguments. A caller can write `mem_size(flag) + mem_peak(helper(flag))` to forward
+that promise, or use a precondition to justify a smaller fixed bound.
+See [calls](../../examples/resource/memory/calls.rs) and
+[argument-specific budgets](../../examples/resource/memory/call_budgets.rs).
 
 ## Dividing work into sections
 
@@ -104,14 +110,17 @@ that an expensive branch is unreachable. The verifier still determines the
 storage charges automatically. See the [conditional example](../../examples/resource/memory/conditional.rs).
 
 Currently, conditions support comparisons and Boolean operators over immutable
-`bool`, `u32`, and `usize` inputs. Callers and `mem_peak(helper)` conservatively
-use the maximum at each conditional in the helper's budget, even when an actual
-argument would select a smaller allowance.
+`bool`, `u32`, and `usize` inputs. Actual calls can also select allowances using
+immutable scalar locals. Mutable selectors and expressions outside this subset
+retain the conservative maximum. Argument-free `mem_peak(helper)` always uses
+that maximum.
 
-Fixed function budgets, sections, and checkpoints retain structural checking:
-branches contribute even when unreachable. Sections and checkpoints currently
-require fixed bounds. These limits matter when combining them with conditional
-function contracts.
+Fixed budgets still account structurally for local storage, including unreachable
+branches. Input-dependent call allowances are proved at the call site.
+
+Sections and checkpoints require fixed bounds; constant call queries work in both.
+After a call with a symbolic selector, checkpoints conservatively include the
+callee's maximum allowance, even if a proof established a tighter bound at the call.
 
 ## Current scope
 

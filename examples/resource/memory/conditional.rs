@@ -26,8 +26,8 @@ fn workspace(large: bool)
 
 // Reserve enough room to run either kind of task.
 //
-// For this first implementation, callers and mem_peak(function) use the largest
-// declared allowance. Consecutive calls reuse that workspace.
+// The argument-free query allows either input. Each actual call uses the
+// allowance selected by its argument; consecutive calls reuse that workspace.
 fn main()
     mem_peak <= mem_peak(workspace),
 {

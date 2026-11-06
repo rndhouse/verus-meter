@@ -18,7 +18,8 @@ automatically; contracts add no runtime tracking.
 
 Functions can refer to helper functions' budgets, divide work into independently
 checked sections, and check the peak reached at a particular point. Conditional
-contracts can give different inputs different allowances.
+contracts can give different inputs different allowances and preserve them through
+helper calls.
 
 Bounds describe source-level workspace under a fixed memory model. Physical
 stack size and heap usage are outside the current guarantee. Support is limited
