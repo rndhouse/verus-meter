@@ -254,6 +254,7 @@ fn async_future_spec_call(
     trait_typ: Option<&Typ>,
 ) -> Expr {
     let call_target_attrs = crate::ast::CallTargetAttrs {
+        resource_intrinsic: None,
         autospec: AutospecUsage::Final,
         const_var: false,
         assume_external_allowed: false,

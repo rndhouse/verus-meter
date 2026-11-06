@@ -386,6 +386,7 @@ pub(crate) fn add_param_decls<'tcx>(
         invariant_mask,
         atomic_update,
         unwind_spec,
+        resource_budget: _,
         invariant_except_break: _,
         invariant: _,
         atomic_call_loop: _,
@@ -2333,6 +2334,11 @@ pub(crate) fn expr_to_vir_with_adjustments<'tcx>(
                 let autospec_usage =
                     if bctx.in_ghost { AutospecUsage::IfMarked } else { AutospecUsage::Final };
                 let call_target_attrs = vir::ast::CallTargetAttrs {
+                    resource_intrinsic: matches!(
+                        (ty1.kind(), ty2.kind()),
+                        (TyKind::Ref(..), TyKind::Ref(..))
+                    )
+                    .then_some(vir::ast::ResourceIntrinsic::ArrayUnsize),
                     autospec: autospec_usage,
                     const_var: false,
                     assume_external_allowed: false,
@@ -2745,6 +2751,7 @@ pub(crate) fn expr_to_vir_innermost<'tcx>(
 
                         let typ_args = Arc::new(vec![tup_typ, ret_typ, fun_typ]);
                         let call_target_attrs = vir::ast::CallTargetAttrs {
+                            resource_intrinsic: None,
                             autospec: AutospecUsage::Final,
                             const_var: false,
                             assume_external_allowed: false,
@@ -2818,6 +2825,7 @@ pub(crate) fn expr_to_vir_innermost<'tcx>(
                 let autospec_usage =
                     if bctx.in_ghost { AutospecUsage::IfMarked } else { AutospecUsage::Final };
                 let call_target_attrs = vir::ast::CallTargetAttrs {
+                    resource_intrinsic: Some(vir::ast::ResourceIntrinsic::ArrayRepeat),
                     autospec: autospec_usage,
                     const_var: false,
                     assume_external_allowed: false,
@@ -2930,6 +2938,7 @@ pub(crate) fn expr_to_vir_innermost<'tcx>(
                     let autospec_usage =
                         if bctx.in_ghost { AutospecUsage::IfMarked } else { AutospecUsage::Final };
                     let call_target_attrs = vir::ast::CallTargetAttrs {
+                        resource_intrinsic: None,
                         autospec: autospec_usage,
                         const_var: false,
                         assume_external_allowed: false,
@@ -3877,6 +3886,7 @@ pub(crate) fn expr_to_vir_innermost<'tcx>(
 
                 let e = if let Some((fun, typ_args)) = fun_typ_args {
                     let call_target_attrs = vir::ast::CallTargetAttrs {
+                        resource_intrinsic: None,
                         autospec: AutospecUsage::Final,
                         const_var: false,
                         assume_external_allowed: false,
@@ -4953,6 +4963,7 @@ pub(crate) fn maybe_do_ptr_cast<'tcx>(
             let autospec_usage =
                 if bctx.in_ghost { AutospecUsage::IfMarked } else { AutospecUsage::Final };
             let call_target_attrs = vir::ast::CallTargetAttrs {
+                resource_intrinsic: None,
                 autospec: autospec_usage,
                 const_var: false,
                 assume_external_allowed: false,

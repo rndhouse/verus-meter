@@ -164,7 +164,9 @@ fn is_header_verus_item(verus_item: &VerusItem) -> bool {
             | SpecItem::InvMaskList
             | SpecItem::InvMaskListCompl
             | SpecItem::InvMaskSet
-            | SpecItem::Atomically => false,
+            | SpecItem::Atomically
+            | SpecItem::MemoryBudgetValue
+            | SpecItem::MemoryBudgetType => false,
 
             SpecItem::NoMethodBody
             | SpecItem::Requires
@@ -179,6 +181,7 @@ fn is_header_verus_item(verus_item: &VerusItem) -> bool {
             | SpecItem::DecreasesBy
             | SpecItem::RecommendsBy
             | SpecItem::OpensInvariantMask
+            | SpecItem::LocalStorageBudget
             | SpecItem::NoUnwind
             | SpecItem::NoUnwindWhen => true,
         },

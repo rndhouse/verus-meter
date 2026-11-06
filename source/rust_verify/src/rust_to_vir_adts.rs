@@ -191,6 +191,7 @@ pub(crate) fn check_item_struct<'tcx>(
     let variants = Arc::new(vec![variant]);
     let mode = get_mode(Mode::Exec, attrs);
     let datatype = DatatypeX {
+        is_struct: adt_def.is_struct(),
         name: Dt::Path(path),
         proxy: None,
         visibility,
@@ -281,6 +282,7 @@ pub(crate) fn check_item_enum<'tcx>(
     vir.datatypes.push(ctxt.spanned_new(
         span,
         DatatypeX {
+            is_struct: adt_def.is_struct(),
             name: Dt::Path(path),
             proxy: None,
             visibility,
@@ -385,6 +387,7 @@ pub(crate) fn check_item_union<'tcx>(
     vir.datatypes.push(ctxt.spanned_new(
         span,
         DatatypeX {
+            is_struct: adt_def.is_struct(),
             name: Dt::Path(path),
             proxy: None,
             visibility,
@@ -684,6 +687,7 @@ pub(crate) fn check_item_external<'tcx>(
         let variants = Arc::new(vec![variant]);
         let visibility = external_item_visibility;
         let datatype = DatatypeX {
+            is_struct: external_adt_def.is_struct(),
             name: Dt::Path(path),
             proxy,
             visibility,
@@ -722,6 +726,7 @@ pub(crate) fn check_item_external<'tcx>(
         let variants = Arc::new(vec![variant]);
         let visibility = external_item_visibility;
         let datatype = DatatypeX {
+            is_struct: external_adt_def.is_struct(),
             name: Dt::Path(path),
             proxy,
             visibility,
@@ -773,6 +778,7 @@ pub(crate) fn check_item_external<'tcx>(
         let visibility = external_item_visibility;
 
         let datatype = DatatypeX {
+            is_struct: external_adt_def.is_struct(),
             name: Dt::Path(path),
             proxy,
             visibility,

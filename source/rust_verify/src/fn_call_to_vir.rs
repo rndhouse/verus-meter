@@ -68,6 +68,7 @@ pub(crate) fn fn_call_to_vir<'tcx>(
                         | SpecItem::Ensures
                         | SpecItem::Returns
                         | SpecItem::OpensInvariantMask
+                        | SpecItem::LocalStorageBudget
                         | SpecItem::NoUnwind
                         | SpecItem::NoUnwindWhen
                         | SpecItem::Decreases
@@ -351,8 +352,13 @@ fn fn_call_or_assoc_const_to_vir<'tcx>(
 
     let typ_args = mk_typ_args(bctx, node_substs, f, expr.span)?;
     let impl_paths = get_impl_paths(bctx, f, node_substs, None, const_var, expr.span)?;
-    let call_target_attrs =
-        vir::ast::CallTargetAttrs { autospec: autospec_usage, assume_external_allowed, const_var };
+    let call_target_attrs = vir::ast::CallTargetAttrs {
+        resource_intrinsic: (tcx.lang_items().slice_len_fn() == Some(f))
+            .then_some(vir::ast::ResourceIntrinsic::SliceLen),
+        autospec: autospec_usage,
+        assume_external_allowed,
+        const_var,
+    };
     let target = CallTarget::Fun(target_kind, name, typ_args, impl_paths, call_target_attrs);
     Ok(bctx.spanned_typed_new(
         expr.span,
@@ -495,6 +501,7 @@ pub(crate) fn call_overloaded_method<'tcx>(
     let typ_args = mk_typ_args(bctx, trait_args, trait_fun_id, span)?;
     let impl_paths = get_impl_paths(bctx, trait_fun_id, trait_args, None, false, span)?;
     let call_target_attrs = vir::ast::CallTargetAttrs {
+        resource_intrinsic: None,
         autospec: autospec_usage,
         assume_external_allowed: false,
         const_var: false,
@@ -629,6 +636,8 @@ fn verus_item_to_vir<'tcx, 'a>(
                     SpecItem::Admit
                     | SpecItem::Assume
                     | SpecItem::NoMethodBody
+                    | SpecItem::MemoryBudgetValue
+                    | SpecItem::MemoryBudgetType
                     | SpecItem::Recommends
                     | SpecItem::DecreasesWhen
                     | SpecItem::DecreasesBy
@@ -644,6 +653,7 @@ fn verus_item_to_vir<'tcx, 'a>(
                     | SpecItem::InvMaskList
                     | SpecItem::InvMaskListCompl
                     | SpecItem::InvMaskSet
+                    | SpecItem::LocalStorageBudget
                     | SpecItem::NoUnwind
                     | SpecItem::NoUnwindWhen => (true, false),
 
@@ -891,6 +901,15 @@ fn verus_item_to_vir<'tcx, 'a>(
                     let arg = mk_one_vir_arg(bctx, expr.span, &args)?;
                     let header = Arc::new(HeaderExprX::DecreasesWhen(arg));
                     mk_expr(ExprX::Header(header))
+                }
+                SpecItem::LocalStorageBudget => {
+                    record_spec_fn_pure_args_only(bctx, expr);
+                    internal_err_unless!(args_len == 1, expr.span, "expected one resource budget");
+                    let budget = crate::resource_budget::lower(bctx, args[0])?;
+                    mk_expr(ExprX::Header(Arc::new(HeaderExprX::LocalStorageBudget(budget))))
+                }
+                SpecItem::MemoryBudgetValue | SpecItem::MemoryBudgetType => {
+                    err_span(expr.span, "memory_budget is only allowed inside a resources clause")
                 }
                 SpecItem::NoUnwind => {
                     record_spec_fn_pure_args_only(bctx, expr);

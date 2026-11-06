@@ -109,6 +109,7 @@ fn simplify_one_expr(functions: &HashMap<Fun, FunctionStub>, expr: &Expr) -> Res
                 _ => (kind.clone(), new_tgt(tgt, autospec_usage), typs.clone(), impl_paths.clone()),
             };
             let attrs = crate::ast::CallTargetAttrs {
+                resource_intrinsic: attrs.resource_intrinsic,
                 autospec: AutospecUsage::Final,
                 const_var: attrs.const_var,
                 assume_external_allowed: false,

@@ -110,6 +110,9 @@ pub(crate) enum SpecItem {
     InvMaskListCompl,
     InvMaskSet,
     Atomically,
+    LocalStorageBudget,
+    MemoryBudgetValue,
+    MemoryBudgetType,
     NoUnwind,
     NoUnwindWhen,
 }
@@ -527,6 +530,9 @@ fn verus_items_map() -> Vec<(&'static str, VerusItem)> {
         ("verus::verus_builtin::inv_mask_list_compl",     VerusItem::Spec(SpecItem::InvMaskListCompl)),
         ("verus::verus_builtin::inv_mask_set",            VerusItem::Spec(SpecItem::InvMaskSet)),
 
+        ("verus::verus_builtin::local_storage_budget", VerusItem::Spec(SpecItem::LocalStorageBudget)),
+        ("verus::verus_builtin::memory_budget_value", VerusItem::Spec(SpecItem::MemoryBudgetValue)),
+        ("verus::verus_builtin::memory_budget_type", VerusItem::Spec(SpecItem::MemoryBudgetType)),
         ("verus::verus_builtin::no_unwind",               VerusItem::Spec(SpecItem::NoUnwind)),
         ("verus::verus_builtin::no_unwind_when",          VerusItem::Spec(SpecItem::NoUnwindWhen)),
 

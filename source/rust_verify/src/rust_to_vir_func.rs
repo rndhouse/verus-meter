@@ -276,6 +276,7 @@ fn handle_autospec<'tcx>(
                 outer_ret: spec_ret_param,
                 item_kind: ItemKind::Function,
                 attrs: Arc::new(FunctionAttrsX {
+                    resource_contract: None,
                     uses_ghost_blocks: vattrs.verus_macro,
                     inline: false,
                     broadcast_forall: false,
@@ -1535,6 +1536,7 @@ fn make_attributes<'tcx>(
         );
     }
     let fattrs = FunctionAttrsX {
+        resource_contract: None,
         uses_ghost_blocks,
         inline: vattrs.inline,
         no_auto_trigger: vattrs.no_auto_trigger,
@@ -2568,6 +2570,11 @@ pub(crate) fn finish_function<'tcx>(
         vec![]
     };
 
+    let mut attrs = (*attrs).clone();
+    attrs.resource_contract = header
+        .resource_budget
+        .map(|budget| vir::resource_storage::ResourceContract::LexicalSlotsV5Expr { budget });
+    let attrs = Arc::new(attrs);
     let mut functionx = FunctionX {
         name,
         proxy,

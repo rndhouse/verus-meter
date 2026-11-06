@@ -3804,6 +3804,7 @@ pub(crate) fn expr_to_stm_opt(
         }
         ExprX::Await(e) => {
             let attrs = crate::ast::CallTargetAttrs {
+                resource_intrinsic: None,
                 autospec: AutospecUsage::Final,
                 const_var: false,
                 assume_external_allowed: false,

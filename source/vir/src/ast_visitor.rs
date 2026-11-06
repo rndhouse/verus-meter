@@ -1311,6 +1311,7 @@ pub(crate) trait AstVisitor<R: Returner, Err, Scope: Scoper> {
     fn visit_datatype(&mut self, datatype: &Datatype) -> Result<R::Ret<Datatype>, Err> {
         let DatatypeX {
             name,
+            is_struct,
             proxy,
             owning_module,
             visibility,
@@ -1330,6 +1331,7 @@ pub(crate) trait AstVisitor<R: Returner, Err, Scope: Scoper> {
         R::ret(|| {
             datatype.new_x(DatatypeX {
                 name: name.clone(),
+                is_struct: *is_struct,
                 proxy: proxy.clone(),
                 owning_module: owning_module.clone(),
                 visibility: visibility.clone(),

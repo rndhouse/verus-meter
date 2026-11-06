@@ -377,6 +377,7 @@ fn simplify_one_expr(
         }
         ExprX::ConstVar(x, autospec) => {
             let call_target_attrs = crate::ast::CallTargetAttrs {
+                resource_intrinsic: None,
                 autospec: *autospec,
                 const_var: true,
                 assume_external_allowed: false,
@@ -1632,6 +1633,7 @@ pub fn simplify_krate(ctx: &mut GlobalCtx, krate: &Krate) -> Result<Krate, VirEr
         };
         let variants = Arc::new(vec![variant]);
         let datatypex = DatatypeX {
+            is_struct: false,
             name: Dt::Tuple(arity),
             proxy: None,
             visibility,
@@ -1703,6 +1705,7 @@ pub fn simplify_krate(ctx: &mut GlobalCtx, krate: &Krate) -> Result<Krate, VirEr
                 .collect(),
         );
         let datatypex = DatatypeX {
+            is_struct: false,
             name: Dt::Path(closure.path.clone()),
             proxy: None,
             visibility,

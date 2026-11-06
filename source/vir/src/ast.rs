@@ -855,6 +855,8 @@ pub enum HeaderExprX {
     /// `extra_dependency(f)` means that recursion-checking should act as if the current
     /// function calls `f`
     ExtraDependency(Fun),
+    /// Compile-time budget for the experimental lexical-slots-v5-64 resource model.
+    LocalStorageBudget(crate::resource_storage::BudgetExpr),
     /// This function will not unwind
     NoUnwind,
     /// This function will not unwind if the given condition holds (function of arguments)
@@ -1021,6 +1023,18 @@ pub enum ImplPath {
 // REVIEW: should trait_typ_args also have ImplPaths?
 pub type ImplPaths = Arc<Vec<ImplPath>>;
 
+/// Provenance for operations with intrinsic resource rules. These are mutually
+/// exclusive and are set by Rust-to-VIR translation, never inferred from names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToDebugSNode)]
+pub enum ResourceIntrinsic {
+    /// Source `[value; length]` syntax.
+    ArrayRepeat,
+    /// Resolved rustc `slice_len_fn` language item.
+    SliceLen,
+    /// Compiler-inserted array-reference to slice-reference coercion.
+    ArrayUnsize,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToDebugSNode)]
 pub struct CallTargetAttrs {
     pub autospec: AutospecUsage,
@@ -1028,6 +1042,7 @@ pub struct CallTargetAttrs {
     pub const_var: bool,
     /// If the expected Fun is undeclared, enable replacing Fun with AssumeExternal
     pub assume_external_allowed: bool,
+    pub resource_intrinsic: Option<ResourceIntrinsic>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToDebugSNode)]
@@ -1571,6 +1586,8 @@ pub struct AutoExtEqual {
 pub type FunctionAttrs = Arc<FunctionAttrsX>;
 #[derive(Debug, Serialize, Deserialize, ToDebugSNode, Default, Clone)]
 pub struct FunctionAttrsX {
+    /// Experimental source-storage contract; its variant identifies the cost model.
+    pub resource_contract: Option<crate::resource_storage::ResourceContract>,
     /// Erasure and lifetime checking based on ghost blocks
     pub uses_ghost_blocks: bool,
     /// Inline spec function for SMT
@@ -1886,6 +1903,9 @@ pub struct FunWithVis {
 #[derive(Clone, Debug, Serialize, Deserialize, ToDebugSNode)]
 pub struct DatatypeX {
     pub name: Dt,
+    /// True for a Rust struct; false for enums, unions, and synthesized datatypes.
+    /// A single variant alone does not establish that a datatype is a struct.
+    pub is_struct: bool,
     /// Similar to FunctionX proxy field.
     /// If this datatype is declared via a proxy (a type labeled external_type_specification)
     /// then this points to the proxy.

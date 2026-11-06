@@ -556,10 +556,14 @@ impl<'tcx> Query<'tcx> {
         let pre_crate = self.get_pre_crate()?;
         let mut cratex = (*pre_crate.krate_without_funs).clone();
         let mut found_err = None;
+        let mut resource_modes = HashMap::new();
         let mut all_dyn_compatability_checks = vec![initial_wf_results.dyn_compatability_checks];
         for stub in pre_crate.infos.iter().flat_map(|info| info.iter_stubs()) {
             match self.get_checked_function(&stub.x.name) {
-                Ok((function, _, _, dyn_compatability_checks)) => {
+                Ok((function, _, modes, dyn_compatability_checks)) => {
+                    if let Some(modes) = modes {
+                        resource_modes.insert(function.x.name.clone(), modes);
+                    }
                     cratex.functions.push(function);
                     all_dyn_compatability_checks.push(dyn_compatability_checks);
                 }
@@ -577,6 +581,21 @@ impl<'tcx> Query<'tcx> {
         }
         if let Some(err) = found_err {
             return Err(err);
+        }
+
+        // All local signatures and mode-checked bodies are now available. Check
+        // storage and reject call cycles before exporting summaries or rewriting
+        // temporary places during resolution inference.
+        let reports = vir::resource_storage::check_crate(
+            &cratex.functions,
+            &cratex.datatypes,
+            &resource_modes,
+        )
+        .map_err(|e| self.emit_error(e))?;
+        if self.args.trace {
+            for (span, report) in reports {
+                self.emit_diags(report.diagnostics(&span));
+            }
         }
 
         let other_vir_crates = self.get_other_vir_crates()?;
