@@ -1,5 +1,5 @@
 {
-  "version": "0.0.0-2026-09-06-0133",
+  "version": "0.0.0-2026-11-01-0251",
   "types": [
     {
       "ident": "Abi",
@@ -6600,6 +6600,31 @@
       }
     },
     {
+      "ident": "SignatureResources",
+      "features": {
+        "any": []
+      },
+      "fields": {
+        "token": {
+          "token": "Resources"
+        },
+        "resource": {
+          "proc_macro2": "Ident"
+        },
+        "le_token": {
+          "token": "Le"
+        },
+        "budget": {
+          "syn": "Expr"
+        },
+        "comma": {
+          "option": {
+            "token": "Comma"
+          }
+        }
+      }
+    },
+    {
       "ident": "SignatureSpec",
       "features": {
         "any": []
@@ -6653,6 +6678,11 @@
         "unwind": {
           "option": {
             "syn": "SignatureUnwind"
+          }
+        },
+        "resources": {
+          "option": {
+            "syn": "SignatureResources"
           }
         },
         "with": {
@@ -8161,6 +8191,7 @@
     "Recommends": "recommends",
     "Ref": "ref",
     "Requires": "requires",
+    "Resources": "resources",
     "Return": "return",
     "Returns": "returns",
     "Reveal": "reveal",

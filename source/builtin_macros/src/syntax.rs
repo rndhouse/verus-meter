@@ -272,6 +272,35 @@ macro_rules! quote_spanned_builtin {
     }
 }
 
+/// Lower the small, parser-validated resource language without rewriting its
+/// arithmetic into spec operators. Argument borrows exist only in erased headers.
+fn lower_memory_budget(expr: &Expr) -> TokenStream {
+    match expr {
+        Expr::Paren(e) => {
+            let e = lower_memory_budget(&e.expr);
+            quote!((#e))
+        }
+        Expr::Group(e) => lower_memory_budget(&e.expr),
+        Expr::Binary(e) => {
+            let left = lower_memory_budget(&e.left);
+            let right = lower_memory_budget(&e.right);
+            let op = &e.op;
+            quote_spanned!(e.span() => (#left #op #right))
+        }
+        Expr::Call(call) => {
+            let Expr::Path(path) = &*call.func else { unreachable!() };
+            if let PathArguments::AngleBracketed(types) = &path.path.segments[0].arguments {
+                let types = &types.args;
+                quote_spanned_builtin!(builtin, expr.span() => #builtin::memory_budget_type::<#types>())
+            } else {
+                let arg = &call.args[0];
+                quote_spanned_builtin!(builtin, expr.span() => #builtin::memory_budget_value(&#arg))
+            }
+        }
+        _ => expr.to_token_stream(),
+    }
+}
+
 macro_rules! parse_quote_spanned_builtin {
     ($b:ident, $span:expr => $($tt:tt)*) => {
         {
@@ -990,6 +1019,7 @@ impl Visitor {
         let decreases = self.take_ghost(&mut spec.decreases);
         let opens_invariants = self.take_ghost(&mut spec.invariants);
         let unwind = self.take_ghost(&mut spec.unwind);
+        let resources = self.take_ghost(&mut spec.resources);
         debug_assert!(spec.atomic_spec.is_none());
 
         let (self_token_op, args) = inputs;
@@ -1262,6 +1292,18 @@ impl Visitor {
             ));
         }
 
+        if let Some(verus_syn::SignatureResources { token, budget, .. }) = resources {
+            // Resource expressions deliberately bypass the general spec visitor:
+            // sizes/budgets are compile-time metadata, not mathematical u64 terms.
+            let budget = lower_memory_budget(&budget);
+            spec_stmts.push(Stmt::Expr(
+                Expr::Verbatim(quote_spanned_builtin!(verus_builtin, token.span() =>
+                    #verus_builtin::local_storage_budget(#budget)
+                )),
+                Some(Semi { spans: [token.span()] }),
+            ));
+        }
+
         if let Some(SignatureUnwind { token, when }) = unwind {
             if let Some((when_token, mut when_expr)) = when {
                 self.visit_expr_mut(&mut when_expr);
@@ -1297,6 +1339,11 @@ impl Visitor {
         let mut unwrap_ghost_tracked: Vec<Stmt> = Vec::new();
 
         let has_body = semi_token.is_none();
+        if sig.spec.resources.is_some() && is_external(attrs) {
+            stmts.push(stmt_with_semi!(sig.fn_token.span =>
+                ::core::compile_error!("resource contracts require a verified function body")
+            ));
+        }
         if self.erase_ghost.erase()
             && has_body
             && !matches!(sig.mode, FnMode::Exec(_) | FnMode::Default)
@@ -2244,6 +2291,7 @@ impl Visitor {
                 decreases: None,
                 invariants: invariants,
                 unwind: unwind,
+                resources: None,
                 with: None,
             },
         };

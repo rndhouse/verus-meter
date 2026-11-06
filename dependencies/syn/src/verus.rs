@@ -224,6 +224,17 @@ ast_struct! {
 }
 
 ast_struct! {
+    /// A compile-time resource budget expression.
+    pub struct SignatureResources {
+        pub token: Token![resources],
+        pub resource: Ident,
+        pub le_token: Token![<=],
+        pub budget: Expr,
+        pub comma: Option<Token![,]>,
+    }
+}
+
+ast_struct! {
     pub struct SignatureUnwind {
         pub token: Token![no_unwind],
         pub when: Option<(Token![when], Expr)>,
@@ -305,6 +316,7 @@ ast_struct! {
         pub decreases: Option<SignatureDecreases>,
         pub invariants: Option<SignatureInvariants>,
         pub unwind: Option<SignatureUnwind>,
+        pub resources: Option<SignatureResources>,
         pub with: Option<WithSpecOnFn>,
     }
 }
@@ -321,6 +333,7 @@ impl SignatureSpec {
         self.decreases = None;
         self.invariants = None;
         self.unwind = None;
+        self.resources = None;
     }
 }
 
@@ -916,6 +929,7 @@ pub mod parsing {
                 || input.peek(Token![decreases])
                 || input.peek(Token![via])
                 || input.peek(Token![when])
+                || input.peek(Token![resources])
                 || input.peek(Token![no_unwind])
                 || input.peek(Token![opens_invariants])
                 || input.peek(Token![outer_mask])
@@ -932,6 +946,7 @@ pub mod parsing {
                 || input.peek2(Token![decreases])
                 || input.peek2(Token![via])
                 || input.peek2(Token![when])
+                || input.peek2(Token![resources])
                 || input.peek2(Token![no_unwind])
                 || input.peek2(Token![opens_invariants])
                 || input.peek2(Token![outer_mask])
@@ -1408,6 +1423,78 @@ pub mod parsing {
         }
     }
 
+    fn validate_memory_budget(expr: &Expr) -> Result<()> {
+        match expr {
+            Expr::Lit(lit) => {
+                if let crate::Lit::Int(n) = &lit.lit {
+                    n.base10_parse::<u64>()?;
+                    if matches!(n.suffix(), "" | "u64") {
+                        return Ok(());
+                    }
+                }
+            }
+            Expr::Paren(e) => return validate_memory_budget(&e.expr),
+            Expr::Group(e) => return validate_memory_budget(&e.expr),
+            Expr::Binary(e) if matches!(e.op, crate::BinOp::Add(_) | crate::BinOp::Mul(_)) => {
+                validate_memory_budget(&e.left)?;
+                return validate_memory_budget(&e.right);
+            }
+            Expr::Call(call) => {
+                if let Expr::Path(path) = &*call.func {
+                    if path.qself.is_none()
+                        && path.path.leading_colon.is_none()
+                        && path.path.segments.len() == 1
+                    {
+                        let segment = &path.path.segments[0];
+                        if segment.ident == "memory_budget" {
+                            match &segment.arguments {
+                                crate::PathArguments::None if call.args.len() == 1 => {
+                                    if matches!(&call.args[0], Expr::Path(_)) {
+                                        return Ok(());
+                                    }
+                                }
+                                crate::PathArguments::AngleBracketed(args)
+                                    if call.args.is_empty() && args.args.len() == 1 =>
+                                {
+                                    if matches!(&args.args[0], crate::GenericArgument::Type(_)) {
+                                        return Ok(());
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        Err(Error::new_spanned(expr, "expected a u64 literal, memory_budget(value/function), memory_budget::<Type>(), or their sums/products"))
+    }
+
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "parsing")))]
+    impl Parse for Option<SignatureResources> {
+        fn parse(input: ParseStream) -> Result<Self> {
+            if !input.peek(Token![resources]) {
+                return Ok(None);
+            }
+            let token = input.parse()?;
+            let resource: Ident = input.parse()?;
+            if resource != "peak_memory_bytes" {
+                return Err(Error::new(resource.span(), "expected peak_memory_bytes"));
+            }
+            let le_token = input.parse()?;
+            let budget = Expr::parse_without_eager_brace(input)?;
+            validate_memory_budget(&budget)?;
+            Ok(Some(SignatureResources {
+                token,
+                resource,
+                le_token,
+                budget,
+                comma: input.parse()?,
+            }))
+        }
+    }
+
     #[cfg_attr(doc_cfg, doc(cfg(feature = "parsing")))]
     impl Parse for SignatureSpec {
         fn parse(input: ParseStream) -> Result<Self> {
@@ -1422,6 +1509,7 @@ pub mod parsing {
             let decreases: Option<SignatureDecreases> = input.parse()?;
             let invariants: Option<SignatureInvariants> = input.parse()?;
             let unwind: Option<SignatureUnwind> = input.parse()?;
+            let resources: Option<SignatureResources> = input.parse()?;
 
             Ok(SignatureSpec {
                 prover,
@@ -1434,6 +1522,7 @@ pub mod parsing {
                 decreases,
                 invariants,
                 unwind,
+                resources,
                 with,
             })
         }
@@ -2383,6 +2472,17 @@ mod printing {
     }
 
     #[cfg_attr(doc_cfg, doc(cfg(feature = "printing")))]
+    impl ToTokens for SignatureResources {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            self.token.to_tokens(tokens);
+            self.resource.to_tokens(tokens);
+            self.le_token.to_tokens(tokens);
+            self.budget.to_tokens(tokens);
+            self.comma.to_tokens(tokens);
+        }
+    }
+
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "printing")))]
     impl ToTokens for SignatureSpec {
         fn to_tokens(&self, tokens: &mut TokenStream) {
             self.prover.to_tokens(tokens);
@@ -2395,6 +2495,7 @@ mod printing {
             self.decreases.to_tokens(tokens);
             self.invariants.to_tokens(tokens);
             self.unwind.to_tokens(tokens);
+            self.resources.to_tokens(tokens);
         }
     }
 
@@ -3180,6 +3281,7 @@ impl parse::Parse for WithSpecOnFn {
                 || input.peek(Token![decreases])
                 || input.peek(Token![via])
                 || input.peek(Token![when])
+                || input.peek(Token![resources])
                 || input.peek(Token![no_unwind])
                 || input.peek(Token![opens_invariants])
         };

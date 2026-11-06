@@ -958,6 +958,9 @@ pub trait Visit<'ast> {
     fn visit_signature_invariants(&mut self, i: &'ast crate::SignatureInvariants) {
         visit_signature_invariants(self, i);
     }
+    fn visit_signature_resources(&mut self, i: &'ast crate::SignatureResources) {
+        visit_signature_resources(self, i);
+    }
     fn visit_signature_spec(&mut self, i: &'ast crate::SignatureSpec) {
         visit_signature_spec(self, i);
     }
@@ -4636,6 +4639,19 @@ where
     v.visit_invariant_name_set(&node.set);
     skip!(node.comma);
 }
+pub fn visit_signature_resources<'ast, V>(
+    v: &mut V,
+    node: &'ast crate::SignatureResources,
+)
+where
+    V: Visit<'ast> + ?Sized,
+{
+    skip!(node.token);
+    v.visit_ident(&node.resource);
+    skip!(node.le_token);
+    v.visit_expr(&node.budget);
+    skip!(node.comma);
+}
 pub fn visit_signature_spec<'ast, V>(v: &mut V, node: &'ast crate::SignatureSpec)
 where
     V: Visit<'ast> + ?Sized,
@@ -4669,6 +4685,9 @@ where
     }
     if let Some(it) = &node.unwind {
         v.visit_signature_unwind(it);
+    }
+    if let Some(it) = &node.resources {
+        v.visit_signature_resources(it);
     }
     if let Some(it) = &node.with {
         v.visit_with_spec_on_fn(it);

@@ -203,6 +203,7 @@ impl crate::syntax::Visitor {
                     vis,
                     sig: Signature {
                         spec: SignatureSpec {
+                            resources: None,
                             prover: None,
                             atomic_spec: None,
                             requires: None,
@@ -293,6 +294,7 @@ impl crate::syntax::Visitor {
                     vis,
                     sig: Signature {
                         spec: SignatureSpec {
+                            resources: None,
                             prover: None,
                             atomic_spec: None,
                             requires: None,
@@ -385,6 +387,7 @@ impl crate::syntax::Visitor {
                     vis,
                     sig: Signature {
                         spec: SignatureSpec {
+                            resources: None,
                             prover: None,
                             atomic_spec: None,
                             requires: None,

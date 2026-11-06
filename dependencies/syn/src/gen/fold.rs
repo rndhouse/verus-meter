@@ -1074,6 +1074,12 @@ pub trait Fold {
     ) -> crate::SignatureInvariants {
         fold_signature_invariants(self, i)
     }
+    fn fold_signature_resources(
+        &mut self,
+        i: crate::SignatureResources,
+    ) -> crate::SignatureResources {
+        fold_signature_resources(self, i)
+    }
     fn fold_signature_spec(&mut self, i: crate::SignatureSpec) -> crate::SignatureSpec {
         fold_signature_spec(self, i)
     }
@@ -4597,6 +4603,21 @@ where
         comma: node.comma,
     }
 }
+pub fn fold_signature_resources<F>(
+    f: &mut F,
+    node: crate::SignatureResources,
+) -> crate::SignatureResources
+where
+    F: Fold + ?Sized,
+{
+    crate::SignatureResources {
+        token: node.token,
+        resource: f.fold_ident(node.resource),
+        le_token: node.le_token,
+        budget: f.fold_expr(node.budget),
+        comma: node.comma,
+    }
+}
 pub fn fold_signature_spec<F>(
     f: &mut F,
     node: crate::SignatureSpec,
@@ -4615,6 +4636,7 @@ where
         decreases: (node.decreases).map(|it| f.fold_signature_decreases(it)),
         invariants: (node.invariants).map(|it| f.fold_signature_invariants(it)),
         unwind: (node.unwind).map(|it| f.fold_signature_unwind(it)),
+        resources: (node.resources).map(|it| f.fold_signature_resources(it)),
         with: (node.with).map(|it| f.fold_with_spec_on_fn(it)),
     }
 }

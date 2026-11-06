@@ -149,6 +149,29 @@ pub fn opens_invariant_mask(_inv_mask: ()) {
 }
 
 #[cfg(verus_keep_ghost)]
+#[rustc_diagnostic_item = "verus::verus_builtin::local_storage_budget"]
+#[verifier::proof]
+pub fn local_storage_budget(_bytes: u64) {
+    unimplemented!();
+}
+
+// Internal markers emitted only inside resource headers. The verifier reads
+// their types/identities without evaluating, copying, or moving the argument.
+#[cfg(verus_keep_ghost)]
+#[rustc_diagnostic_item = "verus::verus_builtin::memory_budget_value"]
+#[verifier::spec]
+pub fn memory_budget_value<T: ?Sized>(_value: &T) -> u64 {
+    unimplemented!()
+}
+
+#[cfg(verus_keep_ghost)]
+#[rustc_diagnostic_item = "verus::verus_builtin::memory_budget_type"]
+#[verifier::spec]
+pub fn memory_budget_type<T: ?Sized>() -> u64 {
+    unimplemented!()
+}
+
+#[cfg(verus_keep_ghost)]
 #[rustc_diagnostic_item = "verus::verus_builtin::no_unwind"]
 #[verifier::proof]
 pub fn no_unwind() {

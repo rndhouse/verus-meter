@@ -2554,6 +2554,15 @@ impl PartialEq for crate::SignatureInvariants {
     }
 }
 #[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
+impl Eq for crate::SignatureResources {}
+#[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
+impl PartialEq for crate::SignatureResources {
+    fn eq(&self, other: &Self) -> bool {
+        self.resource == other.resource && self.budget == other.budget
+            && self.comma == other.comma
+    }
+}
+#[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
 impl Eq for crate::SignatureSpec {}
 #[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
 impl PartialEq for crate::SignatureSpec {
@@ -2564,7 +2573,7 @@ impl PartialEq for crate::SignatureSpec {
             && self.default_ensures == other.default_ensures
             && self.returns == other.returns && self.decreases == other.decreases
             && self.invariants == other.invariants && self.unwind == other.unwind
-            && self.with == other.with
+            && self.resources == other.resources && self.with == other.with
     }
 }
 #[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]

@@ -6191,6 +6191,17 @@ impl Debug for Lite<syn::SignatureInvariants> {
         formatter.finish()
     }
 }
+impl Debug for Lite<syn::SignatureResources> {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        let mut formatter = formatter.debug_struct("SignatureResources");
+        formatter.field("resource", Lite(&self.value.resource));
+        formatter.field("budget", Lite(&self.value.budget));
+        if self.value.comma.is_some() {
+            formatter.field("comma", &Present);
+        }
+        formatter.finish()
+    }
+}
 impl Debug for Lite<syn::SignatureSpec> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         let mut formatter = formatter.debug_struct("SignatureSpec");
@@ -6333,6 +6344,20 @@ impl Debug for Lite<syn::SignatureSpec> {
                 }
             }
             formatter.field("unwind", Print::ref_cast(val));
+        }
+        if let Some(val) = &self.value.resources {
+            #[derive(RefCast)]
+            #[repr(transparent)]
+            struct Print(syn::SignatureResources);
+            impl Debug for Print {
+                fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                    formatter.write_str("Some(")?;
+                    Debug::fmt(Lite(&self.0), formatter)?;
+                    formatter.write_str(")")?;
+                    Ok(())
+                }
+            }
+            formatter.field("resources", Print::ref_cast(val));
         }
         if let Some(val) = &self.value.with {
             #[derive(RefCast)]
@@ -8172,6 +8197,11 @@ impl Debug for Lite<syn::token::Ref> {
 impl Debug for Lite<syn::token::Requires> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("Token![requires]")
+    }
+}
+impl Debug for Lite<syn::token::Resources> {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("Token![resources]")
     }
 }
 impl Debug for Lite<syn::token::Return> {

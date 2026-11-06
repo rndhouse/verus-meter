@@ -3630,6 +3630,18 @@ impl Debug for crate::SignatureInvariants {
     }
 }
 #[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
+impl Debug for crate::SignatureResources {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        let mut formatter = formatter.debug_struct("SignatureResources");
+        formatter.field("token", &self.token);
+        formatter.field("resource", &self.resource);
+        formatter.field("le_token", &self.le_token);
+        formatter.field("budget", &self.budget);
+        formatter.field("comma", &self.comma);
+        formatter.finish()
+    }
+}
+#[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
 impl Debug for crate::SignatureSpec {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         let mut formatter = formatter.debug_struct("SignatureSpec");
@@ -3643,6 +3655,7 @@ impl Debug for crate::SignatureSpec {
         formatter.field("decreases", &self.decreases);
         formatter.field("invariants", &self.invariants);
         formatter.field("unwind", &self.unwind);
+        formatter.field("resources", &self.resources);
         formatter.field("with", &self.with);
         formatter.finish()
     }
