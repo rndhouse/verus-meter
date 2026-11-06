@@ -34,10 +34,10 @@ it does not report Rust's physical type layout. Native integers use their width
 in bytes (`u8`/`i8`: 1, through `u128`/`i128`: 16); `usize` and `isize` both use 8.
 Integer arrays multiply that size by their length.
 
-- Parameters count throughout the call. Locals count from their declaration
+- Parameters and result storage count throughout the call. Locals count from their declaration
   until their block ends, even after a move or last use.
 - Initializing or assigning a value uses its destination's storage. An explicitly
-  constructed array or struct without a destination counts once while evaluated.
+  constructed array, struct, or `Option` without a destination counts once while evaluated.
 - Reading, indexing, arithmetic, and borrowing introduce no implicit storage.
   A reference stored in a variable or parameter counts, but its backing data
   remains charged to the owner.
@@ -52,7 +52,8 @@ and [structs](../../examples/resource/memory/structs.rs).
 
 During a call, the caller keeps its own live storage and also needs room for the
 callee's declared budget. Argument evaluation must fit too. The callee's budget
-already includes its parameters.
+already includes its parameters and result. When the call initializes an existing
+destination, that destination and the callee's result share one charge.
 
 Using `mem_peak(helper)` lets a caller follow changes to the helper's contract.
 It uses the declared allowance even when the helper currently needs less, so the
@@ -62,6 +63,28 @@ arguments. A caller can write `mem_size(flag) + mem_peak(helper(flag))` to forwa
 that promise, or use a precondition to justify a smaller fixed bound.
 See [calls](../../examples/resource/memory/calls.rs) and
 [argument-specific budgets](../../examples/resource/memory/call_budgets.rs).
+
+## Returning and using values
+
+Checked helpers can return native integers, `bool`, fixed integer arrays,
+concrete structs, and `Option<T>` with supported non-owning payloads. Results
+use tail expressions, including value-producing blocks, `if`, and `match`.
+
+A function's budget includes its result storage throughout the call. Returning
+directly into a caller's local uses that local's destination, without counting
+another result buffer. Named locals inside the helper remain charged until scope
+exit, including when one supplies the returned value. Results used as intermediate
+values stay charged until consumed. See [returned buffers](../../examples/resource/memory/returns.rs)
+and [retaining too many results](../../examples/resource/memory/expected-failures/returned_buffers.rs).
+
+`Option<T>` costs one tag byte plus `mem_size(T)` in either variant, regardless
+of Rust's physical representation. `Some`, `None`, by-value
+`match`/`if let`, `is_some`, `is_none`, and `unwrap` are supported. Each named
+match binding gets its own slot for that arm. Verus still requires proof that
+`unwrap` receives `Some`. See [using a popped value](../../examples/resource/memory/options.rs).
+
+Returning heap owners or references, borrowed temporary results, match guards,
+and explicit early `return` remain unsupported.
 
 ## Fixed-size heap objects
 
@@ -100,10 +123,10 @@ can use an input directly, for example `mem_size(capacity) + mem_size(Vec<u32>)
 + capacity * mem_size(u32)`. Callers use `mem_peak(helper(arguments))` to compose
 runtime formulas; an argument-free query requires a fixed envelope.
 
-The subset supports fixed-size non-owning elements, pushes, discarded pops,
+The subset supports fixed-size non-owning elements, pushes, pops returning `Option<T>`,
 length, indexing, and borrowing elements through `as_slice` or `as_mut_slice`.
-Helpers take slices; owning or borrowed vector parameters, growth, reassignment,
-and binding the `Option` returned by `pop` remain unsupported.
+Helpers take slices; owning or borrowed vector parameters, growth, and reassignment
+remain unsupported.
 
 See [collecting selected numbers](../../examples/resource/memory/vectors.rs) and
 [a push that requires growth](../../examples/resource/memory/expected-failures/vector_growth.rs).
@@ -174,18 +197,20 @@ callee's maximum allowance, even if a proof established a tighter bound at the c
 
 ## Current scope
 
-Checked functions must be safe, nongeneric, return `()`, and have a verified body.
+Checked functions must be safe, nongeneric, and have a verified body.
 The supported subset includes `bool`, all native integers, fixed integer arrays,
-concrete structs, local fixed-size boxes and vectors without growth, supported
+concrete structs, non-owning `Option` values, local fixed-size boxes and vectors
+without growth, supported
 references and integer slices,
 indexing, branches, while loops, and calls to checked functions in the same crate. Integer addition,
 subtraction, multiplication, and signed negation retain Verus's overflow checks.
 See the [integer example](../../examples/resource/memory/integers.rs).
 
-`char`, floating-point types, other heap-owning types, destructors, enums, generic
-structs, recursion, closures, cross-crate calls, and value-returning functions
-are not supported. Structs with ghost/tracked or reference fields are also
-excluded. Destructuring, casts, division, and explicit `return`, `break`, or
+`char`, floating-point types, other heap-owning types, destructors, enums other
+than `Option`, generic structs, recursion, closures, and cross-crate calls are
+not supported. Structs with ghost/tracked or reference fields are also
+excluded. Destructuring outside supported Option patterns, casts, division, and
+explicit `return`, `break`, or
 `continue` also remain unsupported. An unsupported construct produces an error rather
 than silently receiving a zero cost.
 
