@@ -4684,7 +4684,6 @@ where
     V: Visit<'ast> + ?Sized,
 {
     skip!(node.token);
-    v.visit_ident(&node.resource);
     skip!(node.le_token);
     v.visit_resource_expr(&node.budget);
     skip!(node.comma);

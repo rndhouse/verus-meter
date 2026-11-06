@@ -17,14 +17,14 @@ Unsupported executable constructs fail closed.
 
 ```rust
 fn example()
-    resources peakmem <= sizeof([u32; 64]),
+    peakmem <= sizeof([u32; 64]),
 {
     { let first = [0u32; 64]; }
     { let second = [0u32; 64]; }
 }
 ```
 
-The resource clause comes after the other function clauses. Its budget is a
+The `peakmem <= ...` clause comes after the other function clauses. Its budget is a
 compile-time expression built from nonnegative `u64` literals (unsuffixed or
 suffixed `u64`), `sizeof` and `peakmem` queries, addition, multiplication, and
 parentheses:
@@ -41,7 +41,7 @@ parentheses:
 For example, the struct helper declares:
 
 ```rust
-resources peakmem <= sizeof(buffer) + peakmem(sorting::insertion_sort),
+peakmem <= sizeof(buffer) + peakmem(sorting::insertion_sort),
 ```
 
 The queries are erased metadata: they do not evaluate, copy, or move their
@@ -62,9 +62,9 @@ body is still checked against its resulting bound. A formula is not itself a
 proof: construction, argument handoff, or other execution can exceed it.
 
 Functions without a resource clause continue through normal Verus verification
-without resource checking. The former `peak_local_storage_bytes` and
-`peak_memory_bytes` clause spellings are replaced by `peakmem`; the overloaded
-`memory_budget` query is replaced by `sizeof` and `peakmem`. Version 5 removes
+without resource checking. The former `resources ...` clause spellings are
+replaced by the standalone `peakmem <= ...` clause; the overloaded `memory_budget`
+query is replaced by `sizeof` and `peakmem`. Version 5 removes
 inferred expression and address temporaries consistently across initialization,
 assignment, and calls.
 
@@ -490,15 +490,17 @@ aggregates, references to zero-sized values, and nested initializer calls.
 
 ## Short resource syntax validation (v5)
 
-The `sizeof`/`peakmem` syntax changes no storage-accounting rules.
+Standalone `peakmem` clauses and the `sizeof`/`peakmem` queries change no
+storage-accounting rules.
 
 - The release workspace and installed verifier built successfully; rebuilt vstd
   reported 2,226 verified and zero errors.
-- All 196 resource tests passed, including 29 budget-expression tests covering
+- All 197 resource tests passed, including 30 budget-expression tests covering
   type aliases, parameter/type name shadowing, compound type syntax, arithmetic
-  precedence, and rejection of values passed to `peakmem` or functions to `sizeof`.
-- All five resource parser tests passed, including round trips and rejection of
-  malformed or superseded syntax.
+  precedence, rejection of values passed to `peakmem` or functions to `sizeof`,
+  and calls to ordinary functions named `peakmem` in other clauses.
+- All six resource parser tests passed, including clause boundaries, round trips,
+  and rejection of malformed or superseded syntax.
 - The five baseline upstream suites in [setup.md](setup.md) passed: 193 tests,
   with three upstream-ignored tests. The complete upstream suite was not run.
 - All ten example-runner tests matching `resource_` passed. The four passing

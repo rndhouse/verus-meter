@@ -6236,7 +6236,6 @@ impl Debug for Lite<syn::SignatureInvariants> {
 impl Debug for Lite<syn::SignatureResources> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         let mut formatter = formatter.debug_struct("SignatureResources");
-        formatter.field("resource", Lite(&self.value.resource));
         formatter.field("budget", Lite(&self.value.budget));
         if self.value.comma.is_some() {
             formatter.field("comma", &Present);
@@ -8166,6 +8165,11 @@ impl Debug for Lite<syn::token::PathSep> {
         formatter.write_str("Token![::]")
     }
 }
+impl Debug for Lite<syn::token::Peakmem> {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("Token![peakmem]")
+    }
+}
 impl Debug for Lite<syn::token::Percent> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("Token![%]")
@@ -8239,11 +8243,6 @@ impl Debug for Lite<syn::token::Ref> {
 impl Debug for Lite<syn::token::Requires> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("Token![requires]")
-    }
-}
-impl Debug for Lite<syn::token::Resources> {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("Token![resources]")
     }
 }
 impl Debug for Lite<syn::token::Return> {

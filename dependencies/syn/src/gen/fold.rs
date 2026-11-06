@@ -4659,7 +4659,6 @@ where
 {
     crate::SignatureResources {
         token: node.token,
-        resource: f.fold_ident(node.resource),
         le_token: node.le_token,
         budget: f.fold_resource_expr(node.budget),
         comma: node.comma,

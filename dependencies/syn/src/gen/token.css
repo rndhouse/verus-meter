@@ -102,6 +102,7 @@ a.struct[title="struct syn::token::OrOr"],
 a.struct[title="struct syn::token::OuterMask"],
 a.struct[title="struct syn::token::Override"],
 a.struct[title="struct syn::token::PathSep"],
+a.struct[title="struct syn::token::Peakmem"],
 a.struct[title="struct syn::token::Percent"],
 a.struct[title="struct syn::token::PercentEq"],
 a.struct[title="struct syn::token::Plus"],
@@ -117,7 +118,6 @@ a.struct[title="struct syn::token::Raw"],
 a.struct[title="struct syn::token::Recommends"],
 a.struct[title="struct syn::token::Ref"],
 a.struct[title="struct syn::token::Requires"],
-a.struct[title="struct syn::token::Resources"],
 a.struct[title="struct syn::token::Return"],
 a.struct[title="struct syn::token::Returns"],
 a.struct[title="struct syn::token::Reveal"],
@@ -271,6 +271,7 @@ a.struct[title="struct syn::token::OrOr"]::before,
 a.struct[title="struct syn::token::OuterMask"]::before,
 a.struct[title="struct syn::token::Override"]::before,
 a.struct[title="struct syn::token::PathSep"]::before,
+a.struct[title="struct syn::token::Peakmem"]::before,
 a.struct[title="struct syn::token::Percent"]::before,
 a.struct[title="struct syn::token::PercentEq"]::before,
 a.struct[title="struct syn::token::Plus"]::before,
@@ -286,7 +287,6 @@ a.struct[title="struct syn::token::Raw"]::before,
 a.struct[title="struct syn::token::Recommends"]::before,
 a.struct[title="struct syn::token::Ref"]::before,
 a.struct[title="struct syn::token::Requires"]::before,
-a.struct[title="struct syn::token::Resources"]::before,
 a.struct[title="struct syn::token::Return"]::before,
 a.struct[title="struct syn::token::Returns"]::before,
 a.struct[title="struct syn::token::Reveal"]::before,
@@ -753,6 +753,10 @@ a.struct[title="struct syn::token::PathSep"]::before {
 	content: "Token![::]";
 }
 
+a.struct[title="struct syn::token::Peakmem"]::before {
+	content: "Token![peakmem]";
+}
+
 a.struct[title="struct syn::token::Percent"]::before {
 	content: "Token![%]";
 }
@@ -811,10 +815,6 @@ a.struct[title="struct syn::token::Ref"]::before {
 
 a.struct[title="struct syn::token::Requires"]::before {
 	content: "Token![requires]";
-}
-
-a.struct[title="struct syn::token::Resources"]::before {
-	content: "Token![resources]";
 }
 
 a.struct[title="struct syn::token::Return"]::before {
@@ -1144,6 +1144,7 @@ a.struct[title="struct syn::token::Mut"]::after,
 a.struct[title="struct syn::token::Ne"]::after,
 a.struct[title="struct syn::token::Open"]::after,
 a.struct[title="struct syn::token::Override"]::after,
+a.struct[title="struct syn::token::Peakmem"]::after,
 a.struct[title="struct syn::token::Priv"]::after,
 a.struct[title="struct syn::token::Proof"]::after,
 a.struct[title="struct syn::token::Pub"]::after,
@@ -1151,7 +1152,6 @@ a.struct[title="struct syn::token::Raw"]::after,
 a.struct[title="struct syn::token::Recommends"]::after,
 a.struct[title="struct syn::token::Ref"]::after,
 a.struct[title="struct syn::token::Requires"]::after,
-a.struct[title="struct syn::token::Resources"]::after,
 a.struct[title="struct syn::token::Return"]::after,
 a.struct[title="struct syn::token::Returns"]::after,
 a.struct[title="struct syn::token::Reveal"]::after,

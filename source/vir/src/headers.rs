@@ -244,7 +244,7 @@ pub fn read_header_block(block: &mut Vec<Stmt>, allows: &HeaderAllows) -> Result
                     }
                     HeaderExprX::LocalStorageBudget(budget) => {
                         if resource_budget.replace(budget.clone()).is_some() {
-                            return Err(error(&stmt.span, "only one resources clause allowed"));
+                            return Err(error(&stmt.span, "only one peakmem clause allowed"));
                         }
                     }
                     HeaderExprX::NoUnwind | HeaderExprX::NoUnwindWhen(_) => {

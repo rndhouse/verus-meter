@@ -20,7 +20,7 @@ verus! {
 // lets this caller follow changes to that contract automatically.
 // The checker also verifies that construction and argument handoff fit.
 pub fn sort_local_array()
-    resources peakmem <= sizeof([u32; 8]) + peakmem(sorting::insertion_sort),
+    peakmem <= sizeof([u32; 8]) + peakmem(sorting::insertion_sort),
 {
     let mut values = [9u32, 3, 7, 3, 0, 8, 1, 5];
     // Remember the input for the preservation proof without retaining a runtime
@@ -39,7 +39,7 @@ pub fn sort_local_array()
 //
 // There is no additional local data here, so the caller's bound is sufficient.
 fn main()
-    resources peakmem <= peakmem(sort_local_array),
+    peakmem <= peakmem(sort_local_array),
 {
     sort_local_array();
 }

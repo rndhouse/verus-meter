@@ -6681,10 +6681,7 @@
       },
       "fields": {
         "token": {
-          "token": "Resources"
-        },
-        "resource": {
-          "proc_macro2": "Ident"
+          "token": "Peakmem"
         },
         "le_token": {
           "token": "Le"
@@ -8251,6 +8248,7 @@
     "OuterMask": "outer_mask",
     "Override": "override",
     "PathSep": "::",
+    "Peakmem": "peakmem",
     "Percent": "%",
     "PercentEq": "%=",
     "Plus": "+",
@@ -8266,7 +8264,6 @@
     "Recommends": "recommends",
     "Ref": "ref",
     "Requires": "requires",
-    "Resources": "resources",
     "Return": "return",
     "Returns": "returns",
     "Reveal": "reveal",

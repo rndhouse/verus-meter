@@ -4486,7 +4486,6 @@ where
     V: VisitMut + ?Sized,
 {
     skip!(node.token);
-    v.visit_ident_mut(&mut node.resource);
     skip!(node.le_token);
     v.visit_resource_expr_mut(&mut node.budget);
     skip!(node.comma);

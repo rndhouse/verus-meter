@@ -913,7 +913,7 @@ fn verus_item_to_vir<'tcx, 'a>(
                 | SpecItem::ResourceSizeOfType
                 | SpecItem::ResourcePeakMem => err_span(
                     expr.span,
-                    "sizeof and peakmem are only allowed inside a resources clause",
+                    "sizeof and peakmem are only allowed inside a peakmem clause",
                 ),
                 SpecItem::NoUnwind => {
                     record_spec_fn_pure_args_only(bctx, expr);

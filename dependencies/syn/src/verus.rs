@@ -226,8 +226,7 @@ ast_struct! {
 ast_struct! {
     /// A compile-time resource budget expression.
     pub struct SignatureResources {
-        pub token: Token![resources],
-        pub resource: Ident,
+        pub token: Token![peakmem],
         pub le_token: Token![<=],
         pub budget: ResourceExpr,
         pub comma: Option<Token![,]>,
@@ -942,7 +941,7 @@ pub mod parsing {
                 || input.peek(Token![decreases])
                 || input.peek(Token![via])
                 || input.peek(Token![when])
-                || input.peek(Token![resources])
+                || (input.peek(Token![peakmem]) && input.peek2(Token![<=]))
                 || input.peek(Token![no_unwind])
                 || input.peek(Token![opens_invariants])
                 || input.peek(Token![outer_mask])
@@ -959,7 +958,7 @@ pub mod parsing {
                 || input.peek2(Token![decreases])
                 || input.peek2(Token![via])
                 || input.peek2(Token![when])
-                || input.peek2(Token![resources])
+                || (input.peek2(Token![peakmem]) && input.peek3(Token![<=]))
                 || input.peek2(Token![no_unwind])
                 || input.peek2(Token![opens_invariants])
                 || input.peek2(Token![outer_mask])
@@ -1497,19 +1496,14 @@ pub mod parsing {
     #[cfg_attr(doc_cfg, doc(cfg(feature = "parsing")))]
     impl Parse for Option<SignatureResources> {
         fn parse(input: ParseStream) -> Result<Self> {
-            if !input.peek(Token![resources]) {
+            if !input.peek(Token![peakmem]) {
                 return Ok(None);
             }
             let token = input.parse()?;
-            let resource: Ident = input.parse()?;
-            if resource != "peakmem" {
-                return Err(Error::new(resource.span(), "expected peakmem"));
-            }
             let le_token = input.parse()?;
             let budget = input.parse()?;
             Ok(Some(SignatureResources {
                 token,
-                resource,
                 le_token,
                 budget,
                 comma: input.parse()?,
@@ -2526,7 +2520,6 @@ mod printing {
     impl ToTokens for SignatureResources {
         fn to_tokens(&self, tokens: &mut TokenStream) {
             self.token.to_tokens(tokens);
-            self.resource.to_tokens(tokens);
             self.le_token.to_tokens(tokens);
             self.budget.to_tokens(tokens);
             self.comma.to_tokens(tokens);
@@ -3332,7 +3325,7 @@ impl parse::Parse for WithSpecOnFn {
                 || input.peek(Token![decreases])
                 || input.peek(Token![via])
                 || input.peek(Token![when])
-                || input.peek(Token![resources])
+                || (input.peek(Token![peakmem]) && input.peek2(Token![<=]))
                 || input.peek(Token![no_unwind])
                 || input.peek(Token![opens_invariants])
         };
