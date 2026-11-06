@@ -219,28 +219,28 @@ test_verify_one_file! {
     #[test] outer_drop_in_branch_rejected verus_code! {
         use vstd::prelude::*;
         fn f(flag: bool) mem_peak <= 200 { let data = Box::new([0u8; 16]); if flag { drop(data); } }
-    } => Err(err) => assert_vir_error_msg(err, "moving or dropping an enclosing box")
+    } => Err(err) => assert_vir_error_msg(err, "moving or dropping an enclosing heap owner")
 }
 
 test_verify_one_file! {
     #[test] outer_drop_in_loop_rejected verus_code! {
         use vstd::prelude::*;
         fn f(flag: bool) mem_peak <= 200 { let data = Box::new([0u8; 16]); while flag decreases 1int, { drop(data); } }
-    } => Err(err) => assert_vir_error_msg(err, "moving or dropping an enclosing box")
+    } => Err(err) => assert_vir_error_msg(err, "moving or dropping an enclosing heap owner")
 }
 
 test_verify_one_file! {
     #[test] outer_drop_in_section_rejected verus_code! {
         use vstd::prelude::*;
         fn f(flag: bool) mem_peak <= 200 { let data = Box::new([0u8; 16]); mem_peak <= 100 { drop(data); } }
-    } => Err(err) => assert_vir_error_msg(err, "moving or dropping an enclosing box")
+    } => Err(err) => assert_vir_error_msg(err, "moving or dropping an enclosing heap owner")
 }
 
 test_verify_one_file! {
     #[test] outer_move_in_branch_rejected verus_code! {
         use vstd::prelude::*;
         fn f(flag: bool) mem_peak <= 100 { let data = Box::new([0u8; 16]); if flag { let moved = data; } }
-    } => Err(err) => assert_vir_error_msg(err, "moving or dropping an enclosing box")
+    } => Err(err) => assert_vir_error_msg(err, "moving or dropping an enclosing heap owner")
 }
 
 test_verify_one_file! {
@@ -269,7 +269,7 @@ test_verify_one_file! {
     #[test] reassignment_rejected verus_code! {
         use vstd::prelude::*;
         fn f() mem_peak <= 100 { let mut data = Box::new(1u8); data = Box::new(2u8); }
-    } => Err(err) => assert_vir_error_msg(err, "reassignment of box owners")
+    } => Err(err) => assert_vir_error_msg(err, "reassignment of heap owners")
 }
 
 test_verify_one_file! {
@@ -290,14 +290,14 @@ test_verify_one_file! {
     #[test] dropping_contents_cannot_release_box verus_code! {
         use vstd::prelude::*;
         fn f() mem_peak <= 100 { let data = Box::new(1u8); drop(*data); }
-    } => Err(err) => assert_vir_error_msg(err, "drop of anything other than a named local box")
+    } => Err(err) => assert_vir_error_msg(err, "drop of anything other than a named local heap owner")
 }
 
 test_verify_one_file! {
     #[test] dropping_reference_cannot_release_box verus_code! {
         use vstd::prelude::*;
         fn f() mem_peak <= 100 { let data = Box::new(1u8); drop(&*data); }
-    } => Err(err) => assert_vir_error_msg(err, "drop of anything other than a named local box")
+    } => Err(err) => assert_vir_error_msg(err, "drop of anything other than a named local heap owner")
 }
 
 test_verify_one_file! {

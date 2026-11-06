@@ -35,7 +35,7 @@ impl Analysis<'_> {
         .ok();
         let constant = bound.as_ref().and_then(super::contracts::constant);
         let budget = constant.unwrap_or(envelope);
-        let caller_live = self.storage.live();
+        let caller_live = self.storage.live_expression(&expr.span);
         let mut parameters = 0u64;
         for (arg, param) in args.iter().zip(callee.x.params.iter()) {
             if param.x.mode != Mode::Exec {
@@ -70,11 +70,13 @@ impl Analysis<'_> {
         })?;
         // Parameters are already included in the callee's declared peak.
         if let Some(bound) = bound.filter(|_| constant.is_none()) {
-            let cost = super::contracts::add(
-                &expr.span,
-                super::contracts::literal(&expr.span, caller_live),
-                bound,
-            );
+            let cost = super::contracts::add(&expr.span, caller_live, bound.clone());
+            if super::contracts::numeric_input(&bound) {
+                self.storage.symbolic_cost(&expr.span, cost);
+                self.storage.release(&expr.span, parameters, "callee return");
+                self.calls.push((target.clone(), expr.span.clone()));
+                return Ok(0);
+            }
             self.storage.reserve_call(&expr.span, additional, cost)?;
         } else {
             self.storage.reserve(

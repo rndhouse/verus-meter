@@ -112,6 +112,7 @@ pub(crate) enum SpecItem {
     Atomically,
     LocalStorageBudget,
     ResourceMemSizeValue,
+    ResourceQuantity,
     ResourceMemSizeType,
     ResourceMemPeak,
     ResourceMemPeakCall,
@@ -536,6 +537,7 @@ fn verus_items_map() -> Vec<(&'static str, VerusItem)> {
 
         ("verus::verus_builtin::local_storage_budget", VerusItem::Spec(SpecItem::LocalStorageBudget)),
         ("verus::verus_builtin::resource_mem_size_value", VerusItem::Spec(SpecItem::ResourceMemSizeValue)),
+        ("verus::verus_builtin::resource_quantity", VerusItem::Spec(SpecItem::ResourceQuantity)),
         ("verus::verus_builtin::resource_mem_size_type", VerusItem::Spec(SpecItem::ResourceMemSizeType)),
         ("verus::verus_builtin::resource_mem_peak", VerusItem::Spec(SpecItem::ResourceMemPeak)),
         ("verus::verus_builtin::resource_mem_peak_call", VerusItem::Spec(SpecItem::ResourceMemPeakCall)),
@@ -1106,4 +1108,33 @@ pub(crate) fn get_rust_item_str(rust_path: Option<&str>) -> Option<RustItem> {
     }
 
     None
+}
+
+// Identify inherent Vec operations by the compiler's Vec identity, so aliases
+// work and unrelated methods with the same names cannot acquire resource rules.
+pub(crate) fn resource_vec_intrinsic(
+    tcx: TyCtxt<'_>,
+    id: DefId,
+) -> Option<vir::ast::ResourceIntrinsic> {
+    let imp = tcx.impl_of_assoc(id)?;
+    if tcx.trait_impl_of_assoc(imp).is_some() {
+        return None;
+    }
+    let TyKind::Adt(adt, _) = tcx.type_of(imp).skip_binder().kind() else {
+        return None;
+    };
+    if !tcx.is_diagnostic_item(rustc_span::Symbol::intern("Vec"), adt.did()) {
+        return None;
+    }
+    use vir::ast::ResourceIntrinsic::*;
+    match tcx.item_name(id).as_str() {
+        "new" => Some(VecNew),
+        "with_capacity" => Some(VecWithCapacity),
+        "push" => Some(VecPush),
+        "pop" => Some(VecPop),
+        "len" => Some(VecLen),
+        "as_slice" => Some(VecAsSlice),
+        "as_mut_slice" => Some(VecAsMutSlice),
+        _ => None,
+    }
 }

@@ -3176,6 +3176,10 @@ impl Hash for crate::ResourceExpr {
                 state.write_u8(0u8);
                 v0.hash(state);
             }
+            crate::ResourceExpr::Quantity(v0) => {
+                state.write_u8(9u8);
+                v0.hash(state);
+            }
             crate::ResourceExpr::Paren(_, v1) => {
                 state.write_u8(1u8);
                 v1.hash(state);

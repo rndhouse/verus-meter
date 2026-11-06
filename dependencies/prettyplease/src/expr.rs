@@ -120,6 +120,7 @@ impl Printer {
                 self.word(" }");
             }
             ResourceExpr::Literal(n) => self.word(n.to_string()),
+            ResourceExpr::Quantity(n) => self.word(n.to_string()),
             ResourceExpr::Paren(_, expr) => {
                 self.word("(");
                 self.resource_budget(expr);

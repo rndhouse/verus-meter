@@ -247,6 +247,7 @@ ast_enum! {
     /// A bare `mem_size` path may name a parameter; other arguments denote types.
     pub enum ResourceExpr {
         Literal(LitInt),
+        Quantity(Ident),
         Paren(token::Paren, Box<ResourceExpr>),
         Add(Box<ResourceExpr>, Token![+], Box<ResourceExpr>),
         Mul(Box<ResourceExpr>, Token![*], Box<ResourceExpr>),
@@ -1520,10 +1521,13 @@ pub mod parsing {
         }
         let name: Ident = input.parse()?;
         if name != "mem_size" && name != "mem_peak" {
-            return Err(Error::new(
-                name.span(),
-                "expected mem_size(type/parameter) or mem_peak(function)",
-            ));
+            if input.peek(token::Paren) {
+                return Err(Error::new(
+                    name.span(),
+                    "expected mem_size(type/parameter) or mem_peak(function)",
+                ));
+            }
+            return Ok(ResourceExpr::Quantity(name));
         }
         let content;
         let paren = parenthesized!(content in input);
@@ -2606,6 +2610,7 @@ mod printing {
                     else_brace.surround(tokens, |tokens| else_budget.to_tokens(tokens));
                 }
                 ResourceExpr::Literal(n) => n.to_tokens(tokens),
+                ResourceExpr::Quantity(n) => n.to_tokens(tokens),
                 ResourceExpr::Paren(paren, expr) => {
                     paren.surround(tokens, |tokens| expr.to_tokens(tokens));
                 }

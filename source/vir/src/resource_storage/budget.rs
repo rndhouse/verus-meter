@@ -21,6 +21,7 @@ pub enum BudgetExprX {
     Mul(BudgetExpr, BudgetExpr),
     If(Expr, BudgetExpr, BudgetExpr),
     FunctionCall(Fun, Exprs),
+    Quantity(Expr),
 }
 
 struct Resolver<'a> {
@@ -68,9 +69,25 @@ impl Resolver<'_> {
             BudgetExprX::If(_, then_budget, else_budget) => {
                 Ok(self.expr(then_budget)?.max(self.expr(else_budget)?))
             }
+            BudgetExprX::Quantity(_) => Ok(u64::MAX),
             BudgetExprX::Literal(n) => Ok(*n),
             BudgetExprX::MemSize(typ) => self.layouts.size(typ, &expr.span),
-            BudgetExprX::Function(name) => self.function(name, &expr.span),
+            BudgetExprX::Function(name) => {
+                let n = self.function(name, &expr.span)?;
+                let formula = super::contracts::function_bound(
+                    &self.functions[name],
+                    &self.resolved,
+                    self.functions,
+                    self.layouts,
+                )?;
+                if super::contracts::numeric_input(&formula) {
+                    return Err(error(
+                        &expr.span,
+                        "runtime memory budgets require mem_peak(helper(arguments))",
+                    ));
+                }
+                Ok(n)
+            }
             BudgetExprX::FunctionCall(name, args) => {
                 self.function(name, &expr.span)?;
                 // Resolution visits the full dependency graph before substitution.
@@ -113,7 +130,11 @@ impl Resolver<'_> {
                 } else {
                     left.checked_mul(right)
                 };
-                result.ok_or_else(|| error(&expr.span, "memory budget arithmetic exceeds u64"))
+                if runtime(expr, self.functions) {
+                    Ok(result.unwrap_or(u64::MAX))
+                } else {
+                    result.ok_or_else(|| error(&expr.span, "memory budget arithmetic exceeds u64"))
+                }
             }
         }
     }
@@ -177,4 +198,22 @@ pub(super) fn evaluate_envelope(
     layouts: &Layouts,
 ) -> Result<u64, VirErr> {
     Resolver { functions, layouts, resolved: budgets.clone(), visiting: HashSet::new() }.expr(expr)
+}
+
+/// Runtime quantities need proof-checked bounds rather than a finite envelope.
+pub(super) fn runtime(expr: &BudgetExpr, functions: &HashMap<Fun, Function>) -> bool {
+    match &expr.x {
+        BudgetExprX::Quantity(_) => true,
+        BudgetExprX::Add(a, b) | BudgetExprX::Mul(a, b) => {
+            runtime(a, functions) || runtime(b, functions)
+        }
+        BudgetExprX::If(_, a, b) => runtime(a, functions) || runtime(b, functions),
+        BudgetExprX::FunctionCall(f, _) => {
+            match functions.get(f).and_then(|f| f.x.attrs.resource_contract.as_ref()) {
+                Some(ResourceContract::LexicalSlotsV5Expr { budget }) => runtime(budget, functions),
+                _ => false,
+            }
+        }
+        _ => false,
+    }
 }

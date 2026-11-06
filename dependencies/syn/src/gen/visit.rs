@@ -4558,6 +4558,9 @@ where
         crate::ResourceExpr::Literal(_binding_0) => {
             v.visit_lit_int(_binding_0);
         }
+        crate::ResourceExpr::Quantity(_binding_0) => {
+            v.visit_ident(_binding_0);
+        }
         crate::ResourceExpr::Paren(_binding_0, _binding_1) => {
             skip!(_binding_0);
             v.visit_resource_expr(&**_binding_1);

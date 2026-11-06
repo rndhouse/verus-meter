@@ -158,6 +158,13 @@ pub fn local_storage_budget(_bytes: u64) {
 // Internal markers emitted only inside resource headers. The verifier reads
 // their types/identities without evaluating, copying, or moving the argument.
 #[cfg(verus_keep_ghost)]
+#[rustc_diagnostic_item = "verus::verus_builtin::resource_quantity"]
+#[verifier::spec]
+pub fn resource_quantity<T>(_value: &T) -> u64 {
+    unimplemented!()
+}
+
+#[cfg(verus_keep_ghost)]
 #[rustc_diagnostic_item = "verus::verus_builtin::resource_mem_size_value"]
 #[verifier::spec]
 pub fn resource_mem_size_value<T: ?Sized>(_value: &T) -> u64 {

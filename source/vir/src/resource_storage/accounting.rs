@@ -3,6 +3,7 @@
 use super::model::{MODEL_NAME, unsupported};
 use crate::ast::{Expr, VirErr, VirErrAs};
 use crate::messages::{Span, error, note};
+use std::collections::HashMap;
 
 pub struct StorageEvent {
     pub span: Span,
@@ -25,7 +26,7 @@ impl StorageReport {
             span,
             if self.conditional {
                 format!(
-                    "resource model {MODEL_NAME}: structural peak {} bytes, conditional budget envelope {} bytes; allocation obligations require Verus proofs",
+                    "resource model {MODEL_NAME}: fixed-cost peak {} bytes, budget envelope {} bytes; symbolic storage obligations require Verus proofs",
                     self.peak, self.budget
                 )
             } else {
@@ -50,18 +51,23 @@ impl StorageReport {
 pub(super) struct Peak {
     pub(super) bytes: u64,
     pub(super) span: Span,
+    pub(super) costs: Vec<(Span, Expr)>,
 }
 
 impl Peak {
     pub(super) fn merge(&mut self, other: &Self) {
         if other.bytes > self.bytes {
-            *self = other.clone();
+            self.bytes = other.bytes;
+            self.span = other.span.clone();
         }
+        self.costs.extend(other.costs.iter().cloned());
     }
 }
 
 pub(super) struct Accounting {
     live: u64,
+    dynamic: HashMap<u64, Expr>,
+    peak_costs: Vec<(Span, Expr)>,
     peak_span: Span,
     report: StorageReport,
 }
@@ -70,6 +76,8 @@ impl Accounting {
     pub(super) fn new(span: &Span, budget: u64) -> Self {
         Self {
             live: 0,
+            dynamic: HashMap::new(),
+            peak_costs: Vec::new(),
             peak_span: span.clone(),
             report: StorageReport {
                 peak: 0,
@@ -87,10 +95,15 @@ impl Accounting {
     }
 
     pub(super) fn peak(&self) -> Peak {
-        Peak { bytes: self.report.peak, span: self.peak_span.clone() }
+        Peak {
+            bytes: self.report.peak,
+            span: self.peak_span.clone(),
+            costs: self.peak_costs.clone(),
+        }
     }
 
     pub(super) fn set_peak(&mut self, peak: Peak) {
+        self.peak_costs = peak.costs;
         self.report.peak = peak.bytes;
         self.peak_span = peak.span;
     }
@@ -107,7 +120,11 @@ impl Accounting {
             self.report.peak = self.live;
             self.peak_span = span.clone();
         }
-        self.report.reservations.push((span.clone(), self.live));
+        if self.dynamic.is_empty() {
+            self.report.reservations.push((span.clone(), self.live));
+        } else {
+            self.symbolic_cost(span, self.live_expression(span));
+        }
         self.event(span, format!("reserve {bytes} bytes for {reason}"));
         Ok(())
     }
@@ -122,11 +139,36 @@ impl Accounting {
     ) -> Result<(), VirErr> {
         self.reserve(span, additional, "callee budget envelope")?;
         if additional != 0 {
-            self.report.reservations.pop();
+            if self.dynamic.is_empty() {
+                self.report.reservations.pop();
+            } else {
+                self.report.call_costs.pop();
+            }
         }
         self.report.call_costs.push((span.clone(), cost));
         self.report.conditional = true;
         Ok(())
+    }
+
+    pub(super) fn live_expression(&self, span: &Span) -> Expr {
+        self.dynamic.values().cloned().fold(super::contracts::literal(span, self.live), |a, b| {
+            super::contracts::add(span, a, b)
+        })
+    }
+
+    pub(super) fn reserve_dynamic(&mut self, span: &Span, cost: Expr) {
+        self.dynamic.insert(span.id, cost);
+        self.symbolic_cost(span, self.live_expression(span));
+    }
+
+    pub(super) fn release_dynamic(&mut self, id: u64) {
+        assert!(self.dynamic.remove(&id).is_some(), "balanced dynamic ownership");
+    }
+
+    pub(super) fn symbolic_cost(&mut self, span: &Span, cost: Expr) {
+        self.report.call_costs.push((span.clone(), cost.clone()));
+        self.peak_costs.push((span.clone(), cost));
+        self.report.conditional = true;
     }
 
     pub(super) fn release(&mut self, span: &Span, bytes: u64, reason: &str) {

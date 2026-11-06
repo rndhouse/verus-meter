@@ -16,6 +16,10 @@ impl Analysis<'_> {
     /// Initialize an already reserved local, retaining only that local's charge.
     pub(super) fn initialize(&mut self, place: &Place, typ: &Typ) -> Result<(), VirErr> {
         if let PlaceX::Temporary(expr) = &place.x {
+            if matches!(&*expr.typ, TypX::Decorate(TypDecoration::Ref, None, inner) if crate::ast_util::types_equal(inner, typ))
+            {
+                return self.copy_into_destination(place, typ);
+            }
             if !crate::ast_util::types_equal(&expr.typ, typ) {
                 return Err(unsupported(&place.span, "this initializer coercion"));
             }
@@ -26,10 +30,10 @@ impl Analysis<'_> {
 
     /// Evaluate into storage already charged to a local, field, or parameter.
     pub(super) fn initialize_expr(&mut self, expr: &Expr) -> Result<(), VirErr> {
-        if super::heap::boxed(&expr.typ) {
+        if self.layouts.owner(&expr.typ) {
             return Err(unsupported(
                 &expr.span,
-                "box values outside a local move, borrow, or explicit drop",
+                "owning values outside a local move, borrow, or explicit drop",
             ));
         }
         if !aggregate(&expr.typ) {

@@ -52,6 +52,18 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
             let substitutions = crate::rust_to_vir_base::fn_def_args(*substitutions, expr.span)?;
             let item = bctx.ctxt.get_verus_item(*id);
             let typ = match item {
+                Some(VerusItem::Spec(SpecItem::ResourceQuantity)) if args.len() == 1 => {
+                    let ExprKind::AddrOf(_, _, value) = args[0].kind else {
+                        return err_span(expr.span, "expected a memory quantity name");
+                    };
+                    let ghost = BodyCtxt { in_ghost: true, ..bctx.clone() };
+                    let value =
+                        crate::rust_to_vir_expr::expr_to_vir(&ghost, value)?.to_spec_expr(&ghost);
+                    return Ok(Spanned::new(
+                        bctx.ctxt.spans.to_air_span(expr.span),
+                        BudgetExprX::Quantity(value),
+                    ));
+                }
                 Some(VerusItem::Spec(SpecItem::ResourceMemPeakCall)) if args.len() == 1 => {
                     let ExprKind::Call(function, arguments) = args[0].kind else {
                         return err_span(expr.span, "mem_peak expects a direct call");

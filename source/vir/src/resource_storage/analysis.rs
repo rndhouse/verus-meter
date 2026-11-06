@@ -13,6 +13,7 @@ pub(super) struct FunctionAnalysis {
     pub(super) calls: Vec<(Fun, Span)>,
     pub(super) symbolic_bound: Option<Expr>,
     pub(super) obligations: Vec<(Span, Expr, Expr)>,
+    pub(super) checks: Vec<(Span, Expr)>,
 }
 
 pub(super) struct Checkpoint {
@@ -32,6 +33,7 @@ pub(super) struct Analysis<'a> {
     pub(super) stable_scalars: HashSet<VarIdent>,
     pub(super) heap: super::heap::Heap,
     pub(super) obligations: Vec<(Span, Expr, Expr)>,
+    pub(super) checks: Vec<(Span, Expr)>,
 }
 
 impl Analysis<'_> {
@@ -103,7 +105,12 @@ impl Analysis<'_> {
                     let bytes = self.layouts.size(&binding.typ, &stmt.span)?;
                     self.storage.reserve(&stmt.span, bytes, "local slot")?;
                     locals.push((stmt.span.clone(), bytes, binding.name.clone()));
-                    if super::heap::boxed(&binding.typ) {
+                    if self.layouts.vector(&binding.typ) {
+                        let init = init.as_ref().ok_or_else(|| {
+                            unsupported(&stmt.span, "uninitialized vector owners")
+                        })?;
+                        self.initialize_vector(&binding.name, init, &binding.typ)?;
+                    } else if super::heap::boxed(&binding.typ) {
                         let init = init
                             .as_ref()
                             .ok_or_else(|| unsupported(&stmt.span, "uninitialized box owners"))?;
@@ -118,7 +125,7 @@ impl Analysis<'_> {
             self.discard(tail)?;
         }
         for (span, bytes, name) in locals.into_iter().rev() {
-            self.drop_box_local(&name, &span)?;
+            self.drop_owner(&name, &span)?;
             self.storage.release(&span, bytes, "local scope exit");
         }
         let released = entry_owners
@@ -137,6 +144,9 @@ impl Analysis<'_> {
     /// Evaluate source expressions. Only a standalone aggregate leaves a storage
     /// charge; scalar/reference operations introduce no implicit objects.
     pub(super) fn expr(&mut self, expr: &Expr) -> Result<u64, VirErr> {
+        if let Some(bytes) = self.vector_expr(expr)? {
+            return Ok(bytes);
+        }
         if let Some(bytes) = self.heap_expr(expr)? {
             return Ok(bytes);
         }
@@ -227,8 +237,8 @@ impl Analysis<'_> {
             }
             ExprX::Call { .. } => return self.call_expr(expr),
             ExprX::Assign { place, rhs, op, typ, .. } => {
-                if super::heap::boxed(typ) {
-                    return Err(unsupported(&expr.span, "reassignment of box owners"));
+                if self.layouts.owner(typ) {
+                    return Err(unsupported(&expr.span, "reassignment of heap owners"));
                 }
                 if op.as_ref().is_some_and(|op| !arithmetic(op)) {
                     return Err(unsupported(&expr.span, "this compound assignment"));
@@ -292,8 +302,15 @@ impl Analysis<'_> {
         self.result(expr, operands)
     }
 
-    pub(super) fn check_checkpoints(&self) -> Result<(), VirErr> {
+    pub(super) fn check_checkpoints(&mut self) -> Result<(), VirErr> {
         for checkpoint in &self.checkpoints {
+            for (span, cost) in &checkpoint.peak.costs {
+                self.obligations.push((
+                    span.clone(),
+                    cost.clone(),
+                    super::contracts::literal(&checkpoint.span, checkpoint.budget),
+                ));
+            }
             if checkpoint.peak.bytes > checkpoint.budget {
                 return Err(error(
                     &checkpoint.span,
@@ -362,10 +379,19 @@ pub(super) fn check(
         stable_scalars: super::contracts::inputs(function),
         heap: super::heap::Heap::default(),
         obligations: Vec::new(),
+        checks: Vec::new(),
     };
     for param in f.params.iter() {
         analysis.var_modes.insert(param.x.name.clone(), param.x.mode);
         if param.x.mode == Mode::Exec {
+            if layouts.vector(&param.x.typ)
+                || matches!(&*param.x.typ, TypX::MutRef(t) | TypX::Decorate(TypDecoration::Ref, _, t) if layouts.vector(t))
+            {
+                return Err(unsupported(
+                    &param.span,
+                    "vector parameters; borrow a slice of the elements instead",
+                ));
+            }
             if super::heap::boxed(&param.x.typ) {
                 return Err(unsupported(
                     &param.span,
@@ -394,5 +420,6 @@ pub(super) fn check(
         calls: analysis.calls,
         symbolic_bound,
         obligations: analysis.obligations,
+        checks: analysis.checks,
     }))
 }

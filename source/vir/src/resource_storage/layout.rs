@@ -8,13 +8,50 @@ use std::collections::{HashMap, HashSet};
 pub(super) struct Layouts {
     datatypes: HashMap<Dt, Datatype>,
     global_allocator: Option<Dt>,
+    vector: Option<Dt>,
 }
 
 impl Layouts {
-    pub(super) fn new(datatypes: &[Datatype], global_allocator: Option<Dt>) -> Self {
+    pub(super) fn new(
+        datatypes: &[Datatype],
+        global_allocator: Option<Dt>,
+        vector: Option<Dt>,
+    ) -> Self {
         Self {
             datatypes: datatypes.iter().map(|d| (d.x.name.clone(), d.clone())).collect(),
             global_allocator,
+            vector,
+        }
+    }
+
+    pub(super) fn vector(&self, typ: &Typ) -> bool {
+        matches!(&**typ, TypX::Datatype(name, _, _) if Some(name) == self.vector.as_ref())
+    }
+
+    pub(super) fn owner(&self, typ: &Typ) -> bool {
+        super::heap::boxed(typ) || self.vector(typ)
+    }
+
+    pub(super) fn vector_element(&self, typ: &Typ, span: &Span) -> Result<u64, VirErr> {
+        let TypX::Datatype(_, args, _) = &**typ else {
+            return Err(unsupported(span, "this vector type"));
+        };
+        if !self.vector(typ) || args.len() != 2 || !self.standard_allocator(&args[1]) {
+            return Err(unsupported(span, "vectors with custom allocator types"));
+        }
+        if self.owner(&args[0]) || matches!(&*args[0], TypX::Decorate(..) | TypX::MutRef(_)) {
+            return Err(unsupported(span, "owning or reference-valued vector elements"));
+        }
+        self.size(&args[0], span)
+    }
+
+    fn standard_allocator(&self, typ: &Typ) -> bool {
+        match &**typ {
+            TypX::Primitive(Primitive::Global, _) => true,
+            TypX::Datatype(name, args, _) => {
+                args.is_empty() && Some(name) == self.global_allocator.as_ref()
+            }
+            _ => false,
         }
     }
 
@@ -68,7 +105,7 @@ impl Layouts {
         }) {
             return Err(unsupported(span, "boxes with custom allocator types"));
         }
-        if matches!(&**inner, TypX::Decorate(..) | TypX::MutRef(_)) {
+        if self.vector(inner) || matches!(&**inner, TypX::Decorate(..) | TypX::MutRef(_)) {
             return Err(unsupported(span, "nested boxes or reference-valued heap objects"));
         }
         Ok(Some(self.size(inner, span)?))
@@ -81,6 +118,10 @@ impl Layouts {
         visiting: &mut HashSet<Dt>,
     ) -> Result<u64, VirErr> {
         match &**typ {
+            _ if self.vector(typ) => {
+                self.vector_element(typ, span)?;
+                Ok(3 * WORD_BYTES)
+            }
             TypX::Decorate(TypDecoration::Box, _, _) => {
                 self.box_contents(typ, span)?;
                 Ok(WORD_BYTES)
@@ -109,7 +150,7 @@ impl Layouts {
                     if *mode != Mode::Exec {
                         return Err(unsupported(span, "ghost or tracked struct fields"));
                     }
-                    if matches!(&**typ, TypX::MutRef(_) | TypX::Decorate(..)) {
+                    if self.vector(typ) || matches!(&**typ, TypX::MutRef(_) | TypX::Decorate(..)) {
                         return Err(unsupported(span, "reference or decorated struct fields"));
                     }
                     let field_bytes = self.size_inner(typ, span, visiting)?;

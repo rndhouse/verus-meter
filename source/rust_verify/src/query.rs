@@ -597,6 +597,11 @@ impl<'tcx> Query<'tcx> {
             &cratex.datatypes,
             &resource_modes,
             global_allocator,
+            pre_crate
+                .ctxt
+                .tcx
+                .get_diagnostic_item(rustc_span::Symbol::intern("Vec"))
+                .map(|id| vir::ast::Dt::Path(pre_crate.ctxt.def_id_to_vir_path(id))),
             &|span| {
                 let mut span = span.clone();
                 span.id = pre_crate.ctxt.spans.get_next_span_id();

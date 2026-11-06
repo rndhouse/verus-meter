@@ -166,6 +166,7 @@ pub(super) fn envelope(expr: &Expr) -> Result<u64, VirErr> {
         return Ok(n);
     }
     match &expr.x {
+        ExprX::Var(_) => Ok(u64::MAX),
         ExprX::If(_, a, Some(b)) => Ok(envelope(a)?.max(envelope(b)?)),
         ExprX::Binary(BinaryOp::Arith(op), a, b) => {
             let a = envelope(a)?;
@@ -175,7 +176,11 @@ pub(super) fn envelope(expr: &Expr) -> Result<u64, VirErr> {
                 ArithOp::Mul(_) => a.checked_mul(b),
                 _ => None,
             };
-            n.ok_or_else(|| error(&expr.span, "memory budget arithmetic exceeds u64"))
+            if numeric_input(expr) {
+                Ok(n.unwrap_or(u64::MAX))
+            } else {
+                n.ok_or_else(|| error(&expr.span, "memory budget arithmetic exceeds u64"))
+            }
         }
         _ => Err(error(&expr.span, "memory budget arithmetic exceeds u64")),
     }
@@ -252,6 +257,7 @@ pub(super) fn lower(
     layouts: &Layouts,
 ) -> Result<Expr, VirErr> {
     let x = match &expr.x {
+        BudgetExprX::Quantity(value) => return quantity(value, allowed),
         BudgetExprX::Literal(n) => return Ok(literal(&expr.span, *n)),
         BudgetExprX::MemSize(typ) => {
             return Ok(literal(&expr.span, layouts.size(typ, &expr.span)?));
@@ -286,4 +292,30 @@ pub(super) fn lower(
         ),
     };
     Ok(simplify(&SpannedTyped::new(&expr.span, &int_typ(), x)))
+}
+
+pub(super) fn quantity(expr: &Expr, allowed: &HashSet<VarIdent>) -> Result<Expr, VirErr> {
+    if !matches!(&*expr.typ, TypX::Int(IntRange::U(8 | 16 | 32 | 64) | IntRange::USize)) {
+        return Err(error(
+            &expr.span,
+            "memory quantities require immutable unsigned integers of at most 64 bits",
+        ));
+    }
+    predicate(expr, allowed)
+}
+
+pub(super) fn numeric_input(expr: &Expr) -> bool {
+    match &expr.x {
+        ExprX::Var(_) => true,
+        ExprX::If(_, a, Some(b)) | ExprX::Binary(_, a, b) => numeric_input(a) || numeric_input(b),
+        _ => false,
+    }
+}
+
+pub(super) fn multiply(span: &Span, a: Expr, b: Expr) -> Expr {
+    simplify(&SpannedTyped::new(
+        span,
+        &int_typ(),
+        ExprX::Binary(BinaryOp::Arith(ArithOp::Mul(OverflowBehavior::Allow)), a, b),
+    ))
 }

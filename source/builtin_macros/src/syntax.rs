@@ -285,6 +285,9 @@ fn lower_memory_budget(expr: &verus_syn::ResourceExpr, parameters: &[Ident]) -> 
             quote_spanned!(expr.span() => (if #condition { #then_budget } else { #else_budget }))
         }
         ResourceExpr::Literal(n) => n.to_token_stream(),
+        ResourceExpr::Quantity(n) => {
+            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_quantity(&#n))
+        }
         ResourceExpr::Paren(_, e) => {
             let e = lower_memory_budget(e, parameters);
             quote!((#e))

@@ -41,10 +41,55 @@ fn obligation(span: &Span, cost: &Expr, bound: &Expr) -> Stmt {
     Spanned::new(span.clone(), StmtX::Expr(assertion))
 }
 
+// Formula arithmetic is mathematical, but every evaluated sum/product must
+// still fit the model's u64 range. Conditional arms retain their own guards.
+fn range_checks(expr: &Expr, guard: &Expr, checks: &mut Vec<Stmt>) {
+    let span = &expr.span;
+    match &expr.x {
+        ExprX::If(condition, yes, Some(no)) => {
+            let and = |b: Expr| {
+                SpannedTyped::new(
+                    span,
+                    &Arc::new(TypX::Bool),
+                    ExprX::Logical(LogicalOp::And, guard.clone(), b),
+                )
+            };
+            range_checks(yes, &and(condition.clone()), checks);
+            let not = SpannedTyped::new(
+                span,
+                &Arc::new(TypX::Bool),
+                ExprX::Unary(UnaryOp::Not, condition.clone()),
+            );
+            range_checks(no, &and(not), checks);
+        }
+        ExprX::Binary(BinaryOp::Arith(_), a, b) => {
+            range_checks(a, guard, checks);
+            range_checks(b, guard, checks);
+            let fits =
+                mk_ineq(span, expr, &super::contracts::literal(span, u64::MAX), InequalityOp::Le);
+            let assertion = SpannedTyped::new(
+                span,
+                &unit_typ(),
+                ExprX::AssertAssume {
+                    is_assume: false,
+                    expr: mk_implies(span, guard, &fits),
+                    msg: Some(error(
+                        span,
+                        "memory budget arithmetic exceeds u64: cannot prove this expression fits",
+                    )),
+                },
+            );
+            checks.push(Spanned::new(span.clone(), StmtX::Expr(assertion)));
+        }
+        _ => {}
+    }
+}
+
 pub(super) fn instrument(
     function: &Function,
     bound: Option<&Expr>,
     obligations: &[(Span, Expr, Expr)],
+    checks: &[(Span, Expr)],
     report: &StorageReport,
     layouts: &Layouts,
     fresh_span: &dyn Fn(&Span) -> Span,
@@ -73,6 +118,25 @@ pub(super) fn instrument(
             .or_insert_with(|| (span.clone(), Vec::new()))
             .1
             .push(obligation(span, cost, bound));
+    }
+    for (span, condition) in checks {
+        let check = SpannedTyped::new(
+            span,
+            &unit_typ(),
+            ExprX::AssertAssume {
+                is_assume: false,
+                expr: condition.clone(),
+                msg: Some(error(
+                    span,
+                    "vector capacity exceeded: cannot prove this push fits the reserved capacity",
+                )),
+            },
+        );
+        sites
+            .entry(span.id)
+            .or_insert_with(|| (span.clone(), Vec::new()))
+            .1
+            .push(Spanned::new(span.clone(), StmtX::Expr(check)));
     }
     let body = function.x.body.as_ref().unwrap();
     let mut seen = HashSet::new();
@@ -147,8 +211,15 @@ pub(super) fn instrument(
             &super::contracts::literal(&function.span, parameters),
             bound,
         );
-        let check = crate::ast_visitor::map_stmt_spans(&check, &mut |span| fresh_span(span));
-        mk_block(&fresh_span(&body.span), vec![check], Some(body.clone()))
+        let mut checks = vec![check];
+        if super::contracts::numeric_input(bound) {
+            range_checks(bound, &mk_bool(&function.span, true), &mut checks);
+        }
+        let checks = checks
+            .iter()
+            .map(|check| crate::ast_visitor::map_stmt_spans(check, &mut |span| fresh_span(span)))
+            .collect();
+        mk_block(&fresh_span(&body.span), checks, Some(body.clone()))
     } else {
         body
     };

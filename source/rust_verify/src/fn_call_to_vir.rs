@@ -353,10 +353,14 @@ fn fn_call_or_assoc_const_to_vir<'tcx>(
     let typ_args = mk_typ_args(bctx, node_substs, f, expr.span)?;
     let impl_paths = get_impl_paths(bctx, f, node_substs, None, const_var, expr.span)?;
     let call_target_attrs = vir::ast::CallTargetAttrs {
-        resource_intrinsic: if rust_item == Some(RustItem::BoxNew) {
+        resource_intrinsic: if let Some(intrinsic) =
+            crate::verus_items::resource_vec_intrinsic(tcx, f)
+        {
+            Some(intrinsic)
+        } else if rust_item == Some(RustItem::BoxNew) {
             Some(vir::ast::ResourceIntrinsic::BoxNew)
         } else if tcx.is_diagnostic_item(rustc_span::Symbol::intern("mem_drop"), f) {
-            Some(vir::ast::ResourceIntrinsic::BoxDrop)
+            Some(vir::ast::ResourceIntrinsic::HeapDrop)
         } else {
             (tcx.lang_items().slice_len_fn() == Some(f))
                 .then_some(vir::ast::ResourceIntrinsic::SliceLen)
@@ -642,6 +646,7 @@ fn verus_item_to_vir<'tcx, 'a>(
                     SpecItem::Admit
                     | SpecItem::Assume
                     | SpecItem::NoMethodBody
+                    | SpecItem::ResourceQuantity
                     | SpecItem::ResourceMemSizeValue
                     | SpecItem::ResourceMemSizeType
                     | SpecItem::ResourceMemPeak
@@ -946,7 +951,8 @@ fn verus_item_to_vir<'tcx, 'a>(
                     let budget = crate::resource_budget::lower(bctx, args[0])?;
                     mk_expr(ExprX::ResourceAssert(budget))
                 }
-                SpecItem::ResourceMemSizeValue
+                SpecItem::ResourceQuantity
+                | SpecItem::ResourceMemSizeValue
                 | SpecItem::ResourceMemSizeType
                 | SpecItem::ResourceMemPeak
                 | SpecItem::ResourceMemPeakCall => err_span(

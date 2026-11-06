@@ -26,6 +26,7 @@ mod model;
 mod places;
 mod sections;
 mod symbolic;
+mod vectors;
 
 pub use accounting::{StorageEvent, StorageReport};
 pub use budget::{BudgetExpr, BudgetExprX};
@@ -47,10 +48,11 @@ pub fn check_crate(
     datatypes: &[Datatype],
     modes: &HashMap<Fun, Arc<ResolutionInfo>>,
     global_allocator: Option<Dt>,
+    vector: Option<Dt>,
     fresh_span: &dyn Fn(&Span) -> Span,
 ) -> Result<Vec<(Span, StorageReport)>, VirErr> {
     let function_map = functions.iter().map(|f| (f.x.name.clone(), f.clone())).collect();
-    let layouts = layout::Layouts::new(datatypes, global_allocator);
+    let layouts = layout::Layouts::new(datatypes, global_allocator, vector);
     let budgets = budget::resolve(functions, &function_map, &layouts)?;
     let mut graph = crate::scc::Graph::new();
     let mut reports = Vec::new();
@@ -84,11 +86,15 @@ pub fn check_crate(
     // Materialize ordinary proof obligations only after checking all structural
     // rules and call cycles. No user-controlled memory counter is introduced.
     for (function, checked) in &reports {
-        if checked.symbolic_bound.is_some() || !checked.obligations.is_empty() {
+        if checked.symbolic_bound.is_some()
+            || !checked.obligations.is_empty()
+            || !checked.checks.is_empty()
+        {
             let updated = symbolic::instrument(
                 function,
                 checked.symbolic_bound.as_ref(),
                 &checked.obligations,
+                &checked.checks,
                 &checked.report,
                 &layouts,
                 fresh_span,

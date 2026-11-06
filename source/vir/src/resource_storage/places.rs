@@ -9,8 +9,11 @@ impl Analysis<'_> {
         if let PlaceX::Local(name) = &place.x {
             if self.var_modes.get(name) == Some(&Mode::Exec) {
                 self.layouts.size(&place.typ, &place.span)?;
-                if super::heap::boxed(&place.typ) && !self.heap.owners.contains_key(name) {
-                    return Err(unsupported(&place.span, "a box without a live local owner"));
+                if self.layouts.owner(&place.typ) && !self.heap.owners.contains_key(name) {
+                    return Err(unsupported(
+                        &place.span,
+                        "a heap object without a live local owner",
+                    ));
                 }
                 return Ok(());
             }
@@ -116,10 +119,10 @@ impl Analysis<'_> {
 
     pub(super) fn read(&mut self, place: &Place, result_typ: &Typ) -> Result<u64, VirErr> {
         self.layouts.size(result_typ, &place.span)?;
-        if super::heap::boxed(result_typ) {
+        if self.layouts.owner(result_typ) {
             return Err(unsupported(
                 &place.span,
-                "box values outside a local move, borrow, or explicit drop",
+                "owning values outside a local move, borrow, or explicit drop",
             ));
         }
         self.access(place, result_typ)
