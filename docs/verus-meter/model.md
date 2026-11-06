@@ -17,12 +17,14 @@ Functions without this clause receive ordinary Verus verification only.
 | `mem_peak(helper(false))` | Its declared budget for these arguments, without executing the helper. |
 | `assert(current(mem_peak) <= bound)` | A check on the peak reached so far. |
 
-Bounds support nonnegative integer literals, these queries, addition,
+Bounds support nonnegative integer literals, immutable unsigned input parameters
+(up to 64 bits), these queries, addition,
 multiplication, and parentheses. Function bounds can also contain conditionals.
 `mem_size` accepts types or names. Call queries accept scalar constants, immutable
 scalar inputs, comparisons, and Boolean operators.
-Formula arithmetic must fit in `u64`; arbitrary spec expressions and named
-numeric constants are not yet supported as budget operands.
+Formula arithmetic must fit in `u64`. Verus proves this for runtime quantities,
+using the function's preconditions. Arbitrary spec expressions and named numeric
+constants are not yet supported as budget operands.
 
 ## What counts
 
@@ -78,8 +80,33 @@ See [heap buffer reuse](../../examples/resource/memory/heap.rs) and
 For now, boxes must stay within their function: helpers borrow their contents.
 Box reassignment, nested boxes, owning struct fields, and custom destructors are
 unsupported. Branches, loops, and budgeted sections may create and consume their
-own boxes, but cannot move or drop owners from outside that region. Growable
-containers and custom allocator types remain unsupported.
+own boxes, but cannot move or drop owners from outside that region. Custom
+allocator types remain unsupported.
+
+## Vectors without growth
+
+A local `Vec<T>` reserves storage once with `Vec::with_capacity(capacity)`.
+Its handle costs `mem_size(Vec<T>)` (24 model bytes), and its backing storage
+costs `capacity * mem_size(T)`, even when empty. The requested capacity is the
+model's limit; allocator over-allocation is outside the guarantee.
+
+Each `push` must be proved to fit that reservation. Branch conditions and loop
+invariants can establish this. `pop` makes room for another element but retains
+the backing storage. Moves transfer the reservation; dropping releases it.
+The same ownership restrictions as boxes apply across branches, loops and sections.
+
+Capacity can be a literal or an immutable unsigned variable. Function budgets
+can use an input directly, for example `mem_size(capacity) + mem_size(Vec<u32>)
++ capacity * mem_size(u32)`. Callers use `mem_peak(helper(arguments))` to compose
+runtime formulas; an argument-free query requires a fixed envelope.
+
+The subset supports fixed-size non-owning elements, pushes, discarded pops,
+length, indexing, and borrowing elements through `as_slice` or `as_mut_slice`.
+Helpers take slices; owning or borrowed vector parameters, growth, reassignment,
+and binding the `Option` returned by `pop` remain unsupported.
+
+See [collecting selected numbers](../../examples/resource/memory/vectors.rs) and
+[a push that requires growth](../../examples/resource/memory/expected-failures/vector_growth.rs).
 
 ## Dividing work into sections
 
@@ -141,14 +168,16 @@ Fixed budgets still account structurally for local storage, including unreachabl
 branches. Input-dependent call allowances are proved at the call site.
 
 Sections and checkpoints require fixed bounds; constant call queries work in both.
-After a call with a symbolic selector, checkpoints conservatively include the
+Runtime allocation charges are also checked against these fixed bounds.
+After a call with a conditional selector, checkpoints conservatively include the
 callee's maximum allowance, even if a proof established a tighter bound at the call.
 
 ## Current scope
 
 Checked functions must be safe, nongeneric, return `()`, and have a verified body.
 The supported subset includes `bool`, all native integers, fixed integer arrays,
-concrete structs, local fixed-size boxes, supported references and integer slices,
+concrete structs, local fixed-size boxes and vectors without growth, supported
+references and integer slices,
 indexing, branches, while loops, and calls to checked functions in the same crate. Integer addition,
 subtraction, multiplication, and signed negation retain Verus's overflow checks.
 See the [integer example](../../examples/resource/memory/integers.rs).
