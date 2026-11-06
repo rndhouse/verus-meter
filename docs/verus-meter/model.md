@@ -28,7 +28,9 @@ numeric constants are not yet supported as budget operands.
 
 The model measures declared storage using fixed sizes under a 64-bit policy.
 Struct sizes add their fields without padding. `mem_size` follows these rules;
-it does not report Rust's physical type layout.
+it does not report Rust's physical type layout. Native integers use their width
+in bytes (`u8`/`i8`: 1, through `u128`/`i128`: 16); `usize` and `isize` both use 8.
+Integer arrays multiply that size by their length.
 
 - Parameters count throughout the call. Locals count from their declaration
   until their block ends, even after a move or last use.
@@ -110,7 +112,7 @@ that an expensive branch is unreachable. The verifier still determines the
 storage charges automatically. See the [conditional example](../../examples/resource/memory/conditional.rs).
 
 Currently, conditions support comparisons and Boolean operators over immutable
-`bool`, `u32`, and `usize` inputs. Actual calls can also select allowances using
+`bool` and all native integer inputs. Actual calls can also select allowances using
 immutable scalar locals. Mutable selectors and expressions outside this subset
 retain the conservative maximum. Argument-free `mem_peak(helper)` always uses
 that maximum.
@@ -125,15 +127,17 @@ callee's maximum allowance, even if a proof established a tighter bound at the c
 ## Current scope
 
 Checked functions must be safe, nongeneric, return `()`, and have a verified body.
-The supported subset includes `bool`, `u32`, `usize`, fixed `u32` arrays, concrete
-structs, supported references and slices, indexing, basic arithmetic, branches,
-while loops, and calls to checked functions in the same crate.
+The supported subset includes `bool`, all native integers, fixed integer arrays,
+concrete structs, supported references and integer slices, indexing, branches,
+while loops, and calls to checked functions in the same crate. Integer addition,
+subtraction, multiplication, and signed negation retain Verus's overflow checks.
+See the [integer example](../../examples/resource/memory/integers.rs).
 
-Heap-owning types, destructors, enums, generic structs, recursion, closures,
-cross-crate calls, and value-returning functions are not supported. Structs with
-ghost/tracked or reference fields are also excluded. Some ordinary Rust constructs,
-including destructuring, casts, division, and explicit `return`, `break`, or
-`continue`, remain unsupported. An unsupported construct produces an error rather
+`char`, floating-point types, heap-owning types, destructors, enums, generic
+structs, recursion, closures, cross-crate calls, and value-returning functions
+are not supported. Structs with ghost/tracked or reference fields are also
+excluded. Destructuring, casts, division, and explicit `return`, `break`, or
+`continue` also remain unsupported. An unsupported construct produces an error rather
 than silently receiving a zero cost.
 
 A failure identifies the declaration, call, or checkpoint that cannot fit its
