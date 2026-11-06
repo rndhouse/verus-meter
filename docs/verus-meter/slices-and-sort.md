@@ -5,7 +5,7 @@ current rules, supported subset, implementation map, and run commands.
 
 This experiment extended lexical storage checking to arithmetic, references,
 and indexing, enough to verify in-place insertion sort over an arbitrary-length
-mutable `u32` slice. The [executable and proof](../../examples/resource_insertion_sort.rs)
+mutable `u32` slice. The [executable and proof](../../examples/resource/memory/resource_insertion_sort.rs)
 establish sortedness, preservation of elements, and an 84-model-byte storage bound.
 The loops also prove termination; there are no assumptions or external-body proofs
 in the example.

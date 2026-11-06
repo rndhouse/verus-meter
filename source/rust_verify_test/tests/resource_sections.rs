@@ -7,7 +7,7 @@ use common::*;
 fn nested_workspace_example() {
     verify_one_file(
         "nested_workspace_example",
-        include_str!("../../../examples/resource_sections.rs").into(),
+        include_str!("../../../examples/resource/memory/resource_sections.rs").into(),
         &["--compile"],
     )
     .unwrap();

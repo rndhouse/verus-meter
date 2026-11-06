@@ -28,7 +28,7 @@ its initializer, retaining both until handoff. One 64-element array therefore
 peaks at `256 + 256 + 4 = 516` model bytes. Successive nested scopes reuse that
 storage; two arrays in the same scope peak at `256 + 256 + 256 + 4 = 772`.
 
-The [example](../../examples/resource_storage.rs) and regression tests preserve
+The [example](../../examples/resource/memory/resource_storage.rs) and regression tests preserve
 those distinctions, including exact and insufficient budgets, copying, shadowing,
 parameter charges, and ghost erasure. Array-repeat syntax receives compiler
 provenance; explicitly calling its helper does not receive the same exemption.
@@ -49,7 +49,7 @@ Validated on 2026-11-05:
   by upstream annotations. The complete Verus test suite was not run.
 - All four parser tests in `dependencies/syn/tests/test_resources.rs` passed,
   covering clause round-tripping, erasure, malformed budgets, and where clauses.
-- `examples/resource_storage.rs` verified with seven checks and zero errors,
+- `examples/resource/memory/resource_storage.rs` verified with seven checks and zero errors,
   compiled with `--compile`, and its executable ran successfully.
 - Rust formatting checks, `git diff --check`, and syntax-codegen reproducibility
   passed.

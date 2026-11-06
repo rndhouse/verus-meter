@@ -6,7 +6,7 @@ records the experiment and its validation.
 
 The experiment added direct calls between resource-checked functions in the
 same crate, plus array-to-slice coercions. The
-[complete example](../../examples/resource_calls.rs) verifies `main` calling an
+[complete example](../../examples/resource/memory/resource_calls.rs) verifies `main` calling an
 array-owning function, which then invokes insertion sort. Both the caller and
 `main` have a 116-model-byte contract.
 

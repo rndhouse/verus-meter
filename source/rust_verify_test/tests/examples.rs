@@ -18,6 +18,8 @@ examples_in_dir!("../../examples");
 examples_in_dir!("../../examples/expected-failures");
 examples_in_dir!("../../examples/guide");
 examples_in_dir!("../../examples/resource");
+examples_in_dir!("../../examples/resource/memory");
+examples_in_dir!("../../examples/resource/memory/expected-failures");
 examples_in_dir!("../../examples/state_machines");
 examples_in_dir!("../../examples/summer_school");
 examples_in_dir!("../../examples/state_machines/tutorial");

@@ -4,11 +4,11 @@ mod common;
 use common::*;
 
 fn struct_example() -> String {
-    include_str!("../../../examples/resource_structs.rs").replace(
+    include_str!("../../../examples/resource/memory/resource_structs.rs").replace(
         "#[path = \"resource_insertion_sort.rs\"]\nmod sorting;",
         &format!(
             "mod sorting {{ {} }}",
-            include_str!("../../../examples/resource_insertion_sort.rs")
+            include_str!("../../../examples/resource/memory/resource_insertion_sort.rs")
         ),
     )
 }
