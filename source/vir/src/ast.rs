@@ -1033,6 +1033,10 @@ pub enum ResourceIntrinsic {
     SliceLen,
     /// Compiler-inserted array-reference to slice-reference coercion.
     ArrayUnsize,
+    /// Resolved standard Box::new; the source model initializes one heap object.
+    BoxNew,
+    /// Resolved core::mem::drop, restricted by the model to a tracked box owner.
+    BoxDrop,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToDebugSNode)]

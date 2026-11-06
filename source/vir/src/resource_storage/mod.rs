@@ -3,7 +3,8 @@
 //! `model` defines the policy; `layout` checks concrete type sizes and struct
 //! fields; `budget` resolves declared budget expressions and their dependencies;
 //! `accounting` owns live/peak totals and traces; `sections` checks nested
-//! workspace contracts and composes their bounds with the parent. `contracts`
+//! workspace contracts and composes their bounds with the parent.
+//! `heap` tracks local box ownership and allocation lifetimes. `contracts`
 //! specializes declared formulas with stable scalar arguments. `symbolic`
 //! turns conditional contracts into ordinary Verus proof obligations.
 //! `construction` accounts for aggregate initialization; `analysis`, `places`,
@@ -19,6 +20,7 @@ mod budget;
 mod calls;
 mod construction;
 mod contracts;
+mod heap;
 mod layout;
 mod model;
 mod places;
@@ -44,9 +46,11 @@ pub fn check_crate(
     functions: &mut [Function],
     datatypes: &[Datatype],
     modes: &HashMap<Fun, Arc<ResolutionInfo>>,
+    global_allocator: Option<Dt>,
+    fresh_span: &dyn Fn(&Span) -> Span,
 ) -> Result<Vec<(Span, StorageReport)>, VirErr> {
     let function_map = functions.iter().map(|f| (f.x.name.clone(), f.clone())).collect();
-    let layouts = layout::Layouts::new(datatypes);
+    let layouts = layout::Layouts::new(datatypes, global_allocator);
     let budgets = budget::resolve(functions, &function_map, &layouts)?;
     let mut graph = crate::scc::Graph::new();
     let mut reports = Vec::new();
@@ -87,6 +91,7 @@ pub fn check_crate(
                 &checked.obligations,
                 &checked.report,
                 &layouts,
+                fresh_span,
             )?;
             let target = functions.iter_mut().find(|f| f.x.name == function.x.name).unwrap();
             *target = updated;

@@ -586,10 +586,22 @@ impl<'tcx> Query<'tcx> {
         // All local signatures and mode-checked bodies are now available. Check
         // fixed storage bounds, generate conditional proof obligations, and reject
         // call cycles before export or resolution inference rewrites temporary places.
+        let global_allocator = pre_crate
+            .ctxt
+            .tcx
+            .lang_items()
+            .global_alloc_ty()
+            .map(|id| vir::ast::Dt::Path(pre_crate.ctxt.def_id_to_vir_path(id)));
         let reports = vir::resource_storage::check_crate(
             &mut cratex.functions,
             &cratex.datatypes,
             &resource_modes,
+            global_allocator,
+            &|span| {
+                let mut span = span.clone();
+                span.id = pre_crate.ctxt.spans.get_next_span_id();
+                span
+            },
         )
         .map_err(|e| self.emit_error(e))?;
         vir::resource_storage::erase_annotations(&mut cratex.functions)

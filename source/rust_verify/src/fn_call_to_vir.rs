@@ -353,8 +353,14 @@ fn fn_call_or_assoc_const_to_vir<'tcx>(
     let typ_args = mk_typ_args(bctx, node_substs, f, expr.span)?;
     let impl_paths = get_impl_paths(bctx, f, node_substs, None, const_var, expr.span)?;
     let call_target_attrs = vir::ast::CallTargetAttrs {
-        resource_intrinsic: (tcx.lang_items().slice_len_fn() == Some(f))
-            .then_some(vir::ast::ResourceIntrinsic::SliceLen),
+        resource_intrinsic: if rust_item == Some(RustItem::BoxNew) {
+            Some(vir::ast::ResourceIntrinsic::BoxNew)
+        } else if tcx.is_diagnostic_item(rustc_span::Symbol::intern("mem_drop"), f) {
+            Some(vir::ast::ResourceIntrinsic::BoxDrop)
+        } else {
+            (tcx.lang_items().slice_len_fn() == Some(f))
+                .then_some(vir::ast::ResourceIntrinsic::SliceLen)
+        },
         autospec: autospec_usage,
         assume_external_allowed,
         const_var,

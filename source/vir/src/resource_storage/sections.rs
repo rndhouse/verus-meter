@@ -22,7 +22,9 @@ impl Analysis<'_> {
         // An enclosing loop must not add its previous iteration's peak to a
         // child checkpoint: the child starts fresh each time it is entered.
         let parent_checkpoints = std::mem::take(&mut self.checkpoints);
+        let protection = self.heap.protect();
         self.block_contents(expr, stmts, tail)?;
+        self.heap.unprotect(protection);
         self.check_checkpoints()?;
         let section = std::mem::replace(&mut self.storage, parent);
         self.checkpoints = parent_checkpoints;

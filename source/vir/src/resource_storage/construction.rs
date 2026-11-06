@@ -26,6 +26,12 @@ impl Analysis<'_> {
 
     /// Evaluate into storage already charged to a local, field, or parameter.
     pub(super) fn initialize_expr(&mut self, expr: &Expr) -> Result<(), VirErr> {
+        if super::heap::boxed(&expr.typ) {
+            return Err(unsupported(
+                &expr.span,
+                "box values outside a local move, borrow, or explicit drop",
+            ));
+        }
         if !aggregate(&expr.typ) {
             // Literals, reads, and operators create no implicit storage slots.
             return self.discard(expr);

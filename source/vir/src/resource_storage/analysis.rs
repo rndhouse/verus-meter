@@ -30,6 +30,7 @@ pub(super) struct Analysis<'a> {
     pub(super) calls: Vec<(Fun, Span)>,
     pub(super) checkpoints: Vec<Checkpoint>,
     pub(super) stable_scalars: HashSet<VarIdent>,
+    pub(super) heap: super::heap::Heap,
     pub(super) obligations: Vec<(Span, Expr, Expr)>,
 }
 
@@ -61,6 +62,7 @@ impl Analysis<'_> {
         tail: &Option<Expr>,
     ) -> Result<(), VirErr> {
         let entry = self.storage.live();
+        let entry_owners = self.heap.owners.clone();
         let mut locals = Vec::new();
         self.storage.event(&expr.span, "enter lexical scope".into());
         for stmt in stmts.iter() {
@@ -100,8 +102,13 @@ impl Analysis<'_> {
                     }
                     let bytes = self.layouts.size(&binding.typ, &stmt.span)?;
                     self.storage.reserve(&stmt.span, bytes, "local slot")?;
-                    locals.push((stmt.span.clone(), bytes));
-                    if let Some(init) = init {
+                    locals.push((stmt.span.clone(), bytes, binding.name.clone()));
+                    if super::heap::boxed(&binding.typ) {
+                        let init = init
+                            .as_ref()
+                            .ok_or_else(|| unsupported(&stmt.span, "uninitialized box owners"))?;
+                        self.initialize_box(&binding.name, init, &binding.typ)?;
+                    } else if let Some(init) = init {
                         self.initialize(init, &binding.typ)?;
                     }
                 }
@@ -110,10 +117,19 @@ impl Analysis<'_> {
         if let Some(tail) = tail {
             self.discard(tail)?;
         }
-        for (span, bytes) in locals.into_iter().rev() {
+        for (span, bytes, name) in locals.into_iter().rev() {
+            self.drop_box_local(&name, &span)?;
             self.storage.release(&span, bytes, "local scope exit");
         }
-        assert_eq!(self.storage.live(), entry);
+        let released = entry_owners
+            .iter()
+            .filter(|(name, _)| !self.heap.owners.contains_key(*name))
+            .try_fold(0u64, |sum, (_, bytes)| sum.checked_add(*bytes))
+            .ok_or_else(|| unsupported(&expr.span, "storage totals exceeding u64"))?;
+        assert_eq!(
+            self.storage.live(),
+            entry.checked_sub(released).expect("balanced heap ownership")
+        );
         self.storage.event(&expr.span, "exit lexical scope".into());
         Ok(())
     }
@@ -121,6 +137,9 @@ impl Analysis<'_> {
     /// Evaluate source expressions. Only a standalone aggregate leaves a storage
     /// charge; scalar/reference operations introduce no implicit objects.
     pub(super) fn expr(&mut self, expr: &Expr) -> Result<u64, VirErr> {
+        if let Some(bytes) = self.heap_expr(expr)? {
+            return Ok(bytes);
+        }
         if let Some(bytes) = self.construction(expr, false)? {
             return Ok(bytes);
         }
@@ -208,6 +227,9 @@ impl Analysis<'_> {
             }
             ExprX::Call { .. } => return self.call_expr(expr),
             ExprX::Assign { place, rhs, op, typ, .. } => {
+                if super::heap::boxed(typ) {
+                    return Err(unsupported(&expr.span, "reassignment of box owners"));
+                }
                 if op.as_ref().is_some_and(|op| !arithmetic(op)) {
                     return Err(unsupported(&expr.span, "this compound assignment"));
                 }
@@ -218,6 +240,7 @@ impl Analysis<'_> {
                 return Ok(0);
             }
             ExprX::If(cond, then_expr, else_expr) if unit(&expr.typ) => {
+                let protection = self.heap.protect();
                 self.discard(cond)?;
                 let prefix_peak = self.storage.peak();
                 self.storage.event(&expr.span, "analyze then alternative".into());
@@ -231,6 +254,7 @@ impl Analysis<'_> {
                 }
                 joined_peak.merge(&self.storage.peak());
                 self.storage.set_peak(joined_peak);
+                self.heap.unprotect(protection);
                 return Ok(0);
             }
             ExprX::Loop {
@@ -242,6 +266,7 @@ impl Analysis<'_> {
                 ..
             } if unit(&expr.typ) => {
                 let entry = self.storage.live();
+                let protection = self.heap.protect();
                 let first_checkpoint = self.checkpoints.len();
                 self.storage.event(&expr.span, "analyze reusable while iteration".into());
                 self.discard(cond)?;
@@ -254,6 +279,7 @@ impl Analysis<'_> {
                 for checkpoint in &mut self.checkpoints[first_checkpoint..] {
                     checkpoint.peak.merge(&iteration_peak);
                 }
+                self.heap.unprotect(protection);
                 return Ok(0);
             }
             _ => {
@@ -334,11 +360,18 @@ pub(super) fn check(
         calls: Vec::new(),
         checkpoints: Vec::new(),
         stable_scalars: super::contracts::inputs(function),
+        heap: super::heap::Heap::default(),
         obligations: Vec::new(),
     };
     for param in f.params.iter() {
         analysis.var_modes.insert(param.x.name.clone(), param.x.mode);
         if param.x.mode == Mode::Exec {
+            if super::heap::boxed(&param.x.typ) {
+                return Err(unsupported(
+                    &param.span,
+                    "owning box parameters; borrow the heap object instead",
+                ));
+            }
             let bytes = layouts.size(&param.x.typ, &param.span)?;
             analysis.storage.reserve(&param.span, bytes, "parameter slot")?;
         }

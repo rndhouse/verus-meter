@@ -7,11 +7,15 @@ use std::collections::{HashMap, HashSet};
 
 pub(super) struct Layouts {
     datatypes: HashMap<Dt, Datatype>,
+    global_allocator: Option<Dt>,
 }
 
 impl Layouts {
-    pub(super) fn new(datatypes: &[Datatype]) -> Self {
-        Self { datatypes: datatypes.iter().map(|d| (d.x.name.clone(), d.clone())).collect() }
+    pub(super) fn new(datatypes: &[Datatype], global_allocator: Option<Dt>) -> Self {
+        Self {
+            datatypes: datatypes.iter().map(|d| (d.x.name.clone(), d.clone())).collect(),
+            global_allocator,
+        }
     }
 
     /// Metadata checks shared by sizing, construction, and field projection.
@@ -48,6 +52,28 @@ impl Layouts {
         self.size_inner(typ, span, &mut HashSet::new())
     }
 
+    /// A box owns a fixed, non-owning value under the standard global allocator.
+    /// Its handle and heap object are sized separately so moves do not duplicate
+    /// the allocation and borrows keep backing storage charged to its owner.
+    pub(super) fn box_contents(&self, typ: &Typ, span: &Span) -> Result<Option<u64>, VirErr> {
+        let TypX::Decorate(TypDecoration::Box, allocator, inner) = &**typ else {
+            return Ok(None);
+        };
+        if !allocator.as_ref().is_some_and(|a| match &*a.allocator_typ {
+            TypX::Primitive(Primitive::Global, _) => true,
+            TypX::Datatype(name, args, _) => {
+                args.is_empty() && Some(name) == self.global_allocator.as_ref()
+            }
+            _ => false,
+        }) {
+            return Err(unsupported(span, "boxes with custom allocator types"));
+        }
+        if matches!(&**inner, TypX::Decorate(..) | TypX::MutRef(_)) {
+            return Err(unsupported(span, "nested boxes or reference-valued heap objects"));
+        }
+        Ok(Some(self.size(inner, span)?))
+    }
+
     fn size_inner(
         &self,
         typ: &Typ,
@@ -55,6 +81,10 @@ impl Layouts {
         visiting: &mut HashSet<Dt>,
     ) -> Result<u64, VirErr> {
         match &**typ {
+            TypX::Decorate(TypDecoration::Box, _, _) => {
+                self.box_contents(typ, span)?;
+                Ok(WORD_BYTES)
+            }
             TypX::Bool => Ok(1),
             TypX::Int(range) if integer_size(range).is_some() => Ok(integer_size(range).unwrap()),
             TypX::MutRef(inner) | TypX::Decorate(TypDecoration::Ref, None, inner) => {
@@ -104,7 +134,7 @@ impl Layouts {
             }
             _ => Err(unsupported(
                 span,
-                "this type (expected bool, a native integer_type_size, a fixed integer array, unit, a concrete struct, or a supported reference)",
+                "this type (expected bool, a native integer, a fixed integer array, unit, a concrete struct, a local box, or a supported reference)",
             )),
         }
     }

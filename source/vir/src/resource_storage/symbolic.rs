@@ -47,7 +47,10 @@ pub(super) fn instrument(
     obligations: &[(Span, Expr, Expr)],
     report: &StorageReport,
     layouts: &Layouts,
+    fresh_span: &dyn Fn(&Span) -> Span,
 ) -> Result<Function, VirErr> {
+    // Inserted proofs must have fresh AST identities. Reusing an executable
+    // allocation's identity confuses resolution inference for owned values.
     let mut sites: HashMap<u64, (Span, u64)> = HashMap::new();
     let parameter_spans: HashSet<_> = function.x.params.iter().map(|p| p.span.id).collect();
     for (span, bytes) in report.reservations.iter().filter(|_| bound.is_some()) {
@@ -98,7 +101,11 @@ pub(super) fn instrument(
                 checks.extend(statements.iter().cloned());
             }
             if !checks.is_empty() {
-                Ok(mk_block(&expr.span, checks, Some(expr.clone())))
+                let checks = checks
+                    .iter()
+                    .map(|s| crate::ast_visitor::map_stmt_spans(s, &mut |span| fresh_span(span)))
+                    .collect();
+                Ok(mk_block(&fresh_span(&expr.span), checks, Some(expr.clone())))
             } else {
                 Ok(expr.clone())
             }
@@ -108,7 +115,11 @@ pub(super) fn instrument(
                 && let Some((_, statements)) = sites.get(&stmt.span.id)
             {
                 seen.insert(stmt.span.id);
-                Ok(statements.iter().cloned().chain(std::iter::once(stmt.clone())).collect())
+                Ok(statements
+                    .iter()
+                    .map(|s| crate::ast_visitor::map_stmt_spans(s, &mut |span| fresh_span(span)))
+                    .chain(std::iter::once(stmt.clone()))
+                    .collect())
             } else {
                 Ok(vec![stmt.clone()])
             }
@@ -131,15 +142,13 @@ pub(super) fn instrument(
             .ok_or_else(|| error(&p.span, "parameter storage exceeds u64"))?;
     }
     let body = if let Some(bound) = bound {
-        mk_block(
-            &body.span,
-            vec![obligation(
-                &function.span,
-                &super::contracts::literal(&function.span, parameters),
-                bound,
-            )],
-            Some(body.clone()),
-        )
+        let check = obligation(
+            &function.span,
+            &super::contracts::literal(&function.span, parameters),
+            bound,
+        );
+        let check = crate::ast_visitor::map_stmt_spans(&check, &mut |span| fresh_span(span));
+        mk_block(&fresh_span(&body.span), vec![check], Some(body.clone()))
     } else {
         body
     };

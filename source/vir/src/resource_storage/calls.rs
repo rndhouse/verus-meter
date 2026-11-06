@@ -42,7 +42,14 @@ impl Analysis<'_> {
                 continue;
             }
             if !crate::ast_util::types_equal(&arg.typ, &param.x.typ) {
-                return Err(unsupported(&arg.span, "this call argument coercion"));
+                return Err(unsupported(
+                    &arg.span,
+                    &format!(
+                        "this call argument coercion ({} to {})",
+                        crate::ast_util::typ_to_diagnostic_str(&arg.typ),
+                        crate::ast_util::typ_to_diagnostic_str(&param.x.typ)
+                    ),
+                ));
             }
             let bytes = self.layouts.size(&param.x.typ, &param.span)?;
             parameters = parameters

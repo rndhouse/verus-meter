@@ -234,7 +234,10 @@ impl ExprOrPlace {
         let p = self.to_place(bctx, span, inner_ty)?;
         let rk = vir::ast::ReadKind::ImmutBor;
         let rk = UnfinalizedReadKind { preliminary_kind: rk, id: bctx.ctxt.unique_read_kind_id() };
-        let typ = Arc::new(TypX::Decorate(vir::ast::TypDecoration::Ref, None, p.typ.clone()));
+        // Box dereference is implicit in places, but the reference must retain
+        // Rust's actual pointee type (e.g. &*Box<[T; N]> is &[T; N], not &Box<_>).
+        let pointee = bctx.mid_ty_to_vir(span, &inner_ty)?;
+        let typ = Arc::new(TypX::Decorate(vir::ast::TypDecoration::Ref, None, pointee));
         Ok(bctx.ctxt.spanned_typed_new_vir(&p.span, &typ, ExprX::ReadPlace(p.clone(), rk)))
     }
 
@@ -2160,7 +2163,11 @@ pub(crate) fn expr_to_vir_with_adjustments<'tcx>(
 
             let place = expr_to_vir_with_adjustments(bctx, expr, adjustments, adjustment_idx - 1)?
                 .to_place(bctx, expr.span, get_inner_ty())?;
-            Ok(ExprOrPlace::Expr(borrow_mut_vir(bctx, expr.span, &place, *allow_two_phase_borrow)))
+            // Cancelling a reborrow can recover a Box-decorated owner place.
+            // Retain Rust's reference type, not the owner's storage type.
+            let mut borrowed = borrow_mut_vir(bctx, expr.span, &place, *allow_two_phase_borrow);
+            Arc::make_mut(&mut borrowed).typ = bctx.mid_ty_to_vir(expr.span, &adjustment.target)?;
+            Ok(ExprOrPlace::Expr(borrowed))
         }
         Adjust::GenericReborrow(_) => {
             unsupported_err!(expr.span, "User-defined Reborrow implementations")
@@ -2972,7 +2979,9 @@ pub(crate) fn expr_to_vir_innermost<'tcx>(
         }
         ExprKind::AddrOf(BorrowKind::Ref, Mutability::Mut, e) => {
             let place = expr_to_vir_place(bctx, e)?;
-            Ok(ExprOrPlace::Expr(borrow_mut_vir(bctx, expr.span, &place, AllowTwoPhase::No)))
+            let mut borrowed = borrow_mut_vir(bctx, expr.span, &place, AllowTwoPhase::No);
+            Arc::make_mut(&mut borrowed).typ = expr_typ()?;
+            Ok(ExprOrPlace::Expr(borrowed))
         }
         ExprKind::AddrOf(BorrowKind::Raw, _, _) => {
             unsupported_err!(expr.span, format!("raw borrows"))

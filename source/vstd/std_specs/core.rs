@@ -168,6 +168,10 @@ pub trait ExMetaSized {
     type ExternalTraitSpecificationFor: core::marker::MetaSized;
 }
 
+// Consumes the value; its destructor may run and may unwind. Resolution checks
+// still apply to the consumed argument, as they do at an implicit scope drop.
+pub assume_specification<T>[ core::mem::drop::<T> ](value: T);
+
 pub assume_specification<T>[ core::mem::swap::<T> ](a: &mut T, b: &mut T)
     ensures
         *final(a) == *old(b),

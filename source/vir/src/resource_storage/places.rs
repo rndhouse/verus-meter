@@ -9,6 +9,9 @@ impl Analysis<'_> {
         if let PlaceX::Local(name) = &place.x {
             if self.var_modes.get(name) == Some(&Mode::Exec) {
                 self.layouts.size(&place.typ, &place.span)?;
+                if super::heap::boxed(&place.typ) && !self.heap.owners.contains_key(name) {
+                    return Err(unsupported(&place.span, "a box without a live local owner"));
+                }
                 return Ok(());
             }
         }
@@ -35,7 +38,8 @@ impl Analysis<'_> {
             }
             PlaceX::Field(op, base) => {
                 let base_typ = match &*base.typ {
-                    TypX::Decorate(TypDecoration::Ref, None, inner) => inner,
+                    TypX::Decorate(TypDecoration::Ref, None, inner)
+                    | TypX::Decorate(TypDecoration::Box, _, inner) => inner,
                     _ => &base.typ,
                 };
                 self.layouts.size(base_typ, &base.span)?;
@@ -61,7 +65,8 @@ impl Analysis<'_> {
             }
             PlaceX::Index(base, index, _, BoundsCheck::Error) => {
                 let base_typ = match &*base.typ {
-                    TypX::Decorate(TypDecoration::Ref, None, inner) => inner,
+                    TypX::Decorate(TypDecoration::Ref, None, inner)
+                    | TypX::Decorate(TypDecoration::Box, _, inner) => inner,
                     _ => &base.typ,
                 };
                 if !slice(base_typ) && !matches!(&**base_typ, TypX::Primitive(Primitive::Array, _))
@@ -75,6 +80,17 @@ impl Analysis<'_> {
                 self.discard(index)?;
                 Ok(0)
             }
+            // Compiler reborrows can materialize a reference expression as a
+            // temporary place. Evaluate that reference, which recursively checks
+            // its backing place; aggregate/box temporaries remain unsupported.
+            PlaceX::Temporary(value)
+                if matches!(
+                    &*place.typ,
+                    TypX::MutRef(_) | TypX::Decorate(TypDecoration::Ref, None, _)
+                ) && crate::ast_util::types_equal(&place.typ, &value.typ) =>
+            {
+                self.expr(value)
+            }
             // Borrowed temporary lifetimes need a separate model. In particular,
             // never release &[...]/&mut [...] at the end of their initializer.
             _ => Err(unsupported(&place.span, "this place or borrowed temporary")),
@@ -87,7 +103,9 @@ impl Analysis<'_> {
         if crate::ast_util::types_equal(&place.typ, target) {
             return Ok(scratch);
         }
-        if let TypX::Decorate(TypDecoration::Ref, None, inner) = &*place.typ {
+        if let TypX::Decorate(TypDecoration::Ref, None, inner)
+        | TypX::Decorate(TypDecoration::Box, _, inner) = &*place.typ
+        {
             if crate::ast_util::types_equal(inner, target) {
                 self.layouts.size(&place.typ, &place.span)?;
                 return Ok(scratch);
@@ -98,6 +116,12 @@ impl Analysis<'_> {
 
     pub(super) fn read(&mut self, place: &Place, result_typ: &Typ) -> Result<u64, VirErr> {
         self.layouts.size(result_typ, &place.span)?;
+        if super::heap::boxed(result_typ) {
+            return Err(unsupported(
+                &place.span,
+                "box values outside a local move, borrow, or explicit drop",
+            ));
+        }
         self.access(place, result_typ)
     }
 
