@@ -5961,6 +5961,48 @@ impl Debug for Lite<syn::Requires> {
         formatter.finish()
     }
 }
+impl Debug for Lite<syn::ResourceExpr> {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        match &self.value {
+            syn::ResourceExpr::Literal(_val) => {
+                formatter.write_str("ResourceExpr::Literal")?;
+                formatter.write_str("(")?;
+                Debug::fmt(Lite(_val), formatter)?;
+                formatter.write_str(")")?;
+                Ok(())
+            }
+            syn::ResourceExpr::Paren(_v0, _v1) => {
+                let mut formatter = formatter.debug_tuple("ResourceExpr::Paren");
+                formatter.field(Lite(_v1));
+                formatter.finish()
+            }
+            syn::ResourceExpr::Add(_v0, _v1, _v2) => {
+                let mut formatter = formatter.debug_tuple("ResourceExpr::Add");
+                formatter.field(Lite(_v0));
+                formatter.field(Lite(_v2));
+                formatter.finish()
+            }
+            syn::ResourceExpr::Mul(_v0, _v1, _v2) => {
+                let mut formatter = formatter.debug_tuple("ResourceExpr::Mul");
+                formatter.field(Lite(_v0));
+                formatter.field(Lite(_v2));
+                formatter.finish()
+            }
+            syn::ResourceExpr::SizeOf(_v0, _v1, _v2) => {
+                let mut formatter = formatter.debug_tuple("ResourceExpr::SizeOf");
+                formatter.field(Lite(_v0));
+                formatter.field(Lite(_v2));
+                formatter.finish()
+            }
+            syn::ResourceExpr::PeakMem(_v0, _v1, _v2) => {
+                let mut formatter = formatter.debug_tuple("ResourceExpr::PeakMem");
+                formatter.field(Lite(_v0));
+                formatter.field(Lite(_v2));
+                formatter.finish()
+            }
+        }
+    }
+}
 impl Debug for Lite<syn::ReturnPat> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         match &self.value {

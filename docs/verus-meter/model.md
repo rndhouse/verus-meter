@@ -17,8 +17,7 @@ Unsupported executable constructs fail closed.
 
 ```rust
 fn example()
-    resources peak_memory_bytes
-        <= memory_budget::<[u32; 64]>(),
+    resources peakmem <= sizeof([u32; 64]),
 {
     { let first = [0u32; 64]; }
     { let second = [0u32; 64]; }
@@ -27,29 +26,34 @@ fn example()
 
 The resource clause comes after the other function clauses. Its budget is a
 compile-time expression built from nonnegative `u64` literals (unsuffixed or
-suffixed `u64`), `memory_budget` queries, addition, multiplication, and parentheses:
+suffixed `u64`), `sizeof` and `peakmem` queries, addition, multiplication, and
+parentheses:
 
-- `memory_budget(buffer)` queries the model size of the named value's type.
+- `sizeof(buffer)` queries the model size of a named parameter's type.
   An `&mut SortBuffer` parameter costs 8 bytes; it excludes the backing struct.
-- `memory_budget(sorting::insertion_sort)` queries the function's **declared**
+- `peakmem(sorting::insertion_sort)` queries the function's **declared**
   budget, including any slack. Function paths and import aliases use resolved
   Rust identities. Only eligible annotated functions in the same crate qualify.
-- `memory_budget::<SortBuffer>()` queries a type directly, including when the
+- `sizeof(SortBuffer)` queries a type directly, including when the
   local value does not yet exist at the function's signature. It uses the same
   unpadded layout rules as executable storage accounting.
 
 For example, the struct helper declares:
 
 ```rust
-resources peak_memory_bytes
-    <= memory_budget(buffer) + memory_budget(sorting::insertion_sort),
+resources peakmem <= sizeof(buffer) + peakmem(sorting::insertion_sort),
 ```
 
 The queries are erased metadata: they do not evaluate, copy, or move their
-arguments, and add no runtime storage. The argument must be a name/path, not
-a field access or computed expression. Runtime arithmetic, arbitrary function
-calls, named numeric constants as budget operands, subtraction, and generic
-function references are unsupported. Every sum and product must fit in `u64`.
+arguments, and add no runtime storage. In `sizeof`, a bare name matching a
+parameter denotes that parameter's type; otherwise the argument is a Rust type,
+such as `[u32; 4]`, `&mut SortBuffer`, or a type alias. Parameter names take
+precedence over type names; a qualified type path disambiguates a shadowed type.
+`peakmem` requires a function path, never a value's storage size. These are
+resource-model queries, not Rust's ABI-aware `std::mem::size_of`.
+Field accesses and computed value expressions are unsupported. Runtime arithmetic,
+arbitrary function calls, named numeric constants as budget operands, subtraction,
+and generic function references are unsupported. Every sum and product must fit in `u64`.
 
 Budget references form their own acyclic graph, independent of executable calls.
 Self/mutual references are rejected even under multiplication by zero. Changing
@@ -58,9 +62,11 @@ body is still checked against its resulting bound. A formula is not itself a
 proof: construction, argument handoff, or other execution can exceed it.
 
 Functions without a resource clause continue through normal Verus verification
-without resource checking. The former `peak_local_storage_bytes` spelling is
-replaced by `peak_memory_bytes`. Version 5 removes inferred expression and address
-temporaries consistently across initialization, assignment, and calls.
+without resource checking. The former `peak_local_storage_bytes` and
+`peak_memory_bytes` clause spellings are replaced by `peakmem`; the overloaded
+`memory_budget` query is replaced by `sizeof` and `peakmem`. Version 5 removes
+inferred expression and address temporaries consistently across initialization,
+assignment, and calls.
 
 Annotated functions must be safe, nongeneric executable functions with a checked
 body and unit return type. Async functions, external bodies, specification
@@ -481,3 +487,20 @@ tests passed in `resource_storage_model`, checking exact bounds and rejection
 one byte below each bound. They cover the fixed size table, shared backing data,
 reference scopes, moves, repeated iterations, unreachable branches, standalone
 aggregates, references to zero-sized values, and nested initializer calls.
+
+## Short resource syntax validation (v5)
+
+The `sizeof`/`peakmem` syntax changes no storage-accounting rules.
+
+- The release workspace and installed verifier built successfully; rebuilt vstd
+  reported 2,226 verified and zero errors.
+- All 196 resource tests passed, including 29 budget-expression tests covering
+  type aliases, parameter/type name shadowing, compound type syntax, arithmetic
+  precedence, and rejection of values passed to `peakmem` or functions to `sizeof`.
+- All five resource parser tests passed, including round trips and rejection of
+  malformed or superseded syntax.
+- The five baseline upstream suites in [setup.md](setup.md) passed: 193 tests,
+  with three upstream-ignored tests. The complete upstream suite was not run.
+- All ten example-runner tests matching `resource_` passed. The four passing
+  project examples also verified, compiled, and ran directly. The array-copy
+  example still reports a 32-byte peak against its 16-byte budget at the copy.

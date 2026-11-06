@@ -36,16 +36,14 @@ impl Resolver<'_> {
         let function = self
             .functions
             .get(name)
-            .ok_or_else(|| unsupported(span, "memory_budget references outside this crate"))?;
+            .ok_or_else(|| unsupported(span, "peakmem references outside this crate"))?;
         let contract = function.x.attrs.resource_contract.as_ref().ok_or_else(|| {
-            error(span, "memory_budget requires a declared resource contract")
+            error(span, "peakmem requires a declared resource contract")
                 .secondary_span(&function.span)
         })?;
         eligible(function)?;
         if !self.visiting.insert(name.clone()) {
-            return Err(
-                error(span, "circular memory_budget reference").secondary_span(&function.span)
-            );
+            return Err(error(span, "circular peakmem reference").secondary_span(&function.span));
         }
         let budget = match contract {
             ResourceContract::LexicalSlotsV5Expr { budget } => self.expr(budget)?,

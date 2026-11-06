@@ -165,8 +165,9 @@ fn is_header_verus_item(verus_item: &VerusItem) -> bool {
             | SpecItem::InvMaskListCompl
             | SpecItem::InvMaskSet
             | SpecItem::Atomically
-            | SpecItem::MemoryBudgetValue
-            | SpecItem::MemoryBudgetType => false,
+            | SpecItem::ResourceSizeOfValue
+            | SpecItem::ResourceSizeOfType
+            | SpecItem::ResourcePeakMem => false,
 
             SpecItem::NoMethodBody
             | SpecItem::Requires

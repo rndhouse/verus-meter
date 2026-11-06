@@ -3514,6 +3514,53 @@ impl Debug for crate::Requires {
     }
 }
 #[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
+impl Debug for crate::ResourceExpr {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("ResourceExpr::")?;
+        match self {
+            crate::ResourceExpr::Literal(v0) => {
+                let mut formatter = formatter.debug_tuple("Literal");
+                formatter.field(v0);
+                formatter.finish()
+            }
+            crate::ResourceExpr::Paren(v0, v1) => {
+                let mut formatter = formatter.debug_tuple("Paren");
+                formatter.field(v0);
+                formatter.field(v1);
+                formatter.finish()
+            }
+            crate::ResourceExpr::Add(v0, v1, v2) => {
+                let mut formatter = formatter.debug_tuple("Add");
+                formatter.field(v0);
+                formatter.field(v1);
+                formatter.field(v2);
+                formatter.finish()
+            }
+            crate::ResourceExpr::Mul(v0, v1, v2) => {
+                let mut formatter = formatter.debug_tuple("Mul");
+                formatter.field(v0);
+                formatter.field(v1);
+                formatter.field(v2);
+                formatter.finish()
+            }
+            crate::ResourceExpr::SizeOf(v0, v1, v2) => {
+                let mut formatter = formatter.debug_tuple("SizeOf");
+                formatter.field(v0);
+                formatter.field(v1);
+                formatter.field(v2);
+                formatter.finish()
+            }
+            crate::ResourceExpr::PeakMem(v0, v1, v2) => {
+                let mut formatter = formatter.debug_tuple("PeakMem");
+                formatter.field(v0);
+                formatter.field(v1);
+                formatter.field(v2);
+                formatter.finish()
+            }
+        }
+    }
+}
+#[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
 impl Debug for crate::ReturnPat {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("ReturnPat::")?;

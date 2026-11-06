@@ -14,7 +14,7 @@ verus! {
 // both arrays matter: changing the copy leaves the original untouched.
 fn main()
     // Deliberately too small: this contract covers only one array.
-    resources peak_memory_bytes <= memory_budget::<[u32; 4]>(),
+    resources peakmem <= sizeof([u32; 4]),
 {
     let original = [1u32, 2, 3, 4];
 

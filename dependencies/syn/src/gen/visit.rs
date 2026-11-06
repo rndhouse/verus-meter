@@ -930,6 +930,9 @@ pub trait Visit<'ast> {
     fn visit_requires(&mut self, i: &'ast crate::Requires) {
         visit_requires(self, i);
     }
+    fn visit_resource_expr(&mut self, i: &'ast crate::ResourceExpr) {
+        visit_resource_expr(self, i);
+    }
     fn visit_return_pat(&mut self, i: &'ast crate::ReturnPat) {
         visit_return_pat(self, i);
     }
@@ -4510,6 +4513,40 @@ where
     skip!(node.token);
     v.visit_specification(&node.exprs);
 }
+pub fn visit_resource_expr<'ast, V>(v: &mut V, node: &'ast crate::ResourceExpr)
+where
+    V: Visit<'ast> + ?Sized,
+{
+    match node {
+        crate::ResourceExpr::Literal(_binding_0) => {
+            v.visit_lit_int(_binding_0);
+        }
+        crate::ResourceExpr::Paren(_binding_0, _binding_1) => {
+            skip!(_binding_0);
+            v.visit_resource_expr(&**_binding_1);
+        }
+        crate::ResourceExpr::Add(_binding_0, _binding_1, _binding_2) => {
+            v.visit_resource_expr(&**_binding_0);
+            skip!(_binding_1);
+            v.visit_resource_expr(&**_binding_2);
+        }
+        crate::ResourceExpr::Mul(_binding_0, _binding_1, _binding_2) => {
+            v.visit_resource_expr(&**_binding_0);
+            skip!(_binding_1);
+            v.visit_resource_expr(&**_binding_2);
+        }
+        crate::ResourceExpr::SizeOf(_binding_0, _binding_1, _binding_2) => {
+            v.visit_ident(_binding_0);
+            skip!(_binding_1);
+            v.visit_type(_binding_2);
+        }
+        crate::ResourceExpr::PeakMem(_binding_0, _binding_1, _binding_2) => {
+            v.visit_ident(_binding_0);
+            skip!(_binding_1);
+            v.visit_expr_path(_binding_2);
+        }
+    }
+}
 pub fn visit_return_pat<'ast, V>(v: &mut V, node: &'ast crate::ReturnPat)
 where
     V: Visit<'ast> + ?Sized,
@@ -4649,7 +4686,7 @@ where
     skip!(node.token);
     v.visit_ident(&node.resource);
     skip!(node.le_token);
-    v.visit_expr(&node.budget);
+    v.visit_resource_expr(&node.budget);
     skip!(node.comma);
 }
 pub fn visit_signature_spec<'ast, V>(v: &mut V, node: &'ast crate::SignatureSpec)

@@ -229,8 +229,21 @@ ast_struct! {
         pub token: Token![resources],
         pub resource: Ident,
         pub le_token: Token![<=],
-        pub budget: Expr,
+        pub budget: ResourceExpr,
         pub comma: Option<Token![,]>,
+    }
+}
+
+ast_enum! {
+    /// The compile-time resource language, separate from executable expressions.
+    /// A bare `sizeof` path may name a parameter; other arguments denote types.
+    pub enum ResourceExpr {
+        Literal(LitInt),
+        Paren(token::Paren, Box<ResourceExpr>),
+        Add(Box<ResourceExpr>, Token![+], Box<ResourceExpr>),
+        Mul(Box<ResourceExpr>, Token![*], Box<ResourceExpr>),
+        SizeOf(Ident, token::Paren, Type),
+        PeakMem(Ident, token::Paren, ExprPath),
     }
 }
 
@@ -1423,52 +1436,62 @@ pub mod parsing {
         }
     }
 
-    fn validate_memory_budget(expr: &Expr) -> Result<()> {
-        match expr {
-            Expr::Lit(lit) => {
-                if let crate::Lit::Int(n) = &lit.lit {
-                    n.base10_parse::<u64>()?;
-                    if matches!(n.suffix(), "" | "u64") {
-                        return Ok(());
-                    }
-                }
+    impl Parse for ResourceExpr {
+        fn parse(input: ParseStream) -> Result<Self> {
+            let mut expr = resource_product(input)?;
+            while input.peek(Token![+]) {
+                let op = input.parse()?;
+                expr = ResourceExpr::Add(Box::new(expr), op, Box::new(resource_product(input)?));
             }
-            Expr::Paren(e) => return validate_memory_budget(&e.expr),
-            Expr::Group(e) => return validate_memory_budget(&e.expr),
-            Expr::Binary(e) if matches!(e.op, crate::BinOp::Add(_) | crate::BinOp::Mul(_)) => {
-                validate_memory_budget(&e.left)?;
-                return validate_memory_budget(&e.right);
-            }
-            Expr::Call(call) => {
-                if let Expr::Path(path) = &*call.func {
-                    if path.qself.is_none()
-                        && path.path.leading_colon.is_none()
-                        && path.path.segments.len() == 1
-                    {
-                        let segment = &path.path.segments[0];
-                        if segment.ident == "memory_budget" {
-                            match &segment.arguments {
-                                crate::PathArguments::None if call.args.len() == 1 => {
-                                    if matches!(&call.args[0], Expr::Path(_)) {
-                                        return Ok(());
-                                    }
-                                }
-                                crate::PathArguments::AngleBracketed(args)
-                                    if call.args.is_empty() && args.args.len() == 1 =>
-                                {
-                                    if matches!(&args.args[0], crate::GenericArgument::Type(_)) {
-                                        return Ok(());
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {}
+            Ok(expr)
         }
-        Err(Error::new_spanned(expr, "expected a u64 literal, memory_budget(value/function), memory_budget::<Type>(), or their sums/products"))
+    }
+
+    fn resource_product(input: ParseStream) -> Result<ResourceExpr> {
+        let mut expr = resource_atom(input)?;
+        while input.peek(Token![*]) {
+            let op = input.parse()?;
+            expr = ResourceExpr::Mul(Box::new(expr), op, Box::new(resource_atom(input)?));
+        }
+        Ok(expr)
+    }
+
+    fn resource_atom(input: ParseStream) -> Result<ResourceExpr> {
+        if input.peek(token::Paren) {
+            let content;
+            let paren = parenthesized!(content in input);
+            let expr = content.parse()?;
+            if !content.is_empty() {
+                return Err(content.error("expected a resource sum or product"));
+            }
+            return Ok(ResourceExpr::Paren(paren, Box::new(expr)));
+        }
+        if input.peek(LitInt) {
+            let n: LitInt = input.parse()?;
+            n.base10_parse::<u64>()?;
+            if !matches!(n.suffix(), "" | "u64") {
+                return Err(Error::new(n.span(), "expected a u64 resource literal"));
+            }
+            return Ok(ResourceExpr::Literal(n));
+        }
+        let name: Ident = input.parse()?;
+        if name != "sizeof" && name != "peakmem" {
+            return Err(Error::new(
+                name.span(),
+                "expected sizeof(type/parameter) or peakmem(function)",
+            ));
+        }
+        let content;
+        let paren = parenthesized!(content in input);
+        let expr = if name == "sizeof" {
+            ResourceExpr::SizeOf(name, paren, content.parse()?)
+        } else {
+            ResourceExpr::PeakMem(name, paren, content.parse()?)
+        };
+        if !content.is_empty() {
+            return Err(content.error("expected a single sizeof or peakmem argument"));
+        }
+        Ok(expr)
     }
 
     #[cfg_attr(doc_cfg, doc(cfg(feature = "parsing")))]
@@ -1479,12 +1502,11 @@ pub mod parsing {
             }
             let token = input.parse()?;
             let resource: Ident = input.parse()?;
-            if resource != "peak_memory_bytes" {
-                return Err(Error::new(resource.span(), "expected peak_memory_bytes"));
+            if resource != "peakmem" {
+                return Err(Error::new(resource.span(), "expected peakmem"));
             }
             let le_token = input.parse()?;
-            let budget = Expr::parse_without_eager_brace(input)?;
-            validate_memory_budget(&budget)?;
+            let budget = input.parse()?;
             Ok(Some(SignatureResources {
                 token,
                 resource,
@@ -2468,6 +2490,35 @@ mod printing {
     impl ToTokens for InvariantNameSetSet {
         fn to_tokens(&self, tokens: &mut TokenStream) {
             self.expr.to_tokens(tokens);
+        }
+    }
+
+    impl ToTokens for ResourceExpr {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            match self {
+                ResourceExpr::Literal(n) => n.to_tokens(tokens),
+                ResourceExpr::Paren(paren, expr) => {
+                    paren.surround(tokens, |tokens| expr.to_tokens(tokens));
+                }
+                ResourceExpr::Add(left, op, right) => {
+                    left.to_tokens(tokens);
+                    op.to_tokens(tokens);
+                    right.to_tokens(tokens);
+                }
+                ResourceExpr::Mul(left, op, right) => {
+                    left.to_tokens(tokens);
+                    op.to_tokens(tokens);
+                    right.to_tokens(tokens);
+                }
+                ResourceExpr::SizeOf(name, paren, typ) => {
+                    name.to_tokens(tokens);
+                    paren.surround(tokens, |tokens| typ.to_tokens(tokens));
+                }
+                ResourceExpr::PeakMem(name, paren, function) => {
+                    name.to_tokens(tokens);
+                    paren.surround(tokens, |tokens| function.to_tokens(tokens));
+                }
+            }
         }
     }
 

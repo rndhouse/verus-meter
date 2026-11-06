@@ -1040,6 +1040,9 @@ pub trait Fold {
     fn fold_requires(&mut self, i: crate::Requires) -> crate::Requires {
         fold_requires(self, i)
     }
+    fn fold_resource_expr(&mut self, i: crate::ResourceExpr) -> crate::ResourceExpr {
+        fold_resource_expr(self, i)
+    }
     fn fold_return_pat(&mut self, i: crate::ReturnPat) -> crate::ReturnPat {
         fold_return_pat(self, i)
     }
@@ -4483,6 +4486,50 @@ where
         exprs: f.fold_specification(node.exprs),
     }
 }
+pub fn fold_resource_expr<F>(f: &mut F, node: crate::ResourceExpr) -> crate::ResourceExpr
+where
+    F: Fold + ?Sized,
+{
+    match node {
+        crate::ResourceExpr::Literal(_binding_0) => {
+            crate::ResourceExpr::Literal(f.fold_lit_int(_binding_0))
+        }
+        crate::ResourceExpr::Paren(_binding_0, _binding_1) => {
+            crate::ResourceExpr::Paren(
+                _binding_0,
+                Box::new(f.fold_resource_expr(*_binding_1)),
+            )
+        }
+        crate::ResourceExpr::Add(_binding_0, _binding_1, _binding_2) => {
+            crate::ResourceExpr::Add(
+                Box::new(f.fold_resource_expr(*_binding_0)),
+                _binding_1,
+                Box::new(f.fold_resource_expr(*_binding_2)),
+            )
+        }
+        crate::ResourceExpr::Mul(_binding_0, _binding_1, _binding_2) => {
+            crate::ResourceExpr::Mul(
+                Box::new(f.fold_resource_expr(*_binding_0)),
+                _binding_1,
+                Box::new(f.fold_resource_expr(*_binding_2)),
+            )
+        }
+        crate::ResourceExpr::SizeOf(_binding_0, _binding_1, _binding_2) => {
+            crate::ResourceExpr::SizeOf(
+                f.fold_ident(_binding_0),
+                _binding_1,
+                f.fold_type(_binding_2),
+            )
+        }
+        crate::ResourceExpr::PeakMem(_binding_0, _binding_1, _binding_2) => {
+            crate::ResourceExpr::PeakMem(
+                f.fold_ident(_binding_0),
+                _binding_1,
+                f.fold_expr_path(_binding_2),
+            )
+        }
+    }
+}
 pub fn fold_return_pat<F>(f: &mut F, node: crate::ReturnPat) -> crate::ReturnPat
 where
     F: Fold + ?Sized,
@@ -4614,7 +4661,7 @@ where
         token: node.token,
         resource: f.fold_ident(node.resource),
         le_token: node.le_token,
-        budget: f.fold_expr(node.budget),
+        budget: f.fold_resource_expr(node.budget),
         comma: node.comma,
     }
 }

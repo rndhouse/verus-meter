@@ -636,8 +636,9 @@ fn verus_item_to_vir<'tcx, 'a>(
                     SpecItem::Admit
                     | SpecItem::Assume
                     | SpecItem::NoMethodBody
-                    | SpecItem::MemoryBudgetValue
-                    | SpecItem::MemoryBudgetType
+                    | SpecItem::ResourceSizeOfValue
+                    | SpecItem::ResourceSizeOfType
+                    | SpecItem::ResourcePeakMem
                     | SpecItem::Recommends
                     | SpecItem::DecreasesWhen
                     | SpecItem::DecreasesBy
@@ -908,9 +909,12 @@ fn verus_item_to_vir<'tcx, 'a>(
                     let budget = crate::resource_budget::lower(bctx, args[0])?;
                     mk_expr(ExprX::Header(Arc::new(HeaderExprX::LocalStorageBudget(budget))))
                 }
-                SpecItem::MemoryBudgetValue | SpecItem::MemoryBudgetType => {
-                    err_span(expr.span, "memory_budget is only allowed inside a resources clause")
-                }
+                SpecItem::ResourceSizeOfValue
+                | SpecItem::ResourceSizeOfType
+                | SpecItem::ResourcePeakMem => err_span(
+                    expr.span,
+                    "sizeof and peakmem are only allowed inside a resources clause",
+                ),
                 SpecItem::NoUnwind => {
                     record_spec_fn_pure_args_only(bctx, expr);
                     let header = Arc::new(HeaderExprX::NoUnwind);

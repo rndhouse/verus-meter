@@ -2459,6 +2459,40 @@ impl PartialEq for crate::Requires {
     }
 }
 #[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
+impl Eq for crate::ResourceExpr {}
+#[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
+impl PartialEq for crate::ResourceExpr {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                crate::ResourceExpr::Literal(self0),
+                crate::ResourceExpr::Literal(other0),
+            ) => self0 == other0,
+            (
+                crate::ResourceExpr::Paren(_, self1),
+                crate::ResourceExpr::Paren(_, other1),
+            ) => self1 == other1,
+            (
+                crate::ResourceExpr::Add(self0, _, self2),
+                crate::ResourceExpr::Add(other0, _, other2),
+            ) => self0 == other0 && self2 == other2,
+            (
+                crate::ResourceExpr::Mul(self0, _, self2),
+                crate::ResourceExpr::Mul(other0, _, other2),
+            ) => self0 == other0 && self2 == other2,
+            (
+                crate::ResourceExpr::SizeOf(self0, _, self2),
+                crate::ResourceExpr::SizeOf(other0, _, other2),
+            ) => self0 == other0 && self2 == other2,
+            (
+                crate::ResourceExpr::PeakMem(self0, _, self2),
+                crate::ResourceExpr::PeakMem(other0, _, other2),
+            ) => self0 == other0 && self2 == other2,
+            _ => false,
+        }
+    }
+}
+#[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
 impl Eq for crate::ReturnPat {}
 #[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
 impl PartialEq for crate::ReturnPat {

@@ -274,30 +274,43 @@ macro_rules! quote_spanned_builtin {
 
 /// Lower the small, parser-validated resource language without rewriting its
 /// arithmetic into spec operators. Argument borrows exist only in erased headers.
-fn lower_memory_budget(expr: &Expr) -> TokenStream {
+fn lower_memory_budget(expr: &verus_syn::ResourceExpr, parameters: &[Ident]) -> TokenStream {
+    use verus_syn::ResourceExpr;
     match expr {
-        Expr::Paren(e) => {
-            let e = lower_memory_budget(&e.expr);
+        ResourceExpr::Literal(n) => n.to_token_stream(),
+        ResourceExpr::Paren(_, e) => {
+            let e = lower_memory_budget(e, parameters);
             quote!((#e))
         }
-        Expr::Group(e) => lower_memory_budget(&e.expr),
-        Expr::Binary(e) => {
-            let left = lower_memory_budget(&e.left);
-            let right = lower_memory_budget(&e.right);
-            let op = &e.op;
-            quote_spanned!(e.span() => (#left #op #right))
+        ResourceExpr::Add(left, op, right) => {
+            let left = lower_memory_budget(left, parameters);
+            let right = lower_memory_budget(right, parameters);
+            quote_spanned!(expr.span() => (#left #op #right))
         }
-        Expr::Call(call) => {
-            let Expr::Path(path) = &*call.func else { unreachable!() };
-            if let PathArguments::AngleBracketed(types) = &path.path.segments[0].arguments {
-                let types = &types.args;
-                quote_spanned_builtin!(builtin, expr.span() => #builtin::memory_budget_type::<#types>())
-            } else {
-                let arg = &call.args[0];
-                quote_spanned_builtin!(builtin, expr.span() => #builtin::memory_budget_value(&#arg))
+        ResourceExpr::Mul(left, op, right) => {
+            let left = lower_memory_budget(left, parameters);
+            let right = lower_memory_budget(right, parameters);
+            quote_spanned!(expr.span() => (#left #op #right))
+        }
+        ResourceExpr::SizeOf(_, _, typ) => {
+            // A simple name matching a parameter denotes its type. All other
+            // arguments are Rust types, resolved by rustc (including aliases).
+            let mut unwrapped = typ;
+            while let Type::Paren(paren) = unwrapped {
+                unwrapped = &paren.elem;
             }
+            if let Type::Path(path) = unwrapped {
+                if path.qself.is_none()
+                    && path.path.get_ident().is_some_and(|id| parameters.contains(id))
+                {
+                    return quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_sizeof_value(&#path));
+                }
+            }
+            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_sizeof_type::<#typ>())
         }
-        _ => expr.to_token_stream(),
+        ResourceExpr::PeakMem(_, _, function) => {
+            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_peakmem(&#function))
+        }
     }
 }
 
@@ -1295,7 +1308,14 @@ impl Visitor {
         if let Some(verus_syn::SignatureResources { token, budget, .. }) = resources {
             // Resource expressions deliberately bypass the general spec visitor:
             // sizes/budgets are compile-time metadata, not mathematical u64 terms.
-            let budget = lower_memory_budget(&budget);
+            // `args` contains only the parameter names produced by
+            // inputs_to_tokens/verus_inputs_to_tokens, separated by commas.
+            let parameters: Vec<_> = args
+                .to_token_stream()
+                .into_iter()
+                .filter_map(|token| if let TokenTree::Ident(id) = token { Some(id) } else { None })
+                .collect();
+            let budget = lower_memory_budget(&budget, &parameters);
             spec_stmts.push(Stmt::Expr(
                 Expr::Verbatim(quote_spanned_builtin!(verus_builtin, token.span() =>
                     #verus_builtin::local_storage_budget(#budget)

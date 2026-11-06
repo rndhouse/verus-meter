@@ -2525,6 +2525,29 @@ impl Clone for crate::Requires {
     }
 }
 #[cfg_attr(docsrs, doc(cfg(feature = "clone-impls")))]
+impl Clone for crate::ResourceExpr {
+    fn clone(&self) -> Self {
+        match self {
+            crate::ResourceExpr::Literal(v0) => crate::ResourceExpr::Literal(v0.clone()),
+            crate::ResourceExpr::Paren(v0, v1) => {
+                crate::ResourceExpr::Paren(v0.clone(), v1.clone())
+            }
+            crate::ResourceExpr::Add(v0, v1, v2) => {
+                crate::ResourceExpr::Add(v0.clone(), v1.clone(), v2.clone())
+            }
+            crate::ResourceExpr::Mul(v0, v1, v2) => {
+                crate::ResourceExpr::Mul(v0.clone(), v1.clone(), v2.clone())
+            }
+            crate::ResourceExpr::SizeOf(v0, v1, v2) => {
+                crate::ResourceExpr::SizeOf(v0.clone(), v1.clone(), v2.clone())
+            }
+            crate::ResourceExpr::PeakMem(v0, v1, v2) => {
+                crate::ResourceExpr::PeakMem(v0.clone(), v1.clone(), v2.clone())
+            }
+        }
+    }
+}
+#[cfg_attr(docsrs, doc(cfg(feature = "clone-impls")))]
 impl Clone for crate::ReturnPat {
     fn clone(&self) -> Self {
         match self {

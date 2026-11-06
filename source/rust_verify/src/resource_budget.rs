@@ -38,26 +38,34 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
         ExprKind::Call(callee, args) => {
             let callee_type = bctx.types.expr_ty(callee);
             let TyKind::FnDef(id, substitutions) = callee_type.kind() else {
-                return err_span(expr.span, "expected memory_budget in resource clause");
+                return err_span(expr.span, "expected sizeof or peakmem in resource clause");
             };
             let substitutions = crate::rust_to_vir_base::fn_def_args(*substitutions, expr.span)?;
             let item = bctx.ctxt.get_verus_item(*id);
             let typ = match item {
-                Some(VerusItem::Spec(SpecItem::MemoryBudgetType)) if args.is_empty() => {
+                Some(VerusItem::Spec(SpecItem::ResourceSizeOfType)) if args.is_empty() => {
                     substitutions.type_at(0)
                 }
-                Some(VerusItem::Spec(SpecItem::MemoryBudgetValue)) if args.len() == 1 => {
+                Some(VerusItem::Spec(
+                    SpecItem::ResourceSizeOfValue | SpecItem::ResourcePeakMem,
+                )) if args.len() == 1 => {
                     let ExprKind::AddrOf(_, _, value) = args[0].kind else {
-                        return err_span(expr.span, "expected a borrowed memory_budget argument");
+                        return err_span(expr.span, "expected a borrowed resource query argument");
                     };
                     if !matches!(value.kind, ExprKind::Path(_)) {
                         return err_span(
                             value.span,
-                            "memory_budget expects a parameter or function name, not an evaluated expression",
+                            "resource queries expect a parameter or function name, not an evaluated expression",
                         );
                     }
                     let typ = substitutions.type_at(0);
-                    if let TyKind::FnDef(_, fn_args) = typ.kind() {
+                    if matches!(item, Some(VerusItem::Spec(SpecItem::ResourcePeakMem))) {
+                        let TyKind::FnDef(_, fn_args) = typ.kind() else {
+                            return err_span(
+                                value.span,
+                                "peakmem expects a function with a declared resource contract",
+                            );
+                        };
                         if !crate::rust_to_vir_base::fn_def_args(*fn_args, value.span)?.is_empty() {
                             return err_span(
                                 value.span,
@@ -75,7 +83,7 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
                 _ => {
                     return err_span(
                         expr.span,
-                        "only memory_budget calls are allowed in resource budgets",
+                        "only sizeof and peakmem queries are allowed in resource budgets",
                     );
                 }
             };

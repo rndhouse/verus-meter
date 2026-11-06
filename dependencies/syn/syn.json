@@ -6308,6 +6308,81 @@
       }
     },
     {
+      "ident": "ResourceExpr",
+      "features": {
+        "any": []
+      },
+      "variants": {
+        "Literal": [
+          {
+            "syn": "LitInt"
+          }
+        ],
+        "Paren": [
+          {
+            "group": "Paren"
+          },
+          {
+            "box": {
+              "syn": "ResourceExpr"
+            }
+          }
+        ],
+        "Add": [
+          {
+            "box": {
+              "syn": "ResourceExpr"
+            }
+          },
+          {
+            "token": "Plus"
+          },
+          {
+            "box": {
+              "syn": "ResourceExpr"
+            }
+          }
+        ],
+        "Mul": [
+          {
+            "box": {
+              "syn": "ResourceExpr"
+            }
+          },
+          {
+            "token": "Star"
+          },
+          {
+            "box": {
+              "syn": "ResourceExpr"
+            }
+          }
+        ],
+        "SizeOf": [
+          {
+            "proc_macro2": "Ident"
+          },
+          {
+            "group": "Paren"
+          },
+          {
+            "syn": "Type"
+          }
+        ],
+        "PeakMem": [
+          {
+            "proc_macro2": "Ident"
+          },
+          {
+            "group": "Paren"
+          },
+          {
+            "syn": "ExprPath"
+          }
+        ]
+      }
+    },
+    {
       "ident": "ReturnPat",
       "features": {
         "any": []
@@ -6615,7 +6690,7 @@
           "token": "Le"
         },
         "budget": {
-          "syn": "Expr"
+          "syn": "ResourceExpr"
         },
         "comma": {
           "option": {

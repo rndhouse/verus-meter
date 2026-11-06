@@ -3132,6 +3132,44 @@ impl Hash for crate::Requires {
     }
 }
 #[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
+impl Hash for crate::ResourceExpr {
+    fn hash<H>(&self, state: &mut H)
+    where
+        H: Hasher,
+    {
+        match self {
+            crate::ResourceExpr::Literal(v0) => {
+                state.write_u8(0u8);
+                v0.hash(state);
+            }
+            crate::ResourceExpr::Paren(_, v1) => {
+                state.write_u8(1u8);
+                v1.hash(state);
+            }
+            crate::ResourceExpr::Add(v0, _, v2) => {
+                state.write_u8(2u8);
+                v0.hash(state);
+                v2.hash(state);
+            }
+            crate::ResourceExpr::Mul(v0, _, v2) => {
+                state.write_u8(3u8);
+                v0.hash(state);
+                v2.hash(state);
+            }
+            crate::ResourceExpr::SizeOf(v0, _, v2) => {
+                state.write_u8(4u8);
+                v0.hash(state);
+                v2.hash(state);
+            }
+            crate::ResourceExpr::PeakMem(v0, _, v2) => {
+                state.write_u8(5u8);
+                v0.hash(state);
+                v2.hash(state);
+            }
+        }
+    }
+}
+#[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
 impl Hash for crate::ReturnPat {
     fn hash<H>(&self, state: &mut H)
     where
