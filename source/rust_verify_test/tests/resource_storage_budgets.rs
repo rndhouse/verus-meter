@@ -157,7 +157,7 @@ test_verify_one_file! {
         proof fn f() {
             let n = verus_builtin::resource_sizeof_type::<u32>();
         }
-    } => Err(err) => assert_vir_error_msg(err, "sizeof and peakmem are only allowed inside a peakmem clause")
+    } => Err(err) => assert_vir_error_msg(err, "sizeof and peakmem are only allowed inside a peakmem clause or checkpoint")
 }
 
 test_verify_one_file! {
@@ -227,7 +227,7 @@ test_verify_one_file! {
         proof fn f() {
             let n = verus_builtin::resource_peakmem(&leaf);
         }
-    } => Err(err) => assert_vir_error_msg(err, "sizeof and peakmem are only allowed inside a peakmem clause")
+    } => Err(err) => assert_vir_error_msg(err, "sizeof and peakmem are only allowed inside a peakmem clause or checkpoint")
 }
 
 test_verify_one_file! {

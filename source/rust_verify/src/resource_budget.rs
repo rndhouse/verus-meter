@@ -1,4 +1,4 @@
-//! Read erased resource headers without evaluating their value arguments.
+//! Read erased resource clauses and checkpoints without evaluating their arguments.
 
 use crate::context::BodyCtxt;
 use crate::util::err_span;
@@ -55,7 +55,7 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
                     if !matches!(value.kind, ExprKind::Path(_)) {
                         return err_span(
                             value.span,
-                            "resource queries expect a parameter or function name, not an evaluated expression",
+                            "resource queries expect a local, parameter, or function name, not an evaluated expression",
                         );
                     }
                     let typ = substitutions.type_at(0);

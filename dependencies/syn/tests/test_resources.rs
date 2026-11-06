@@ -97,3 +97,31 @@ fn peakmem_clause_is_distinct_from_calls_in_other_clauses() {
         assert_eq!(printed, reparsed.to_token_stream().to_string());
     }
 }
+
+#[test]
+fn memory_checkpoints_round_trip_alongside_logical_assertions() {
+    for statement in [
+        "assert(peakmem <= sizeof(local) + peakmem(helper));",
+        "assert(peakmem <= 2 * sizeof([u32; 4]));",
+        "assert(peakmem(local) <= 10);",
+        "assert(true) by { }",
+    ] {
+        let parsed: ItemFn = parse_str(&format!("fn f() {{ {statement} }}")).unwrap();
+        let printed = parsed.clone().to_token_stream().to_string();
+        let reparsed: ItemFn = parse_str(&printed).unwrap();
+        assert_eq!(printed, reparsed.to_token_stream().to_string());
+    }
+}
+
+#[test]
+fn checkpoints_reject_proof_overrides_and_runtime_budgets() {
+    for statement in [
+        "assert(peakmem <= sizeof(x)) by { }",
+        "assert(peakmem <= 0) by(compute)",
+        "assert(peakmem <= x);",
+        "assert(peakmem <= sizeof(make()));",
+        "assert(peakmem <= 4 - 1);",
+    ] {
+        assert!(parse_str::<ItemFn>(&format!("fn f() {{ {statement} }}")).is_err());
+    }
+}

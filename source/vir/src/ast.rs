@@ -1348,6 +1348,8 @@ pub enum ExprX {
     MatchGuardFreeze(Place, Expr),
     /// Turn tracked &A into &B where B has A as a field
     ShrRefStructWrap(Expr, Expr, Typ, Typ, Ident, Ident),
+    /// Checked and erased before export; never a logical assumption.
+    ResourceAssert(crate::resource_storage::BudgetExpr),
 }
 
 #[derive(Debug, Serialize, Deserialize, ToDebugSNode, Clone, Copy)]

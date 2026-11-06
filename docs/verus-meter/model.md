@@ -83,6 +83,52 @@ Calls with generic/dynamic targets, imported callees, and recursive call graphs
 are also rejected. Supporting a construct in Verus does not automatically give
 it a resource rule.
 
+## Memory checkpoints
+
+Inside an annotated executable function, `assert(peakmem <= bound)` checks the
+highest modelled memory use from that function's entry to the assertion. The
+bound uses the same `sizeof`, `peakmem(function)`, and checked arithmetic as the
+function contract. At a checkpoint, `sizeof` can also name a local in scope;
+the query uses only its type, even if the value is moved or uninitialized.
+
+```rust
+fn example()
+    peakmem <= 2 * sizeof([u32; 4]),
+{
+    let original = [1u32, 2, 3, 4];
+    assert(peakmem <= sizeof(original));
+    {
+        let copy = original;
+        assert(peakmem <= sizeof(original) + sizeof(copy));
+    }
+    assert(peakmem <= 2 * sizeof(original));
+}
+```
+
+The [checkpoint example](../../examples/resource_checkpoints.rs) illustrates
+these rules:
+
+- Completed scopes and calls remain part of the peak. A checkpoint neither
+  resets history nor replaces the whole-function contract.
+- A branch's checkpoint includes the common prefix and that branch. After the
+  branches join, the larger peak contributes to subsequent checkpoints.
+- A loop checkpoint must cover any iteration, including peaks from earlier
+  complete iterations. The checker includes the full iteration's peak in every
+  checkpoint inside it, including nested loops. It does not use logical proofs
+  to establish that a loop runs only once or that a branch is unreachable.
+- Later operations outside an enclosing loop do not affect an earlier checkpoint.
+
+Checkpoints require an existing function-level contract and an executable
+location. They cannot appear in proof blocks or external bodies, or use `by`
+proofs to override memory accounting. They introduce no runtime storage and no
+logical assumption: successful checkpoints are erased only after resource
+checking. Ordinary assertions retain their normal Verus meaning.
+
+The [failing checkpoint example](../../examples/expected-failures/resource_checkpoint.rs)
+allows both arrays in its function contract but asserts room for just one at the
+checkpoint. Verus rejects the assertion with `peak 32 bytes exceeds bound 16 bytes`
+and also identifies the allocation that established the peak.
+
 ## Sizes
 
 | Value | Model bytes |
@@ -281,6 +327,9 @@ builtin; typed Rust-to-VIR lowering resolves query arguments without evaluating
 them, and header extraction stores the budget expression in function attributes. The checker
 runs once local functions have passed mode checking, before resolution inference
 or AST simplification rewrites temporary places, and before exporting the crate.
+Body checkpoints have a dedicated VIR node retained through mode checking.
+The checker validates their path prefixes and loop histories, then erases them
+before export; they never become assumptions in functional proofs.
 
 It computes structural bounds directly using checked arithmetic, without an SMT
 counter or reliance on user assertions. Standalone aggregate expressions leave
@@ -309,12 +358,12 @@ responsibility:
 
 | File | Responsibility |
 | --- | --- |
-| [mod.rs](../../source/vir/src/resource_storage/mod.rs) | Crate orchestration and call-cycle rejection |
+| [mod.rs](../../source/vir/src/resource_storage/mod.rs) | Crate orchestration, call-cycle rejection, and erasure of checked checkpoints |
 | [model.rs](../../source/vir/src/resource_storage/model.rs) | Model identity, word size, supported arithmetic and function eligibility |
 | [budget.rs](../../source/vir/src/resource_storage/budget.rs) | Checked budget arithmetic, resolved function references, and budget-cycle rejection |
 | [layout.rs](../../source/vir/src/resource_storage/layout.rs) | Type sizes, concrete struct eligibility, field layouts and recursive layout checks |
 | [accounting.rs](../../source/vir/src/resource_storage/accounting.rs) | Private live/peak state, checked reservations/releases, trace events, budget diagnostics |
-| [analysis.rs](../../source/vir/src/resource_storage/analysis.rs) | Function entry, expression traversal, lexical scopes and control flow |
+| [analysis.rs](../../source/vir/src/resource_storage/analysis.rs) | Function entry, lexical scopes, branch/loop histories, and checkpoint checking |
 | [places.rs](../../source/vir/src/resource_storage/places.rs) | Source-place validation, reads and borrows |
 | [construction.rs](../../source/vir/src/resource_storage/construction.rs) | Aggregate destinations, nested construction, copies and moves |
 | [calls.rs](../../source/vir/src/resource_storage/calls.rs) | Argument handoff, callee budgets and intrinsic evaluation |
@@ -333,6 +382,8 @@ Rust-to-VIR lowering. The checker has no dependency on rustc internals.
 | [Complete call chain](../../examples/resource_calls.rs) | 76: a 32-byte local array plus the sorter's 44 |
 | [Struct field sorting](../../examples/resource_structs.rs) | 85: a 33-byte struct plus its helper's 52 |
 | [Keeping an array copy (expected failure)](../../examples/expected-failures/resource_array_copy.rs) | Rejected: peak 32 exceeds the declared budget of 16 |
+| [Memory checkpoints](../../examples/resource_checkpoints.rs) | 32, with checkpoints before, during, and after copying |
+| [Tighter checkpoint (expected failure)](../../examples/expected-failures/resource_checkpoint.rs) | Function budget 32 fits; checkpoint bound 16 fails |
 
 Use the development environment in [setup.md](setup.md). From `source`:
 
@@ -340,11 +391,11 @@ Use the development environment in [setup.md](setup.md). From `source`:
 cargo build --release -p rust_verify
 VERUS_Z3_PATH="$PWD/z3" ./target-verus/release/verus ../examples/resource_calls.rs --trace --compile -o target-verus/resource-calls
 ./target-verus/resource-calls
-cargo test --release -p rust_verify_test --test resource_storage --test resource_storage_slices --test resource_storage_calls --test resource_storage_structs --test resource_storage_budgets --test resource_storage_initialization --test resource_storage_model
+cargo test --release -p rust_verify_test --test resource_storage --test resource_storage_slices --test resource_storage_calls --test resource_storage_structs --test resource_storage_budgets --test resource_storage_initialization --test resource_storage_model --test resource_checkpoints --test resource_array_copy
 ```
 
 The integration suites are grouped into basic storage, slices/arithmetic,
-call composition, structs, symbolic budgets, and aggregate initialization.
+call composition, structs, symbolic budgets, aggregate initialization, and checkpoints.
 Build the verifier before testing: the test harness invokes the existing executable. Representation changes also require the installed
 verifier/vstd rebuild from the setup instructions.
 
@@ -506,3 +557,25 @@ storage-accounting rules.
 - All ten example-runner tests matching `resource_` passed. The four passing
   project examples also verified, compiled, and ran directly. The array-copy
   example still reports a 32-byte peak against its 16-byte budget at the copy.
+
+## Memory checkpoint validation (v5)
+
+Checkpoints add checks at individual program locations without changing the
+source storage costs or whole-function bounds.
+
+- The release workspace and installed verifier built successfully. A fresh
+  vstd build reported 2,226 verified and zero errors.
+- All 222 resource tests passed, including 25 checkpoint tests. These cover
+  local type queries, scopes, completed calls, branch separation and joins,
+  previous loop iterations, nested loops, arithmetic overflow, and diagnostics
+  at the assertion. They also check that checkpoints cannot replace contracts,
+  prove unrelated logical claims, or disappear into unchecked proof code.
+- All eight resource parser tests passed, including logical-assertion round
+  trips and rejection of checkpoint proof overrides.
+- 1,076 selected upstream tests passed, with eight upstream-ignored tests: the
+  14 suites listed under struct validation plus `assert_by_compute`,
+  `assert_forall_by`, `assert_bitvector_by`, and `syntax_attr`. The complete
+  upstream suite was not run.
+- All 12 example-runner tests matching `resource_` passed. All five passing
+  project examples also verified, compiled, and ran directly. Both expected
+  failures were rejected at their documented locations.

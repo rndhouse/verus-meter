@@ -56,6 +56,24 @@ impl Hash for crate::Assert {
     }
 }
 #[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
+impl Hash for crate::AssertExpr {
+    fn hash<H>(&self, state: &mut H)
+    where
+        H: Hasher,
+    {
+        match self {
+            crate::AssertExpr::Logical(v0) => {
+                state.write_u8(0u8);
+                v0.hash(state);
+            }
+            crate::AssertExpr::PeakMem(v0) => {
+                state.write_u8(1u8);
+                v0.hash(state);
+            }
+        }
+    }
+}
+#[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
 impl Hash for crate::AssertForall {
     fn hash<H>(&self, state: &mut H)
     where

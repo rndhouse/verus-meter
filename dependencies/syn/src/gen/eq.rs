@@ -47,6 +47,22 @@ impl PartialEq for crate::Assert {
     }
 }
 #[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
+impl Eq for crate::AssertExpr {}
+#[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
+impl PartialEq for crate::AssertExpr {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (crate::AssertExpr::Logical(self0), crate::AssertExpr::Logical(other0)) => {
+                self0 == other0
+            }
+            (crate::AssertExpr::PeakMem(self0), crate::AssertExpr::PeakMem(other0)) => {
+                self0 == other0
+            }
+            _ => false,
+        }
+    }
+}
+#[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
 impl Eq for crate::AssertForall {}
 #[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
 impl PartialEq for crate::AssertForall {

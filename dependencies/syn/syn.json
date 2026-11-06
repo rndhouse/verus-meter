@@ -113,9 +113,7 @@
           "group": "Paren"
         },
         "expr": {
-          "box": {
-            "syn": "Expr"
-          }
+          "syn": "AssertExpr"
         },
         "by_token": {
           "option": {
@@ -146,6 +144,28 @@
             }
           }
         }
+      }
+    },
+    {
+      "ident": "AssertExpr",
+      "features": {
+        "any": []
+      },
+      "variants": {
+        "Logical": [
+          {
+            "box": {
+              "syn": "Expr"
+            }
+          }
+        ],
+        "PeakMem": [
+          {
+            "box": {
+              "syn": "SignatureResources"
+            }
+          }
+        ]
       }
     },
     {

@@ -54,6 +54,15 @@ impl Clone for crate::Assert {
     }
 }
 #[cfg_attr(docsrs, doc(cfg(feature = "clone-impls")))]
+impl Clone for crate::AssertExpr {
+    fn clone(&self) -> Self {
+        match self {
+            crate::AssertExpr::Logical(v0) => crate::AssertExpr::Logical(v0.clone()),
+            crate::AssertExpr::PeakMem(v0) => crate::AssertExpr::PeakMem(v0.clone()),
+        }
+    }
+}
+#[cfg_attr(docsrs, doc(cfg(feature = "clone-impls")))]
 impl Clone for crate::AssertForall {
     fn clone(&self) -> Self {
         crate::AssertForall {

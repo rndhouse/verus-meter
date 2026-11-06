@@ -61,6 +61,24 @@ impl Debug for crate::Assert {
     }
 }
 #[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
+impl Debug for crate::AssertExpr {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("AssertExpr::")?;
+        match self {
+            crate::AssertExpr::Logical(v0) => {
+                let mut formatter = formatter.debug_tuple("Logical");
+                formatter.field(v0);
+                formatter.finish()
+            }
+            crate::AssertExpr::PeakMem(v0) => {
+                let mut formatter = formatter.debug_tuple("PeakMem");
+                formatter.field(v0);
+                formatter.finish()
+            }
+        }
+    }
+}
+#[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
 impl Debug for crate::AssertForall {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         let mut formatter = formatter.debug_struct("AssertForall");

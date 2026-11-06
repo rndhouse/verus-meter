@@ -50,6 +50,9 @@ pub trait Fold {
     fn fold_assert(&mut self, i: crate::Assert) -> crate::Assert {
         fold_assert(self, i)
     }
+    fn fold_assert_expr(&mut self, i: crate::AssertExpr) -> crate::AssertExpr {
+        fold_assert_expr(self, i)
+    }
     fn fold_assert_forall(&mut self, i: crate::AssertForall) -> crate::AssertForall {
         fold_assert_forall(self, i)
     }
@@ -1403,11 +1406,24 @@ where
         attrs: f.fold_attributes(node.attrs),
         assert_token: node.assert_token,
         paren_token: node.paren_token,
-        expr: Box::new(f.fold_expr(*node.expr)),
+        expr: f.fold_assert_expr(node.expr),
         by_token: node.by_token,
         prover: (node.prover).map(|it| ((it).0, f.fold_ident((it).1))),
         requires: (node.requires).map(|it| f.fold_requires(it)),
         body: (node.body).map(|it| Box::new(full!(f.fold_block(* it)))),
+    }
+}
+pub fn fold_assert_expr<F>(f: &mut F, node: crate::AssertExpr) -> crate::AssertExpr
+where
+    F: Fold + ?Sized,
+{
+    match node {
+        crate::AssertExpr::Logical(_binding_0) => {
+            crate::AssertExpr::Logical(Box::new(f.fold_expr(*_binding_0)))
+        }
+        crate::AssertExpr::PeakMem(_binding_0) => {
+            crate::AssertExpr::PeakMem(Box::new(f.fold_signature_resources(*_binding_0)))
+        }
     }
 }
 pub fn fold_assert_forall<F>(f: &mut F, node: crate::AssertForall) -> crate::AssertForall

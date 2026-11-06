@@ -110,6 +110,8 @@ pub(crate) struct Visitor {
     inside_impl: Option<Box<(Generics, Box<Type>)>>,
     // A place to put items that are emitted while visiting
     additional_items: Vec<Item>,
+    // Names visible to sizeof at a memory checkpoint.
+    resource_bindings: Vec<Ident>,
 }
 
 // For exec "let pat = init" declarations, recursively find Tracked(x), Ghost(x), x in pat
@@ -3427,6 +3429,22 @@ impl Visitor {
             return false;
         };
 
+        if matches!(expr, Expr::Assert(a) if matches!(a.expr, verus_syn::AssertExpr::PeakMem(_))) {
+            let Expr::Assert(assert) = take_expr(expr) else { unreachable!() };
+            let verus_syn::AssertExpr::PeakMem(resource) = assert.expr else { unreachable!() };
+            let span = assert.assert_token.span;
+            let attrs = assert.attrs;
+            *expr = if self.inside_ghost > 0 || self.inside_external_code > 0 || self.inside_const {
+                quote_verbatim!(span, attrs => ::core::compile_error!("peakmem checkpoints require a verified exec function body"))
+            } else if self.erase_ghost.erase() {
+                quote_verbatim!(span, attrs => ())
+            } else {
+                let budget = lower_memory_budget(&resource.budget, &self.resource_bindings);
+                quote_verbatim!(builtin, span, attrs => #builtin::resource_assert_peakmem(#budget))
+            };
+            return true;
+        }
+
         if self.rustdoc && self.inside_const {
             let Expr::Assert(assert) = take_expr(expr) else { unreachable!() };
             let span = assert.assert_token.span;
@@ -3443,7 +3461,8 @@ impl Visitor {
 
         let span = assert.assert_token.span;
         let (proof_note_attrs, attrs) = split_off_proof_note_attrs(assert.attrs);
-        let arg = Box::new(wrap_expr_with_attrs(*assert.expr, proof_note_attrs));
+        let verus_syn::AssertExpr::Logical(condition) = assert.expr else { unreachable!() };
+        let arg = Box::new(wrap_expr_with_attrs(*condition, proof_note_attrs));
 
         if let Some(prover) = &assert.prover {
             let prover_id = prover.1.to_string();
@@ -4874,9 +4893,17 @@ impl VisitMut for Visitor {
             local.attrs.push(mk_verus_attr(ghost.span, quote! { spec }));
         }
         visit_local_mut(self, local);
+        let pat = match &local.pat {
+            Pat::Type(pat) => &*pat.pat,
+            pat => pat,
+        };
+        if let Pat::Ident(pat) = pat {
+            self.resource_bindings.push(pat.ident.clone());
+        }
     }
 
     fn visit_block_mut(&mut self, block: &mut Block) {
+        let resource_scope = self.resource_bindings.len();
         fn visit_items_in_block(stmts: &mut Vec<Stmt>, mut f: impl FnMut(&mut Vec<Item>)) {
             let block_stmts = std::mem::replace(stmts, vec![]);
             for stmt in block_stmts {
@@ -4937,6 +4964,7 @@ impl VisitMut for Visitor {
         if has_pre_post_items {
             visit_items_in_block(&mut block.stmts, |items| self.visit_items_post(items));
         }
+        self.resource_bindings.truncate(resource_scope);
     }
 
     fn visit_type_param_mut(&mut self, p: &mut verus_syn::TypeParam) {
@@ -4966,7 +4994,14 @@ impl VisitMut for Visitor {
         if is_external_code {
             self.inside_external_code += 1;
         }
+        let outer_bindings = std::mem::take(&mut self.resource_bindings);
+        self.resource_bindings = verus_inputs_to_tokens(&fun.sig.inputs)
+            .1
+            .into_iter()
+            .filter_map(|t| if let TokenTree::Ident(id) = t { Some(id) } else { None })
+            .collect();
         visit_item_fn_mut(self, fun);
+        self.resource_bindings = outer_bindings;
         if is_external_code {
             self.inside_external_code -= 1;
         }
@@ -5655,6 +5690,7 @@ pub(crate) fn rewrite_items_inner(
         rustdoc: env_rustdoc(),
         inside_impl: None,
         additional_items: Vec::new(),
+        resource_bindings: Vec::new(),
     };
     visitor.visit_items_prefilter(items);
     let mut index = 0;
@@ -5697,6 +5733,7 @@ pub(crate) fn rewrite_impl_items(
         rustdoc: env_rustdoc(),
         inside_impl: None,
         additional_items: Vec::new(),
+        resource_bindings: Vec::new(),
     };
     visitor.visit_impl_items_prefilter(&mut items.items, for_trait);
     for mut item in &mut items.items {
@@ -5733,6 +5770,7 @@ pub(crate) fn rewrite_expr(
         rustdoc: env_rustdoc(),
         inside_impl: None,
         additional_items: Vec::new(),
+        resource_bindings: Vec::new(),
     };
     visitor.visit_expr_mut(&mut expr);
     expr.to_tokens(&mut new_stream);
@@ -5767,6 +5805,7 @@ pub(crate) fn rewrite_proof_decl(
         rustdoc: env_rustdoc(),
         inside_impl: None,
         additional_items: Vec::new(),
+        resource_bindings: Vec::new(),
     };
     for mut ss in stmts {
         match ss {
@@ -5823,6 +5862,7 @@ pub(crate) fn rewrite_expr_node(erase_ghost: EraseGhost, inside_ghost: bool, exp
         rustdoc: env_rustdoc(),
         inside_impl: None,
         additional_items: Vec::new(),
+        resource_bindings: Vec::new(),
     };
     visitor.visit_expr_mut(expr);
 }
@@ -6072,6 +6112,7 @@ pub(crate) fn sig_specs_attr(
         rustdoc: env_rustdoc(),
         inside_impl: None,
         additional_items: Vec::new(),
+        resource_bindings: Vec::new(),
     };
 
     if let Some(pat) = &ret_pat {
@@ -6123,6 +6164,7 @@ pub(crate) fn while_loop_spec_attr(
         rustdoc: env_rustdoc(),
         inside_impl: None,
         additional_items: Vec::new(),
+        resource_bindings: Vec::new(),
     };
     let mut spec_attr = spec_attr;
     visitor.visit_loop_spec(&mut spec_attr);
@@ -6158,6 +6200,7 @@ pub(crate) fn for_loop_spec_attr(
         rustdoc: env_rustdoc(),
         inside_impl: None,
         additional_items: Vec::new(),
+        resource_bindings: Vec::new(),
     };
     let mut spec_attr = spec_attr;
     visitor.visit_loop_spec(&mut spec_attr);
@@ -6219,6 +6262,7 @@ pub(crate) fn proof_block(
         rustdoc: env_rustdoc(),
         inside_impl: None,
         additional_items: Vec::new(),
+        resource_bindings: Vec::new(),
     };
     visitor.visit_block_mut(&mut invoke);
     invoke.to_tokens(&mut new_stream);
@@ -6246,6 +6290,7 @@ pub(crate) fn proof_macro_exprs(
         rustdoc: env_rustdoc(),
         inside_impl: None,
         additional_items: Vec::new(),
+        resource_bindings: Vec::new(),
     };
     for element in &mut invoke.elements.elements {
         match element {
@@ -6279,6 +6324,7 @@ pub(crate) fn inv_au_macro_exprs(
         rustdoc: env_rustdoc(),
         inside_impl: None,
         additional_items: Vec::new(),
+        resource_bindings: Vec::new(),
     };
 
     invoke
@@ -6323,6 +6369,7 @@ pub(crate) fn proof_macro_explicit_exprs(
         rustdoc: env_rustdoc(),
         inside_impl: None,
         additional_items: Vec::new(),
+        resource_bindings: Vec::new(),
     };
     for element in &mut invoke.elements.elements {
         match element {

@@ -273,6 +273,7 @@ fn outer_reason_by_expr_kind(e: &Expr) -> Option<OuterProphReason> {
             | ExprX::AssertBy { .. }
             | ExprX::AssertQuery { .. }
             | ExprX::AssertCompute { .. }
+            | ExprX::ResourceAssert(_)
             | ExprX::If(..)
             | ExprX::Match(..)
             | ExprX::Ghost { .. }
@@ -2762,6 +2763,12 @@ fn check_expr(
         }
         ExprX::AssertAssumeUserDefinedTypeInvariant { .. } => {
             panic!("internal error: AssertAssumeUserDefinedTypeInvariant shouldn't exist here")
+        }
+        ExprX::ResourceAssert(_) => {
+            if typing.block_ghostness != Ghost::Exec || outer_mode != Mode::Exec {
+                return Err(error(&expr.span, "peakmem checkpoints require an exec function body"));
+            }
+            Ok((Mode::Exec, Proph::No))
         }
         ExprX::AssertAssume { is_assume: _, expr: e, msg: _ } => {
             if ctxt.check_ghost_blocks && typing.block_ghostness == Ghost::Exec {

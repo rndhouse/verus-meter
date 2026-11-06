@@ -121,6 +121,26 @@ impl Debug for Lite<syn::Assert> {
         formatter.finish()
     }
 }
+impl Debug for Lite<syn::AssertExpr> {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        match &self.value {
+            syn::AssertExpr::Logical(_val) => {
+                formatter.write_str("AssertExpr::Logical")?;
+                formatter.write_str("(")?;
+                Debug::fmt(Lite(_val), formatter)?;
+                formatter.write_str(")")?;
+                Ok(())
+            }
+            syn::AssertExpr::PeakMem(_val) => {
+                formatter.write_str("AssertExpr::PeakMem")?;
+                formatter.write_str("(")?;
+                Debug::fmt(Lite(_val), formatter)?;
+                formatter.write_str(")")?;
+                Ok(())
+            }
+        }
+    }
+}
 impl Debug for Lite<syn::AssertForall> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         let mut formatter = formatter.debug_struct("AssertForall");

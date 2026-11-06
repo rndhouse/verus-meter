@@ -50,6 +50,9 @@ pub trait VisitMut {
     fn visit_assert_mut(&mut self, i: &mut crate::Assert) {
         visit_assert_mut(self, i);
     }
+    fn visit_assert_expr_mut(&mut self, i: &mut crate::AssertExpr) {
+        visit_assert_expr_mut(self, i);
+    }
     fn visit_assert_forall_mut(&mut self, i: &mut crate::AssertForall) {
         visit_assert_forall_mut(self, i);
     }
@@ -1264,7 +1267,7 @@ where
     v.visit_attributes_mut(&mut node.attrs);
     skip!(node.assert_token);
     skip!(node.paren_token);
-    v.visit_expr_mut(&mut *node.expr);
+    v.visit_assert_expr_mut(&mut node.expr);
     skip!(node.by_token);
     if let Some(it) = &mut node.prover {
         skip!((it).0);
@@ -1275,6 +1278,19 @@ where
     }
     if let Some(it) = &mut node.body {
         full!(v.visit_block_mut(& mut * * it));
+    }
+}
+pub fn visit_assert_expr_mut<V>(v: &mut V, node: &mut crate::AssertExpr)
+where
+    V: VisitMut + ?Sized,
+{
+    match node {
+        crate::AssertExpr::Logical(_binding_0) => {
+            v.visit_expr_mut(&mut **_binding_0);
+        }
+        crate::AssertExpr::PeakMem(_binding_0) => {
+            v.visit_signature_resources_mut(&mut **_binding_0);
+        }
     }
 }
 pub fn visit_assert_forall_mut<V>(v: &mut V, node: &mut crate::AssertForall)

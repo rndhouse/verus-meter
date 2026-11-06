@@ -556,8 +556,8 @@ mod whitespace;
 mod verus;
 pub use crate::verus::rejoin_tokens;
 pub use crate::verus::{
-    Assert, AssertForall, Assume, AssumeSpecification, AtomicSpec, AtomicallyBlock, BigAnd,
-    BigAndExpr, BigOr, BigOrExpr, BroadcastUse, Closed, ClosureArg, DataMode, Decreases,
+    Assert, AssertExpr, AssertForall, Assume, AssumeSpecification, AtomicSpec, AtomicallyBlock,
+    BigAnd, BigAndExpr, BigOr, BigOrExpr, BroadcastUse, Closed, ClosureArg, DataMode, Decreases,
     DefaultEnsures, Ensures, ExprFinal, ExprGetField, ExprHas, ExprHasNot, ExprIs, ExprIsNot,
     ExprMatches, FnMode, FnProofArg, FnProofOptions, Global, GlobalInner, GlobalLayout,
     GlobalSizeOf, InnerMask, Invariant, InvariantEnsures, InvariantExceptBreak, InvariantNameSet,

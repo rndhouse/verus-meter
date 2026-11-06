@@ -98,3 +98,14 @@ pub(super) fn resolve(
     }
     Ok(resolver.resolved)
 }
+
+/// Checkpoint formulas refer to already resolved function contracts. Their
+/// references do not add executable calls or introduce new contract cycles.
+pub(super) fn evaluate_checkpoint(
+    expr: &BudgetExpr,
+    budgets: &HashMap<Fun, u64>,
+    functions: &HashMap<Fun, Function>,
+    layouts: &Layouts,
+) -> Result<u64, VirErr> {
+    Resolver { functions, layouts, resolved: budgets.clone(), visiting: HashSet::new() }.expr(expr)
+}

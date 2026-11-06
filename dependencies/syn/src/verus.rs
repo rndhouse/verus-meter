@@ -361,12 +361,20 @@ ast_struct! {
         pub attrs: Vec<Attribute>,
         pub assert_token: Token![assert],
         pub paren_token: token::Paren,
-        pub expr: Box<Expr>,
+        pub expr: AssertExpr,
         /// by_token is only used if prover and/or body is Some
         pub by_token: Option<Token![by]>,
         pub prover: Option<(token::Paren, Ident)>,
         pub requires: Option<Requires>,
         pub body: Option<Box<Block>>,
+    }
+}
+
+ast_enum! {
+    /// Logical assertions and memory checkpoints use different expression languages.
+    pub enum AssertExpr {
+        Logical(Box<Expr>),
+        PeakMem(Box<SignatureResources>),
     }
 }
 
@@ -1598,11 +1606,20 @@ pub mod parsing {
             let assert_token: Token![assert] = input.parse()?;
             let content;
             let paren_token = parenthesized!(content in input);
-            let expr = content.parse()?;
+            let expr = if content.peek(Token![peakmem]) && content.peek2(Token![<=]) {
+                AssertExpr::PeakMem(Box::new(
+                    content.parse::<Option<SignatureResources>>()?.unwrap(),
+                ))
+            } else {
+                AssertExpr::Logical(content.parse()?)
+            };
             if !content.is_empty() {
                 return Err(content.error("expected `)`"));
             }
             if input.peek(Token![by]) {
+                if matches!(expr, AssertExpr::PeakMem(_)) {
+                    return Err(input.error("peakmem checkpoints do not support by proofs"));
+                }
                 let by_token = input.parse()?;
                 let prover = if input.peek(token::Paren) {
                     let content;
@@ -2562,6 +2579,15 @@ mod printing {
             self.paren_token.surround(tokens, |tokens| {
                 self.expr.to_tokens(tokens);
             });
+        }
+    }
+
+    impl ToTokens for AssertExpr {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            match self {
+                AssertExpr::Logical(expr) => expr.to_tokens(tokens),
+                AssertExpr::PeakMem(resource) => resource.to_tokens(tokens),
+            }
         }
     }
 

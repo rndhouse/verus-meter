@@ -1,16 +1,22 @@
 //! Function entry and structural traversal of executable expressions/scopes.
 
-use super::accounting::{Accounting, StorageReport};
+use super::accounting::{Accounting, Peak, StorageReport};
 use super::layout::Layouts;
 use super::model::{arithmetic, eligible, unit, unsupported};
 use crate::ast::*;
-use crate::messages::Span;
+use crate::messages::{Span, error};
 use crate::resolution_inference::ResolutionInfo;
 use std::collections::HashMap;
 
 pub(super) struct FunctionAnalysis {
     pub(super) report: StorageReport,
     pub(super) calls: Vec<(Fun, Span)>,
+}
+
+struct Checkpoint {
+    span: Span,
+    budget: u64,
+    peak: Peak,
 }
 
 pub(super) struct Analysis<'a> {
@@ -20,6 +26,7 @@ pub(super) struct Analysis<'a> {
     pub(super) var_modes: HashMap<VarIdent, Mode>,
     pub(super) storage: Accounting,
     pub(super) calls: Vec<(Fun, Span)>,
+    checkpoints: Vec<Checkpoint>,
 }
 
 impl Analysis<'_> {
@@ -96,6 +103,20 @@ impl Analysis<'_> {
         }
         let mut operands = 0u64;
         match &expr.x {
+            ExprX::ResourceAssert(budget) => {
+                let budget = super::budget::evaluate_checkpoint(
+                    budget,
+                    self.budgets,
+                    self.functions,
+                    self.layouts,
+                )?;
+                self.checkpoints.push(Checkpoint {
+                    span: expr.span.clone(),
+                    budget,
+                    peak: self.storage.peak(),
+                });
+                return Ok(0);
+            }
             ExprX::Ghost { alloc_wrapper: false, .. }
             | ExprX::AssertAssume { .. }
             | ExprX::AssertBy { .. }
@@ -168,12 +189,18 @@ impl Analysis<'_> {
             }
             ExprX::If(cond, then_expr, else_expr) if unit(&expr.typ) => {
                 self.discard(cond)?;
+                let prefix_peak = self.storage.peak();
                 self.storage.event(&expr.span, "analyze then alternative".into());
                 self.discard(then_expr)?;
+                let mut joined_peak = self.storage.peak();
+                // A checkpoint in one alternative cannot have visited its sibling.
+                self.storage.set_peak(prefix_peak);
                 if let Some(else_expr) = else_expr {
                     self.storage.event(&expr.span, "analyze else alternative".into());
                     self.discard(else_expr)?;
                 }
+                joined_peak.merge(&self.storage.peak());
+                self.storage.set_peak(joined_peak);
                 return Ok(0);
             }
             ExprX::Loop {
@@ -185,10 +212,18 @@ impl Analysis<'_> {
                 ..
             } if unit(&expr.typ) => {
                 let entry = self.storage.live();
+                let first_checkpoint = self.checkpoints.len();
                 self.storage.event(&expr.span, "analyze reusable while iteration".into());
                 self.discard(cond)?;
                 self.discard(body)?;
                 assert_eq!(self.storage.live(), entry);
+                // Every checkpoint may be reached after a previous complete
+                // iteration. With reusable storage, one iteration's maximum is
+                // the fixed point, including any nested loops or alternatives.
+                let iteration_peak = self.storage.peak();
+                for checkpoint in &mut self.checkpoints[first_checkpoint..] {
+                    checkpoint.peak.merge(&iteration_peak);
+                }
                 return Ok(0);
             }
             _ => {
@@ -216,6 +251,18 @@ pub(super) fn check(
     budgets: &HashMap<Fun, u64>,
 ) -> Result<Option<FunctionAnalysis>, VirErr> {
     let Some(&budget) = budgets.get(&function.x.name) else {
+        if let Some(body) = &function.x.body {
+            crate::ast_visitor::expr_visitor_check(body, &mut |_, expr| {
+                if matches!(expr.x, ExprX::ResourceAssert(_)) {
+                    Err(error(
+                        &expr.span,
+                        "peakmem checkpoints require a function-level peakmem contract",
+                    ))
+                } else {
+                    Ok(())
+                }
+            })?;
+        }
         return Ok(None);
     };
     let f = &function.x;
@@ -234,6 +281,7 @@ pub(super) fn check(
         var_modes: modes.var_modes.clone(),
         storage: Accounting::new(&function.span, budget),
         calls: Vec::new(),
+        checkpoints: Vec::new(),
     };
     for param in f.params.iter() {
         analysis.var_modes.insert(param.x.name.clone(), param.x.mode);
@@ -243,6 +291,18 @@ pub(super) fn check(
         }
     }
     analysis.discard(body)?;
+    for checkpoint in &analysis.checkpoints {
+        if checkpoint.peak.bytes > checkpoint.budget {
+            return Err(error(
+                &checkpoint.span,
+                format!(
+                    "peakmem assertion failed: peak {} bytes exceeds bound {} bytes",
+                    checkpoint.peak.bytes, checkpoint.budget,
+                ),
+            )
+            .secondary_span(&checkpoint.peak.span));
+        }
+    }
     let report = analysis.storage.finish(&function.span)?;
     Ok(Some(FunctionAnalysis { report, calls: analysis.calls }))
 }

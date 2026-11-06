@@ -72,3 +72,29 @@ pub fn check_crate(
     }
     Ok(reports.into_iter().map(|(f, checked)| (f.span.clone(), checked.report)).collect())
 }
+
+/// Erase checkpoints only after the entire crate's storage checks succeed.
+/// They cannot be exported as unchecked claims or become logical assumptions.
+pub fn erase_checkpoints(functions: &mut [Function]) -> Result<(), VirErr> {
+    for function in functions {
+        // Unannotated functions were checked for forbidden checkpoints above.
+        if function.x.attrs.resource_contract.is_none() {
+            continue;
+        }
+        if let Some(body) = &function.x.body {
+            let body = crate::ast_visitor::map_expr_visitor(body, &|expr| {
+                if matches!(expr.x, ExprX::ResourceAssert(_)) {
+                    Ok(SpannedTyped::new(
+                        &expr.span,
+                        &expr.typ,
+                        ExprX::Block(Arc::new(vec![]), None),
+                    ))
+                } else {
+                    Ok(expr.clone())
+                }
+            })?;
+            Arc::make_mut(function).x.body = Some(body);
+        }
+    }
+    Ok(())
+}

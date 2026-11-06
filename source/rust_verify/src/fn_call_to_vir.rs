@@ -639,6 +639,7 @@ fn verus_item_to_vir<'tcx, 'a>(
                     | SpecItem::ResourceSizeOfValue
                     | SpecItem::ResourceSizeOfType
                     | SpecItem::ResourcePeakMem
+                    | SpecItem::ResourceAssertPeakMem
                     | SpecItem::Recommends
                     | SpecItem::DecreasesWhen
                     | SpecItem::DecreasesBy
@@ -909,11 +910,27 @@ fn verus_item_to_vir<'tcx, 'a>(
                     let budget = crate::resource_budget::lower(bctx, args[0])?;
                     mk_expr(ExprX::Header(Arc::new(HeaderExprX::LocalStorageBudget(budget))))
                 }
+                SpecItem::ResourceAssertPeakMem => {
+                    if bctx.in_ghost {
+                        return err_span(
+                            expr.span,
+                            "peakmem checkpoints require an exec function body",
+                        );
+                    }
+                    record_spec_fn_pure_args_only(bctx, expr);
+                    internal_err_unless!(
+                        args_len == 1,
+                        expr.span,
+                        "expected one checkpoint budget"
+                    );
+                    let budget = crate::resource_budget::lower(bctx, args[0])?;
+                    mk_expr(ExprX::ResourceAssert(budget))
+                }
                 SpecItem::ResourceSizeOfValue
                 | SpecItem::ResourceSizeOfType
                 | SpecItem::ResourcePeakMem => err_span(
                     expr.span,
-                    "sizeof and peakmem are only allowed inside a peakmem clause",
+                    "sizeof and peakmem are only allowed inside a peakmem clause or checkpoint",
                 ),
                 SpecItem::NoUnwind => {
                     record_spec_fn_pure_args_only(bctx, expr);

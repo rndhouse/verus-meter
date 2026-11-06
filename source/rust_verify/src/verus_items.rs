@@ -114,6 +114,7 @@ pub(crate) enum SpecItem {
     ResourceSizeOfValue,
     ResourceSizeOfType,
     ResourcePeakMem,
+    ResourceAssertPeakMem,
     NoUnwind,
     NoUnwindWhen,
 }
@@ -535,6 +536,7 @@ fn verus_items_map() -> Vec<(&'static str, VerusItem)> {
         ("verus::verus_builtin::resource_sizeof_value", VerusItem::Spec(SpecItem::ResourceSizeOfValue)),
         ("verus::verus_builtin::resource_sizeof_type", VerusItem::Spec(SpecItem::ResourceSizeOfType)),
         ("verus::verus_builtin::resource_peakmem", VerusItem::Spec(SpecItem::ResourcePeakMem)),
+        ("verus::verus_builtin::resource_assert_peakmem", VerusItem::Spec(SpecItem::ResourceAssertPeakMem)),
         ("verus::verus_builtin::no_unwind",               VerusItem::Spec(SpecItem::NoUnwind)),
         ("verus::verus_builtin::no_unwind_when",          VerusItem::Spec(SpecItem::NoUnwindWhen)),
 

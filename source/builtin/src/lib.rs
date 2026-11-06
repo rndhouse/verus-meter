@@ -178,6 +178,14 @@ pub fn resource_peakmem<F>(_function: &F) -> u64 {
     unimplemented!()
 }
 
+// Erased checkpoint metadata; interpreted by the source storage checker.
+#[cfg(verus_keep_ghost)]
+#[rustc_diagnostic_item = "verus::verus_builtin::resource_assert_peakmem"]
+#[verifier::proof]
+pub fn resource_assert_peakmem(_bytes: u64) {
+    unimplemented!()
+}
+
 #[cfg(verus_keep_ghost)]
 #[rustc_diagnostic_item = "verus::verus_builtin::no_unwind"]
 #[verifier::proof]

@@ -35,6 +35,21 @@ impl StorageReport {
     }
 }
 
+/// A path's high-water mark, including the source that established it.
+#[derive(Clone)]
+pub(super) struct Peak {
+    pub(super) bytes: u64,
+    pub(super) span: Span,
+}
+
+impl Peak {
+    pub(super) fn merge(&mut self, other: &Self) {
+        if other.bytes > self.bytes {
+            *self = other.clone();
+        }
+    }
+}
+
 pub(super) struct Accounting {
     live: u64,
     peak_span: Span,
@@ -52,6 +67,15 @@ impl Accounting {
 
     pub(super) fn live(&self) -> u64 {
         self.live
+    }
+
+    pub(super) fn peak(&self) -> Peak {
+        Peak { bytes: self.report.peak, span: self.peak_span.clone() }
+    }
+
+    pub(super) fn set_peak(&mut self, peak: Peak) {
+        self.report.peak = peak.bytes;
+        self.peak_span = peak.span;
     }
 
     pub(super) fn reserve(&mut self, span: &Span, bytes: u64, reason: &str) -> Result<(), VirErr> {

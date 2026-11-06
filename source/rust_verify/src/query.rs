@@ -592,6 +592,8 @@ impl<'tcx> Query<'tcx> {
             &resource_modes,
         )
         .map_err(|e| self.emit_error(e))?;
+        vir::resource_storage::erase_checkpoints(&mut cratex.functions)
+            .map_err(|e| self.emit_error(e))?;
         if self.args.trace {
             for (span, report) in reports {
                 self.emit_diags(report.diagnostics(&span));
