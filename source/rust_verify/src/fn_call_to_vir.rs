@@ -639,6 +639,7 @@ fn verus_item_to_vir<'tcx, 'a>(
                     | SpecItem::ResourceMemSizeValue
                     | SpecItem::ResourceMemSizeType
                     | SpecItem::ResourceMemPeak
+                    | SpecItem::ResourceMemPeakCall
                     | SpecItem::ResourceAssertMemPeak
                     | SpecItem::ResourceSection
                     | SpecItem::Recommends
@@ -941,7 +942,8 @@ fn verus_item_to_vir<'tcx, 'a>(
                 }
                 SpecItem::ResourceMemSizeValue
                 | SpecItem::ResourceMemSizeType
-                | SpecItem::ResourceMemPeak => err_span(
+                | SpecItem::ResourceMemPeak
+                | SpecItem::ResourceMemPeakCall => err_span(
                     expr.span,
                     "mem_size and mem_peak are only allowed inside a mem_peak clause or checkpoint",
                 ),

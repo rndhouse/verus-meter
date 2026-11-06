@@ -6432,6 +6432,17 @@
             "syn": "ExprPath"
           }
         ],
+        "MemPeakCall": [
+          {
+            "proc_macro2": "Ident"
+          },
+          {
+            "group": "Paren"
+          },
+          {
+            "syn": "ExprCall"
+          }
+        ],
         "If": [
           {
             "token": "If"

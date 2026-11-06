@@ -139,6 +139,11 @@ impl Printer {
                 self.ty(typ);
                 self.word(")");
             }
+            ResourceExpr::MemPeakCall(_, _, call) => {
+                self.word("mem_peak(");
+                self.expr(&Expr::Call(call.clone()), FixupContext::NONE);
+                self.word(")");
+            }
             ResourceExpr::MemPeak(_, _, function) => {
                 self.word("mem_peak(");
                 self.expr_path(function);
@@ -1700,6 +1705,16 @@ fn parseable_as_stmt(mut expr: &Expr) -> bool {
 #[cfg(test)]
 mod resource_tests {
     use quote::quote;
+
+    #[test]
+    fn argument_specific_budget_round_trip() {
+        let file = verus_syn::parse_file(
+            "fn f(flag: bool) { mem_peak <= mem_size(flag) + mem_peak(module::helper(!flag, 4u32,)) { mem_peak <= mem_peak(helper(false)) {} } }",
+        ).unwrap();
+        let pretty = crate::unparse(&file);
+        let reparsed = verus_syn::parse_file(&pretty).unwrap();
+        assert_eq!(quote!(#file).to_string(), quote!(#reparsed).to_string());
+    }
 
     #[test]
     fn conditional_budget_round_trip() {

@@ -315,6 +315,9 @@ fn lower_memory_budget(expr: &verus_syn::ResourceExpr, parameters: &[Ident]) -> 
             }
             quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_mem_size_type::<#typ>())
         }
+        ResourceExpr::MemPeakCall(_, _, call) => {
+            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_mem_peak_call(#call))
+        }
         ResourceExpr::MemPeak(_, _, function) => {
             quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_mem_peak(&#function))
         }

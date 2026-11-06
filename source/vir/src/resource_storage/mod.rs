@@ -3,7 +3,8 @@
 //! `model` defines the policy; `layout` checks concrete type sizes and struct
 //! fields; `budget` resolves declared budget expressions and their dependencies;
 //! `accounting` owns live/peak totals and traces; `sections` checks nested
-//! workspace contracts and composes their bounds with the parent. `symbolic`
+//! workspace contracts and composes their bounds with the parent. `contracts`
+//! specializes declared formulas with stable scalar arguments. `symbolic`
 //! turns conditional contracts into ordinary Verus proof obligations.
 //! `construction` accounts for aggregate initialization; `analysis`, `places`,
 //! and `calls` interpret other supported executable VIR. This
@@ -17,6 +18,7 @@ mod analysis;
 mod budget;
 mod calls;
 mod construction;
+mod contracts;
 mod layout;
 mod model;
 mod places;
@@ -78,8 +80,14 @@ pub fn check_crate(
     // Materialize ordinary proof obligations only after checking all structural
     // rules and call cycles. No user-controlled memory counter is introduced.
     for (function, checked) in &reports {
-        if let Some(bound) = &checked.symbolic_bound {
-            let updated = symbolic::instrument(function, bound, &checked.report, &layouts)?;
+        if checked.symbolic_bound.is_some() || !checked.obligations.is_empty() {
+            let updated = symbolic::instrument(
+                function,
+                checked.symbolic_bound.as_ref(),
+                &checked.obligations,
+                &checked.report,
+                &layouts,
+            )?;
             let target = functions.iter_mut().find(|f| f.x.name == function.x.name).unwrap();
             *target = updated;
         }

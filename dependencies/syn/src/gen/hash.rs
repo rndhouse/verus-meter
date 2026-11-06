@@ -3200,8 +3200,13 @@ impl Hash for crate::ResourceExpr {
                 v0.hash(state);
                 v2.hash(state);
             }
-            crate::ResourceExpr::If(_, v1, _, v3, _, _, v6) => {
+            crate::ResourceExpr::MemPeakCall(v0, _, v2) => {
                 state.write_u8(6u8);
+                v0.hash(state);
+                v2.hash(state);
+            }
+            crate::ResourceExpr::If(_, v1, _, v3, _, _, v6) => {
+                state.write_u8(7u8);
                 v1.hash(state);
                 v3.hash(state);
                 v6.hash(state);

@@ -1,7 +1,7 @@
 //! Checked live/peak accounting and source-located diagnostics.
 
 use super::model::{MODEL_NAME, unsupported};
-use crate::ast::{VirErr, VirErrAs};
+use crate::ast::{Expr, VirErr, VirErrAs};
 use crate::messages::{Span, error, note};
 
 pub struct StorageEvent {
@@ -16,6 +16,7 @@ pub struct StorageReport {
     pub events: Vec<StorageEvent>,
     pub(super) reservations: Vec<(Span, u64)>,
     pub(super) conditional: bool,
+    pub(super) call_costs: Vec<(Span, Expr)>,
 }
 
 impl StorageReport {
@@ -76,6 +77,7 @@ impl Accounting {
                 events: Vec::new(),
                 reservations: Vec::new(),
                 conditional: false,
+                call_costs: Vec::new(),
             },
         }
     }
@@ -107,6 +109,23 @@ impl Accounting {
         }
         self.report.reservations.push((span.clone(), self.live));
         self.event(span, format!("reserve {bytes} bytes for {reason}"));
+        Ok(())
+    }
+
+    // Keep an envelope for traces/checkpoints, but prove the instantiated cost
+    // instead of treating that envelope as a required allocation.
+    pub(super) fn reserve_call(
+        &mut self,
+        span: &Span,
+        additional: u64,
+        cost: Expr,
+    ) -> Result<(), VirErr> {
+        self.reserve(span, additional, "callee budget envelope")?;
+        if additional != 0 {
+            self.report.reservations.pop();
+        }
+        self.report.call_costs.push((span.clone(), cost));
+        self.report.conditional = true;
         Ok(())
     }
 
@@ -143,12 +162,19 @@ impl Accounting {
         diagnostic: &str,
     ) -> Result<StorageReport, VirErr> {
         self.release(scope_span, self.live, exit);
-        if self.report.peak > self.report.budget {
+        let (peak_span, required_peak) = self
+            .report
+            .reservations
+            .iter()
+            .max_by_key(|(_, n)| n)
+            .map(|(span, n)| (span, *n))
+            .unwrap_or((scope_span, 0));
+        if required_peak > self.report.budget {
             return Err(error(
-                &self.peak_span,
+                peak_span,
                 format!(
                     "{diagnostic}: peak {} bytes exceeds budget {} bytes ({MODEL_NAME})",
-                    self.report.peak, self.report.budget,
+                    required_peak, self.report.budget,
                 ),
             )
             .secondary_span(scope_span));

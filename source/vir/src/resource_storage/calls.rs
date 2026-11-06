@@ -13,7 +13,7 @@ impl Analysis<'_> {
                 "calls outside this crate; imported storage summaries are not supported",
             )
         })?;
-        let Some(&budget) = self.budgets.get(target) else {
+        let Some(&envelope) = self.budgets.get(target) else {
             return Err(unsupported(&expr.span, "calls without a current-model storage contract")
                 .secondary_span(&callee.span));
         };
@@ -21,6 +21,21 @@ impl Analysis<'_> {
         if args.len() != callee.x.params.len() || !unit(&expr.typ) {
             return Err(unsupported(&expr.span, "this call signature"));
         }
+        // Unsupported selectors retain the envelope. Never re-read mutable
+        // state or re-evaluate side effects in a generated pre-call assertion.
+        let bound = super::contracts::instantiate(
+            callee,
+            args,
+            &self.stable_scalars,
+            self.budgets,
+            self.functions,
+            self.layouts,
+            false,
+        )
+        .ok();
+        let constant = bound.as_ref().and_then(super::contracts::constant);
+        let budget = constant.unwrap_or(envelope);
+        let caller_live = self.storage.live();
         let mut parameters = 0u64;
         for (arg, param) in args.iter().zip(callee.x.params.iter()) {
             if param.x.mode != Mode::Exec {
@@ -47,11 +62,20 @@ impl Analysis<'_> {
             error(&callee.span, "callee storage budget is smaller than its parameter storage")
         })?;
         // Parameters are already included in the callee's declared peak.
-        self.storage.reserve(
-            &expr.span,
-            additional,
-            &format!("callee peak for {}", crate::ast_util::fun_as_friendly_rust_name(target)),
-        )?;
+        if let Some(bound) = bound.filter(|_| constant.is_none()) {
+            let cost = super::contracts::add(
+                &expr.span,
+                super::contracts::literal(&expr.span, caller_live),
+                bound,
+            );
+            self.storage.reserve_call(&expr.span, additional, cost)?;
+        } else {
+            self.storage.reserve(
+                &expr.span,
+                additional,
+                &format!("callee peak for {}", crate::ast_util::fun_as_friendly_rust_name(target)),
+            )?;
+        }
         self.storage.release(&expr.span, budget, "callee return");
         self.calls.push((target.clone(), expr.span.clone()));
         Ok(0)

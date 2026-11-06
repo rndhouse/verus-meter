@@ -6039,6 +6039,12 @@ impl Debug for Lite<syn::ResourceExpr> {
                 formatter.field(Lite(_v2));
                 formatter.finish()
             }
+            syn::ResourceExpr::MemPeakCall(_v0, _v1, _v2) => {
+                let mut formatter = formatter.debug_tuple("ResourceExpr::MemPeakCall");
+                formatter.field(Lite(_v0));
+                formatter.field(Lite(_v2));
+                formatter.finish()
+            }
             syn::ResourceExpr::If(_v0, _v1, _v2, _v3, _v4, _v5, _v6) => {
                 let mut formatter = formatter.debug_tuple("ResourceExpr::If");
                 formatter.field(Lite(_v1));

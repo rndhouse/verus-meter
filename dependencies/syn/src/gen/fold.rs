@@ -4570,6 +4570,13 @@ where
                 f.fold_expr_path(_binding_2),
             )
         }
+        crate::ResourceExpr::MemPeakCall(_binding_0, _binding_1, _binding_2) => {
+            crate::ResourceExpr::MemPeakCall(
+                f.fold_ident(_binding_0),
+                _binding_1,
+                f.fold_expr_call(_binding_2),
+            )
+        }
         crate::ResourceExpr::If(
             _binding_0,
             _binding_1,

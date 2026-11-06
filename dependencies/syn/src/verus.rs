@@ -252,6 +252,7 @@ ast_enum! {
         Mul(Box<ResourceExpr>, Token![*], Box<ResourceExpr>),
         MemSize(Ident, token::Paren, Type),
         MemPeak(Ident, token::Paren, ExprPath),
+        MemPeakCall(Ident, token::Paren, ExprCall),
         If(Token![if], Box<Expr>, token::Brace, Box<ResourceExpr>, Token![else], token::Brace, Box<ResourceExpr>),
     }
 }
@@ -1529,7 +1530,15 @@ pub mod parsing {
         let expr = if name == "mem_size" {
             ResourceExpr::MemSize(name, paren, content.parse()?)
         } else {
-            ResourceExpr::MemPeak(name, paren, content.parse()?)
+            match content.parse::<Expr>()? {
+                Expr::Path(function) => ResourceExpr::MemPeak(name, paren, function),
+                Expr::Call(call) if matches!(*call.func, Expr::Path(_)) => {
+                    ResourceExpr::MemPeakCall(name, paren, call)
+                }
+                _ => {
+                    return Err(content.error("expected a function name or direct call in mem_peak"))
+                }
+            }
         };
         if !content.is_empty() {
             return Err(content.error("expected a single mem_size or mem_peak argument"));
@@ -2613,6 +2622,10 @@ mod printing {
                 ResourceExpr::MemSize(name, paren, typ) => {
                     name.to_tokens(tokens);
                     paren.surround(tokens, |tokens| typ.to_tokens(tokens));
+                }
+                ResourceExpr::MemPeakCall(name, paren, call) => {
+                    name.to_tokens(tokens);
+                    paren.surround(tokens, |tokens| call.to_tokens(tokens));
                 }
                 ResourceExpr::MemPeak(name, paren, function) => {
                     name.to_tokens(tokens);

@@ -2518,6 +2518,10 @@ impl PartialEq for crate::ResourceExpr {
                 crate::ResourceExpr::MemPeak(other0, _, other2),
             ) => self0 == other0 && self2 == other2,
             (
+                crate::ResourceExpr::MemPeakCall(self0, _, self2),
+                crate::ResourceExpr::MemPeakCall(other0, _, other2),
+            ) => self0 == other0 && self2 == other2,
+            (
                 crate::ResourceExpr::If(_, self1, _, self3, _, _, self6),
                 crate::ResourceExpr::If(_, other1, _, other3, _, _, other6),
             ) => self1 == other1 && self3 == other3 && self6 == other6,

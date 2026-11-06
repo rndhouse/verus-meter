@@ -4582,6 +4582,11 @@ where
             skip!(_binding_1);
             v.visit_expr_path(_binding_2);
         }
+        crate::ResourceExpr::MemPeakCall(_binding_0, _binding_1, _binding_2) => {
+            v.visit_ident(_binding_0);
+            skip!(_binding_1);
+            v.visit_expr_call(_binding_2);
+        }
         crate::ResourceExpr::If(
             _binding_0,
             _binding_1,

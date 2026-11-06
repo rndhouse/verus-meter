@@ -4,9 +4,7 @@
 //! inputs give the budget a stable entry-state meaning without a ghost counter.
 
 use super::accounting::StorageReport;
-use super::budget::{BudgetExpr, BudgetExprX, evaluate_envelope, is_conditional};
 use super::layout::Layouts;
-use super::model::ResourceContract;
 use crate::ast::*;
 use crate::ast_util::*;
 use crate::def::Spanned;
@@ -14,120 +12,64 @@ use crate::messages::{Span, error};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-fn predicate(expr: &Expr, function: &Function) -> Result<Expr, VirErr> {
-    let variable = match &expr.x {
-        ExprX::Var(name) => Some(name),
-        ExprX::ReadPlace(place, _) => match &place.x {
-            PlaceX::Local(name) => Some(name),
-            _ => None,
-        },
-        _ => None,
-    };
-    if let Some(name) = variable {
-        if function.x.params.iter().any(|p| {
-            p.x.name == *name
-                && p.x.mode == Mode::Exec
-                && !p.x.user_mut
-                && matches!(&*p.x.typ, TypX::Bool | TypX::Int(IntRange::U(32) | IntRange::USize))
-        }) {
-            return Ok(SpannedTyped::new(&expr.span, &expr.typ, ExprX::Var(name.clone())));
-        }
-        return Err(error(
-            &expr.span,
-            "memory budget predicates currently require immutable bool, u32, or usize input parameters",
-        ));
-    }
-    let x = match &expr.x {
-        ExprX::Const(Constant::Bool(_) | Constant::Int(_)) => return Ok(expr.clone()),
-        ExprX::Unary(UnaryOp::Not, e) => ExprX::Unary(UnaryOp::Not, predicate(e, function)?),
-        ExprX::Binary(op @ (BinaryOp::Eq(_) | BinaryOp::Ne | BinaryOp::Inequality(_)), a, b) => {
-            ExprX::Binary(*op, predicate(a, function)?, predicate(b, function)?)
-        }
-        ExprX::Logical(op, a, b) => {
-            ExprX::Logical(*op, predicate(a, function)?, predicate(b, function)?)
-        }
-        _ => {
-            return Err(error(
-                &expr.span,
-                "memory budget predicates currently support scalar input comparisons and Boolean operators",
-            ));
-        }
-    };
-    Ok(SpannedTyped::new(&expr.span, &expr.typ, x))
-}
-
 pub(super) fn function_bound(
     function: &Function,
     budgets: &HashMap<Fun, u64>,
     functions: &HashMap<Fun, Function>,
     layouts: &Layouts,
 ) -> Result<Option<Expr>, VirErr> {
-    let Some(ResourceContract::LexicalSlotsV5Expr { budget }) = &function.x.attrs.resource_contract
-    else {
-        return Ok(None);
+    let bound = super::contracts::function_bound(function, budgets, functions, layouts)?;
+    let declared_conditional = match &function.x.attrs.resource_contract {
+        Some(super::model::ResourceContract::LexicalSlotsV5Expr { budget }) => {
+            super::budget::is_conditional(budget)
+        }
+        _ => false,
     };
-    if !is_conditional(budget) {
-        return Ok(None);
-    }
-    fn lower(
-        expr: &BudgetExpr,
-        function: &Function,
-        budgets: &HashMap<Fun, u64>,
-        functions: &HashMap<Fun, Function>,
-        layouts: &Layouts,
-    ) -> Result<Expr, VirErr> {
-        let x = match &expr.x {
-            BudgetExprX::If(cond, a, b) => ExprX::If(
-                predicate(cond, function)?,
-                lower(a, function, budgets, functions, layouts)?,
-                Some(lower(b, function, budgets, functions, layouts)?),
-            ),
-            BudgetExprX::Add(a, b) | BudgetExprX::Mul(a, b) => {
-                let op = if matches!(expr.x, BudgetExprX::Add(..)) {
-                    ArithOp::Add(OverflowBehavior::Allow)
-                } else {
-                    ArithOp::Mul(OverflowBehavior::Allow)
-                };
-                ExprX::Binary(
-                    BinaryOp::Arith(op),
-                    lower(a, function, budgets, functions, layouts)?,
-                    lower(b, function, budgets, functions, layouts)?,
-                )
-            }
-            _ => ExprX::Const(const_int_from_u128(evaluate_envelope(
-                expr, budgets, functions, layouts,
-            )? as u128)),
-        };
-        Ok(SpannedTyped::new(&expr.span, &int_typ(), x))
-    }
-    Ok(Some(lower(budget, function, budgets, functions, layouts)?))
+    Ok(if !declared_conditional && super::contracts::constant(&bound).is_some() {
+        None
+    } else {
+        Some(bound)
+    })
 }
 
-fn obligation(span: &Span, bytes: u64, bound: &Expr) -> Stmt {
-    let cost =
-        SpannedTyped::new(span, &int_typ(), ExprX::Const(const_int_from_u128(bytes as u128)));
+fn obligation(span: &Span, cost: &Expr, bound: &Expr) -> Stmt {
     let assertion = SpannedTyped::new(span, &unit_typ(), ExprX::AssertAssume {
         is_assume: false,
-        expr: mk_ineq(span, &cost, bound, InequalityOp::Le),
-        msg: Some(error(span, format!("conditional memory budget exceeded: cannot prove {bytes} model bytes fit the declared bound")).secondary_span(&bound.span)),
+        expr: mk_ineq(span, cost, bound, InequalityOp::Le),
+        msg: Some(error(span, "conditional memory budget exceeded: cannot prove the required model bytes fit the declared bound").secondary_span(&bound.span)),
     });
     Spanned::new(span.clone(), StmtX::Expr(assertion))
 }
 
 pub(super) fn instrument(
     function: &Function,
-    bound: &Expr,
+    bound: Option<&Expr>,
+    obligations: &[(Span, Expr, Expr)],
     report: &StorageReport,
     layouts: &Layouts,
 ) -> Result<Function, VirErr> {
     let mut sites: HashMap<u64, (Span, u64)> = HashMap::new();
     let parameter_spans: HashSet<_> = function.x.params.iter().map(|p| p.span.id).collect();
-    for (span, bytes) in &report.reservations {
+    for (span, bytes) in report.reservations.iter().filter(|_| bound.is_some()) {
         if parameter_spans.contains(&span.id) {
             continue;
         }
         let site = sites.entry(span.id).or_insert((span.clone(), 0));
         site.1 = site.1.max(*bytes);
+    }
+    let mut sites: HashMap<u64, (Span, Vec<Stmt>)> = sites
+        .into_iter()
+        .map(|(id, (span, bytes))| {
+            let check = obligation(&span, &super::contracts::literal(&span, bytes), bound.unwrap());
+            (id, (span, vec![check]))
+        })
+        .collect();
+    for (span, cost, bound) in obligations {
+        sites
+            .entry(span.id)
+            .or_insert_with(|| (span.clone(), Vec::new()))
+            .1
+            .push(obligation(span, cost, bound));
     }
     let body = function.x.body.as_ref().unwrap();
     let mut seen = HashSet::new();
@@ -145,15 +87,15 @@ pub(super) fn instrument(
             let mut checks = Vec::new();
             if let ExprX::Call { args, .. } = &expr.x {
                 for arg in args.iter().filter(|arg| matches!(arg.x, ExprX::TwoPhaseBorrowMut(_))) {
-                    if let Some((span, bytes)) = sites.get(&arg.span.id) {
+                    if let Some((_, statements)) = sites.get(&arg.span.id) {
                         seen.insert(arg.span.id);
-                        checks.push(obligation(span, *bytes, bound));
+                        checks.extend(statements.iter().cloned());
                     }
                 }
             }
-            if let Some((span, bytes)) = sites.get(&expr.span.id) {
+            if let Some((_, statements)) = sites.get(&expr.span.id) {
                 seen.insert(expr.span.id);
-                checks.push(obligation(span, *bytes, bound));
+                checks.extend(statements.iter().cloned());
             }
             if !checks.is_empty() {
                 Ok(mk_block(&expr.span, checks, Some(expr.clone())))
@@ -163,10 +105,10 @@ pub(super) fn instrument(
         },
         &|seen, _, stmt| {
             if let StmtX::Decl { .. } = &stmt.x
-                && let Some((span, bytes)) = sites.get(&stmt.span.id)
+                && let Some((_, statements)) = sites.get(&stmt.span.id)
             {
                 seen.insert(stmt.span.id);
-                Ok(vec![obligation(span, *bytes, bound), stmt.clone()])
+                Ok(statements.iter().cloned().chain(std::iter::once(stmt.clone())).collect())
             } else {
                 Ok(vec![stmt.clone()])
             }
@@ -188,11 +130,19 @@ pub(super) fn instrument(
             .checked_add(layouts.size(&p.x.typ, &p.span)?)
             .ok_or_else(|| error(&p.span, "parameter storage exceeds u64"))?;
     }
-    let body = mk_block(
-        &body.span,
-        vec![obligation(&function.span, parameters, bound)],
-        Some(body.clone()),
-    );
+    let body = if let Some(bound) = bound {
+        mk_block(
+            &body.span,
+            vec![obligation(
+                &function.span,
+                &super::contracts::literal(&function.span, parameters),
+                bound,
+            )],
+            Some(body.clone()),
+        )
+    } else {
+        body
+    };
     let mut result = function.clone();
     Arc::make_mut(&mut result).x.body = Some(body);
     Ok(result)

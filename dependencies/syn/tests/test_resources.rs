@@ -38,7 +38,7 @@ fn malformed_resource_clauses_are_rejected() {
         "fn f() mem_peak <= 4 - 4 {}",
         "fn f() resources peak_local_storage_bytes <= 8 {}",
         "fn f() mem_peak <= mem_peak(x.field) {}",
-        "fn f() mem_peak <= mem_peak(make()) {}",
+        "fn f() mem_peak <= mem_peak(object.make()) {}",
         "fn f() mem_peak <= mem_peak() {}",
         "fn f() resources peak_memory_bytes <= 8 {}",
         "fn f() mem_peak <= memory_budget(x) {}",
@@ -77,6 +77,8 @@ fn expressive_budgets_round_trip() {
         "mem_size(module::Alias<u32>) + mem_peak(module::f::<u32>)",
         "1 + 2 * 3 + (4 + 5) * 6",
         "mem_size((x))",
+        "mem_peak(helper(false))",
+        "mem_peak(module::helper(count <= 4, !flag)) + mem_peak(empty())",
     ] {
         let code = format!("fn f(x: u32) mem_peak <= {budget}, {{}}");
         let parsed: ItemFn = parse_str(&code).unwrap();

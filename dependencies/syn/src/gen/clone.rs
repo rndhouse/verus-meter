@@ -2566,6 +2566,9 @@ impl Clone for crate::ResourceExpr {
             crate::ResourceExpr::MemPeak(v0, v1, v2) => {
                 crate::ResourceExpr::MemPeak(v0.clone(), v1.clone(), v2.clone())
             }
+            crate::ResourceExpr::MemPeakCall(v0, v1, v2) => {
+                crate::ResourceExpr::MemPeakCall(v0.clone(), v1.clone(), v2.clone())
+            }
             crate::ResourceExpr::If(v0, v1, v2, v3, v4, v5, v6) => {
                 crate::ResourceExpr::If(
                     v0.clone(),

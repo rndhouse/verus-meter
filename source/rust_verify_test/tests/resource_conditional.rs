@@ -98,14 +98,14 @@ fn conditional_workspace_example() {
 }
 
 test_verify_one_file! {
-    #[test] calls_retain_the_declared_envelope verus_code! {
+    #[test] calls_use_the_selected_allowance verus_code! {
         use vstd::prelude::*;
         fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
             if large { let scratch = [0u32; 8]; }
             else { let scratch = [0u32; 4]; }
         }
         fn caller() mem_peak <= 17 { helper(false); }
-    } => Err(err) => assert_vir_error_msg(err, "peak 33 bytes exceeds budget 17 bytes")
+    } => Ok(())
 }
 
 test_verify_one_file! {

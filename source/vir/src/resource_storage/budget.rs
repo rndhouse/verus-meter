@@ -20,6 +20,7 @@ pub enum BudgetExprX {
     Add(BudgetExpr, BudgetExpr),
     Mul(BudgetExpr, BudgetExpr),
     If(Expr, BudgetExpr, BudgetExpr),
+    FunctionCall(Fun, Exprs),
 }
 
 struct Resolver<'a> {
@@ -63,13 +64,45 @@ impl Resolver<'_> {
     fn expr(&mut self, expr: &BudgetExpr) -> Result<u64, VirErr> {
         match &expr.x {
             // Retain a safe envelope for existing argument-free mem_peak queries
-            // and callers. The function body separately proves its conditional bound.
+            // queries. Calls instantiate this formula with their actual arguments.
             BudgetExprX::If(_, then_budget, else_budget) => {
                 Ok(self.expr(then_budget)?.max(self.expr(else_budget)?))
             }
             BudgetExprX::Literal(n) => Ok(*n),
             BudgetExprX::MemSize(typ) => self.layouts.size(typ, &expr.span),
             BudgetExprX::Function(name) => self.function(name, &expr.span),
+            BudgetExprX::FunctionCall(name, args) => {
+                self.function(name, &expr.span)?;
+                // Resolution visits the full dependency graph before substitution.
+                // Argument validity is checked in the owning formula's context.
+                let mut allowed = HashSet::new();
+                for arg in args.iter() {
+                    crate::ast_visitor::expr_visitor_check(arg, &mut |_, e| {
+                        match &e.x {
+                            ExprX::Var(n) => {
+                                allowed.insert(n.clone());
+                            }
+                            ExprX::ReadPlace(p, _) => {
+                                if let PlaceX::Local(n) = &p.x {
+                                    allowed.insert(n.clone());
+                                }
+                            }
+                            _ => {}
+                        }
+                        Ok::<(), VirErr>(())
+                    })?;
+                }
+                let bound = super::contracts::instantiate(
+                    &self.functions[name],
+                    args,
+                    &allowed,
+                    &self.resolved,
+                    self.functions,
+                    self.layouts,
+                    true,
+                )?;
+                super::contracts::envelope(&bound)
+            }
             BudgetExprX::Add(left, right) | BudgetExprX::Mul(left, right) => {
                 // Visit both operands even when one is zero: cycles and invalid
                 // references must not be hidden by arithmetic simplification.
@@ -119,10 +152,16 @@ pub(super) fn evaluate_body_budget(
             "conditional memory bounds currently require a function contract; section and checkpoint bounds remain fixed",
         ));
     }
-    evaluate_envelope(expr, budgets, functions, layouts)
+    // Resolve even rejected formulas so cycles and overflow cannot hide in them.
+    evaluate_envelope(expr, budgets, functions, layouts)?;
+    let bound = super::contracts::lower(expr, &HashSet::new(), budgets, functions, layouts)?;
+    super::contracts::constant(&bound).ok_or_else(|| error(
+        &expr.span,
+        "conditional memory bounds currently require a function contract; section and checkpoint bounds remain fixed",
+    ))
 }
 
-// Inspect only this formula; mem_peak(function) deliberately remains an envelope.
+// Inspect the written formula, not argument-free queries into other contracts.
 pub(super) fn is_conditional(expr: &BudgetExpr) -> bool {
     match &expr.x {
         BudgetExprX::If(..) => true,

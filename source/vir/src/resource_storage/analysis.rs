@@ -6,12 +6,13 @@ use super::model::{arithmetic, eligible, unit, unsupported};
 use crate::ast::*;
 use crate::messages::{Span, error};
 use crate::resolution_inference::ResolutionInfo;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub(super) struct FunctionAnalysis {
     pub(super) report: StorageReport,
     pub(super) calls: Vec<(Fun, Span)>,
     pub(super) symbolic_bound: Option<Expr>,
+    pub(super) obligations: Vec<(Span, Expr, Expr)>,
 }
 
 pub(super) struct Checkpoint {
@@ -28,6 +29,8 @@ pub(super) struct Analysis<'a> {
     pub(super) storage: Accounting,
     pub(super) calls: Vec<(Fun, Span)>,
     pub(super) checkpoints: Vec<Checkpoint>,
+    pub(super) stable_scalars: HashSet<VarIdent>,
+    pub(super) obligations: Vec<(Span, Expr, Expr)>,
 }
 
 impl Analysis<'_> {
@@ -91,6 +94,9 @@ impl Analysis<'_> {
                             &stmt.span,
                             "let-else, ref bindings, or generated declarations",
                         ));
+                    }
+                    if binding.user_mut == Some(false) && super::contracts::scalar(&binding.typ) {
+                        self.stable_scalars.insert(binding.name.clone());
                     }
                     let bytes = self.layouts.size(&binding.typ, &stmt.span)?;
                     self.storage.reserve(&stmt.span, bytes, "local slot")?;
@@ -326,6 +332,8 @@ pub(super) fn check(
         storage: Accounting::new(&function.span, budget),
         calls: Vec::new(),
         checkpoints: Vec::new(),
+        stable_scalars: super::contracts::inputs(function),
+        obligations: Vec::new(),
     };
     for param in f.params.iter() {
         analysis.var_modes.insert(param.x.name.clone(), param.x.mode);
@@ -342,5 +350,15 @@ pub(super) fn check(
     } else {
         analysis.storage.finish(&function.span)?
     };
-    Ok(Some(FunctionAnalysis { report, calls: analysis.calls, symbolic_bound }))
+    let bound =
+        symbolic_bound.clone().unwrap_or_else(|| super::contracts::literal(&function.span, budget));
+    analysis.obligations.extend(
+        report.call_costs.iter().map(|(span, cost)| (span.clone(), cost.clone(), bound.clone())),
+    );
+    Ok(Some(FunctionAnalysis {
+        report,
+        calls: analysis.calls,
+        symbolic_bound,
+        obligations: analysis.obligations,
+    }))
 }

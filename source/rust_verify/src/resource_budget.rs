@@ -52,6 +52,33 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
             let substitutions = crate::rust_to_vir_base::fn_def_args(*substitutions, expr.span)?;
             let item = bctx.ctxt.get_verus_item(*id);
             let typ = match item {
+                Some(VerusItem::Spec(SpecItem::ResourceMemPeakCall)) if args.len() == 1 => {
+                    let ExprKind::Call(function, arguments) = args[0].kind else {
+                        return err_span(expr.span, "mem_peak expects a direct call");
+                    };
+                    let TyKind::FnDef(_, fn_args) = bctx.types.expr_ty(function).kind() else {
+                        return err_span(function.span, "mem_peak expects a named function");
+                    };
+                    if !crate::rust_to_vir_base::fn_def_args(*fn_args, function.span)?.is_empty() {
+                        return err_span(
+                            function.span,
+                            "generic function memory budgets are not supported",
+                        );
+                    }
+                    let target = crate::rust_to_vir_expr::get_fn_path(bctx, function)?;
+                    let ghost = BodyCtxt { in_ghost: true, ..bctx.clone() };
+                    let arguments = arguments
+                        .iter()
+                        .map(|arg| {
+                            Ok(crate::rust_to_vir_expr::expr_to_vir(&ghost, arg)?
+                                .to_spec_expr(&ghost))
+                        })
+                        .collect::<Result<Vec<_>, VirErr>>()?;
+                    return Ok(Spanned::new(
+                        bctx.ctxt.spans.to_air_span(expr.span),
+                        BudgetExprX::FunctionCall(target, std::sync::Arc::new(arguments)),
+                    ));
+                }
                 Some(VerusItem::Spec(SpecItem::ResourceMemSizeType)) if args.is_empty() => {
                     substitutions.type_at(0)
                 }
