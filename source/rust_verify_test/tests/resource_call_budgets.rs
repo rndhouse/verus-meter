@@ -238,7 +238,7 @@ fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 }
     else { let scratch = [0u32; 4]; }
 }
 fn f() mem_peak <= 17 { helper({ assert(true); false }); }
-    } => Err(err) => assert_vir_error_msg(err, "value-returning blocks")
+    } => Err(err) => assert_vir_error_msg(err, "peak 33 bytes exceeds budget 17 bytes")
 }
 
 test_verify_one_file! {

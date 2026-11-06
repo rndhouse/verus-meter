@@ -7,6 +7,7 @@
 //! `heap` tracks local box ownership and allocation lifetimes. `contracts`
 //! specializes declared formulas with stable scalar arguments. `symbolic`
 //! turns conditional contracts into ordinary Verus proof obligations.
+//! `values` handles result destinations and Option arms;
 //! `construction` accounts for aggregate initialization; `analysis`, `places`,
 //! and `calls` interpret other supported executable VIR. This
 //! module validates the crate-wide call graph before publishing any reports.
@@ -26,6 +27,7 @@ mod model;
 mod places;
 mod sections;
 mod symbolic;
+mod values;
 mod vectors;
 
 pub use accounting::{StorageEvent, StorageReport};
@@ -49,10 +51,11 @@ pub fn check_crate(
     modes: &HashMap<Fun, Arc<ResolutionInfo>>,
     global_allocator: Option<Dt>,
     vector: Option<Dt>,
+    option: Option<Dt>,
     fresh_span: &dyn Fn(&Span) -> Span,
 ) -> Result<Vec<(Span, StorageReport)>, VirErr> {
     let function_map = functions.iter().map(|f| (f.x.name.clone(), f.clone())).collect();
-    let layouts = layout::Layouts::new(datatypes, global_allocator, vector);
+    let layouts = layout::Layouts::new(datatypes, global_allocator, vector, option);
     let budgets = budget::resolve(functions, &function_map, &layouts)?;
     let mut graph = crate::scc::Graph::new();
     let mut reports = Vec::new();

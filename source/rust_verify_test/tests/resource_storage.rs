@@ -303,12 +303,12 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] value_returning_blocks_are_rejected verus_code! {
+    #[test] value_returning_blocks_use_destination verus_code! {
         use vstd::prelude::*;
-        fn example() mem_peak <= 1000 {
+        fn example() mem_peak <= 8 {
             let x = { let y = 0u32; y };
         }
-    } => Err(err) => assert_vir_error_msg(err, "does not support value-returning blocks")
+    } => Ok(())
 }
 
 test_verify_one_file! {

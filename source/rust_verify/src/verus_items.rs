@@ -1138,3 +1138,26 @@ pub(crate) fn resource_vec_intrinsic(
         _ => None,
     }
 }
+
+pub(crate) fn resource_option_intrinsic(
+    tcx: TyCtxt<'_>,
+    id: DefId,
+) -> Option<vir::ast::ResourceIntrinsic> {
+    let imp = tcx.impl_of_assoc(id)?;
+    if tcx.trait_impl_of_assoc(imp).is_some() {
+        return None;
+    }
+    let TyKind::Adt(adt, _) = tcx.type_of(imp).skip_binder().kind() else {
+        return None;
+    };
+    if !tcx.is_diagnostic_item(rustc_span::Symbol::intern("Option"), adt.did()) {
+        return None;
+    }
+    use vir::ast::ResourceIntrinsic::*;
+    match tcx.item_name(id).as_str() {
+        "is_some" => Some(OptionIsSome),
+        "is_none" => Some(OptionIsNone),
+        "unwrap" => Some(OptionUnwrap),
+        _ => None,
+    }
+}

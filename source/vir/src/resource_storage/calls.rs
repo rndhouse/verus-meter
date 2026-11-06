@@ -1,12 +1,18 @@
 //! Direct-call composition and compiler-identified resource intrinsics.
 
 use super::analysis::Analysis;
-use super::model::{eligible, slice, unit, unsupported};
+use super::model::{eligible, slice, unsupported};
 use crate::ast::*;
 use crate::messages::error;
 
 impl Analysis<'_> {
-    fn call(&mut self, expr: &Expr, target: &Fun, args: &Exprs) -> Result<u64, VirErr> {
+    fn call(
+        &mut self,
+        expr: &Expr,
+        target: &Fun,
+        args: &Exprs,
+        destination: bool,
+    ) -> Result<u64, VirErr> {
         let callee = self.functions.get(target).ok_or_else(|| {
             unsupported(
                 &expr.span,
@@ -18,9 +24,16 @@ impl Analysis<'_> {
                 .secondary_span(&callee.span));
         };
         eligible(callee)?;
-        if args.len() != callee.x.params.len() || !unit(&expr.typ) {
+        if args.len() != callee.x.params.len()
+            || !crate::ast_util::types_equal(&expr.typ, &callee.x.outer_ret.x.typ)
+        {
             return Err(unsupported(&expr.span, "this call signature"));
         }
+        let result_size = self.layouts.return_size(&expr.typ, &expr.span)?;
+        if !destination {
+            self.storage.reserve(&expr.span, result_size, "call result destination")?;
+        }
+        let retained = if destination { 0 } else { result_size };
         // Unsupported selectors retain the envelope. Never re-read mutable
         // state or re-evaluate side effects in a generated pre-call assertion.
         let bound = super::contracts::instantiate(
@@ -65,17 +78,28 @@ impl Analysis<'_> {
                 _ => self.initialize_expr(arg)?,
             }
         }
-        let additional = budget.checked_sub(parameters).ok_or_else(|| {
-            error(&callee.span, "callee storage budget is smaller than its parameter storage")
+        let supplied = parameters
+            .checked_add(result_size)
+            .ok_or_else(|| unsupported(&expr.span, "call destinations exceeding u64"))?;
+        let additional = budget.checked_sub(supplied).ok_or_else(|| {
+            error(
+                &callee.span,
+                "callee storage budget is smaller than its parameter and result storage",
+            )
         })?;
         // Parameters are already included in the callee's declared peak.
         if let Some(bound) = bound.filter(|_| constant.is_none()) {
-            let cost = super::contracts::add(&expr.span, caller_live, bound.clone());
+            let extra = super::contracts::subtract(
+                &expr.span,
+                bound.clone(),
+                super::contracts::literal(&expr.span, result_size),
+            );
+            let cost = super::contracts::add(&expr.span, caller_live, extra);
             if super::contracts::numeric_input(&bound) {
                 self.storage.symbolic_cost(&expr.span, cost);
                 self.storage.release(&expr.span, parameters, "callee return");
                 self.calls.push((target.clone(), expr.span.clone()));
-                return Ok(0);
+                return Ok(retained);
             }
             self.storage.reserve_call(&expr.span, additional, cost)?;
         } else {
@@ -85,12 +109,12 @@ impl Analysis<'_> {
                 &format!("callee peak for {}", crate::ast_util::fun_as_friendly_rust_name(target)),
             )?;
         }
-        self.storage.release(&expr.span, budget, "callee return");
+        self.storage.release(&expr.span, budget - result_size, "callee return");
         self.calls.push((target.clone(), expr.span.clone()));
-        Ok(0)
+        Ok(retained)
     }
 
-    pub(super) fn call_expr(&mut self, expr: &Expr) -> Result<u64, VirErr> {
+    pub(super) fn call_expr(&mut self, expr: &Expr, destination: bool) -> Result<u64, VirErr> {
         let operands;
         match &expr.x {
             ExprX::Call {
@@ -157,7 +181,7 @@ impl Analysis<'_> {
                 post_args: None,
                 body: None,
             } if typs.is_empty() && impls.is_empty() && !attrs.const_var => {
-                return self.call(expr, target, args);
+                return self.call(expr, target, args, destination);
             }
             _ => {
                 return Err(unsupported(

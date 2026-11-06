@@ -1035,7 +1035,7 @@ pub enum ResourceIntrinsic {
     ArrayUnsize,
     /// Resolved standard Box::new; the source model initializes one heap object.
     BoxNew,
-    /// Resolved core::mem::drop, restricted by the model to a tracked box owner.
+    /// Resolved core::mem::drop, restricted by the model to a tracked heap owner.
     HeapDrop,
     VecNew,
     VecWithCapacity,
@@ -1044,6 +1044,9 @@ pub enum ResourceIntrinsic {
     VecLen,
     VecAsSlice,
     VecAsMutSlice,
+    OptionIsSome,
+    OptionIsNone,
+    OptionUnwrap,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToDebugSNode)]

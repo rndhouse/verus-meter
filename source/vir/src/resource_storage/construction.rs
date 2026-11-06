@@ -36,6 +36,19 @@ impl Analysis<'_> {
                 "owning values outside a local move, borrow, or explicit drop",
             ));
         }
+        if self.value_into(expr)? {
+            return Ok(());
+        }
+        if let Some(_) = self.vector_expr(expr)? {
+            return Ok(());
+        }
+        if matches!(&expr.x, ExprX::Call { .. }) {
+            if self.construction(expr, true)?.is_some() {
+                return Ok(());
+            }
+            self.call_expr(expr, true)?;
+            return Ok(());
+        }
         if !aggregate(&expr.typ) {
             // Literals, reads, and operators create no implicit storage slots.
             return self.discard(expr);
@@ -53,14 +66,14 @@ impl Analysis<'_> {
             }
         }
         // Preserve ordinary rejection of unsupported calls, blocks, and types.
-        // No currently supported aggregate-producing expression reaches here.
         self.discard(expr)
     }
 
     fn copy_into_destination(&mut self, place: &Place, typ: &Typ) -> Result<(), VirErr> {
         self.layouts.size(typ, &place.span)?;
         // Source and destination storage is already accounted for.
-        self.access(place, typ)?;
+        let scratch = self.read(place, typ)?;
+        self.storage.release(&place.span, scratch, "source value consumed into destination");
         Ok(())
     }
 
@@ -72,6 +85,16 @@ impl Analysis<'_> {
         destination: bool,
     ) -> Result<Option<u64>, VirErr> {
         let fields: Vec<&Expr> = match &expr.x {
+            ExprX::Ctor(_, variant, fields, None) if self.layouts.option(&expr.typ) => {
+                let payload = self.layouts.option_payload(&expr.typ, &expr.span)?;
+                match (variant.as_str(), fields.as_slice()) {
+                    ("None", []) => vec![],
+                    ("Some", [field]) if crate::ast_util::types_equal(&field.a.typ, payload) => {
+                        vec![&field.a]
+                    }
+                    _ => return Err(unsupported(&expr.span, "this Option constructor")),
+                }
+            }
             ExprX::Ctor(name @ Dt::Path(_), variant_name, fields, None) => {
                 let variant = self.layouts.struct_variant(&expr.typ, &expr.span)?;
                 let TypX::Datatype(result_name, _, _) = &*expr.typ else { unreachable!() };

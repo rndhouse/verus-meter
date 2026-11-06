@@ -97,7 +97,8 @@ pub(super) fn instrument(
     // Inserted proofs must have fresh AST identities. Reusing an executable
     // allocation's identity confuses resolution inference for owned values.
     let mut sites: HashMap<u64, (Span, u64)> = HashMap::new();
-    let parameter_spans: HashSet<_> = function.x.params.iter().map(|p| p.span.id).collect();
+    let mut parameter_spans: HashSet<_> = function.x.params.iter().map(|p| p.span.id).collect();
+    parameter_spans.insert(function.span.id);
     for (span, bytes) in report.reservations.iter().filter(|_| bound.is_some()) {
         if parameter_spans.contains(&span.id) {
             continue;
@@ -199,7 +200,7 @@ pub(super) fn instrument(
             return Err(error(span, "unsupported conditional memory reservation site"));
         }
     }
-    let mut parameters = 0u64;
+    let mut parameters = layouts.return_size(&function.x.outer_ret.x.typ, &function.span)?;
     for p in function.x.params.iter().filter(|p| p.x.mode == Mode::Exec) {
         parameters = parameters
             .checked_add(layouts.size(&p.x.typ, &p.span)?)

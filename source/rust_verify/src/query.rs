@@ -602,6 +602,11 @@ impl<'tcx> Query<'tcx> {
                 .tcx
                 .get_diagnostic_item(rustc_span::Symbol::intern("Vec"))
                 .map(|id| vir::ast::Dt::Path(pre_crate.ctxt.def_id_to_vir_path(id))),
+            pre_crate
+                .ctxt
+                .tcx
+                .get_diagnostic_item(rustc_span::Symbol::intern("Option"))
+                .map(|id| vir::ast::Dt::Path(pre_crate.ctxt.def_id_to_vir_path(id))),
             &|span| {
                 let mut span = span.clone();
                 span.id = pre_crate.ctxt.spans.get_next_span_id();

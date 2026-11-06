@@ -9,6 +9,7 @@ pub(super) struct Layouts {
     datatypes: HashMap<Dt, Datatype>,
     global_allocator: Option<Dt>,
     vector: Option<Dt>,
+    option: Option<Dt>,
 }
 
 impl Layouts {
@@ -16,16 +17,42 @@ impl Layouts {
         datatypes: &[Datatype],
         global_allocator: Option<Dt>,
         vector: Option<Dt>,
+        option: Option<Dt>,
     ) -> Self {
         Self {
             datatypes: datatypes.iter().map(|d| (d.x.name.clone(), d.clone())).collect(),
             global_allocator,
             vector,
+            option,
         }
     }
 
     pub(super) fn vector(&self, typ: &Typ) -> bool {
         matches!(&**typ, TypX::Datatype(name, _, _) if Some(name) == self.vector.as_ref())
+    }
+
+    pub(super) fn option(&self, typ: &Typ) -> bool {
+        matches!(&**typ, TypX::Datatype(name, _, _) if Some(name) == self.option.as_ref())
+    }
+
+    pub(super) fn option_payload<'a>(&self, typ: &'a Typ, span: &Span) -> Result<&'a Typ, VirErr> {
+        let TypX::Datatype(_, args, _) = &**typ else {
+            return Err(unsupported(span, "this Option type"));
+        };
+        if !self.option(typ) || args.len() != 1 {
+            return Err(unsupported(span, "this Option type"));
+        }
+        if self.owner(&args[0]) || matches!(&*args[0], TypX::Decorate(..) | TypX::MutRef(_)) {
+            return Err(unsupported(span, "owning or reference-valued Option payloads"));
+        }
+        Ok(&args[0])
+    }
+
+    pub(super) fn return_size(&self, typ: &Typ, span: &Span) -> Result<u64, VirErr> {
+        if self.owner(typ) || matches!(&**typ, TypX::Decorate(..) | TypX::MutRef(_)) {
+            return Err(unsupported(span, "owning or reference return values"));
+        }
+        self.size(typ, span)
     }
 
     pub(super) fn owner(&self, typ: &Typ) -> bool {
@@ -118,6 +145,12 @@ impl Layouts {
         visiting: &mut HashSet<Dt>,
     ) -> Result<u64, VirErr> {
         match &**typ {
+            _ if self.option(typ) => {
+                let payload = self.option_payload(typ, span)?;
+                self.size_inner(payload, span, visiting)?
+                    .checked_add(1)
+                    .ok_or_else(|| unsupported(span, "Option sizes exceeding u64"))
+            }
             _ if self.vector(typ) => {
                 self.vector_element(typ, span)?;
                 Ok(3 * WORD_BYTES)

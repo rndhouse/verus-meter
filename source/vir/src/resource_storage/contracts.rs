@@ -319,3 +319,15 @@ pub(super) fn multiply(span: &Span, a: Expr, b: Expr) -> Expr {
         ExprX::Binary(BinaryOp::Arith(ArithOp::Mul(OverflowBehavior::Allow)), a, b),
     ))
 }
+
+// Internal destination credit; source budget formulas remain addition/products.
+pub(super) fn subtract(span: &Span, a: Expr, b: Expr) -> Expr {
+    if constant(&b) == Some(0) {
+        return a;
+    }
+    SpannedTyped::new(
+        span,
+        &int_typ(),
+        ExprX::Binary(BinaryOp::Arith(ArithOp::Sub(OverflowBehavior::Allow)), a, b),
+    )
+}

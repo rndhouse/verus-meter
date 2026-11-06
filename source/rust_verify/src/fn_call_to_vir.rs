@@ -354,8 +354,10 @@ fn fn_call_or_assoc_const_to_vir<'tcx>(
     let impl_paths = get_impl_paths(bctx, f, node_substs, None, const_var, expr.span)?;
     let call_target_attrs = vir::ast::CallTargetAttrs {
         resource_intrinsic: if let Some(intrinsic) =
-            crate::verus_items::resource_vec_intrinsic(tcx, f)
+            crate::verus_items::resource_option_intrinsic(tcx, f)
         {
+            Some(intrinsic)
+        } else if let Some(intrinsic) = crate::verus_items::resource_vec_intrinsic(tcx, f) {
             Some(intrinsic)
         } else if rust_item == Some(RustItem::BoxNew) {
             Some(vir::ast::ResourceIntrinsic::BoxNew)

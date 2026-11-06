@@ -108,11 +108,10 @@ pub(super) fn eligible(function: &Function) -> Result<(), VirErr> {
         || f.attrs.is_unsafe
         || f.attrs.is_external_body
         || f.proxy.is_some()
-        || !unit(&f.outer_ret.x.typ)
     {
         return Err(unsupported(
             &function.span,
-            "this function (expected a safe, nongeneric exec function returning unit)",
+            "this function (expected a safe, nongeneric exec function)",
         ));
     }
     if f.body.is_none() {

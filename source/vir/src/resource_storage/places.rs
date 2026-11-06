@@ -23,7 +23,7 @@ impl Analysis<'_> {
 
     /// Validate a place and evaluate its index expressions. Locations do not
     /// introduce source-level storage objects.
-    fn place(&mut self, place: &Place) -> Result<u64, VirErr> {
+    fn place(&mut self, place: &Place, reading: bool) -> Result<u64, VirErr> {
         match &place.x {
             PlaceX::Local(_) => {
                 self.local(place)?;
@@ -64,7 +64,7 @@ impl Analysis<'_> {
                     return Err(unsupported(&place.span, "this struct field type"));
                 }
                 // Accessing a field uses the existing owner's storage.
-                self.access(base, base_typ)
+                self.access_mode(base, base_typ, reading)
             }
             PlaceX::Index(base, index, _, BoundsCheck::Error) => {
                 let base_typ = match &*base.typ {
@@ -79,9 +79,9 @@ impl Analysis<'_> {
                 if !matches!(&*index.typ, TypX::Int(IntRange::USize)) {
                     return Err(unsupported(&index.span, "non-usize indexes"));
                 }
-                self.access(base, base_typ)?;
+                let result = self.access_mode(base, base_typ, reading)?;
                 self.discard(index)?;
-                Ok(0)
+                Ok(result)
             }
             // Compiler reborrows can materialize a reference expression as a
             // temporary place. Evaluate that reference, which recursively checks
@@ -94,6 +94,15 @@ impl Analysis<'_> {
             {
                 self.expr(value)
             }
+            // A by-value projection can consume a returned object immediately.
+            // Keep that object's charge until the containing read is consumed.
+            PlaceX::Temporary(value)
+                if reading
+                    && !self.layouts.owner(&place.typ)
+                    && crate::ast_util::types_equal(&place.typ, &value.typ) =>
+            {
+                self.expr(value)
+            }
             // Borrowed temporary lifetimes need a separate model. In particular,
             // never release &[...]/&mut [...] at the end of their initializer.
             _ => Err(unsupported(&place.span, "this place or borrowed temporary")),
@@ -102,7 +111,11 @@ impl Analysis<'_> {
 
     /// Account for implicit shared dereferences, which VIR omits as place nodes.
     pub(super) fn access(&mut self, place: &Place, target: &Typ) -> Result<u64, VirErr> {
-        let scratch = self.place(place)?;
+        self.access_mode(place, target, false)
+    }
+
+    fn access_mode(&mut self, place: &Place, target: &Typ, reading: bool) -> Result<u64, VirErr> {
+        let scratch = self.place(place, reading)?;
         if crate::ast_util::types_equal(&place.typ, target) {
             return Ok(scratch);
         }
@@ -125,7 +138,7 @@ impl Analysis<'_> {
                 "owning values outside a local move, borrow, or explicit drop",
             ));
         }
-        self.access(place, result_typ)
+        self.access_mode(place, result_typ, true)
     }
 
     pub(super) fn borrow(&mut self, place: &Place, typ: &Typ) -> Result<u64, VirErr> {

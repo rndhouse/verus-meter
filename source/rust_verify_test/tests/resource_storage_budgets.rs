@@ -143,7 +143,7 @@ test_verify_one_file! {
         #[verifier::external_body]
         fn leaf() mem_peak <= 8 {}
         fn f() mem_peak <= mem_peak(leaf) {}
-    } => Err(err) => assert_vir_error_msg(err, "expected a safe, nongeneric exec function returning unit")
+    } => Err(err) => assert_vir_error_msg(err, "expected a safe, nongeneric exec function")
 }
 
 test_verify_one_file! {

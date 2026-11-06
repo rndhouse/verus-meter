@@ -233,7 +233,7 @@ test_verify_one_file! {
     #[test] callee_below_parameter_size_is_rejected verus_code! {
         fn caller() mem_peak <= 100 { leaf(0); }
         fn leaf(x: u32) mem_peak <= 0 {}
-    } => Err(err) => assert_vir_error_msg(err, "callee storage budget is smaller than its parameter storage")
+    } => Err(err) => assert_vir_error_msg(err, "callee storage budget is smaller than its parameter and result storage")
 }
 
 test_verify_one_file! {

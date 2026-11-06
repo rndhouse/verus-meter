@@ -43,18 +43,24 @@ impl Analysis<'_> {
         Ok(())
     }
 
-    fn block(&mut self, expr: &Expr, stmts: &Stmts, tail: &Option<Expr>) -> Result<(), VirErr> {
-        if !unit(&expr.typ) {
-            return Err(unsupported(&expr.span, "value-returning blocks"));
-        }
+    pub(super) fn block(
+        &mut self,
+        expr: &Expr,
+        stmts: &Stmts,
+        tail: &Option<Expr>,
+        destination: bool,
+    ) -> Result<(), VirErr> {
         if let Some(stmt) = stmts.first() {
             if let StmtX::Expr(marker) = &stmt.x {
                 if let ExprX::ResourceSection(budget) = &marker.x {
+                    if !unit(&expr.typ) {
+                        return Err(unsupported(&expr.span, "value-returning memory sections"));
+                    }
                     return self.section(expr, &marker.span, budget, &stmts[1..], tail);
                 }
             }
         }
-        self.block_contents(expr, stmts, tail)
+        self.block_value(expr, stmts, tail, destination)
     }
 
     pub(super) fn block_contents(
@@ -62,6 +68,16 @@ impl Analysis<'_> {
         expr: &Expr,
         stmts: &[Stmt],
         tail: &Option<Expr>,
+    ) -> Result<(), VirErr> {
+        self.block_value(expr, stmts, tail, false)
+    }
+
+    fn block_value(
+        &mut self,
+        expr: &Expr,
+        stmts: &[Stmt],
+        tail: &Option<Expr>,
+        destination: bool,
     ) -> Result<(), VirErr> {
         let entry = self.storage.live();
         let entry_owners = self.heap.owners.clone();
@@ -122,7 +138,11 @@ impl Analysis<'_> {
             }
         }
         if let Some(tail) = tail {
-            self.discard(tail)?;
+            if destination {
+                self.initialize_expr(tail)?;
+            } else {
+                self.discard(tail)?;
+            }
         }
         for (span, bytes, name) in locals.into_iter().rev() {
             self.drop_owner(&name, &span)?;
@@ -144,6 +164,9 @@ impl Analysis<'_> {
     /// Evaluate source expressions. Only a standalone aggregate leaves a storage
     /// charge; scalar/reference operations introduce no implicit objects.
     pub(super) fn expr(&mut self, expr: &Expr) -> Result<u64, VirErr> {
+        if let Some(bytes) = self.value_expr(expr)? {
+            return Ok(bytes);
+        }
         if let Some(bytes) = self.vector_expr(expr)? {
             return Ok(bytes);
         }
@@ -184,7 +207,7 @@ impl Analysis<'_> {
             | ExprX::RevealString(..)
             | ExprX::RevealByteString(..) => return Ok(0),
             ExprX::Block(stmts, tail) => {
-                self.block(expr, stmts, tail)?;
+                self.block(expr, stmts, tail, false)?;
                 return Ok(0);
             }
             ExprX::Const(Constant::Bool(_) | Constant::Int(_)) => {}
@@ -235,7 +258,7 @@ impl Analysis<'_> {
                 }
                 operands = self.expr(lhs)? + self.expr(rhs)?;
             }
-            ExprX::Call { .. } => return self.call_expr(expr),
+            ExprX::Call { .. } => return self.call_expr(expr, false),
             ExprX::Assign { place, rhs, op, typ, .. } => {
                 if self.layouts.owner(typ) {
                     return Err(unsupported(&expr.span, "reassignment of heap owners"));
@@ -381,6 +404,11 @@ pub(super) fn check(
         obligations: Vec::new(),
         checks: Vec::new(),
     };
+    if f.outer_ret.x.mode != Mode::Exec {
+        return Err(unsupported(&function.span, "ghost or tracked return values"));
+    }
+    let result_size = layouts.return_size(&f.outer_ret.x.typ, &function.span)?;
+    analysis.storage.reserve(&function.span, result_size, "function result destination")?;
     for param in f.params.iter() {
         analysis.var_modes.insert(param.x.name.clone(), param.x.mode);
         if param.x.mode == Mode::Exec {
@@ -403,7 +431,11 @@ pub(super) fn check(
         }
     }
     let symbolic_bound = super::symbolic::function_bound(function, budgets, functions, layouts)?;
-    analysis.discard(body)?;
+    if unit(&f.outer_ret.x.typ) {
+        analysis.discard(body)?;
+    } else {
+        analysis.initialize_expr(body)?;
+    }
     analysis.check_checkpoints()?;
     let report = if symbolic_bound.is_some() {
         analysis.storage.finish_conditional(&function.span)

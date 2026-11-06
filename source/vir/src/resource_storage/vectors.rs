@@ -183,7 +183,7 @@ impl Analysis<'_> {
             return Err(unsupported(&expr.span, "this vector operation"));
         }
         // These operations use existing storage. A discarded pop result creates
-        // no declared slot; binding Option values remains outside the subset.
+        // no declared slot; a bound Option result uses its caller-provided destination.
         Ok(Some(0))
     }
 }
