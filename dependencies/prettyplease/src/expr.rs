@@ -92,7 +92,7 @@ impl Printer {
 
             Expr::ResourceBlock(section) => {
                 self.outer_attrs(&section.attrs);
-                self.word("peakmem <= ");
+                self.word("mem_peak <= ");
                 self.resource_budget(&section.contract.budget);
                 self.nbsp();
                 self.cbox(INDENT);
@@ -134,13 +134,13 @@ impl Printer {
                 });
                 self.resource_budget(right);
             }
-            ResourceExpr::SizeOf(_, _, typ) => {
-                self.word("sizeof(");
+            ResourceExpr::MemSize(_, _, typ) => {
+                self.word("mem_size(");
                 self.ty(typ);
                 self.word(")");
             }
-            ResourceExpr::PeakMem(_, _, function) => {
-                self.word("peakmem(");
+            ResourceExpr::MemPeak(_, _, function) => {
+                self.word("mem_peak(");
                 self.expr_path(function);
                 self.word(")");
             }
@@ -1704,7 +1704,7 @@ mod resource_tests {
     #[test]
     fn conditional_budget_round_trip() {
         let file = verus_syn::parse_file(
-            "fn f() { peakmem <= sizeof(flag) + if flag { 32 } else { 16 } { let x = 1; } }",
+            "fn f() { mem_peak <= mem_size(flag) + if flag { 32 } else { 16 } { let x = 1; } }",
         )
         .unwrap();
         let pretty = crate::unparse(&file);
@@ -1715,7 +1715,7 @@ mod resource_tests {
     #[test]
     fn memory_sections_keep_executable_contents() {
         let file = verus_syn::parse_file(
-            "fn f() { peakmem <= 2 * (sizeof([u32; 4]) + peakmem(helper)) { let x = 1; peakmem <= 0 { consume(x); } } }",
+            "fn f() { mem_peak <= 2 * (mem_size([u32; 4]) + mem_peak(helper)) { let x = 1; mem_peak <= 0 { consume(x); } } }",
         ).unwrap();
         let pretty = crate::unparse(&file);
         let reparsed = verus_syn::parse_file(&pretty).unwrap();

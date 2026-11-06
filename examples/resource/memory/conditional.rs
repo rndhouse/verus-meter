@@ -14,8 +14,8 @@ verus! {
 // workspace must fit its allowance. Increasing either array beyond that
 // allowance makes verification fail at its declaration.
 fn workspace(large: bool)
-    peakmem <= sizeof(large)
-        + if large { sizeof([u32; 8]) } else { sizeof([u32; 4]) },
+    mem_peak <= mem_size(large)
+        + if large { mem_size([u32; 8]) } else { mem_size([u32; 4]) },
 {
     if large {
         let scratch = [0u32; 8];
@@ -26,10 +26,10 @@ fn workspace(large: bool)
 
 // Reserve enough room to run either kind of task.
 //
-// For this first implementation, callers and peakmem(function) use the largest
+// For this first implementation, callers and mem_peak(function) use the largest
 // declared allowance. Consecutive calls reuse that workspace.
 fn main()
-    peakmem <= peakmem(workspace),
+    mem_peak <= mem_peak(workspace),
 {
     workspace(false);
     workspace(true);

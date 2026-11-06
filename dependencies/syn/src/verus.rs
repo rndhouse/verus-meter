@@ -226,7 +226,7 @@ ast_struct! {
 ast_struct! {
     /// A resource budget formula, optionally conditional on function inputs.
     pub struct SignatureResources {
-        pub token: Token![peakmem],
+        pub token: Token![mem_peak],
         pub le_token: Token![<=],
         pub budget: ResourceExpr,
         pub comma: Option<Token![,]>,
@@ -244,14 +244,14 @@ ast_struct! {
 
 ast_enum! {
     /// Resource formulas, with ordinary expressions for conditional predicates.
-    /// A bare `sizeof` path may name a parameter; other arguments denote types.
+    /// A bare `mem_size` path may name a parameter; other arguments denote types.
     pub enum ResourceExpr {
         Literal(LitInt),
         Paren(token::Paren, Box<ResourceExpr>),
         Add(Box<ResourceExpr>, Token![+], Box<ResourceExpr>),
         Mul(Box<ResourceExpr>, Token![*], Box<ResourceExpr>),
-        SizeOf(Ident, token::Paren, Type),
-        PeakMem(Ident, token::Paren, ExprPath),
+        MemSize(Ident, token::Paren, Type),
+        MemPeak(Ident, token::Paren, ExprPath),
         If(Token![if], Box<Expr>, token::Brace, Box<ResourceExpr>, Token![else], token::Brace, Box<ResourceExpr>),
     }
 }
@@ -384,7 +384,7 @@ ast_enum! {
     /// Logical assertions and memory checkpoints use different expression languages.
     pub enum AssertExpr {
         Logical(Box<Expr>),
-        PeakMem(Ident, token::Paren, Box<SignatureResources>),
+        MemPeak(Ident, token::Paren, Box<SignatureResources>),
     }
 }
 
@@ -959,7 +959,7 @@ pub mod parsing {
                 || input.peek(Token![decreases])
                 || input.peek(Token![via])
                 || input.peek(Token![when])
-                || (input.peek(Token![peakmem]) && input.peek2(Token![<=]))
+                || (input.peek(Token![mem_peak]) && input.peek2(Token![<=]))
                 || input.peek(Token![no_unwind])
                 || input.peek(Token![opens_invariants])
                 || input.peek(Token![outer_mask])
@@ -976,7 +976,7 @@ pub mod parsing {
                 || input.peek2(Token![decreases])
                 || input.peek2(Token![via])
                 || input.peek2(Token![when])
-                || (input.peek2(Token![peakmem]) && input.peek3(Token![<=]))
+                || (input.peek2(Token![mem_peak]) && input.peek3(Token![<=]))
                 || input.peek2(Token![no_unwind])
                 || input.peek2(Token![opens_invariants])
                 || input.peek2(Token![outer_mask])
@@ -1518,21 +1518,21 @@ pub mod parsing {
             return Ok(ResourceExpr::Literal(n));
         }
         let name: Ident = input.parse()?;
-        if name != "sizeof" && name != "peakmem" {
+        if name != "mem_size" && name != "mem_peak" {
             return Err(Error::new(
                 name.span(),
-                "expected sizeof(type/parameter) or peakmem(function)",
+                "expected mem_size(type/parameter) or mem_peak(function)",
             ));
         }
         let content;
         let paren = parenthesized!(content in input);
-        let expr = if name == "sizeof" {
-            ResourceExpr::SizeOf(name, paren, content.parse()?)
+        let expr = if name == "mem_size" {
+            ResourceExpr::MemSize(name, paren, content.parse()?)
         } else {
-            ResourceExpr::PeakMem(name, paren, content.parse()?)
+            ResourceExpr::MemPeak(name, paren, content.parse()?)
         };
         if !content.is_empty() {
-            return Err(content.error("expected a single sizeof or peakmem argument"));
+            return Err(content.error("expected a single mem_size or mem_peak argument"));
         }
         Ok(expr)
     }
@@ -1540,7 +1540,7 @@ pub mod parsing {
     #[cfg_attr(doc_cfg, doc(cfg(feature = "parsing")))]
     impl Parse for Option<SignatureResources> {
         fn parse(input: ParseStream) -> Result<Self> {
-            if !input.peek(Token![peakmem]) {
+            if !input.peek(Token![mem_peak]) {
                 return Ok(None);
             }
             let token = input.parse()?;
@@ -1559,7 +1559,7 @@ pub mod parsing {
         fn parse(input: ParseStream) -> Result<Self> {
             let contract = input
                 .parse::<Option<SignatureResources>>()?
-                .ok_or_else(|| input.error("expected peakmem section contract"))?;
+                .ok_or_else(|| input.error("expected mem_peak section contract"))?;
             Ok(Self {
                 attrs: Vec::new(),
                 contract: Box::new(contract),
@@ -1658,18 +1658,18 @@ pub mod parsing {
             // Only the exact contextual query is reserved. Ordinary calls such
             // as current(x) remain logical expressions.
             let lookahead = content.fork();
-            let current_peakmem = (|| -> Result<bool> {
+            let current_mem_peak = (|| -> Result<bool> {
                 let name: Ident = lookahead.parse()?;
                 if name != "current" {
                     return Ok(false);
                 }
                 let metric;
                 parenthesized!(metric in lookahead);
-                metric.parse::<Token![peakmem]>()?;
+                metric.parse::<Token![mem_peak]>()?;
                 Ok(metric.is_empty())
             })()
             .unwrap_or(false);
-            let expr = if current_peakmem {
+            let expr = if current_mem_peak {
                 let current = content.parse()?;
                 let metric;
                 let current_paren = parenthesized!(metric in content);
@@ -1679,10 +1679,10 @@ pub mod parsing {
                     budget: content.parse()?,
                     comma: content.parse()?,
                 };
-                AssertExpr::PeakMem(current, current_paren, Box::new(resource))
-            } else if content.peek(Token![peakmem]) && content.peek2(Token![<=]) {
+                AssertExpr::MemPeak(current, current_paren, Box::new(resource))
+            } else if content.peek(Token![mem_peak]) && content.peek2(Token![<=]) {
                 return Err(
-                    content.error("use assert(current(peakmem) <= bound) for a memory checkpoint")
+                    content.error("use assert(current(mem_peak) <= bound) for a memory checkpoint")
                 );
             } else {
                 AssertExpr::Logical(content.parse()?)
@@ -1691,8 +1691,8 @@ pub mod parsing {
                 return Err(content.error("expected `)`"));
             }
             if input.peek(Token![by]) {
-                if matches!(expr, AssertExpr::PeakMem(..)) {
-                    return Err(input.error("peakmem checkpoints do not support by proofs"));
+                if matches!(expr, AssertExpr::MemPeak(..)) {
+                    return Err(input.error("mem_peak checkpoints do not support by proofs"));
                 }
                 let by_token = input.parse()?;
                 let prover = if input.peek(token::Paren) {
@@ -2610,11 +2610,11 @@ mod printing {
                     op.to_tokens(tokens);
                     right.to_tokens(tokens);
                 }
-                ResourceExpr::SizeOf(name, paren, typ) => {
+                ResourceExpr::MemSize(name, paren, typ) => {
                     name.to_tokens(tokens);
                     paren.surround(tokens, |tokens| typ.to_tokens(tokens));
                 }
-                ResourceExpr::PeakMem(name, paren, function) => {
+                ResourceExpr::MemPeak(name, paren, function) => {
                     name.to_tokens(tokens);
                     paren.surround(tokens, |tokens| function.to_tokens(tokens));
                 }
@@ -2683,7 +2683,7 @@ mod printing {
         fn to_tokens(&self, tokens: &mut TokenStream) {
             match self {
                 AssertExpr::Logical(expr) => expr.to_tokens(tokens),
-                AssertExpr::PeakMem(current, paren, resource) => {
+                AssertExpr::MemPeak(current, paren, resource) => {
                     current.to_tokens(tokens);
                     paren.surround(tokens, |tokens| resource.token.to_tokens(tokens));
                     resource.le_token.to_tokens(tokens);
@@ -3454,7 +3454,7 @@ impl parse::Parse for WithSpecOnFn {
                 || input.peek(Token![decreases])
                 || input.peek(Token![via])
                 || input.peek(Token![when])
-                || (input.peek(Token![peakmem]) && input.peek2(Token![<=]))
+                || (input.peek(Token![mem_peak]) && input.peek2(Token![<=]))
                 || input.peek(Token![no_unwind])
                 || input.peek(Token![opens_invariants])
         };

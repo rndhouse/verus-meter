@@ -4,12 +4,12 @@ use verus_syn::{parse_str, ItemFn};
 #[test]
 fn resource_clause_survives_clone_and_printing() {
     let function: ItemFn =
-        parse_str("fn f(x: bool) requires x, ensures x, peakmem <= 516, {}").unwrap();
+        parse_str("fn f(x: bool) requires x, ensures x, mem_peak <= 516, {}").unwrap();
     let copy = function.clone();
     let printed = copy.to_token_stream().to_string();
     let reparsed: ItemFn = parse_str(&printed).unwrap();
     let resources = reparsed.sig.spec.resources.unwrap();
-    assert_eq!(resources.token.to_token_stream().to_string(), "peakmem");
+    assert_eq!(resources.token.to_token_stream().to_string(), "mem_peak");
     assert_eq!(resources.budget.to_token_stream().to_string(), "516");
     assert!(reparsed.sig.spec.requires.is_some());
     assert!(reparsed.sig.spec.ensures.is_some());
@@ -17,38 +17,41 @@ fn resource_clause_survives_clone_and_printing() {
 
 #[test]
 fn resource_clause_is_erased_for_rust() {
-    let mut function: ItemFn = parse_str("fn f() peakmem <= 0 {}").unwrap();
+    let mut function: ItemFn = parse_str("fn f() mem_peak <= 0 {}").unwrap();
     function.sig.spec.erase_spec_fields();
-    assert!(!function.to_token_stream().to_string().contains("peakmem"));
+    assert!(!function.to_token_stream().to_string().contains("mem_peak"));
 }
 
 #[test]
 fn malformed_resource_clauses_are_rejected() {
     for text in [
+        "fn f() peakmem <= 0 {}",
+        "fn f() mem_peak <= sizeof(u32) {}",
+        "fn f() mem_peak <= peakmem(helper) {}",
         "fn f() resources heap_bytes <= 8 {}",
-        "fn f() resources peakmem <= 8 {}",
-        "fn f() peakmem < 8 {}",
-        "fn f() peakmem <= BUDGET {}",
-        "fn f() peakmem <= -1 {}",
-        "fn f() peakmem <= 18446744073709551616 {}",
-        "fn f() peakmem <= 8u32 {}",
-        "fn f() peakmem <= 4 - 4 {}",
+        "fn f() resources mem_peak <= 8 {}",
+        "fn f() mem_peak < 8 {}",
+        "fn f() mem_peak <= BUDGET {}",
+        "fn f() mem_peak <= -1 {}",
+        "fn f() mem_peak <= 18446744073709551616 {}",
+        "fn f() mem_peak <= 8u32 {}",
+        "fn f() mem_peak <= 4 - 4 {}",
         "fn f() resources peak_local_storage_bytes <= 8 {}",
-        "fn f() peakmem <= peakmem(x.field) {}",
-        "fn f() peakmem <= peakmem(make()) {}",
-        "fn f() peakmem <= peakmem() {}",
+        "fn f() mem_peak <= mem_peak(x.field) {}",
+        "fn f() mem_peak <= mem_peak(make()) {}",
+        "fn f() mem_peak <= mem_peak() {}",
         "fn f() resources peak_memory_bytes <= 8 {}",
-        "fn f() peakmem <= memory_budget(x) {}",
-        "fn f() peakmem <= memory_budget::<u32>() {}",
-        "fn f() peakmem <= sizeof::<u32>() {}",
-        "fn f() peakmem <= sizeof() {}",
-        "fn f() peakmem <= sizeof(x.field) {}",
-        "fn f() peakmem <= sizeof(make()) {}",
-        "fn f() peakmem <= sizeof(4) {}",
-        "fn f() peakmem <= sizeof(x, y) {}",
-        "fn f() peakmem <= peakmem(x, y) {}",
-        "fn f() peakmem <= peakmem([u32; 4]) {}",
-        "fn f() peakmem <= 8 peakmem <= 9 {}",
+        "fn f() mem_peak <= memory_budget(x) {}",
+        "fn f() mem_peak <= memory_budget::<u32>() {}",
+        "fn f() mem_peak <= mem_size::<u32>() {}",
+        "fn f() mem_peak <= mem_size() {}",
+        "fn f() mem_peak <= mem_size(x.field) {}",
+        "fn f() mem_peak <= mem_size(make()) {}",
+        "fn f() mem_peak <= mem_size(4) {}",
+        "fn f() mem_peak <= mem_size(x, y) {}",
+        "fn f() mem_peak <= mem_peak(x, y) {}",
+        "fn f() mem_peak <= mem_peak([u32; 4]) {}",
+        "fn f() mem_peak <= 8 mem_peak <= 9 {}",
     ] {
         assert!(
             parse_str::<ItemFn>(text).is_err(),
@@ -59,7 +62,7 @@ fn malformed_resource_clauses_are_rejected() {
 
 #[test]
 fn resource_clause_ends_where_clause() {
-    let function: ItemFn = parse_str("fn f<T>() where T: Copy peakmem <= 0 {}").unwrap();
+    let function: ItemFn = parse_str("fn f<T>() where T: Copy mem_peak <= 0 {}").unwrap();
     assert!(function.sig.spec.resources.is_some());
 }
 
@@ -67,15 +70,15 @@ fn resource_clause_ends_where_clause() {
 fn expressive_budgets_round_trip() {
     for budget in [
         "4 + 4",
-        "sizeof(x) + peakmem(module::f)",
-        "2 * (sizeof([u32; 8]) + 4u64)",
-        "sizeof(crate::Buffer) + sizeof(&mut [u32]) + sizeof(())",
-        "sizeof([[u32; 4]; 2]) + sizeof(&'a Buffer)",
-        "sizeof(module::Alias<u32>) + peakmem(module::f::<u32>)",
+        "mem_size(x) + mem_peak(module::f)",
+        "2 * (mem_size([u32; 8]) + 4u64)",
+        "mem_size(crate::Buffer) + mem_size(&mut [u32]) + mem_size(())",
+        "mem_size([[u32; 4]; 2]) + mem_size(&'a Buffer)",
+        "mem_size(module::Alias<u32>) + mem_peak(module::f::<u32>)",
         "1 + 2 * 3 + (4 + 5) * 6",
-        "sizeof((x))",
+        "mem_size((x))",
     ] {
-        let code = format!("fn f(x: u32) peakmem <= {budget}, {{}}");
+        let code = format!("fn f(x: u32) mem_peak <= {budget}, {{}}");
         let parsed: ItemFn = parse_str(&code).unwrap();
         let printed = parsed.to_token_stream().to_string();
         let reparsed: ItemFn = parse_str(&printed).unwrap();
@@ -84,11 +87,11 @@ fn expressive_budgets_round_trip() {
 }
 
 #[test]
-fn peakmem_clause_is_distinct_from_calls_in_other_clauses() {
+fn mem_peak_clause_is_distinct_from_calls_in_other_clauses() {
     for text in [
-        "fn f(x: u32) requires peakmem(x), ensures peakmem(x), peakmem <= sizeof(x), {}",
-        "fn f(x: u32) requires peakmem(x) ensures peakmem(x) peakmem <= sizeof(x) {}",
-        "fn f<T>() where T: peakmem, peakmem <= 0 {}",
+        "fn f(x: u32) requires mem_peak(x), ensures mem_peak(x), mem_peak <= mem_size(x), {}",
+        "fn f(x: u32) requires mem_peak(x) ensures mem_peak(x) mem_peak <= mem_size(x) {}",
+        "fn f<T>() where T: mem_peak, mem_peak <= 0 {}",
     ] {
         let parsed: ItemFn = parse_str(text).unwrap();
         assert!(parsed.sig.spec.resources.is_some());
@@ -101,11 +104,11 @@ fn peakmem_clause_is_distinct_from_calls_in_other_clauses() {
 #[test]
 fn memory_checkpoints_round_trip_alongside_logical_assertions() {
     for statement in [
-        "assert(current(peakmem) <= sizeof(local) + peakmem(helper));",
-        "assert(current(peakmem) <= 2 * sizeof([u32; 4]));",
-        "assert(peakmem(local) <= 10);",
+        "assert(current(mem_peak) <= mem_size(local) + mem_peak(helper));",
+        "assert(current(mem_peak) <= 2 * mem_size([u32; 4]));",
+        "assert(mem_peak(local) <= 10);",
         "assert(current(local) <= 10);",
-        "assert(module::current(peakmem) <= 10);",
+        "assert(module::current(mem_peak) <= 10);",
         "assert(true) by { }",
     ] {
         let parsed: ItemFn = parse_str(&format!("fn f() {{ {statement} }}")).unwrap();
@@ -114,8 +117,8 @@ fn memory_checkpoints_round_trip_alongside_logical_assertions() {
             panic!("expected an assertion")
         };
         assert_eq!(
-            matches!(assertion.expr, verus_syn::AssertExpr::PeakMem(..)),
-            statement.starts_with("assert(current(peakmem)")
+            matches!(assertion.expr, verus_syn::AssertExpr::MemPeak(..)),
+            statement.starts_with("assert(current(mem_peak)")
         );
         let printed = parsed.clone().to_token_stream().to_string();
         let reparsed: ItemFn = parse_str(&printed).unwrap();
@@ -126,14 +129,14 @@ fn memory_checkpoints_round_trip_alongside_logical_assertions() {
 #[test]
 fn checkpoints_reject_proof_overrides_and_runtime_budgets() {
     for statement in [
-        "assert(peakmem <= 0);",
-        "assert(current(peakmem) < 0);",
-        "assert(current(peakmem) == 0);",
-        "assert(current(peakmem) <= sizeof(x)) by { }",
-        "assert(current(peakmem) <= 0) by(compute)",
-        "assert(current(peakmem) <= x);",
-        "assert(current(peakmem) <= sizeof(make()));",
-        "assert(current(peakmem) <= 4 - 1);",
+        "assert(mem_peak <= 0);",
+        "assert(current(mem_peak) < 0);",
+        "assert(current(mem_peak) == 0);",
+        "assert(current(mem_peak) <= mem_size(x)) by { }",
+        "assert(current(mem_peak) <= 0) by(compute)",
+        "assert(current(mem_peak) <= x);",
+        "assert(current(mem_peak) <= mem_size(make()));",
+        "assert(current(mem_peak) <= 4 - 1);",
     ] {
         assert!(parse_str::<ItemFn>(&format!("fn f() {{ {statement} }}")).is_err());
     }
@@ -142,18 +145,18 @@ fn checkpoints_reject_proof_overrides_and_runtime_budgets() {
 #[test]
 fn memory_sections_round_trip_and_end_statements() {
     for body in [
-        "peakmem <= 0 {} let x = 1;",
-        "peakmem <= sizeof(x) { peakmem <= 0 {} } peakmem <= 0 {};",
-        "#[allow(unused)] peakmem <= 2 * (sizeof([u32; 4]) + peakmem(helper)) { let x = 1; }",
-        "let x = peakmem <= 0 {};",
-        "if true { peakmem <= 0 {} } else { peakmem <= 0 {} }",
+        "mem_peak <= 0 {} let x = 1;",
+        "mem_peak <= mem_size(x) { mem_peak <= 0 {} } mem_peak <= 0 {};",
+        "#[allow(unused)] mem_peak <= 2 * (mem_size([u32; 4]) + mem_peak(helper)) { let x = 1; }",
+        "let x = mem_peak <= 0 {};",
+        "if true { mem_peak <= 0 {} } else { mem_peak <= 0 {} }",
     ] {
         let parsed: ItemFn = parse_str(&format!("fn f() {{ {body} }}")).unwrap();
         let printed = parsed.clone().to_token_stream().to_string();
         let reparsed: ItemFn = parse_str(&printed).unwrap();
         assert_eq!(printed, reparsed.to_token_stream().to_string());
     }
-    let parsed: ItemFn = parse_str("fn f() { peakmem(helper); }").unwrap();
+    let parsed: ItemFn = parse_str("fn f() { mem_peak(helper); }").unwrap();
     assert!(matches!(
         parsed.block.stmts[0],
         verus_syn::Stmt::Expr(verus_syn::Expr::Call(_), _)
@@ -163,10 +166,10 @@ fn memory_sections_round_trip_and_end_statements() {
 #[test]
 fn memory_sections_reject_invalid_budgets() {
     for body in [
-        "peakmem <= unknown {}",
-        "peakmem <= sizeof(make()) {}",
-        "peakmem <= 4 - 1 {}",
-        "peakmem <= 4;",
+        "mem_peak <= unknown {}",
+        "mem_peak <= mem_size(make()) {}",
+        "mem_peak <= 4 - 1 {}",
+        "mem_peak <= 4;",
     ] {
         assert!(parse_str::<ItemFn>(&format!("fn f() {{ {body} }}")).is_err());
     }
@@ -175,11 +178,11 @@ fn memory_sections_reject_invalid_budgets() {
 #[test]
 fn conditional_resource_budgets_round_trip() {
     for budget in [
-        "sizeof(flag) + if flag { sizeof([u32; 8]) } else { sizeof([u32; 4]) }",
+        "mem_size(flag) + if flag { mem_size([u32; 8]) } else { mem_size([u32; 4]) }",
         "if count <= 4 { 16 } else { 32 }",
         "2 * (if a && !b { 32 } else { if b { 16 } else { 0 } })",
     ] {
-        let parsed: ItemFn = parse_str(&format!("fn f() peakmem <= {budget}, {{}}")).unwrap();
+        let parsed: ItemFn = parse_str(&format!("fn f() mem_peak <= {budget}, {{}}")).unwrap();
         let printed = parsed.to_token_stream().to_string();
         let reparsed: ItemFn = parse_str(&printed).unwrap();
         assert_eq!(printed, reparsed.to_token_stream().to_string());
@@ -193,6 +196,6 @@ fn conditional_resource_budgets_require_both_formula_branches() {
         "if flag { let x = 4; x } else { 0 }",
         "if flag { 4 } else { runtime_value }",
     ] {
-        assert!(parse_str::<ItemFn>(&format!("fn f() peakmem <= {budget} {{}}")).is_err());
+        assert!(parse_str::<ItemFn>(&format!("fn f() mem_peak <= {budget} {{}}")).is_err());
     }
 }

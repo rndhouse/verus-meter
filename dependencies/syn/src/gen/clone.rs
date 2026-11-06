@@ -58,8 +58,8 @@ impl Clone for crate::AssertExpr {
     fn clone(&self) -> Self {
         match self {
             crate::AssertExpr::Logical(v0) => crate::AssertExpr::Logical(v0.clone()),
-            crate::AssertExpr::PeakMem(v0, v1, v2) => {
-                crate::AssertExpr::PeakMem(v0.clone(), v1.clone(), v2.clone())
+            crate::AssertExpr::MemPeak(v0, v1, v2) => {
+                crate::AssertExpr::MemPeak(v0.clone(), v1.clone(), v2.clone())
             }
         }
     }
@@ -2560,11 +2560,11 @@ impl Clone for crate::ResourceExpr {
             crate::ResourceExpr::Mul(v0, v1, v2) => {
                 crate::ResourceExpr::Mul(v0.clone(), v1.clone(), v2.clone())
             }
-            crate::ResourceExpr::SizeOf(v0, v1, v2) => {
-                crate::ResourceExpr::SizeOf(v0.clone(), v1.clone(), v2.clone())
+            crate::ResourceExpr::MemSize(v0, v1, v2) => {
+                crate::ResourceExpr::MemSize(v0.clone(), v1.clone(), v2.clone())
             }
-            crate::ResourceExpr::PeakMem(v0, v1, v2) => {
-                crate::ResourceExpr::PeakMem(v0.clone(), v1.clone(), v2.clone())
+            crate::ResourceExpr::MemPeak(v0, v1, v2) => {
+                crate::ResourceExpr::MemPeak(v0.clone(), v1.clone(), v2.clone())
             }
             crate::ResourceExpr::If(v0, v1, v2, v3, v4, v5, v6) => {
                 crate::ResourceExpr::If(

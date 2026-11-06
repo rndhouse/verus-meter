@@ -4,7 +4,7 @@
 // is done in total. These small examples isolate that distinction and show why
 // proof-only data can be excluded from the runtime budget.
 // Budgets use abstract model bytes; they do not predict physical stack sizes.
-// sizeof names a type or parameter's storage; peakmem names a function's bound.
+// mem_size names a type or parameter's storage; mem_peak names a function's bound.
 // Run with --trace to inspect the accounting behind each bound.
 
 use vstd::prelude::*;
@@ -17,7 +17,7 @@ verus! {
 // only needs to cover one array at a time.
 // The initializer uses the declared array's storage.
 fn separate_scopes()
-    peakmem <= sizeof([u32; 64]),
+    mem_peak <= mem_size([u32; 64]),
 {
     // Explicit scopes make the reuse independent of compiler optimizations.
     { let first = [0u32; 64]; }
@@ -29,7 +29,7 @@ fn separate_scopes()
 // Both declared arrays remain live while the second is initialized. The budget
 // covers exactly those two arrays.
 fn overlapping_scopes()
-    peakmem <= 2 * sizeof([u32; 64]),
+    mem_peak <= 2 * mem_size([u32; 64]),
 {
     let first = [0u32; 64];
     // The first slot stays live until this function's block ends, even if unused.
@@ -41,7 +41,7 @@ fn overlapping_scopes()
 // Only one alternative runs, so their workspace costs are not added together.
 // The budget covers the larger branch while retaining the condition's storage.
 fn branches(condition: bool)
-    peakmem <= sizeof(condition) + sizeof([u32; 64]),
+    mem_peak <= mem_size(condition) + mem_size([u32; 64]),
 {
     if condition {
         let scratch = [0u32; 64];
@@ -57,7 +57,7 @@ fn branches(condition: bool)
 // Termination is a separate obligation, established by the decreasing expression.
 // The condition remains live while each iteration uses its workspace.
 fn reusable_loop(mut condition: bool)
-    peakmem <= sizeof(condition) + sizeof([u32; 64]),
+    mem_peak <= mem_size(condition) + mem_size([u32; 64]),
 {
     while condition
         decreases if condition { 1int } else { 0int },
@@ -72,7 +72,7 @@ fn reusable_loop(mut condition: bool)
 // Ghost and proof data are erased, so even these deliberately large proof-only
 // arrays leave the executable workspace's budget unchanged.
 fn erased_proof_data()
-    peakmem <= sizeof([u32; 64]),
+    mem_peak <= mem_size([u32; 64]),
 {
     let ghost large = [0u32; 4096usize];
     proof { let another = [0u32; 8192usize]; }

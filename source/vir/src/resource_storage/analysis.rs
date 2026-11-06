@@ -265,7 +265,7 @@ impl Analysis<'_> {
                 return Err(error(
                     &checkpoint.span,
                     format!(
-                        "peakmem assertion failed: peak {} bytes exceeds bound {} bytes",
+                        "mem_peak assertion failed: peak {} bytes exceeds bound {} bytes",
                         checkpoint.peak.bytes, checkpoint.budget,
                     ),
                 )
@@ -295,12 +295,12 @@ pub(super) fn check(
                 if matches!(expr.x, ExprX::ResourceSection(_)) {
                     Err(error(
                         &expr.span,
-                        "peakmem sections require a function-level peakmem contract",
+                        "mem_peak sections require a function-level mem_peak contract",
                     ))
                 } else if matches!(expr.x, ExprX::ResourceAssert(_)) {
                     Err(error(
                         &expr.span,
-                        "peakmem checkpoints require a function-level peakmem contract",
+                        "mem_peak checkpoints require a function-level mem_peak contract",
                     ))
                 } else {
                     Ok(())

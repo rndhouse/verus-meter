@@ -1279,7 +1279,7 @@ where
         crate::AssertExpr::Logical(_binding_0) => {
             v.visit_expr(&**_binding_0);
         }
-        crate::AssertExpr::PeakMem(_binding_0, _binding_1, _binding_2) => {
+        crate::AssertExpr::MemPeak(_binding_0, _binding_1, _binding_2) => {
             v.visit_ident(_binding_0);
             skip!(_binding_1);
             v.visit_signature_resources(&**_binding_2);
@@ -4572,12 +4572,12 @@ where
             skip!(_binding_1);
             v.visit_resource_expr(&**_binding_2);
         }
-        crate::ResourceExpr::SizeOf(_binding_0, _binding_1, _binding_2) => {
+        crate::ResourceExpr::MemSize(_binding_0, _binding_1, _binding_2) => {
             v.visit_ident(_binding_0);
             skip!(_binding_1);
             v.visit_type(_binding_2);
         }
-        crate::ResourceExpr::PeakMem(_binding_0, _binding_1, _binding_2) => {
+        crate::ResourceExpr::MemPeak(_binding_0, _binding_1, _binding_2) => {
             v.visit_ident(_binding_0);
             skip!(_binding_1);
             v.visit_expr_path(_binding_2);

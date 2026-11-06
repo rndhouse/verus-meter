@@ -70,8 +70,8 @@ impl Debug for crate::AssertExpr {
                 formatter.field(v0);
                 formatter.finish()
             }
-            crate::AssertExpr::PeakMem(v0, v1, v2) => {
-                let mut formatter = formatter.debug_tuple("PeakMem");
+            crate::AssertExpr::MemPeak(v0, v1, v2) => {
+                let mut formatter = formatter.debug_tuple("MemPeak");
                 formatter.field(v0);
                 formatter.field(v1);
                 formatter.field(v2);
@@ -3579,15 +3579,15 @@ impl Debug for crate::ResourceExpr {
                 formatter.field(v2);
                 formatter.finish()
             }
-            crate::ResourceExpr::SizeOf(v0, v1, v2) => {
-                let mut formatter = formatter.debug_tuple("SizeOf");
+            crate::ResourceExpr::MemSize(v0, v1, v2) => {
+                let mut formatter = formatter.debug_tuple("MemSize");
                 formatter.field(v0);
                 formatter.field(v1);
                 formatter.field(v2);
                 formatter.finish()
             }
-            crate::ResourceExpr::PeakMem(v0, v1, v2) => {
-                let mut formatter = formatter.debug_tuple("PeakMem");
+            crate::ResourceExpr::MemPeak(v0, v1, v2) => {
+                let mut formatter = formatter.debug_tuple("MemPeak");
                 formatter.field(v0);
                 formatter.field(v1);
                 formatter.field(v2);

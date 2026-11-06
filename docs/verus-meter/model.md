@@ -15,44 +15,47 @@ Unsupported executable constructs fail closed.
 
 ## Contract and supported subset
 
+The public names are `mem_peak` and `mem_size`, replacing the earlier `peakmem`
+and `sizeof` spellings. Checkpoints use `current(mem_peak)`; `current` is unchanged.
+
 ```rust
 fn example()
-    peakmem <= sizeof([u32; 64]),
+    mem_peak <= mem_size([u32; 64]),
 {
     { let first = [0u32; 64]; }
     { let second = [0u32; 64]; }
 }
 ```
 
-The `peakmem <= ...` clause comes after the other function clauses. Its budget is a
+The `mem_peak <= ...` clause comes after the other function clauses. Its budget is a
 compile-time expression built from nonnegative `u64` literals (unsuffixed or
-suffixed `u64`), `sizeof` and `peakmem` queries, addition, multiplication, and
+suffixed `u64`), `mem_size` and `mem_peak` queries, addition, multiplication, and
 parentheses. Function contracts can also select between budget formulas with
 `if condition { ... } else { ... }`, as described below:
 
-- `sizeof(buffer)` queries the model size of a named parameter's type.
+- `mem_size(buffer)` queries the model size of a named parameter's type.
   An `&mut SortBuffer` parameter costs 8 bytes; it excludes the backing struct.
-- `peakmem(sorting::insertion_sort)` queries the function's **declared**
+- `mem_peak(sorting::insertion_sort)` queries the function's **declared**
   budget, including any slack. For a conditional contract it currently uses a
   conservative envelope: the maximum at each conditional in the formula.
   Function paths and import aliases use resolved
   Rust identities. Only eligible annotated functions in the same crate qualify.
-- `sizeof(SortBuffer)` queries a type directly, including when the
+- `mem_size(SortBuffer)` queries a type directly, including when the
   local value does not yet exist at the function's signature. It uses the same
   unpadded layout rules as executable storage accounting.
 
 For example, the struct helper declares:
 
 ```rust
-peakmem <= sizeof(buffer) + peakmem(sorting::insertion_sort),
+mem_peak <= mem_size(buffer) + mem_peak(sorting::insertion_sort),
 ```
 
 The queries are erased metadata: they do not evaluate, copy, or move their
-arguments, and add no runtime storage. In `sizeof`, a bare name matching a
+arguments, and add no runtime storage. In `mem_size`, a bare name matching a
 parameter denotes that parameter's type; otherwise the argument is a Rust type,
 such as `[u32; 4]`, `&mut SortBuffer`, or a type alias. Parameter names take
 precedence over type names; a qualified type path disambiguates a shadowed type.
-`peakmem` requires a function path, never a value's storage size. These are
+`mem_peak` requires a function path, never a value's storage size. These are
 resource-model queries, not Rust's ABI-aware `std::mem::size_of`.
 Field accesses and computed value expressions are unsupported. Runtime arithmetic,
 arbitrary function calls, named numeric constants as budget operands, subtraction,
@@ -66,8 +69,8 @@ proof: construction, argument handoff, or other execution can exceed it.
 
 Functions without a resource clause continue through normal Verus verification
 without resource checking. The former `resources ...` clause spellings are
-replaced by the standalone `peakmem <= ...` clause; the overloaded `memory_budget`
-query is replaced by `sizeof` and `peakmem`. Version 5 removes
+replaced by the standalone `mem_peak <= ...` clause; the overloaded `memory_budget`
+query is replaced by `mem_size` and `mem_peak`. Version 5 removes
 inferred expression and address temporaries consistently across initialization,
 assignment, and calls.
 
@@ -92,8 +95,8 @@ A function can select a workspace allowance using its inputs:
 
 ```rust
 fn workspace(large: bool)
-    peakmem <= sizeof(large)
-        + if large { sizeof([u32; 8]) } else { sizeof([u32; 4]) },
+    mem_peak <= mem_size(large)
+        + if large { mem_size([u32; 8]) } else { mem_size([u32; 4]) },
 {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
@@ -125,7 +128,7 @@ This first slice has explicit boundaries:
 - Branch budgets use the existing formula language and may contain nested
   conditionals. The conservative arithmetic envelope must fit in `u64`, and all
   branches are checked for unsupported types, invalid queries, and budget cycles.
-- Calls and `peakmem(function)` currently use the conservative declared envelope,
+- Calls and `mem_peak(function)` currently use the conservative declared envelope,
   even when the actual argument would select a smaller allowance. Argument-aware
   budget instantiation remains a separate next step.
 - Sections and checkpoints still require fixed bounds and retain their structural
@@ -141,27 +144,27 @@ budget envelope from the proof obligations; a trace alone is not a proof result.
 
 ## Memory checkpoints
 
-Inside an annotated executable function, `assert(current(peakmem) <= bound)`
+Inside an annotated executable function, `assert(current(mem_peak) <= bound)`
 checks the highest modelled memory use from the nearest budgeted section's entry
 to the assertion, or from function entry when outside a section.
 `current` selects the peak at this point; it does not mean current live storage
-or the sum of allocations. The function clause remains `peakmem <= ...`, and
-`peakmem(function)` still queries a declared whole-function bound. The checkpoint
-bound uses the same `sizeof`, `peakmem(function)`, and checked arithmetic as the
-function contract. At a checkpoint, `sizeof` can also name a local in scope;
+or the sum of allocations. The function clause remains `mem_peak <= ...`, and
+`mem_peak(function)` still queries a declared whole-function bound. The checkpoint
+bound uses the same `mem_size`, `mem_peak(function)`, and checked arithmetic as the
+function contract. At a checkpoint, `mem_size` can also name a local in scope;
 the query uses only its type, even if the value is moved or uninitialized.
 
 ```rust
 fn example()
-    peakmem <= 2 * sizeof([u32; 4]),
+    mem_peak <= 2 * mem_size([u32; 4]),
 {
     let original = [1u32, 2, 3, 4];
-    assert(current(peakmem) <= sizeof(original));
+    assert(current(mem_peak) <= mem_size(original));
     {
         let copy = original;
-        assert(current(peakmem) <= sizeof(original) + sizeof(copy));
+        assert(current(mem_peak) <= mem_size(original) + mem_size(copy));
     }
-    assert(current(peakmem) <= 2 * sizeof(original));
+    assert(current(mem_peak) <= 2 * mem_size(original));
 }
 ```
 
@@ -194,14 +197,14 @@ and also identifies the allocation that established the peak.
 An executable block can declare its own workspace allowance:
 
 ```rust
-fn example() peakmem <= 3 * sizeof([u32; 4]) {
+fn example() mem_peak <= 3 * mem_size([u32; 4]) {
     let original = [1u32, 2, 3, 4];
-    peakmem <= 2 * sizeof(original) {
-        assert(current(peakmem) <= 0);
+    mem_peak <= 2 * mem_size(original) {
+        assert(current(mem_peak) <= 0);
         let copy = original;
-        peakmem <= sizeof(copy) {
+        mem_peak <= mem_size(copy) {
             let scratch = copy;
-            assert(current(peakmem) <= sizeof(scratch));
+            assert(current(mem_peak) <= mem_size(scratch));
         }
     }
 }
@@ -215,14 +218,14 @@ composition rule as function contracts. A child that fits cannot excuse an
 over-budget parent, and a generous parent cannot excuse an over-budget child.
 Sibling sections reuse their allowances; nested sections compose recursively.
 
-`current(peakmem)` selects the nearest budgeted section. Leaving a section restores
+`current(mem_peak)` selects the nearest budgeted section. Leaving a section restores
 the parent's accounting, with the child's allowance included in the parent's peak.
 Ordinary unannotated blocks retain their enclosing history. A section inside a
 loop starts fresh on each entry; a loop inside a section retains previous-iteration
 peaks in that section's checkpoints. There is no runtime counter or reset.
 
-Section bounds use the same formula language as function contracts. `sizeof`
-can name locals in scope at section entry, and `peakmem(function)` queries the
+Section bounds use the same formula language as function contracts. `mem_size`
+can name locals in scope at section entry, and `mem_peak(function)` queries the
 function's declared bound. Sections require an annotated executable function
 and a unit-valued body, with the same supported subset as other checked blocks.
 They may read or modify outer data without charging for that data again, while
@@ -655,15 +658,15 @@ aggregates, references to zero-sized values, and nested initializer calls.
 
 ## Short resource syntax validation (v5)
 
-Standalone `peakmem` clauses and the `sizeof`/`peakmem` queries change no
+Standalone `mem_peak` clauses and the `mem_size`/`mem_peak` queries change no
 storage-accounting rules.
 
 - The release workspace and installed verifier built successfully; rebuilt vstd
   reported 2,226 verified and zero errors.
 - All 197 resource tests passed, including 30 budget-expression tests covering
   type aliases, parameter/type name shadowing, compound type syntax, arithmetic
-  precedence, rejection of values passed to `peakmem` or functions to `sizeof`,
-  and calls to ordinary functions named `peakmem` in other clauses.
+  precedence, rejection of values passed to `mem_peak` or functions to `mem_size`,
+  and calls to ordinary functions named `mem_peak` in other clauses.
 - All six resource parser tests passed, including clause boundaries, round trips,
   and rejection of malformed or superseded syntax.
 - The five baseline upstream suites in [setup.md](setup.md) passed: 193 tests,
@@ -694,12 +697,12 @@ source storage costs or whole-function bounds.
   project examples also verified, compiled, and ran directly. Both expected
   failures were rejected at their documented locations.
 
-The subsequent `current(peakmem)` spelling preserves these rules. Validation
+The subsequent `current(mem_peak)` spelling preserves these rules. Validation
 passed with 223 resource tests (26 checkpoint tests), the same 1,076 selected
 upstream tests, eight parser tests, and 12 example-runner tests. Ordinary calls
 to functions named `current` remain logical expressions. The updated passing
 checkpoint example also verified, compiled, and ran; the failing example was
-rejected at its `current(peakmem)` assertion.
+rejected at its `current(mem_peak)` assertion.
 
 ## Budgeted section validation (v5)
 
@@ -739,3 +742,12 @@ fixed contracts and source storage charges retain their previous rules.
 - The conditional workspace example verified, compiled, and ran. A separate
   compiled harness proved a conditional postcondition and checked both runtime
   outcomes after writes through a mutable reference.
+
+## Memory naming validation (v5)
+
+The `mem_peak` / `mem_size` rename preserves accounting and proof behavior.
+Release and installed verifier builds passed; fresh vstd verification reported
+2,226 verified and zero errors. All 273 resource tests, 1,076 selected upstream
+tests (eight ignored), 14 resource example checks, 12 parser tests, and both
+formatter tests passed. All seven passing memory examples verified, compiled,
+and ran. Parser regressions also reject the superseded resource spellings.

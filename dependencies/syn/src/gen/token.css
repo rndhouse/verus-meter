@@ -85,6 +85,7 @@ a.struct[title="struct syn::token::Lt"],
 a.struct[title="struct syn::token::Macro"],
 a.struct[title="struct syn::token::Match"],
 a.struct[title="struct syn::token::Matches"],
+a.struct[title="struct syn::token::MemPeak"],
 a.struct[title="struct syn::token::Minus"],
 a.struct[title="struct syn::token::MinusEq"],
 a.struct[title="struct syn::token::Mod"],
@@ -102,7 +103,6 @@ a.struct[title="struct syn::token::OrOr"],
 a.struct[title="struct syn::token::OuterMask"],
 a.struct[title="struct syn::token::Override"],
 a.struct[title="struct syn::token::PathSep"],
-a.struct[title="struct syn::token::Peakmem"],
 a.struct[title="struct syn::token::Percent"],
 a.struct[title="struct syn::token::PercentEq"],
 a.struct[title="struct syn::token::Plus"],
@@ -254,6 +254,7 @@ a.struct[title="struct syn::token::Lt"]::before,
 a.struct[title="struct syn::token::Macro"]::before,
 a.struct[title="struct syn::token::Match"]::before,
 a.struct[title="struct syn::token::Matches"]::before,
+a.struct[title="struct syn::token::MemPeak"]::before,
 a.struct[title="struct syn::token::Minus"]::before,
 a.struct[title="struct syn::token::MinusEq"]::before,
 a.struct[title="struct syn::token::Mod"]::before,
@@ -271,7 +272,6 @@ a.struct[title="struct syn::token::OrOr"]::before,
 a.struct[title="struct syn::token::OuterMask"]::before,
 a.struct[title="struct syn::token::Override"]::before,
 a.struct[title="struct syn::token::PathSep"]::before,
-a.struct[title="struct syn::token::Peakmem"]::before,
 a.struct[title="struct syn::token::Percent"]::before,
 a.struct[title="struct syn::token::PercentEq"]::before,
 a.struct[title="struct syn::token::Plus"]::before,
@@ -685,6 +685,10 @@ a.struct[title="struct syn::token::Matches"]::before {
 	content: "Token![matches]";
 }
 
+a.struct[title="struct syn::token::MemPeak"]::before {
+	content: "Token![mem_peak]";
+}
+
 a.struct[title="struct syn::token::Minus"]::before {
 	content: "Token![-]";
 }
@@ -751,10 +755,6 @@ a.struct[title="struct syn::token::Override"]::before {
 
 a.struct[title="struct syn::token::PathSep"]::before {
 	content: "Token![::]";
-}
-
-a.struct[title="struct syn::token::Peakmem"]::before {
-	content: "Token![peakmem]";
 }
 
 a.struct[title="struct syn::token::Percent"]::before {
@@ -1144,7 +1144,6 @@ a.struct[title="struct syn::token::Mut"]::after,
 a.struct[title="struct syn::token::Ne"]::after,
 a.struct[title="struct syn::token::Open"]::after,
 a.struct[title="struct syn::token::Override"]::after,
-a.struct[title="struct syn::token::Peakmem"]::after,
 a.struct[title="struct syn::token::Priv"]::after,
 a.struct[title="struct syn::token::Proof"]::after,
 a.struct[title="struct syn::token::Pub"]::after,
@@ -1184,6 +1183,7 @@ a.struct[title="struct syn::token::AssumeSpecification"]::after,
 a.struct[title="struct syn::token::DefaultEnsures"]::after,
 a.struct[title="struct syn::token::InnerMask"]::after,
 a.struct[title="struct syn::token::InvariantEnsures"]::after,
+a.struct[title="struct syn::token::MemPeak"]::after,
 a.struct[title="struct syn::token::NoUnwind"]::after,
 a.struct[title="struct syn::token::OpensInvariants"]::after,
 a.struct[title="struct syn::token::OuterMask"]::after,

@@ -131,8 +131,8 @@ impl Debug for Lite<syn::AssertExpr> {
                 formatter.write_str(")")?;
                 Ok(())
             }
-            syn::AssertExpr::PeakMem(_v0, _v1, _v2) => {
-                let mut formatter = formatter.debug_tuple("AssertExpr::PeakMem");
+            syn::AssertExpr::MemPeak(_v0, _v1, _v2) => {
+                let mut formatter = formatter.debug_tuple("AssertExpr::MemPeak");
                 formatter.field(Lite(_v0));
                 formatter.field(Lite(_v2));
                 formatter.finish()
@@ -6027,14 +6027,14 @@ impl Debug for Lite<syn::ResourceExpr> {
                 formatter.field(Lite(_v2));
                 formatter.finish()
             }
-            syn::ResourceExpr::SizeOf(_v0, _v1, _v2) => {
-                let mut formatter = formatter.debug_tuple("ResourceExpr::SizeOf");
+            syn::ResourceExpr::MemSize(_v0, _v1, _v2) => {
+                let mut formatter = formatter.debug_tuple("ResourceExpr::MemSize");
                 formatter.field(Lite(_v0));
                 formatter.field(Lite(_v2));
                 formatter.finish()
             }
-            syn::ResourceExpr::PeakMem(_v0, _v1, _v2) => {
-                let mut formatter = formatter.debug_tuple("ResourceExpr::PeakMem");
+            syn::ResourceExpr::MemPeak(_v0, _v1, _v2) => {
+                let mut formatter = formatter.debug_tuple("ResourceExpr::MemPeak");
                 formatter.field(Lite(_v0));
                 formatter.field(Lite(_v2));
                 formatter.finish()
@@ -8126,6 +8126,11 @@ impl Debug for Lite<syn::token::Matches> {
         formatter.write_str("Token![matches]")
     }
 }
+impl Debug for Lite<syn::token::MemPeak> {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("Token![mem_peak]")
+    }
+}
 impl Debug for Lite<syn::token::Minus> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("Token![-]")
@@ -8209,11 +8214,6 @@ impl Debug for Lite<syn::token::Override> {
 impl Debug for Lite<syn::token::PathSep> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("Token![::]")
-    }
-}
-impl Debug for Lite<syn::token::Peakmem> {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("Token![peakmem]")
     }
 }
 impl Debug for Lite<syn::token::Percent> {

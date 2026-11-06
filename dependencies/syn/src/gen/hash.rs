@@ -66,7 +66,7 @@ impl Hash for crate::AssertExpr {
                 state.write_u8(0u8);
                 v0.hash(state);
             }
-            crate::AssertExpr::PeakMem(v0, _, v2) => {
+            crate::AssertExpr::MemPeak(v0, _, v2) => {
                 state.write_u8(1u8);
                 v0.hash(state);
                 v2.hash(state);
@@ -3190,12 +3190,12 @@ impl Hash for crate::ResourceExpr {
                 v0.hash(state);
                 v2.hash(state);
             }
-            crate::ResourceExpr::SizeOf(v0, _, v2) => {
+            crate::ResourceExpr::MemSize(v0, _, v2) => {
                 state.write_u8(4u8);
                 v0.hash(state);
                 v2.hash(state);
             }
-            crate::ResourceExpr::PeakMem(v0, _, v2) => {
+            crate::ResourceExpr::MemPeak(v0, _, v2) => {
                 state.write_u8(5u8);
                 v0.hash(state);
                 v2.hash(state);

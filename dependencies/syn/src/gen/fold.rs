@@ -1427,8 +1427,8 @@ where
         crate::AssertExpr::Logical(_binding_0) => {
             crate::AssertExpr::Logical(Box::new(f.fold_expr(*_binding_0)))
         }
-        crate::AssertExpr::PeakMem(_binding_0, _binding_1, _binding_2) => {
-            crate::AssertExpr::PeakMem(
+        crate::AssertExpr::MemPeak(_binding_0, _binding_1, _binding_2) => {
+            crate::AssertExpr::MemPeak(
                 f.fold_ident(_binding_0),
                 _binding_1,
                 Box::new(f.fold_signature_resources(*_binding_2)),
@@ -4556,15 +4556,15 @@ where
                 Box::new(f.fold_resource_expr(*_binding_2)),
             )
         }
-        crate::ResourceExpr::SizeOf(_binding_0, _binding_1, _binding_2) => {
-            crate::ResourceExpr::SizeOf(
+        crate::ResourceExpr::MemSize(_binding_0, _binding_1, _binding_2) => {
+            crate::ResourceExpr::MemSize(
                 f.fold_ident(_binding_0),
                 _binding_1,
                 f.fold_type(_binding_2),
             )
         }
-        crate::ResourceExpr::PeakMem(_binding_0, _binding_1, _binding_2) => {
-            crate::ResourceExpr::PeakMem(
+        crate::ResourceExpr::MemPeak(_binding_0, _binding_1, _binding_2) => {
+            crate::ResourceExpr::MemPeak(
                 f.fold_ident(_binding_0),
                 _binding_1,
                 f.fold_expr_path(_binding_2),

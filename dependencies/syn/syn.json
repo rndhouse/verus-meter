@@ -159,7 +159,7 @@
             }
           }
         ],
-        "PeakMem": [
+        "MemPeak": [
           {
             "proc_macro2": "Ident"
           },
@@ -6410,7 +6410,7 @@
             }
           }
         ],
-        "SizeOf": [
+        "MemSize": [
           {
             "proc_macro2": "Ident"
           },
@@ -6421,7 +6421,7 @@
             "syn": "Type"
           }
         ],
-        "PeakMem": [
+        "MemPeak": [
           {
             "proc_macro2": "Ident"
           },
@@ -6762,7 +6762,7 @@
       },
       "fields": {
         "token": {
-          "token": "Peakmem"
+          "token": "MemPeak"
         },
         "le_token": {
           "token": "Le"
@@ -8312,6 +8312,7 @@
     "Macro": "macro",
     "Match": "match",
     "Matches": "matches",
+    "MemPeak": "mem_peak",
     "Minus": "-",
     "MinusEq": "-=",
     "Mod": "mod",
@@ -8329,7 +8330,6 @@
     "OuterMask": "outer_mask",
     "Override": "override",
     "PathSep": "::",
-    "Peakmem": "peakmem",
     "Percent": "%",
     "PercentEq": "%=",
     "Plus": "+",

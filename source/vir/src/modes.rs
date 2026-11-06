@@ -2767,7 +2767,10 @@ fn check_expr(
         }
         ExprX::ResourceAssert(_) | ExprX::ResourceSection(_) => {
             if typing.block_ghostness != Ghost::Exec || outer_mode != Mode::Exec {
-                return Err(error(&expr.span, "peakmem checkpoints require an exec function body"));
+                return Err(error(
+                    &expr.span,
+                    "mem_peak checkpoints require an exec function body",
+                ));
             }
             Ok((Mode::Exec, Proph::No))
         }

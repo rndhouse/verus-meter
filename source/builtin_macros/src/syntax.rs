@@ -110,7 +110,7 @@ pub(crate) struct Visitor {
     inside_impl: Option<Box<(Generics, Box<Type>)>>,
     // A place to put items that are emitted while visiting
     additional_items: Vec<Item>,
-    // Names visible to sizeof at a memory checkpoint.
+    // Names visible to mem_size at a memory checkpoint.
     resource_bindings: Vec<Ident>,
 }
 
@@ -299,7 +299,7 @@ fn lower_memory_budget(expr: &verus_syn::ResourceExpr, parameters: &[Ident]) -> 
             let right = lower_memory_budget(right, parameters);
             quote_spanned!(expr.span() => (#left #op #right))
         }
-        ResourceExpr::SizeOf(_, _, typ) => {
+        ResourceExpr::MemSize(_, _, typ) => {
             // A simple name matching a parameter denotes its type. All other
             // arguments are Rust types, resolved by rustc (including aliases).
             let mut unwrapped = typ;
@@ -310,13 +310,13 @@ fn lower_memory_budget(expr: &verus_syn::ResourceExpr, parameters: &[Ident]) -> 
                 if path.qself.is_none()
                     && path.path.get_ident().is_some_and(|id| parameters.contains(id))
                 {
-                    return quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_sizeof_value(&#path));
+                    return quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_mem_size_value(&#path));
                 }
             }
-            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_sizeof_type::<#typ>())
+            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_mem_size_type::<#typ>())
         }
-        ResourceExpr::PeakMem(_, _, function) => {
-            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_peakmem(&#function))
+        ResourceExpr::MemPeak(_, _, function) => {
+            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_mem_peak(&#function))
         }
     }
 }
@@ -3438,10 +3438,10 @@ impl Visitor {
         let span = section.contract.token.span;
         let attrs = section.attrs;
         if self.inside_ghost > 0 || self.inside_external_code > 0 || self.inside_const {
-            *expr = quote_verbatim!(span, attrs => ::core::compile_error!("peakmem sections require a verified exec function body"));
+            *expr = quote_verbatim!(span, attrs => ::core::compile_error!("mem_peak sections require a verified exec function body"));
             return true;
         }
-        // Resolve sizeof names before visiting declarations in the section.
+        // Resolve mem_size names before visiting declarations in the section.
         let budget = lower_memory_budget(&section.contract.budget, &self.resource_bindings);
         self.visit_block_mut(&mut section.block);
         if !self.erase_ghost.erase() {
@@ -3460,20 +3460,20 @@ impl Visitor {
             return false;
         };
 
-        if matches!(expr, Expr::Assert(a) if matches!(a.expr, verus_syn::AssertExpr::PeakMem(..))) {
+        if matches!(expr, Expr::Assert(a) if matches!(a.expr, verus_syn::AssertExpr::MemPeak(..))) {
             let Expr::Assert(assert) = take_expr(expr) else { unreachable!() };
-            let verus_syn::AssertExpr::PeakMem(_, _, resource) = assert.expr else {
+            let verus_syn::AssertExpr::MemPeak(_, _, resource) = assert.expr else {
                 unreachable!()
             };
             let span = assert.assert_token.span;
             let attrs = assert.attrs;
             *expr = if self.inside_ghost > 0 || self.inside_external_code > 0 || self.inside_const {
-                quote_verbatim!(span, attrs => ::core::compile_error!("peakmem checkpoints require a verified exec function body"))
+                quote_verbatim!(span, attrs => ::core::compile_error!("mem_peak checkpoints require a verified exec function body"))
             } else if self.erase_ghost.erase() {
                 quote_verbatim!(span, attrs => ())
             } else {
                 let budget = lower_memory_budget(&resource.budget, &self.resource_bindings);
-                quote_verbatim!(builtin, span, attrs => #builtin::resource_assert_peakmem(#budget))
+                quote_verbatim!(builtin, span, attrs => #builtin::resource_assert_mem_peak(#budget))
             };
             return true;
         }

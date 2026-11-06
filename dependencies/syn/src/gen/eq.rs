@@ -56,8 +56,8 @@ impl PartialEq for crate::AssertExpr {
                 self0 == other0
             }
             (
-                crate::AssertExpr::PeakMem(self0, _, self2),
-                crate::AssertExpr::PeakMem(other0, _, other2),
+                crate::AssertExpr::MemPeak(self0, _, self2),
+                crate::AssertExpr::MemPeak(other0, _, other2),
             ) => self0 == other0 && self2 == other2,
             _ => false,
         }
@@ -2510,12 +2510,12 @@ impl PartialEq for crate::ResourceExpr {
                 crate::ResourceExpr::Mul(other0, _, other2),
             ) => self0 == other0 && self2 == other2,
             (
-                crate::ResourceExpr::SizeOf(self0, _, self2),
-                crate::ResourceExpr::SizeOf(other0, _, other2),
+                crate::ResourceExpr::MemSize(self0, _, self2),
+                crate::ResourceExpr::MemSize(other0, _, other2),
             ) => self0 == other0 && self2 == other2,
             (
-                crate::ResourceExpr::PeakMem(self0, _, self2),
-                crate::ResourceExpr::PeakMem(other0, _, other2),
+                crate::ResourceExpr::MemPeak(self0, _, self2),
+                crate::ResourceExpr::MemPeak(other0, _, other2),
             ) => self0 == other0 && self2 == other2,
             (
                 crate::ResourceExpr::If(_, self1, _, self3, _, _, self6),

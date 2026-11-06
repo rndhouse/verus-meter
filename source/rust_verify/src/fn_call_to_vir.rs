@@ -636,10 +636,10 @@ fn verus_item_to_vir<'tcx, 'a>(
                     SpecItem::Admit
                     | SpecItem::Assume
                     | SpecItem::NoMethodBody
-                    | SpecItem::ResourceSizeOfValue
-                    | SpecItem::ResourceSizeOfType
-                    | SpecItem::ResourcePeakMem
-                    | SpecItem::ResourceAssertPeakMem
+                    | SpecItem::ResourceMemSizeValue
+                    | SpecItem::ResourceMemSizeType
+                    | SpecItem::ResourceMemPeak
+                    | SpecItem::ResourceAssertMemPeak
                     | SpecItem::ResourceSection
                     | SpecItem::Recommends
                     | SpecItem::DecreasesWhen
@@ -915,7 +915,7 @@ fn verus_item_to_vir<'tcx, 'a>(
                     if bctx.in_ghost {
                         return err_span(
                             expr.span,
-                            "peakmem sections require an exec function body",
+                            "mem_peak sections require an exec function body",
                         );
                     }
                     record_spec_fn_pure_args_only(bctx, expr);
@@ -923,11 +923,11 @@ fn verus_item_to_vir<'tcx, 'a>(
                     let budget = crate::resource_budget::lower(bctx, args[0])?;
                     mk_expr(ExprX::ResourceSection(budget))
                 }
-                SpecItem::ResourceAssertPeakMem => {
+                SpecItem::ResourceAssertMemPeak => {
                     if bctx.in_ghost {
                         return err_span(
                             expr.span,
-                            "peakmem checkpoints require an exec function body",
+                            "mem_peak checkpoints require an exec function body",
                         );
                     }
                     record_spec_fn_pure_args_only(bctx, expr);
@@ -939,11 +939,11 @@ fn verus_item_to_vir<'tcx, 'a>(
                     let budget = crate::resource_budget::lower(bctx, args[0])?;
                     mk_expr(ExprX::ResourceAssert(budget))
                 }
-                SpecItem::ResourceSizeOfValue
-                | SpecItem::ResourceSizeOfType
-                | SpecItem::ResourcePeakMem => err_span(
+                SpecItem::ResourceMemSizeValue
+                | SpecItem::ResourceMemSizeType
+                | SpecItem::ResourceMemPeak => err_span(
                     expr.span,
-                    "sizeof and peakmem are only allowed inside a peakmem clause or checkpoint",
+                    "mem_size and mem_peak are only allowed inside a mem_peak clause or checkpoint",
                 ),
                 SpecItem::NoUnwind => {
                     record_spec_fn_pure_args_only(bctx, expr);

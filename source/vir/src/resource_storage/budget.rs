@@ -15,7 +15,7 @@ pub type BudgetExpr = Arc<Spanned<BudgetExprX>>;
 #[derive(Clone, Debug, Serialize, Deserialize, ToDebugSNode)]
 pub enum BudgetExprX {
     Literal(u64),
-    SizeOf(Typ),
+    MemSize(Typ),
     Function(Fun),
     Add(BudgetExpr, BudgetExpr),
     Mul(BudgetExpr, BudgetExpr),
@@ -37,14 +37,14 @@ impl Resolver<'_> {
         let function = self
             .functions
             .get(name)
-            .ok_or_else(|| unsupported(span, "peakmem references outside this crate"))?;
+            .ok_or_else(|| unsupported(span, "mem_peak references outside this crate"))?;
         let contract = function.x.attrs.resource_contract.as_ref().ok_or_else(|| {
-            error(span, "peakmem requires a declared resource contract")
+            error(span, "mem_peak requires a declared resource contract")
                 .secondary_span(&function.span)
         })?;
         eligible(function)?;
         if !self.visiting.insert(name.clone()) {
-            return Err(error(span, "circular peakmem reference").secondary_span(&function.span));
+            return Err(error(span, "circular mem_peak reference").secondary_span(&function.span));
         }
         let budget = match contract {
             ResourceContract::LexicalSlotsV5Expr { budget } => self.expr(budget)?,
@@ -62,13 +62,13 @@ impl Resolver<'_> {
 
     fn expr(&mut self, expr: &BudgetExpr) -> Result<u64, VirErr> {
         match &expr.x {
-            // Retain a safe envelope for existing argument-free peakmem queries
+            // Retain a safe envelope for existing argument-free mem_peak queries
             // and callers. The function body separately proves its conditional bound.
             BudgetExprX::If(_, then_budget, else_budget) => {
                 Ok(self.expr(then_budget)?.max(self.expr(else_budget)?))
             }
             BudgetExprX::Literal(n) => Ok(*n),
-            BudgetExprX::SizeOf(typ) => self.layouts.size(typ, &expr.span),
+            BudgetExprX::MemSize(typ) => self.layouts.size(typ, &expr.span),
             BudgetExprX::Function(name) => self.function(name, &expr.span),
             BudgetExprX::Add(left, right) | BudgetExprX::Mul(left, right) => {
                 // Visit both operands even when one is zero: cycles and invalid
@@ -122,7 +122,7 @@ pub(super) fn evaluate_body_budget(
     evaluate_envelope(expr, budgets, functions, layouts)
 }
 
-// Inspect only this formula; peakmem(function) deliberately remains an envelope.
+// Inspect only this formula; mem_peak(function) deliberately remains an envelope.
 pub(super) fn is_conditional(expr: &BudgetExpr) -> bool {
     match &expr.x {
         BudgetExprX::If(..) => true,

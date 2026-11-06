@@ -158,31 +158,31 @@ pub fn local_storage_budget(_bytes: u64) {
 // Internal markers emitted only inside resource headers. The verifier reads
 // their types/identities without evaluating, copying, or moving the argument.
 #[cfg(verus_keep_ghost)]
-#[rustc_diagnostic_item = "verus::verus_builtin::resource_sizeof_value"]
+#[rustc_diagnostic_item = "verus::verus_builtin::resource_mem_size_value"]
 #[verifier::spec]
-pub fn resource_sizeof_value<T: ?Sized>(_value: &T) -> u64 {
+pub fn resource_mem_size_value<T: ?Sized>(_value: &T) -> u64 {
     unimplemented!()
 }
 
 #[cfg(verus_keep_ghost)]
-#[rustc_diagnostic_item = "verus::verus_builtin::resource_sizeof_type"]
+#[rustc_diagnostic_item = "verus::verus_builtin::resource_mem_size_type"]
 #[verifier::spec]
-pub fn resource_sizeof_type<T: ?Sized>() -> u64 {
+pub fn resource_mem_size_type<T: ?Sized>() -> u64 {
     unimplemented!()
 }
 
 #[cfg(verus_keep_ghost)]
-#[rustc_diagnostic_item = "verus::verus_builtin::resource_peakmem"]
+#[rustc_diagnostic_item = "verus::verus_builtin::resource_mem_peak"]
 #[verifier::spec]
-pub fn resource_peakmem<F>(_function: &F) -> u64 {
+pub fn resource_mem_peak<F>(_function: &F) -> u64 {
     unimplemented!()
 }
 
 // Erased checkpoint metadata; interpreted by the source storage checker.
 #[cfg(verus_keep_ghost)]
-#[rustc_diagnostic_item = "verus::verus_builtin::resource_assert_peakmem"]
+#[rustc_diagnostic_item = "verus::verus_builtin::resource_assert_mem_peak"]
 #[verifier::proof]
-pub fn resource_assert_peakmem(_bytes: u64) {
+pub fn resource_assert_mem_peak(_bytes: u64) {
     unimplemented!()
 }
 

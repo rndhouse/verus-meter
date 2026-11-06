@@ -35,7 +35,7 @@ pub fn sort_buffer(buffer: &mut SortBuffer)
         final(buffer).ready,
         sorting::sorted_prefix(final(buffer).values@, 8),
         final(buffer).values@.to_multiset() == old(buffer).values@.to_multiset(),
-    peakmem <= sizeof(buffer) + peakmem(sorting::insertion_sort),
+    mem_peak <= mem_size(buffer) + mem_peak(sorting::insertion_sort),
 {
     // Working through a field borrow avoids a second array-sized workspace.
     sorting::insertion_sort(&mut buffer.values);
@@ -50,7 +50,7 @@ pub fn sort_buffer(buffer: &mut SortBuffer)
 // and can be used before its local variable is in scope.
 // The checker also verifies that constructing the buffer fits this bound.
 pub fn sort_local_struct()
-    peakmem <= sizeof(SortBuffer) + peakmem(sort_buffer),
+    mem_peak <= mem_size(SortBuffer) + mem_peak(sort_buffer),
 {
     let mut buffer = SortBuffer {
         values: [9u32, 3, 7, 3, 0, 8, 1, 5],
@@ -69,7 +69,7 @@ pub fn sort_local_struct()
 //
 // With no additional local data at this level, the same memory bound suffices.
 fn main()
-    peakmem <= peakmem(sort_local_struct),
+    mem_peak <= mem_peak(sort_local_struct),
 {
     sort_local_struct();
 }
