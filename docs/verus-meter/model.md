@@ -326,6 +326,7 @@ Rust-to-VIR lowering. The checker has no dependency on rustc internals.
 | [Insertion sort](../../examples/resource_insertion_sort.rs) | 44, independent of slice length |
 | [Complete call chain](../../examples/resource_calls.rs) | 76: a 32-byte local array plus the sorter's 44 |
 | [Struct field sorting](../../examples/resource_structs.rs) | 85: a 33-byte struct plus its helper's 52 |
+| [Keeping an array copy (expected failure)](../../examples/expected-failures/resource_array_copy.rs) | Rejected: peak 32 exceeds the declared budget of 16 |
 
 Use the development environment in [setup.md](setup.md). From `source`:
 
@@ -340,6 +341,41 @@ The integration suites are grouped into basic storage, slices/arithmetic,
 call composition, structs, symbolic budgets, and aggregate initialization.
 Build the verifier before testing: the test harness invokes the existing executable. Representation changes also require the installed
 verifier/vstd rebuild from the setup instructions.
+
+## Seeing a memory contract reject a regression
+
+[resource_array_copy.rs](../../examples/expected-failures/resource_array_copy.rs)
+is intentionally failing code. It edits a copy of an array while preserving the
+original, but its contract allows room for only one array. Both arrays coexist,
+so making the copy exceeds the budget.
+
+Comments mark the violated contract and the copy declaration where Verus reports
+the violation. The file contains only
+this failing version; the test does not rewrite its source.
+
+From `source`, using the environment in [setup.md](setup.md), run Verus directly
+to see the rejection (a nonzero exit status is expected):
+
+```sh
+VERUS_Z3_PATH="$PWD/z3" ./target-verus/release/verus ../examples/expected-failures/resource_array_copy.rs
+```
+
+The expected diagnostic is:
+
+```text
+local storage budget exceeded: peak 32 bytes exceeds budget 16 bytes (lexical-slots-v5-64)
+```
+
+The companion [resource_array_copy test](../../source/rust_verify_test/tests/resource_array_copy.rs)
+verifies that file exactly as written and asserts the specific memory diagnostic:
+
+```sh
+cargo test --release -p rust_verify_test --test resource_array_copy -- --nocapture
+```
+
+That test passes when the example is rejected for exceeding its memory budget.
+Accepting the example, or rejecting it for a different reason, fails the test.
+The file is also marked `expect-errors` for the general examples test runner.
 
 ## Refactor validation (v2)
 
