@@ -95,24 +95,23 @@ fn run_example_for_file(file_path: &str) {
     }
 
     let relative_path = PathBuf::from(relative_path);
+    // Match examples_in_dir!, including the directory so equal filenames in
+    // different example groups cannot share outputs during parallel tests.
+    let dir = relative_path.parent().unwrap().to_str().unwrap();
+    let test_name = dir.replace("../../", "").replace("/", "_").replace("-", "_")
+        + "_"
+        + &relative_path.file_prefix().unwrap().to_str().unwrap().replace("-", "_");
 
     // Create a temp directory under target/ for --out-dir output
     let target_dir = std::env::current_exe().unwrap();
     let target_dir = target_dir.parent().unwrap().parent().unwrap();
-    let example_out_dir = target_dir
-        .join("test_inputs")
-        .join(format!("example-{}", relative_path.file_stem().unwrap().to_str().unwrap()));
+    let example_out_dir = target_dir.join("test_inputs").join(format!("example-{test_name}"));
     if example_out_dir.exists() {
         std::fs::remove_dir_all(&example_out_dir).unwrap();
     }
     std::fs::create_dir_all(&example_out_dir).unwrap();
 
     {
-        // same naming scheme as examples_in_dir!
-        let dir = relative_path.parent().unwrap().to_str().unwrap();
-        let test_name = dir.replace("../../", "").replace("/", "_").replace("-", "_")
-            + "_"
-            + &relative_path.file_prefix().unwrap().to_str().unwrap().replace("-", "_");
         let file_name = relative_path.file_name().unwrap().to_str().unwrap().to_string();
         let contents = std::fs::read_to_string(&relative_path).expect("cannot read example");
         let files = [(file_name.clone(), contents)];

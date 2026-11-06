@@ -7,7 +7,7 @@ use common::*;
 fn lexical_examples_use_their_own_budgets() {
     verify_one_file(
         "lexical_examples_use_their_own_budgets",
-        include_str!("../../../examples/resource/memory/resource_storage.rs").into(),
+        include_str!("../../../examples/resource/memory/storage.rs").into(),
         &[],
     )
     .unwrap();

@@ -8,7 +8,7 @@
 use vstd::prelude::*;
 
 // Reuse the sorter's implementation, functional specification, and budget.
-#[path = "resource_insertion_sort.rs"]
+#[path = "insertion_sort.rs"]
 mod sorting;
 
 verus! {

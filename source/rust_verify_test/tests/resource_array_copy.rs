@@ -9,8 +9,7 @@ fn array_copy_exceeds_the_declared_budget() {
     // coexist, but the contract allows room for just one array.
     let err = verify_one_file(
         "array_copy_exceeds_the_declared_budget",
-        include_str!("../../../examples/resource/memory/expected-failures/resource_array_copy.rs")
-            .into(),
+        include_str!("../../../examples/resource/memory/expected-failures/array_copy.rs").into(),
         &[],
     )
     .unwrap_err();

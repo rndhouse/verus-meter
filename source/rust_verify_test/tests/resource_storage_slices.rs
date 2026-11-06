@@ -3,8 +3,7 @@
 mod common;
 use common::*;
 
-const SORT_EXAMPLE: &str =
-    include_str!("../../../examples/resource/memory/resource_insertion_sort.rs");
+const SORT_EXAMPLE: &str = include_str!("../../../examples/resource/memory/insertion_sort.rs");
 
 #[test]
 fn insertion_sort_functional_and_resource_contracts() {

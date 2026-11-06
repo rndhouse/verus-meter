@@ -17,7 +17,7 @@ test_verify_one_file! {
 fn checkpoint_example() {
     verify_one_file(
         "checkpoint_example",
-        include_str!("../../../examples/resource/memory/resource_checkpoints.rs").into(),
+        include_str!("../../../examples/resource/memory/checkpoints.rs").into(),
         &[],
     )
     .unwrap();
@@ -27,8 +27,7 @@ fn checkpoint_example() {
 fn failing_checkpoint_points_to_assertion() {
     let err = verify_one_file(
         "failing_checkpoint_points_to_assertion",
-        include_str!("../../../examples/resource/memory/expected-failures/resource_checkpoint.rs")
-            .into(),
+        include_str!("../../../examples/resource/memory/expected-failures/checkpoint.rs").into(),
         &[],
     )
     .unwrap_err();

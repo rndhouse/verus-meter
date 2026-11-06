@@ -7,7 +7,7 @@
 use vstd::prelude::*;
 
 // The same verified sorter is used by the plain-array caller example.
-#[path = "resource_insertion_sort.rs"]
+#[path = "insertion_sort.rs"]
 mod sorting;
 
 verus! {

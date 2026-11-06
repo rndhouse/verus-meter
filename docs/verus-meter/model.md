@@ -100,7 +100,7 @@ fn workspace(large: bool)
 }
 ```
 
-The [conditional workspace example](../../examples/resource/memory/resource_conditional.rs)
+The [conditional workspace example](../../examples/resource/memory/conditional.rs)
 demonstrates this first integration with Verus's proof machinery. The structural
 checker derives charges at local declarations, aggregate construction, argument
 handoff, calls, and section entry. It inserts ordinary proof obligations that
@@ -165,7 +165,7 @@ fn example()
 }
 ```
 
-The [checkpoint example](../../examples/resource/memory/resource_checkpoints.rs) illustrates
+The [checkpoint example](../../examples/resource/memory/checkpoints.rs) illustrates
 these rules:
 
 - Completed scopes and calls remain part of the peak. A checkpoint neither
@@ -184,7 +184,7 @@ proofs to override memory accounting. They introduce no runtime storage and no
 logical assumption: successful checkpoints are erased only after resource
 checking. Ordinary assertions retain their normal Verus meaning.
 
-The [failing checkpoint example](../../examples/resource/memory/expected-failures/resource_checkpoint.rs)
+The [failing checkpoint example](../../examples/resource/memory/expected-failures/checkpoint.rs)
 allows both arrays in its function contract but asserts room for just one at the
 checkpoint. Verus rejects the assertion with `peak 32 bytes exceeds bound 16 bytes`
 and also identifies the allocation that established the peak.
@@ -229,7 +229,7 @@ They may read or modify outer data without charging for that data again, while
 any references or copies declared inside are charged normally. Section metadata
 is erased after checking; the executable block and its effects remain.
 
-The [nested workspace example](../../examples/resource/memory/resource_sections.rs) shows two
+The [nested workspace example](../../examples/resource/memory/sections.rs) shows two
 levels of sections and checkpoints at each level.
 
 ## Sizes
@@ -489,21 +489,21 @@ Rust-to-VIR lowering. The checker has no dependency on rustc internals.
 
 | Example | Expected model peak |
 | --- | --- |
-| [Lexical reuse](../../examples/resource/memory/resource_storage.rs) | 256 for separate 64-element array scopes; 512 when overlapping |
-| [Insertion sort](../../examples/resource/memory/resource_insertion_sort.rs) | 44, independent of slice length |
-| [Complete call chain](../../examples/resource/memory/resource_calls.rs) | 76: a 32-byte local array plus the sorter's 44 |
-| [Struct field sorting](../../examples/resource/memory/resource_structs.rs) | 85: a 33-byte struct plus its helper's 52 |
-| [Keeping an array copy (expected failure)](../../examples/resource/memory/expected-failures/resource_array_copy.rs) | Rejected: peak 32 exceeds the declared budget of 16 |
-| [Memory checkpoints](../../examples/resource/memory/resource_checkpoints.rs) | 32, with checkpoints before, during, and after copying |
-| [Nested workspace sections](../../examples/resource/memory/resource_sections.rs) | 48 in the function; 32 in the outer section; 16 in the inner section |
-| [Conditional workspace](../../examples/resource/memory/resource_conditional.rs) | 33 for a large task; 17 for a small task; callers reserve the declared envelope of 33 |
-| [Tighter checkpoint (expected failure)](../../examples/resource/memory/expected-failures/resource_checkpoint.rs) | Function budget 32 fits; checkpoint bound 16 fails |
+| [Lexical reuse](../../examples/resource/memory/storage.rs) | 256 for separate 64-element array scopes; 512 when overlapping |
+| [Insertion sort](../../examples/resource/memory/insertion_sort.rs) | 44, independent of slice length |
+| [Complete call chain](../../examples/resource/memory/calls.rs) | 76: a 32-byte local array plus the sorter's 44 |
+| [Struct field sorting](../../examples/resource/memory/structs.rs) | 85: a 33-byte struct plus its helper's 52 |
+| [Keeping an array copy (expected failure)](../../examples/resource/memory/expected-failures/array_copy.rs) | Rejected: peak 32 exceeds the declared budget of 16 |
+| [Memory checkpoints](../../examples/resource/memory/checkpoints.rs) | 32, with checkpoints before, during, and after copying |
+| [Nested workspace sections](../../examples/resource/memory/sections.rs) | 48 in the function; 32 in the outer section; 16 in the inner section |
+| [Conditional workspace](../../examples/resource/memory/conditional.rs) | 33 for a large task; 17 for a small task; callers reserve the declared envelope of 33 |
+| [Tighter checkpoint (expected failure)](../../examples/resource/memory/expected-failures/checkpoint.rs) | Function budget 32 fits; checkpoint bound 16 fails |
 
 Use the development environment in [setup.md](setup.md). From `source`:
 
 ```sh
 cargo build --release -p rust_verify
-VERUS_Z3_PATH="$PWD/z3" ./target-verus/release/verus ../examples/resource/memory/resource_calls.rs --trace --compile -o target-verus/resource-calls
+VERUS_Z3_PATH="$PWD/z3" ./target-verus/release/verus ../examples/resource/memory/calls.rs --trace --compile -o target-verus/resource-calls
 ./target-verus/resource-calls
 cargo test --release -p rust_verify_test --test resource_storage --test resource_storage_slices --test resource_storage_calls --test resource_storage_structs --test resource_storage_budgets --test resource_storage_initialization --test resource_storage_model --test resource_checkpoints --test resource_sections --test resource_conditional --test resource_array_copy
 ```
@@ -515,7 +515,7 @@ verifier/vstd rebuild from the setup instructions.
 
 ## Seeing a memory contract reject a regression
 
-[resource_array_copy.rs](../../examples/resource/memory/expected-failures/resource_array_copy.rs)
+[array_copy.rs](../../examples/resource/memory/expected-failures/array_copy.rs)
 is intentionally failing code. It edits a copy of an array while preserving the
 original, but its contract allows room for only one array. Both arrays coexist,
 so making the copy exceeds the budget.
@@ -528,7 +528,7 @@ From `source`, using the environment in [setup.md](setup.md), run Verus directly
 to see the rejection (a nonzero exit status is expected):
 
 ```sh
-VERUS_Z3_PATH="$PWD/z3" ./target-verus/release/verus ../examples/resource/memory/expected-failures/resource_array_copy.rs
+VERUS_Z3_PATH="$PWD/z3" ./target-verus/release/verus ../examples/resource/memory/expected-failures/array_copy.rs
 ```
 
 The expected diagnostic is:

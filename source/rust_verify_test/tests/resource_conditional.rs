@@ -91,7 +91,7 @@ test_verify_one_file! {
 fn conditional_workspace_example() {
     verify_one_file(
         "conditional_workspace_example",
-        include_str!("../../../examples/resource/memory/resource_conditional.rs").into(),
+        include_str!("../../../examples/resource/memory/conditional.rs").into(),
         &["--compile"],
     )
     .unwrap();
