@@ -46,20 +46,55 @@ pub(super) fn unit(typ: &Typ) -> bool {
     matches!(&**typ, TypX::Datatype(Dt::Tuple(0), _, _))
 }
 
+/// Native integer widths share one policy across layouts, operators and contracts.
+/// Pointer-sized integers use the model's fixed word size, not the host layout.
+pub(super) fn integer_size(range: &IntRange) -> Option<u64> {
+    match range {
+        IntRange::U(bits @ (8 | 16 | 32 | 64 | 128))
+        | IntRange::I(bits @ (8 | 16 | 32 | 64 | 128)) => Some(u64::from(*bits) / 8),
+        IntRange::USize | IntRange::ISize => Some(WORD_BYTES),
+        _ => None,
+    }
+}
+
+pub(super) fn integer_type_size(typ: &Typ) -> Option<u64> {
+    if let TypX::Int(range) = &**typ { integer_size(range) } else { None }
+}
+
 pub(super) fn slice(typ: &Typ) -> bool {
     matches!(&**typ, TypX::Primitive(Primitive::Slice, args)
-        if args.len() == 1 && matches!(&*args[0], TypX::Int(IntRange::U(32))))
+        if args.len() == 1 && integer_type_size(&args[0]).is_some())
 }
 
 pub(super) fn arithmetic(op: &BinaryOp) -> bool {
-    matches!(
-        op,
+    match op {
         BinaryOp::Arith(
-            ArithOp::Add(OverflowBehavior::Error(IntRange::U(32) | IntRange::USize))
-                | ArithOp::Sub(OverflowBehavior::Error(IntRange::U(32) | IntRange::USize))
-                | ArithOp::Mul(OverflowBehavior::Error(IntRange::U(32) | IntRange::USize))
-        )
-    )
+            ArithOp::Add(OverflowBehavior::Error(range))
+            | ArithOp::Sub(OverflowBehavior::Error(range))
+            | ArithOp::Mul(OverflowBehavior::Error(range)),
+        ) => integer_size(range).is_some(),
+        _ => false,
+    }
+}
+
+/// Rust lowering represents a negative literal as unchecked `0 - magnitude`.
+/// Recognize that literal alone; all executable arithmetic retains overflow checks.
+pub(super) fn negative_literal(expr: &Expr) -> Option<Constant> {
+    if !matches!(&*expr.typ, TypX::Int(IntRange::I(_) | IntRange::ISize))
+        || integer_type_size(&expr.typ).is_none()
+    {
+        return None;
+    }
+    if let ExprX::Binary(BinaryOp::Arith(ArithOp::Sub(OverflowBehavior::Allow)), a, b) = &expr.x
+        && let (ExprX::Const(Constant::Int(zero)), ExprX::Const(Constant::Int(magnitude))) =
+            (&a.x, &b.x)
+        && *zero == 0.into()
+        && *magnitude >= 0.into()
+    {
+        Some(Constant::Int(-magnitude))
+    } else {
+        None
+    }
 }
 
 pub(super) fn eligible(function: &Function) -> Result<(), VirErr> {

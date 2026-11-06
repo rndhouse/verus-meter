@@ -1,6 +1,6 @@
 //! Concrete layouts. Structs are sums of executable fields, without ABI padding.
 
-use super::model::{WORD_BYTES, slice, unsupported};
+use super::model::{WORD_BYTES, integer_size, integer_type_size, slice, unsupported};
 use crate::ast::*;
 use crate::messages::Span;
 use std::collections::{HashMap, HashSet};
@@ -56,8 +56,7 @@ impl Layouts {
     ) -> Result<u64, VirErr> {
         match &**typ {
             TypX::Bool => Ok(1),
-            TypX::Int(IntRange::U(32)) => Ok(4),
-            TypX::Int(IntRange::USize) => Ok(WORD_BYTES),
+            TypX::Int(range) if integer_size(range).is_some() => Ok(integer_size(range).unwrap()),
             TypX::MutRef(inner) | TypX::Decorate(TypDecoration::Ref, None, inner) => {
                 if slice(inner) {
                     Ok(2 * WORD_BYTES)
@@ -92,7 +91,7 @@ impl Layouts {
                 Ok(bytes)
             }
             TypX::Primitive(Primitive::Array, args)
-                if args.len() == 2 && matches!(&*args[0], TypX::Int(IntRange::U(32))) =>
+                if args.len() == 2 && integer_type_size(&args[0]).is_some() =>
             {
                 let TypX::ConstInt(n) = &*args[1] else {
                     return Err(unsupported(span, "nonliteral array lengths"));
@@ -100,12 +99,12 @@ impl Layouts {
                 n.to_string()
                     .parse::<u64>()
                     .ok()
-                    .and_then(|n| n.checked_mul(4))
+                    .and_then(|n| n.checked_mul(integer_type_size(&args[0]).unwrap()))
                     .ok_or_else(|| unsupported(span, "array sizes exceeding u64"))
             }
             _ => Err(unsupported(
                 span,
-                "this type (expected bool, u32, usize, [u32; N], unit, a concrete struct, or a supported reference)",
+                "this type (expected bool, a native integer_type_size, a fixed integer array, unit, a concrete struct, or a supported reference)",
             )),
         }
     }

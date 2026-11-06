@@ -134,7 +134,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] unsupported_type_is_rejected verus_code! {
         use vstd::prelude::*;
-        fn example() mem_peak <= 1000 { let x = 0u64; }
+        fn example() mem_peak <= 1000 { let x = 'x'; }
     } => Err(err) => assert_vir_error_msg(err, "does not support this type")
 }
 
@@ -298,7 +298,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] unsupported_reference_targets_are_rejected verus_code! {
         use vstd::prelude::*;
-        fn example(x: &u64) mem_peak <= 1000 {}
+        fn example(x: &char) mem_peak <= 1000 {}
     } => Err(err) => assert_vir_error_msg(err, "does not support this type")
 }
 

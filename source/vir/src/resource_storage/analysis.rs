@@ -197,6 +197,7 @@ impl Analysis<'_> {
                 self.discard(lhs)?;
                 operands = self.expr(rhs)?;
             }
+            ExprX::Binary(..) if super::model::negative_literal(expr).is_some() => {}
             ExprX::Binary(op, lhs, rhs) if arithmetic(op) => {
                 if !crate::ast_util::types_equal(&lhs.typ, &expr.typ)
                     || !crate::ast_util::types_equal(&rhs.typ, &expr.typ)

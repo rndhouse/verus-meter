@@ -2,7 +2,7 @@
 
 use super::budget::{BudgetExpr, BudgetExprX};
 use super::layout::Layouts;
-use super::model::ResourceContract;
+use super::model::{ResourceContract, integer_type_size, negative_literal};
 use crate::ast::*;
 use crate::ast_util::*;
 use crate::messages::{Span, error};
@@ -14,7 +14,7 @@ pub(super) fn literal(span: &Span, bytes: u64) -> Expr {
 }
 
 pub(super) fn scalar(typ: &Typ) -> bool {
-    matches!(&**typ, TypX::Bool | TypX::Int(IntRange::U(32) | IntRange::USize))
+    matches!(&**typ, TypX::Bool) || integer_type_size(typ).is_some()
 }
 
 pub(super) fn inputs(function: &Function) -> HashSet<VarIdent> {
@@ -28,6 +28,9 @@ pub(super) fn inputs(function: &Function) -> HashSet<VarIdent> {
 }
 
 pub(super) fn predicate(expr: &Expr, allowed: &HashSet<VarIdent>) -> Result<Expr, VirErr> {
+    if let Some(value) = negative_literal(expr) {
+        return Ok(SpannedTyped::new(&expr.span, &expr.typ, ExprX::Const(value)));
+    }
     let variable = match &expr.x {
         ExprX::Var(name) => Some(name),
         ExprX::ReadPlace(place, _) => match &place.x {
@@ -42,7 +45,7 @@ pub(super) fn predicate(expr: &Expr, allowed: &HashSet<VarIdent>) -> Result<Expr
         }
         return Err(error(
             &expr.span,
-            "memory budget predicates currently require immutable bool, u32, or usize input parameters",
+            "memory budget predicates currently require immutable Boolean or native integer input parameters",
         ));
     }
     let x = match &expr.x {
@@ -75,6 +78,9 @@ pub(super) fn add(span: &Span, a: Expr, b: Expr) -> Expr {
 // Folding is deliberately limited to pure constants. Unknown predicates remain
 // proof expressions; no executable branch is removed from structural accounting.
 fn simplify(expr: &Expr) -> Expr {
+    if let Some(value) = negative_literal(expr) {
+        return SpannedTyped::new(&expr.span, &expr.typ, ExprX::Const(value));
+    }
     let x = match &expr.x {
         ExprX::If(c, a, Some(b)) => {
             let c = simplify(c);

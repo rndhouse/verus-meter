@@ -333,6 +333,6 @@ test_verify_one_file! {
 
 test_verify_one_file! {
     #[test] unsupported_discarded_scalar_is_still_rejected verus_code! {
-        fn f() mem_peak <= 0 { 0u64; }
-    } => Err(err) => assert_vir_error_msg(err, "does not support this type")
+        fn f() mem_peak <= 0 { 'x'; }
+    } => Err(err) => assert_vir_error_msg(err, "does not support this executable expression")
 }

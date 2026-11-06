@@ -201,7 +201,7 @@ test_verify_one_file! {
 
 test_verify_one_file! {
     #[test] unsupported_field_types_rejected verus_code! {
-        struct S { value: u64 }
+        struct S { value: char }
         fn f(p: S) mem_peak <= 1000 {}
     } => Err(err) => assert_vir_error_msg(err, "does not support this type")
 }

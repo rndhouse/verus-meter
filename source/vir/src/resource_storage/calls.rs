@@ -108,7 +108,7 @@ impl Analysis<'_> {
                 && args.len() == 1 =>
             {
                 // Shared unsizing may lower through a helper adapter that
-                // borrows a temporary thin reference, producing &&[u32; N].
+                // borrows a temporary thin reference, producing &&[T; N].
                 // Admit only this exact, nonescaping adapter shape. Evaluate
                 // the inner reference normally so borrowed backing temporaries
                 // still fail. Compiler adapters do not create source storage.

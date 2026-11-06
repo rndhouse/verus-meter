@@ -148,7 +148,7 @@ test_verify_one_file! {
 
 test_verify_one_file! {
     #[test] unsupported_type_query_rejected verus_code! {
-        fn f() mem_peak <= mem_size(u64) {}
+        fn f() mem_peak <= mem_size(char) {}
     } => Err(err) => assert_vir_error_msg(err, "resource model")
 }
 

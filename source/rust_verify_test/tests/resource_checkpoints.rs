@@ -247,7 +247,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] checkpoint_rejects_unsupported_types verus_code! {
         use vstd::prelude::*;
-        fn f() mem_peak <= 0 { assert(current(mem_peak) <= mem_size(u64)); }
+        fn f() mem_peak <= 0 { assert(current(mem_peak) <= mem_size(char)); }
     } => Err(err) => assert_vir_error_msg(err, "resource model")
 }
 
