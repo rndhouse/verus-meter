@@ -21,9 +21,10 @@ checked sections, and check the peak reached at a particular point. Conditional
 contracts can give different inputs different allowances and preserve them through
 helper calls.
 
-Bounds describe source-level workspace under a fixed memory model. Physical
-stack size and heap usage are outside the current guarantee. Support is limited
-to a subset of Rust, and unsupported operations are rejected in checked functions.
+Bounds describe declared storage and supported heap objects under a fixed memory
+model. Physical stack size and allocator overhead are outside the guarantee.
+Support is limited to a subset of Rust; unsupported operations are rejected in
+checked functions.
 
 - [Memory contracts](model.md): how to write and understand the guarantees.
 - [Examples](../../examples/resource/memory): complete programs with explanatory comments.

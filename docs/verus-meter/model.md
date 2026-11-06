@@ -61,6 +61,26 @@ that promise, or use a precondition to justify a smaller fixed bound.
 See [calls](../../examples/resource/memory/calls.rs) and
 [argument-specific budgets](../../examples/resource/memory/call_budgets.rs).
 
+## Fixed-size heap objects
+
+`Box<T>` can own one fixed-size value. `mem_size(Box<T>)` counts the owning handle
+(8 model bytes); the live heap object adds `mem_size(T)` to `mem_peak`. A
+`Box::new` initializer uses that object's storage, following the same destination
+rule as local initialization. Allocator metadata, padding, and physical allocation
+strategies are outside the model.
+
+Moving a box between locals transfers its heap charge. Borrowing its contents
+keeps that charge with the owner. Explicit `drop` or the owner's scope exit releases
+the heap object; local variable slots still count until their own scopes end.
+See [heap buffer reuse](../../examples/resource/memory/heap.rs) and
+[two allocations that exceed their allowance](../../examples/resource/memory/expected-failures/heap_overlap.rs).
+
+For now, boxes must stay within their function: helpers borrow their contents.
+Box reassignment, nested boxes, owning struct fields, and custom destructors are
+unsupported. Branches, loops, and budgeted sections may create and consume their
+own boxes, but cannot move or drop owners from outside that region. Growable
+containers and custom allocator types remain unsupported.
+
 ## Dividing work into sections
 
 A section gives one part of an operation its own workspace allowance:
@@ -128,12 +148,12 @@ callee's maximum allowance, even if a proof established a tighter bound at the c
 
 Checked functions must be safe, nongeneric, return `()`, and have a verified body.
 The supported subset includes `bool`, all native integers, fixed integer arrays,
-concrete structs, supported references and integer slices, indexing, branches,
-while loops, and calls to checked functions in the same crate. Integer addition,
+concrete structs, local fixed-size boxes, supported references and integer slices,
+indexing, branches, while loops, and calls to checked functions in the same crate. Integer addition,
 subtraction, multiplication, and signed negation retain Verus's overflow checks.
 See the [integer example](../../examples/resource/memory/integers.rs).
 
-`char`, floating-point types, heap-owning types, destructors, enums, generic
+`char`, floating-point types, other heap-owning types, destructors, enums, generic
 structs, recursion, closures, cross-crate calls, and value-returning functions
 are not supported. Structs with ghost/tracked or reference fields are also
 excluded. Destructuring, casts, division, and explicit `return`, `break`, or
