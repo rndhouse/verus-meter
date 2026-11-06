@@ -5,3 +5,6 @@ target/
 doc/
 /coverage/
 /target-verus/
+
+# Local compiler crash reports
+/rustc-ice-*.txt
