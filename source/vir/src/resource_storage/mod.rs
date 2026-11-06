@@ -2,7 +2,8 @@
 //!
 //! `model` defines the policy; `layout` checks concrete type sizes and struct
 //! fields; `budget` resolves declared budget expressions and their dependencies;
-//! `accounting` owns live/peak totals and traces.
+//! `accounting` owns live/peak totals and traces; `sections` checks nested
+//! workspace contracts and composes their bounds with the parent.
 //! `construction` accounts for aggregate initialization; `analysis`, `places`,
 //! and `calls` interpret other supported executable VIR. This
 //! module validates the crate-wide call graph before publishing any reports.
@@ -18,6 +19,7 @@ mod construction;
 mod layout;
 mod model;
 mod places;
+mod sections;
 
 pub use accounting::{StorageEvent, StorageReport};
 pub use budget::{BudgetExpr, BudgetExprX};
@@ -73,17 +75,17 @@ pub fn check_crate(
     Ok(reports.into_iter().map(|(f, checked)| (f.span.clone(), checked.report)).collect())
 }
 
-/// Erase checkpoints only after the entire crate's storage checks succeed.
+/// Erase resource annotations only after the entire crate's storage checks succeed.
 /// They cannot be exported as unchecked claims or become logical assumptions.
-pub fn erase_checkpoints(functions: &mut [Function]) -> Result<(), VirErr> {
+pub fn erase_annotations(functions: &mut [Function]) -> Result<(), VirErr> {
     for function in functions {
-        // Unannotated functions were checked for forbidden checkpoints above.
+        // Unannotated functions were checked for forbidden annotations above.
         if function.x.attrs.resource_contract.is_none() {
             continue;
         }
         if let Some(body) = &function.x.body {
             let body = crate::ast_visitor::map_expr_visitor(body, &|expr| {
-                if matches!(expr.x, ExprX::ResourceAssert(_)) {
+                if matches!(expr.x, ExprX::ResourceAssert(_) | ExprX::ResourceSection(_)) {
                     Ok(SpannedTyped::new(
                         &expr.span,
                         &expr.typ,

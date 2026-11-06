@@ -72,7 +72,7 @@ Annotated functions must be safe, nongeneric executable functions with a checked
 body and unit return type. Async functions, external bodies, specification
 proxies, and trait-method forms are rejected. Supported constructs include named
 bindings, scalar/array values, concrete structs, supported references, arithmetic and comparisons,
-indexing, assignments, unit-valued blocks and branches, while loops, and direct
+indexing, assignments, unit-valued blocks and branches, budgeted sections, while loops, and direct
 calls to annotated functions in the same crate.
 
 Enums/unions, heap-owning values, destructors, general nested references, closures,
@@ -86,7 +86,8 @@ it a resource rule.
 ## Memory checkpoints
 
 Inside an annotated executable function, `assert(current(peakmem) <= bound)`
-checks the highest modelled memory use from that function's entry to the assertion.
+checks the highest modelled memory use from the nearest budgeted section's entry
+to the assertion, or from function entry when outside a section.
 `current` selects the peak at this point; it does not mean current live storage
 or the sum of allocations. The function clause remains `peakmem <= ...`, and
 `peakmem(function)` still queries a declared whole-function bound. The checkpoint
@@ -115,7 +116,7 @@ these rules:
   resets history nor replaces the whole-function contract.
 - A branch's checkpoint includes the common prefix and that branch. After the
   branches join, the larger peak contributes to subsequent checkpoints.
-- A loop checkpoint must cover any iteration, including peaks from earlier
+- A loop checkpoint must cover any iteration within its accounting section, including peaks from earlier
   complete iterations. The checker includes the full iteration's peak in every
   checkpoint inside it, including nested loops. It does not use logical proofs
   to establish that a loop runs only once or that a branch is unreachable.
@@ -131,6 +132,49 @@ The [failing checkpoint example](../../examples/expected-failures/resource_check
 allows both arrays in its function contract but asserts room for just one at the
 checkpoint. Verus rejects the assertion with `peak 32 bytes exceeds bound 16 bytes`
 and also identifies the allocation that established the peak.
+
+## Budgeted sections
+
+An executable block can declare its own workspace allowance:
+
+```rust
+fn example() peakmem <= 3 * sizeof([u32; 4]) {
+    let original = [1u32, 2, 3, 4];
+    peakmem <= 2 * sizeof(original) {
+        assert(current(peakmem) <= 0);
+        let copy = original;
+        peakmem <= sizeof(copy) {
+            let scratch = copy;
+            assert(current(peakmem) <= sizeof(scratch));
+        }
+    }
+}
+```
+
+Each section is checked independently from zero live storage and zero peak.
+Storage owned by enclosing scopes and their earlier peaks are excluded from the
+child's accounting. The parent remains responsible for its live storage **plus
+the child's declared bound**, including unused slack. The checker uses the same
+composition rule as function contracts. A child that fits cannot excuse an
+over-budget parent, and a generous parent cannot excuse an over-budget child.
+Sibling sections reuse their allowances; nested sections compose recursively.
+
+`current(peakmem)` selects the nearest budgeted section. Leaving a section restores
+the parent's accounting, with the child's allowance included in the parent's peak.
+Ordinary unannotated blocks retain their enclosing history. A section inside a
+loop starts fresh on each entry; a loop inside a section retains previous-iteration
+peaks in that section's checkpoints. There is no runtime counter or reset.
+
+Section bounds use the same formula language as function contracts. `sizeof`
+can name locals in scope at section entry, and `peakmem(function)` queries the
+function's declared bound. Sections require an annotated executable function
+and a unit-valued body, with the same supported subset as other checked blocks.
+They may read or modify outer data without charging for that data again, while
+any references or copies declared inside are charged normally. Section metadata
+is erased after checking; the executable block and its effects remain.
+
+The [nested workspace example](../../examples/resource_sections.rs) shows two
+levels of sections and checkpoints at each level.
 
 ## Sizes
 
@@ -293,9 +337,10 @@ rejected even at zero storage cost, preventing circular justification of bounds.
 
 ## Cost policy review
 
-The implementation has only four sources of positive charges: local slots,
+The implementation charges local slots,
 parameter slots, standalone aggregate results, and the additional part of a
-callee's declared budget. Expression evaluation and place access do not reserve
+callee's declared budget. A parent also reserves each section's declared budget
+in place of its independently checked internal charges. Expression evaluation and place access do not reserve
 storage. A callee's parameters are included in its budget, not added twice.
 
 The remaining choices are definitions of this model, rather than conclusions
@@ -309,6 +354,7 @@ about how a compiler stores values:
 | Lexical lifetimes | A declaration reserves a slot until its block ends, including unused, uninitialized, shadowed, or moved-from slots. This measures declared storage, not the number of currently initialized values. Explicit scopes permit reuse. |
 | Initialization | The destination is reserved while its initializer runs. A helper called during initialization therefore overlaps that destination. |
 | Calls | Caller-owned storage remains live. Each parameter has one slot; the callee's declared budget includes it. Declared slack is intentionally retained for compositional contracts. |
+| Sections | Each section checks its own workspace from zero. Its parent retains existing storage and reserves the child's declared allowance, including slack. |
 | Control flow | Alternative branches use a maximum, and iterations reuse their block's storage. Unreachable branches still contribute to the structural bound. |
 | Standalone aggregates | An explicitly written aggregate expression without a destination owns one temporary result. Scalar expression evaluation has no storage charge. This is a deliberate distinction in the current object model. |
 
@@ -330,9 +376,10 @@ builtin; typed Rust-to-VIR lowering resolves query arguments without evaluating
 them, and header extraction stores the budget expression in function attributes. The checker
 runs once local functions have passed mode checking, before resolution inference
 or AST simplification rewrites temporary places, and before exporting the crate.
-Body checkpoints have a dedicated VIR node retained through mode checking.
-The checker validates their path prefixes and loop histories, then erases them
-before export; they never become assumptions in functional proofs.
+Body checkpoints and section headers have dedicated VIR nodes retained through
+mode checking. The checker validates section budgets, checkpoint path prefixes,
+and loop histories, then erases the metadata before export. Executable section
+bodies remain intact; resource annotations never become assumptions in functional proofs.
 
 It computes structural bounds directly using checked arithmetic, without an SMT
 counter or reliance on user assertions. Standalone aggregate expressions leave
@@ -361,12 +408,13 @@ responsibility:
 
 | File | Responsibility |
 | --- | --- |
-| [mod.rs](../../source/vir/src/resource_storage/mod.rs) | Crate orchestration, call-cycle rejection, and erasure of checked checkpoints |
+| [mod.rs](../../source/vir/src/resource_storage/mod.rs) | Crate orchestration, call-cycle rejection, and erasure of checked annotations |
 | [model.rs](../../source/vir/src/resource_storage/model.rs) | Model identity, word size, supported arithmetic and function eligibility |
 | [budget.rs](../../source/vir/src/resource_storage/budget.rs) | Checked budget arithmetic, resolved function references, and budget-cycle rejection |
 | [layout.rs](../../source/vir/src/resource_storage/layout.rs) | Type sizes, concrete struct eligibility, field layouts and recursive layout checks |
 | [accounting.rs](../../source/vir/src/resource_storage/accounting.rs) | Private live/peak state, checked reservations/releases, trace events, budget diagnostics |
 | [analysis.rs](../../source/vir/src/resource_storage/analysis.rs) | Function entry, lexical scopes, branch/loop histories, and checkpoint checking |
+| [sections.rs](../../source/vir/src/resource_storage/sections.rs) | Independent section accounting and composition with the parent's declared storage |
 | [places.rs](../../source/vir/src/resource_storage/places.rs) | Source-place validation, reads and borrows |
 | [construction.rs](../../source/vir/src/resource_storage/construction.rs) | Aggregate destinations, nested construction, copies and moves |
 | [calls.rs](../../source/vir/src/resource_storage/calls.rs) | Argument handoff, callee budgets and intrinsic evaluation |
@@ -386,6 +434,7 @@ Rust-to-VIR lowering. The checker has no dependency on rustc internals.
 | [Struct field sorting](../../examples/resource_structs.rs) | 85: a 33-byte struct plus its helper's 52 |
 | [Keeping an array copy (expected failure)](../../examples/expected-failures/resource_array_copy.rs) | Rejected: peak 32 exceeds the declared budget of 16 |
 | [Memory checkpoints](../../examples/resource_checkpoints.rs) | 32, with checkpoints before, during, and after copying |
+| [Nested workspace sections](../../examples/resource_sections.rs) | 48 in the function; 32 in the outer section; 16 in the inner section |
 | [Tighter checkpoint (expected failure)](../../examples/expected-failures/resource_checkpoint.rs) | Function budget 32 fits; checkpoint bound 16 fails |
 
 Use the development environment in [setup.md](setup.md). From `source`:
@@ -394,11 +443,11 @@ Use the development environment in [setup.md](setup.md). From `source`:
 cargo build --release -p rust_verify
 VERUS_Z3_PATH="$PWD/z3" ./target-verus/release/verus ../examples/resource_calls.rs --trace --compile -o target-verus/resource-calls
 ./target-verus/resource-calls
-cargo test --release -p rust_verify_test --test resource_storage --test resource_storage_slices --test resource_storage_calls --test resource_storage_structs --test resource_storage_budgets --test resource_storage_initialization --test resource_storage_model --test resource_checkpoints --test resource_array_copy
+cargo test --release -p rust_verify_test --test resource_storage --test resource_storage_slices --test resource_storage_calls --test resource_storage_structs --test resource_storage_budgets --test resource_storage_initialization --test resource_storage_model --test resource_checkpoints --test resource_sections --test resource_array_copy
 ```
 
 The integration suites are grouped into basic storage, slices/arithmetic,
-call composition, structs, symbolic budgets, aggregate initialization, and checkpoints.
+call composition, structs, symbolic budgets, aggregate initialization, checkpoints, and sections.
 Build the verifier before testing: the test harness invokes the existing executable. Representation changes also require the installed
 verifier/vstd rebuild from the setup instructions.
 
@@ -589,3 +638,22 @@ upstream tests, eight parser tests, and 12 example-runner tests. Ordinary calls
 to functions named `current` remain logical expressions. The updated passing
 checkpoint example also verified, compiled, and ran; the failing example was
 rejected at its `current(peakmem)` assertion.
+
+## Budgeted section validation (v5)
+
+Sections add independent workspace contracts while retaining the source storage
+costs and the enclosing function's obligation.
+
+- The release workspace and installed verifier built successfully. A fresh vstd
+  build reported 2,226 verified and zero errors.
+- All 245 resource tests passed, including 22 section tests covering independent
+  bounds, parent storage, declared slack, siblings, nesting, calls, loop history,
+  checkpoint scope, overflow, unsupported contexts, and functional verification.
+- All 10 resource parser tests passed. The formatter's section round-trip test
+  passed using an isolated test manifest; its existing standalone workspace
+  still refers to the pre-fork package name and cannot run directly.
+- The same 1,076 selected upstream tests listed above passed, with eight ignored.
+  All 13 example-runner tests matching `resource_` passed.
+- The nested workspace example verified, compiled, and ran. A separate compiled
+  harness verified a postcondition and checked the result at runtime, confirming
+  that writes through nested sections survive erasure of resource annotations.

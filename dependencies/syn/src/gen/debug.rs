@@ -780,6 +780,7 @@ impl Debug for crate::Expr {
                 formatter.field(v0);
                 formatter.finish()
             }
+            crate::Expr::ResourceBlock(v0) => v0.debug(formatter, "ResourceBlock"),
             crate::Expr::AssertForall(v0) => {
                 let mut formatter = formatter.debug_tuple("AssertForall");
                 formatter.field(v0);
@@ -1490,6 +1491,21 @@ impl crate::ExprRepeat {
         formatter.field("expr", &self.expr);
         formatter.field("semi_token", &self.semi_token);
         formatter.field("len", &self.len);
+        formatter.finish()
+    }
+}
+#[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
+impl Debug for crate::ExprResourceBlock {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        self.debug(formatter, "ExprResourceBlock")
+    }
+}
+impl crate::ExprResourceBlock {
+    fn debug(&self, formatter: &mut fmt::Formatter, name: &str) -> fmt::Result {
+        let mut formatter = formatter.debug_struct(name);
+        formatter.field("attrs", &self.attrs);
+        formatter.field("contract", &self.contract);
+        formatter.field("block", &self.block);
         formatter.finish()
     }
 }

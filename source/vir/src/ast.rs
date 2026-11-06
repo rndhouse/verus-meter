@@ -1350,6 +1350,8 @@ pub enum ExprX {
     ShrRefStructWrap(Expr, Expr, Typ, Typ, Ident, Ident),
     /// Checked and erased before export; never a logical assumption.
     ResourceAssert(crate::resource_storage::BudgetExpr),
+    /// First statement of an independently budgeted lexical block.
+    ResourceSection(crate::resource_storage::BudgetExpr),
 }
 
 #[derive(Debug, Serialize, Deserialize, ToDebugSNode, Clone, Copy)]

@@ -382,6 +382,12 @@ pub trait Fold {
     fn fold_expr_repeat(&mut self, i: crate::ExprRepeat) -> crate::ExprRepeat {
         fold_expr_repeat(self, i)
     }
+    fn fold_expr_resource_block(
+        &mut self,
+        i: crate::ExprResourceBlock,
+    ) -> crate::ExprResourceBlock {
+        fold_expr_resource_block(self, i)
+    }
     #[cfg(feature = "full")]
     #[cfg_attr(docsrs, doc(cfg(feature = "full")))]
     fn fold_expr_return(&mut self, i: crate::ExprReturn) -> crate::ExprReturn {
@@ -2019,6 +2025,9 @@ where
         }
         crate::Expr::Assume(_binding_0) => crate::Expr::Assume(f.fold_assume(_binding_0)),
         crate::Expr::Assert(_binding_0) => crate::Expr::Assert(f.fold_assert(_binding_0)),
+        crate::Expr::ResourceBlock(_binding_0) => {
+            crate::Expr::ResourceBlock(f.fold_expr_resource_block(_binding_0))
+        }
         crate::Expr::AssertForall(_binding_0) => {
             crate::Expr::AssertForall(f.fold_assert_forall(_binding_0))
         }
@@ -2553,6 +2562,19 @@ where
         expr: Box::new(f.fold_expr(*node.expr)),
         semi_token: node.semi_token,
         len: Box::new(f.fold_expr(*node.len)),
+    }
+}
+pub fn fold_expr_resource_block<F>(
+    f: &mut F,
+    node: crate::ExprResourceBlock,
+) -> crate::ExprResourceBlock
+where
+    F: Fold + ?Sized,
+{
+    crate::ExprResourceBlock {
+        attrs: f.fold_attributes(node.attrs),
+        contract: Box::new(f.fold_signature_resources(*node.contract)),
+        block: full!(f.fold_block(node.block)),
     }
 }
 #[cfg(feature = "full")]

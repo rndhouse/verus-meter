@@ -1477,6 +1477,11 @@
             "syn": "Assert"
           }
         ],
+        "ResourceBlock": [
+          {
+            "syn": "ExprResourceBlock"
+          }
+        ],
         "AssertForall": [
           {
             "syn": "AssertForall"
@@ -2688,6 +2693,27 @@
           "box": {
             "syn": "Expr"
           }
+        }
+      }
+    },
+    {
+      "ident": "ExprResourceBlock",
+      "features": {
+        "any": []
+      },
+      "fields": {
+        "attrs": {
+          "vec": {
+            "syn": "Attribute"
+          }
+        },
+        "contract": {
+          "box": {
+            "syn": "SignatureResources"
+          }
+        },
+        "block": {
+          "syn": "Block"
         }
       }
     },

@@ -233,6 +233,15 @@ ast_struct! {
     }
 }
 
+ast_struct! {
+    /// A lexical section with an independently checked workspace contract.
+    pub struct ExprResourceBlock {
+        pub attrs: Vec<Attribute>,
+        pub contract: Box<SignatureResources>,
+        pub block: Block,
+    }
+}
+
 ast_enum! {
     /// The compile-time resource language, separate from executable expressions.
     /// A bare `sizeof` path may name a parameter; other arguments denote types.
@@ -1519,6 +1528,19 @@ pub mod parsing {
         }
     }
 
+    impl Parse for ExprResourceBlock {
+        fn parse(input: ParseStream) -> Result<Self> {
+            let contract = input
+                .parse::<Option<SignatureResources>>()?
+                .ok_or_else(|| input.error("expected peakmem section contract"))?;
+            Ok(Self {
+                attrs: Vec::new(),
+                contract: Box::new(contract),
+                block: input.parse()?,
+            })
+        }
+    }
+
     #[cfg_attr(doc_cfg, doc(cfg(feature = "parsing")))]
     impl Parse for SignatureSpec {
         fn parse(input: ParseStream) -> Result<Self> {
@@ -2555,6 +2577,14 @@ mod printing {
                     paren.surround(tokens, |tokens| function.to_tokens(tokens));
                 }
             }
+        }
+    }
+
+    impl ToTokens for ExprResourceBlock {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            crate::expr::printing::outer_attrs_to_tokens(&self.attrs, tokens);
+            self.contract.to_tokens(tokens);
+            self.block.to_tokens(tokens);
         }
     }
 

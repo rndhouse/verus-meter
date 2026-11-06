@@ -90,11 +90,51 @@ impl Printer {
             Expr::Matches(m) => self.expr_matches(m),
             Expr::Final(e) => self.expr_final(e),
 
+            Expr::ResourceBlock(section) => {
+                self.outer_attrs(&section.attrs);
+                self.word("peakmem <= ");
+                self.resource_budget(&section.contract.budget);
+                self.nbsp();
+                self.cbox(INDENT);
+                self.small_block(&section.block, &section.attrs);
+                self.end();
+            }
             Expr::Assume(_) | Expr::Assert(_) | Expr::AssertForall(_) | Expr::RevealHide(_) => {}
         }
 
         if needs_paren {
             self.word(")");
+        }
+    }
+
+    fn resource_budget(&mut self, budget: &verus_syn::ResourceExpr) {
+        use verus_syn::ResourceExpr;
+        match budget {
+            ResourceExpr::Literal(n) => self.word(n.to_string()),
+            ResourceExpr::Paren(_, expr) => {
+                self.word("(");
+                self.resource_budget(expr);
+                self.word(")");
+            }
+            ResourceExpr::Add(left, _, right) | ResourceExpr::Mul(left, _, right) => {
+                self.resource_budget(left);
+                self.word(if matches!(budget, ResourceExpr::Add(..)) {
+                    " + "
+                } else {
+                    " * "
+                });
+                self.resource_budget(right);
+            }
+            ResourceExpr::SizeOf(_, _, typ) => {
+                self.word("sizeof(");
+                self.ty(typ);
+                self.word(")");
+            }
+            ResourceExpr::PeakMem(_, _, function) => {
+                self.word("peakmem(");
+                self.expr_path(function);
+                self.word(")");
+            }
         }
     }
 
@@ -1645,5 +1685,20 @@ fn parseable_as_stmt(mut expr: &Expr) -> bool {
 
             _ => return false,
         }
+    }
+}
+
+#[cfg(test)]
+mod resource_tests {
+    use quote::quote;
+
+    #[test]
+    fn memory_sections_keep_executable_contents() {
+        let file = verus_syn::parse_file(
+            "fn f() { peakmem <= 2 * (sizeof([u32; 4]) + peakmem(helper)) { let x = 1; peakmem <= 0 { consume(x); } } }",
+        ).unwrap();
+        let pretty = crate::unparse(&file);
+        let reparsed = verus_syn::parse_file(&pretty).unwrap();
+        assert_eq!(quote!(#file).to_string(), quote!(#reparsed).to_string());
     }
 }

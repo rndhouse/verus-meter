@@ -523,6 +523,7 @@ impl Clone for crate::Expr {
             crate::Expr::Yield(v0) => crate::Expr::Yield(v0.clone()),
             crate::Expr::Assume(v0) => crate::Expr::Assume(v0.clone()),
             crate::Expr::Assert(v0) => crate::Expr::Assert(v0.clone()),
+            crate::Expr::ResourceBlock(v0) => crate::Expr::ResourceBlock(v0.clone()),
             crate::Expr::AssertForall(v0) => crate::Expr::AssertForall(v0.clone()),
             crate::Expr::RevealHide(v0) => crate::Expr::RevealHide(v0.clone()),
             crate::Expr::View(v0) => crate::Expr::View(v0.clone()),
@@ -998,6 +999,16 @@ impl Clone for crate::ExprRepeat {
             expr: self.expr.clone(),
             semi_token: self.semi_token.clone(),
             len: self.len.clone(),
+        }
+    }
+}
+#[cfg_attr(docsrs, doc(cfg(feature = "clone-impls")))]
+impl Clone for crate::ExprResourceBlock {
+    fn clone(&self) -> Self {
+        crate::ExprResourceBlock {
+            attrs: self.attrs.clone(),
+            contract: self.contract.clone(),
+            block: self.block.clone(),
         }
     }
 }

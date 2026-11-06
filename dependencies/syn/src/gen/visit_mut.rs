@@ -369,6 +369,9 @@ pub trait VisitMut {
     fn visit_expr_repeat_mut(&mut self, i: &mut crate::ExprRepeat) {
         visit_expr_repeat_mut(self, i);
     }
+    fn visit_expr_resource_block_mut(&mut self, i: &mut crate::ExprResourceBlock) {
+        visit_expr_resource_block_mut(self, i);
+    }
     #[cfg(feature = "full")]
     #[cfg_attr(docsrs, doc(cfg(feature = "full")))]
     fn visit_expr_return_mut(&mut self, i: &mut crate::ExprReturn) {
@@ -1982,6 +1985,9 @@ where
         crate::Expr::Assert(_binding_0) => {
             v.visit_assert_mut(_binding_0);
         }
+        crate::Expr::ResourceBlock(_binding_0) => {
+            v.visit_expr_resource_block_mut(_binding_0);
+        }
         crate::Expr::AssertForall(_binding_0) => {
             v.visit_assert_forall_mut(_binding_0);
         }
@@ -2510,6 +2516,14 @@ where
     v.visit_expr_mut(&mut *node.expr);
     skip!(node.semi_token);
     v.visit_expr_mut(&mut *node.len);
+}
+pub fn visit_expr_resource_block_mut<V>(v: &mut V, node: &mut crate::ExprResourceBlock)
+where
+    V: VisitMut + ?Sized,
+{
+    v.visit_attributes_mut(&mut node.attrs);
+    v.visit_signature_resources_mut(&mut *node.contract);
+    full!(v.visit_block_mut(& mut node.block));
 }
 #[cfg(feature = "full")]
 #[cfg_attr(docsrs, doc(cfg(feature = "full")))]

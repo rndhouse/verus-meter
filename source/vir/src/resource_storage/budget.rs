@@ -99,9 +99,9 @@ pub(super) fn resolve(
     Ok(resolver.resolved)
 }
 
-/// Checkpoint formulas refer to already resolved function contracts. Their
+/// Body budget formulas refer to already resolved function contracts. Their
 /// references do not add executable calls or introduce new contract cycles.
-pub(super) fn evaluate_checkpoint(
+pub(super) fn evaluate_body_budget(
     expr: &BudgetExpr,
     budgets: &HashMap<Fun, u64>,
     functions: &HashMap<Fun, Function>,

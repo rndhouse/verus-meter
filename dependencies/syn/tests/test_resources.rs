@@ -138,3 +138,36 @@ fn checkpoints_reject_proof_overrides_and_runtime_budgets() {
         assert!(parse_str::<ItemFn>(&format!("fn f() {{ {statement} }}")).is_err());
     }
 }
+
+#[test]
+fn memory_sections_round_trip_and_end_statements() {
+    for body in [
+        "peakmem <= 0 {} let x = 1;",
+        "peakmem <= sizeof(x) { peakmem <= 0 {} } peakmem <= 0 {};",
+        "#[allow(unused)] peakmem <= 2 * (sizeof([u32; 4]) + peakmem(helper)) { let x = 1; }",
+        "let x = peakmem <= 0 {};",
+        "if true { peakmem <= 0 {} } else { peakmem <= 0 {} }",
+    ] {
+        let parsed: ItemFn = parse_str(&format!("fn f() {{ {body} }}")).unwrap();
+        let printed = parsed.clone().to_token_stream().to_string();
+        let reparsed: ItemFn = parse_str(&printed).unwrap();
+        assert_eq!(printed, reparsed.to_token_stream().to_string());
+    }
+    let parsed: ItemFn = parse_str("fn f() { peakmem(helper); }").unwrap();
+    assert!(matches!(
+        parsed.block.stmts[0],
+        verus_syn::Stmt::Expr(verus_syn::Expr::Call(_), _)
+    ));
+}
+
+#[test]
+fn memory_sections_reject_invalid_budgets() {
+    for body in [
+        "peakmem <= unknown {}",
+        "peakmem <= sizeof(make()) {}",
+        "peakmem <= 4 - 1 {}",
+        "peakmem <= 4;",
+    ] {
+        assert!(parse_str::<ItemFn>(&format!("fn f() {{ {body} }}")).is_err());
+    }
+}

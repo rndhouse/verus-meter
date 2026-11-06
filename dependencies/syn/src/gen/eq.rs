@@ -547,6 +547,9 @@ impl PartialEq for crate::Expr {
             (crate::Expr::Yield(self0), crate::Expr::Yield(other0)) => self0 == other0,
             (crate::Expr::Assume(self0), crate::Expr::Assume(other0)) => self0 == other0,
             (crate::Expr::Assert(self0), crate::Expr::Assert(other0)) => self0 == other0,
+            (crate::Expr::ResourceBlock(self0), crate::Expr::ResourceBlock(other0)) => {
+                self0 == other0
+            }
             (crate::Expr::AssertForall(self0), crate::Expr::AssertForall(other0)) => {
                 self0 == other0
             }
@@ -957,6 +960,15 @@ impl Eq for crate::ExprRepeat {}
 impl PartialEq for crate::ExprRepeat {
     fn eq(&self, other: &Self) -> bool {
         self.attrs == other.attrs && self.expr == other.expr && self.len == other.len
+    }
+}
+#[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
+impl Eq for crate::ExprResourceBlock {}
+#[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
+impl PartialEq for crate::ExprResourceBlock {
+    fn eq(&self, other: &Self) -> bool {
+        self.attrs == other.attrs && self.contract == other.contract
+            && self.block == other.block
     }
 }
 #[cfg(feature = "full")]

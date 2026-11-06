@@ -25,8 +25,9 @@ use crate::ty::ReturnType;
 use crate::ty::Type;
 use crate::verus::{
     Assert, AssertForall, Assume, AtomicallyBlock, BigAnd, BigOr, ClosureArg, Decreases, Ensures,
-    ExprFinal, ExprGetField, ExprHas, ExprHasNot, ExprIs, ExprIsNot, ExprMatches, FnProofOptions,
-    Invariant, InvariantEnsures, InvariantExceptBreak, Requires, RevealHide, View,
+    ExprFinal, ExprGetField, ExprHas, ExprHasNot, ExprIs, ExprIsNot, ExprMatches,
+    ExprResourceBlock, FnProofOptions, Invariant, InvariantEnsures, InvariantExceptBreak, Requires,
+    RevealHide, View,
 };
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -256,6 +257,9 @@ ast_enum_of_structs! {
         // verus
         Assume(Assume),
         Assert(Assert),
+
+        /// A section whose additional workspace fits its declared bound.
+        ResourceBlock(ExprResourceBlock),
         AssertForall(AssertForall),
         RevealHide(RevealHide),
         View(View),
@@ -1011,6 +1015,7 @@ impl Expr {
             | Expr::Yield(ExprYield { attrs, .. })
             // verus
             | Expr::Assume(Assume { attrs, .. })
+            | Expr::ResourceBlock(ExprResourceBlock { attrs, .. })
             | Expr::Assert(Assert { attrs, .. })
             | Expr::AssertForall(AssertForall { attrs, .. })
             | Expr::RevealHide(RevealHide { attrs, .. })
@@ -1352,6 +1357,8 @@ pub(crate) mod parsing {
             Expr::ForLoop(input.parse()?)
         } else if input.peek(Token![loop]) {
             Expr::Loop(input.parse()?)
+        } else if input.peek(Token![peakmem]) && input.peek2(Token![<=]) {
+            Expr::ResourceBlock(input.parse()?)
         } else if input.peek(Token![assume]) {
             Expr::Assume(input.parse()?)
         } else if input.peek(Token![assert]) && input.peek2(Token![forall]) {
@@ -2007,6 +2014,8 @@ pub(crate) mod parsing {
         } else if token::parsing::peek_keyword(input.cursor(), "builtin") && input.peek2(Token![#])
         {
             expr_builtin(input)
+        } else if input.peek(Token![peakmem]) && input.peek2(Token![<=]) {
+            input.parse().map(Expr::ResourceBlock)
         } else if input.peek(Ident)
             || input.peek(Token![::])
             || input.peek(Token![<])
@@ -2394,7 +2403,7 @@ pub(crate) mod parsing {
 
             // verus
             Expr::Assert(e) => e.body.is_none(),
-            Expr::AssertForall(_) => false,
+            Expr::AssertForall(_) | Expr::ResourceBlock(_) => false,
             Expr::Unary(e) if matches!(e.op, crate::op::UnOp::Proof(_)) => false,
 
             _ => true,
@@ -3604,6 +3613,7 @@ pub(crate) mod printing {
             // verus
             Expr::Assume(e) => e.to_tokens(tokens),
             Expr::Assert(e) => e.to_tokens(tokens),
+            Expr::ResourceBlock(e) => e.to_tokens(tokens),
             Expr::AssertForall(e) => e.to_tokens(tokens),
             Expr::RevealHide(e) => e.to_tokens(tokens),
             Expr::View(e) => e.to_tokens(tokens),

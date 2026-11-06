@@ -3423,6 +3423,31 @@ impl Visitor {
         true
     }
 
+    /// Keep the executable block intact while attaching erased section metadata.
+    fn handle_resource_block(&mut self, expr: &mut Expr) -> bool {
+        if !matches!(expr, Expr::ResourceBlock(_)) {
+            return false;
+        }
+        let Expr::ResourceBlock(mut section) = take_expr(expr) else { unreachable!() };
+        let span = section.contract.token.span;
+        let attrs = section.attrs;
+        if self.inside_ghost > 0 || self.inside_external_code > 0 || self.inside_const {
+            *expr = quote_verbatim!(span, attrs => ::core::compile_error!("peakmem sections require a verified exec function body"));
+            return true;
+        }
+        // Resolve sizeof names before visiting declarations in the section.
+        let budget = lower_memory_budget(&section.contract.budget, &self.resource_bindings);
+        self.visit_block_mut(&mut section.block);
+        if !self.erase_ghost.erase() {
+            section.block.stmts.insert(0, Stmt::Expr(
+                Expr::Verbatim(quote_spanned_builtin!(builtin, span => #builtin::resource_section(#budget))),
+                Some(Semi { spans: [span] }),
+            ));
+        }
+        *expr = Expr::Block(ExprBlock { attrs, label: None, block: section.block });
+        true
+    }
+
     /// Handle `assert` statements. Automatically wrap them in a proof block.
     fn handle_assert(&mut self, expr: &mut Expr) -> bool {
         let Expr::Assert(_) = expr else {
@@ -4630,7 +4655,8 @@ impl VisitMut for Visitor {
         self.handle_atomic_call(expr);
         self.normalize_expr_proof_note_attrs(expr);
 
-        if self.chain_operators(expr)
+        if self.handle_resource_block(expr)
+            || self.chain_operators(expr)
             || self.closure_quant_operators(expr)
             || self.handle_binary_ops(expr)
             || self.handle_assume(expr)

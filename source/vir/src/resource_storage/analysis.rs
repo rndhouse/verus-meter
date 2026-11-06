@@ -13,7 +13,7 @@ pub(super) struct FunctionAnalysis {
     pub(super) calls: Vec<(Fun, Span)>,
 }
 
-struct Checkpoint {
+pub(super) struct Checkpoint {
     span: Span,
     budget: u64,
     peak: Peak,
@@ -26,7 +26,7 @@ pub(super) struct Analysis<'a> {
     pub(super) var_modes: HashMap<VarIdent, Mode>,
     pub(super) storage: Accounting,
     pub(super) calls: Vec<(Fun, Span)>,
-    checkpoints: Vec<Checkpoint>,
+    pub(super) checkpoints: Vec<Checkpoint>,
 }
 
 impl Analysis<'_> {
@@ -40,6 +40,22 @@ impl Analysis<'_> {
         if !unit(&expr.typ) {
             return Err(unsupported(&expr.span, "value-returning blocks"));
         }
+        if let Some(stmt) = stmts.first() {
+            if let StmtX::Expr(marker) = &stmt.x {
+                if let ExprX::ResourceSection(budget) = &marker.x {
+                    return self.section(expr, &marker.span, budget, &stmts[1..], tail);
+                }
+            }
+        }
+        self.block_contents(expr, stmts, tail)
+    }
+
+    pub(super) fn block_contents(
+        &mut self,
+        expr: &Expr,
+        stmts: &[Stmt],
+        tail: &Option<Expr>,
+    ) -> Result<(), VirErr> {
         let entry = self.storage.live();
         let mut locals = Vec::new();
         self.storage.event(&expr.span, "enter lexical scope".into());
@@ -103,8 +119,14 @@ impl Analysis<'_> {
         }
         let mut operands = 0u64;
         match &expr.x {
+            ExprX::ResourceSection(_) => {
+                return Err(unsupported(
+                    &expr.span,
+                    "section metadata outside the start of a block",
+                ));
+            }
             ExprX::ResourceAssert(budget) => {
-                let budget = super::budget::evaluate_checkpoint(
+                let budget = super::budget::evaluate_body_budget(
                     budget,
                     self.budgets,
                     self.functions,
@@ -236,6 +258,22 @@ impl Analysis<'_> {
         self.result(expr, operands)
     }
 
+    pub(super) fn check_checkpoints(&self) -> Result<(), VirErr> {
+        for checkpoint in &self.checkpoints {
+            if checkpoint.peak.bytes > checkpoint.budget {
+                return Err(error(
+                    &checkpoint.span,
+                    format!(
+                        "peakmem assertion failed: peak {} bytes exceeds bound {} bytes",
+                        checkpoint.peak.bytes, checkpoint.budget,
+                    ),
+                )
+                .secondary_span(&checkpoint.peak.span));
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn result(&mut self, expr: &Expr, operands: u64) -> Result<u64, VirErr> {
         self.layouts.size(&expr.typ, &expr.span)?;
         self.storage.release(&expr.span, operands, "consumed aggregate operands");
@@ -253,7 +291,12 @@ pub(super) fn check(
     let Some(&budget) = budgets.get(&function.x.name) else {
         if let Some(body) = &function.x.body {
             crate::ast_visitor::expr_visitor_check(body, &mut |_, expr| {
-                if matches!(expr.x, ExprX::ResourceAssert(_)) {
+                if matches!(expr.x, ExprX::ResourceSection(_)) {
+                    Err(error(
+                        &expr.span,
+                        "peakmem sections require a function-level peakmem contract",
+                    ))
+                } else if matches!(expr.x, ExprX::ResourceAssert(_)) {
                     Err(error(
                         &expr.span,
                         "peakmem checkpoints require a function-level peakmem contract",
@@ -291,18 +334,7 @@ pub(super) fn check(
         }
     }
     analysis.discard(body)?;
-    for checkpoint in &analysis.checkpoints {
-        if checkpoint.peak.bytes > checkpoint.budget {
-            return Err(error(
-                &checkpoint.span,
-                format!(
-                    "peakmem assertion failed: peak {} bytes exceeds bound {} bytes",
-                    checkpoint.peak.bytes, checkpoint.budget,
-                ),
-            )
-            .secondary_span(&checkpoint.peak.span));
-        }
-    }
+    analysis.check_checkpoints()?;
     let report = analysis.storage.finish(&function.span)?;
     Ok(Some(FunctionAnalysis { report, calls: analysis.calls }))
 }

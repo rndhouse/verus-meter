@@ -1921,6 +1921,15 @@ impl Debug for Lite<syn::Expr> {
                 formatter.write_str(")")?;
                 Ok(())
             }
+            syn::Expr::ResourceBlock(_val) => {
+                let mut formatter = formatter.debug_struct("Expr::ResourceBlock");
+                if !_val.attrs.is_empty() {
+                    formatter.field("attrs", Lite(&_val.attrs));
+                }
+                formatter.field("contract", Lite(&_val.contract));
+                formatter.field("block", Lite(&_val.block));
+                formatter.finish()
+            }
             syn::Expr::AssertForall(_val) => {
                 formatter.write_str("Expr::AssertForall")?;
                 formatter.write_str("(")?;
@@ -2863,6 +2872,17 @@ impl Debug for Lite<syn::ExprRepeat> {
         }
         formatter.field("expr", Lite(&self.value.expr));
         formatter.field("len", Lite(&self.value.len));
+        formatter.finish()
+    }
+}
+impl Debug for Lite<syn::ExprResourceBlock> {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        let mut formatter = formatter.debug_struct("ExprResourceBlock");
+        if !self.value.attrs.is_empty() {
+            formatter.field("attrs", Lite(&self.value.attrs));
+        }
+        formatter.field("contract", Lite(&self.value.contract));
+        formatter.field("block", Lite(&self.value.block));
         formatter.finish()
     }
 }

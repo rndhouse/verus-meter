@@ -186,6 +186,14 @@ pub fn resource_assert_peakmem(_bytes: u64) {
     unimplemented!()
 }
 
+// First statement of a section block; erased while retaining its executable body.
+#[cfg(verus_keep_ghost)]
+#[rustc_diagnostic_item = "verus::verus_builtin::resource_section"]
+#[verifier::proof]
+pub fn resource_section(_bytes: u64) {
+    unimplemented!()
+}
+
 #[cfg(verus_keep_ghost)]
 #[rustc_diagnostic_item = "verus::verus_builtin::no_unwind"]
 #[verifier::proof]

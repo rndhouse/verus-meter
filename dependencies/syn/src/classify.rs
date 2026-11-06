@@ -35,7 +35,7 @@ pub(crate) fn requires_comma_to_be_match_arm(expr: &Expr) -> bool {
 
         // verus
         Expr::Assert(e) => e.body.is_none(),
-        Expr::AssertForall(_) => false,
+        Expr::AssertForall(_) | Expr::ResourceBlock(_) => false,
         Expr::Assume(_)
         | Expr::RevealHide(_)
         | Expr::View(_)
@@ -204,6 +204,7 @@ pub(crate) fn expr_leading_label(mut expr: &Expr) -> bool {
             // verus
             Expr::Assume(_)
             | Expr::Assert(_)
+            | Expr::ResourceBlock(_)
             | Expr::AssertForall(_)
             | Expr::RevealHide(_)
             | Expr::View(_)
@@ -283,7 +284,7 @@ pub(crate) fn expr_trailing_brace(mut expr: &Expr) -> bool {
             // verus
             Expr::Assume(_) => return false,
             Expr::Assert(e) => return e.body.is_some(),
-            Expr::AssertForall(_) => return true,
+            Expr::AssertForall(_) | Expr::ResourceBlock(_) => return true,
             Expr::RevealHide(_) => return false,
             Expr::View(_) => return false,
             Expr::GetField(_) => return false,

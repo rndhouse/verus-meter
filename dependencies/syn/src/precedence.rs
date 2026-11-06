@@ -206,6 +206,7 @@ impl Precedence {
             // verus
             Expr::Assume(_)
             | Expr::Assert(_)
+            | Expr::ResourceBlock(_)
             | Expr::AssertForall(_)
             | Expr::RevealHide(_)
             | Expr::View(_)

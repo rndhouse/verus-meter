@@ -106,13 +106,30 @@ impl Accounting {
         self.report.events.push(StorageEvent { span: span.clone(), description, live: self.live });
     }
 
-    pub(super) fn finish(mut self, function_span: &Span) -> Result<StorageReport, VirErr> {
-        self.release(function_span, self.live, "function exit");
+    pub(super) fn finish(self, function_span: &Span) -> Result<StorageReport, VirErr> {
+        self.finish_scope(function_span, "function exit", "local storage budget exceeded")
+    }
+
+    pub(super) fn finish_section(self, section_span: &Span) -> Result<StorageReport, VirErr> {
+        self.finish_scope(section_span, "section exit", "section storage budget exceeded")
+    }
+
+    fn finish_scope(
+        mut self,
+        scope_span: &Span,
+        exit: &str,
+        diagnostic: &str,
+    ) -> Result<StorageReport, VirErr> {
+        self.release(scope_span, self.live, exit);
         if self.report.peak > self.report.budget {
-            return Err(error(&self.peak_span, format!(
-                "local storage budget exceeded: peak {} bytes exceeds budget {} bytes ({MODEL_NAME})",
-                self.report.peak, self.report.budget,
-            )).secondary_span(function_span));
+            return Err(error(
+                &self.peak_span,
+                format!(
+                    "{diagnostic}: peak {} bytes exceeds budget {} bytes ({MODEL_NAME})",
+                    self.report.peak, self.report.budget,
+                ),
+            )
+            .secondary_span(scope_span));
         }
         Ok(self.report)
     }

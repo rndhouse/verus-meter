@@ -168,7 +168,8 @@ fn is_header_verus_item(verus_item: &VerusItem) -> bool {
             | SpecItem::ResourceSizeOfValue
             | SpecItem::ResourceSizeOfType
             | SpecItem::ResourcePeakMem
-            | SpecItem::ResourceAssertPeakMem => false,
+            | SpecItem::ResourceAssertPeakMem
+            | SpecItem::ResourceSection => false,
 
             SpecItem::NoMethodBody
             | SpecItem::Requires

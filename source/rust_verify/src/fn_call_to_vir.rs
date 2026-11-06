@@ -640,6 +640,7 @@ fn verus_item_to_vir<'tcx, 'a>(
                     | SpecItem::ResourceSizeOfType
                     | SpecItem::ResourcePeakMem
                     | SpecItem::ResourceAssertPeakMem
+                    | SpecItem::ResourceSection
                     | SpecItem::Recommends
                     | SpecItem::DecreasesWhen
                     | SpecItem::DecreasesBy
@@ -909,6 +910,18 @@ fn verus_item_to_vir<'tcx, 'a>(
                     internal_err_unless!(args_len == 1, expr.span, "expected one resource budget");
                     let budget = crate::resource_budget::lower(bctx, args[0])?;
                     mk_expr(ExprX::Header(Arc::new(HeaderExprX::LocalStorageBudget(budget))))
+                }
+                SpecItem::ResourceSection => {
+                    if bctx.in_ghost {
+                        return err_span(
+                            expr.span,
+                            "peakmem sections require an exec function body",
+                        );
+                    }
+                    record_spec_fn_pure_args_only(bctx, expr);
+                    internal_err_unless!(args_len == 1, expr.span, "expected one section budget");
+                    let budget = crate::resource_budget::lower(bctx, args[0])?;
+                    mk_expr(ExprX::ResourceSection(budget))
                 }
                 SpecItem::ResourceAssertPeakMem => {
                     if bctx.in_ghost {

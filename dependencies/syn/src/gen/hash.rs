@@ -801,52 +801,56 @@ impl Hash for crate::Expr {
                 state.write_u8(41u8);
                 v0.hash(state);
             }
-            crate::Expr::AssertForall(v0) => {
+            crate::Expr::ResourceBlock(v0) => {
                 state.write_u8(42u8);
                 v0.hash(state);
             }
-            crate::Expr::RevealHide(v0) => {
+            crate::Expr::AssertForall(v0) => {
                 state.write_u8(43u8);
                 v0.hash(state);
             }
-            crate::Expr::View(v0) => {
+            crate::Expr::RevealHide(v0) => {
                 state.write_u8(44u8);
                 v0.hash(state);
             }
-            crate::Expr::BigAnd(v0) => {
+            crate::Expr::View(v0) => {
                 state.write_u8(45u8);
                 v0.hash(state);
             }
-            crate::Expr::BigOr(v0) => {
+            crate::Expr::BigAnd(v0) => {
                 state.write_u8(46u8);
                 v0.hash(state);
             }
-            crate::Expr::Is(v0) => {
+            crate::Expr::BigOr(v0) => {
                 state.write_u8(47u8);
                 v0.hash(state);
             }
-            crate::Expr::IsNot(v0) => {
+            crate::Expr::Is(v0) => {
                 state.write_u8(48u8);
                 v0.hash(state);
             }
-            crate::Expr::Has(v0) => {
+            crate::Expr::IsNot(v0) => {
                 state.write_u8(49u8);
                 v0.hash(state);
             }
-            crate::Expr::HasNot(v0) => {
+            crate::Expr::Has(v0) => {
                 state.write_u8(50u8);
                 v0.hash(state);
             }
-            crate::Expr::Matches(v0) => {
+            crate::Expr::HasNot(v0) => {
                 state.write_u8(51u8);
                 v0.hash(state);
             }
-            crate::Expr::GetField(v0) => {
+            crate::Expr::Matches(v0) => {
                 state.write_u8(52u8);
                 v0.hash(state);
             }
-            crate::Expr::Final(v0) => {
+            crate::Expr::GetField(v0) => {
                 state.write_u8(53u8);
+                v0.hash(state);
+            }
+            crate::Expr::Final(v0) => {
+                state.write_u8(54u8);
                 v0.hash(state);
             }
             #[cfg(not(feature = "full"))]
@@ -1310,6 +1314,17 @@ impl Hash for crate::ExprRepeat {
         self.attrs.hash(state);
         self.expr.hash(state);
         self.len.hash(state);
+    }
+}
+#[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
+impl Hash for crate::ExprResourceBlock {
+    fn hash<H>(&self, state: &mut H)
+    where
+        H: Hasher,
+    {
+        self.attrs.hash(state);
+        self.contract.hash(state);
+        self.block.hash(state);
     }
 }
 #[cfg(feature = "full")]
