@@ -374,7 +374,7 @@ ast_enum! {
     /// Logical assertions and memory checkpoints use different expression languages.
     pub enum AssertExpr {
         Logical(Box<Expr>),
-        PeakMem(Box<SignatureResources>),
+        PeakMem(Ident, token::Paren, Box<SignatureResources>),
     }
 }
 
@@ -1606,10 +1606,35 @@ pub mod parsing {
             let assert_token: Token![assert] = input.parse()?;
             let content;
             let paren_token = parenthesized!(content in input);
-            let expr = if content.peek(Token![peakmem]) && content.peek2(Token![<=]) {
-                AssertExpr::PeakMem(Box::new(
-                    content.parse::<Option<SignatureResources>>()?.unwrap(),
-                ))
+            // Only the exact contextual query is reserved. Ordinary calls such
+            // as current(x) remain logical expressions.
+            let lookahead = content.fork();
+            let current_peakmem = (|| -> Result<bool> {
+                let name: Ident = lookahead.parse()?;
+                if name != "current" {
+                    return Ok(false);
+                }
+                let metric;
+                parenthesized!(metric in lookahead);
+                metric.parse::<Token![peakmem]>()?;
+                Ok(metric.is_empty())
+            })()
+            .unwrap_or(false);
+            let expr = if current_peakmem {
+                let current = content.parse()?;
+                let metric;
+                let current_paren = parenthesized!(metric in content);
+                let resource = SignatureResources {
+                    token: metric.parse()?,
+                    le_token: content.parse()?,
+                    budget: content.parse()?,
+                    comma: content.parse()?,
+                };
+                AssertExpr::PeakMem(current, current_paren, Box::new(resource))
+            } else if content.peek(Token![peakmem]) && content.peek2(Token![<=]) {
+                return Err(
+                    content.error("use assert(current(peakmem) <= bound) for a memory checkpoint")
+                );
             } else {
                 AssertExpr::Logical(content.parse()?)
             };
@@ -1617,7 +1642,7 @@ pub mod parsing {
                 return Err(content.error("expected `)`"));
             }
             if input.peek(Token![by]) {
-                if matches!(expr, AssertExpr::PeakMem(_)) {
+                if matches!(expr, AssertExpr::PeakMem(..)) {
                     return Err(input.error("peakmem checkpoints do not support by proofs"));
                 }
                 let by_token = input.parse()?;
@@ -2586,7 +2611,13 @@ mod printing {
         fn to_tokens(&self, tokens: &mut TokenStream) {
             match self {
                 AssertExpr::Logical(expr) => expr.to_tokens(tokens),
-                AssertExpr::PeakMem(resource) => resource.to_tokens(tokens),
+                AssertExpr::PeakMem(current, paren, resource) => {
+                    current.to_tokens(tokens);
+                    paren.surround(tokens, |tokens| resource.token.to_tokens(tokens));
+                    resource.le_token.to_tokens(tokens);
+                    resource.budget.to_tokens(tokens);
+                    resource.comma.to_tokens(tokens);
+                }
             }
         }
     }

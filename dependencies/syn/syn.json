@@ -161,6 +161,12 @@
         ],
         "PeakMem": [
           {
+            "proc_macro2": "Ident"
+          },
+          {
+            "group": "Paren"
+          },
+          {
             "box": {
               "syn": "SignatureResources"
             }

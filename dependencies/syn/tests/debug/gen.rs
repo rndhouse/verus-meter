@@ -131,12 +131,11 @@ impl Debug for Lite<syn::AssertExpr> {
                 formatter.write_str(")")?;
                 Ok(())
             }
-            syn::AssertExpr::PeakMem(_val) => {
-                formatter.write_str("AssertExpr::PeakMem")?;
-                formatter.write_str("(")?;
-                Debug::fmt(Lite(_val), formatter)?;
-                formatter.write_str(")")?;
-                Ok(())
+            syn::AssertExpr::PeakMem(_v0, _v1, _v2) => {
+                let mut formatter = formatter.debug_tuple("AssertExpr::PeakMem");
+                formatter.field(Lite(_v0));
+                formatter.field(Lite(_v2));
+                formatter.finish()
             }
         }
     }

@@ -3429,9 +3429,11 @@ impl Visitor {
             return false;
         };
 
-        if matches!(expr, Expr::Assert(a) if matches!(a.expr, verus_syn::AssertExpr::PeakMem(_))) {
+        if matches!(expr, Expr::Assert(a) if matches!(a.expr, verus_syn::AssertExpr::PeakMem(..))) {
             let Expr::Assert(assert) = take_expr(expr) else { unreachable!() };
-            let verus_syn::AssertExpr::PeakMem(resource) = assert.expr else { unreachable!() };
+            let verus_syn::AssertExpr::PeakMem(_, _, resource) = assert.expr else {
+                unreachable!()
+            };
             let span = assert.assert_token.span;
             let attrs = assert.attrs;
             *expr = if self.inside_ghost > 0 || self.inside_external_code > 0 || self.inside_const {

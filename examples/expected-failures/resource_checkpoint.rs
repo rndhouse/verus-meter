@@ -19,7 +19,7 @@ fn main()
     let copy = original;
 
     // Verus reports the violation here: the peak includes both arrays.
-    assert(peakmem <= sizeof(original));
+    assert(current(peakmem) <= sizeof(original));
     assert(copy[0] == original[0]);
 }
 

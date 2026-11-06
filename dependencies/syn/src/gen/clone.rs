@@ -58,7 +58,9 @@ impl Clone for crate::AssertExpr {
     fn clone(&self) -> Self {
         match self {
             crate::AssertExpr::Logical(v0) => crate::AssertExpr::Logical(v0.clone()),
-            crate::AssertExpr::PeakMem(v0) => crate::AssertExpr::PeakMem(v0.clone()),
+            crate::AssertExpr::PeakMem(v0, v1, v2) => {
+                crate::AssertExpr::PeakMem(v0.clone(), v1.clone(), v2.clone())
+            }
         }
     }
 }

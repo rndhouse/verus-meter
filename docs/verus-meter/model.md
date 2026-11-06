@@ -85,8 +85,11 @@ it a resource rule.
 
 ## Memory checkpoints
 
-Inside an annotated executable function, `assert(peakmem <= bound)` checks the
-highest modelled memory use from that function's entry to the assertion. The
+Inside an annotated executable function, `assert(current(peakmem) <= bound)`
+checks the highest modelled memory use from that function's entry to the assertion.
+`current` selects the peak at this point; it does not mean current live storage
+or the sum of allocations. The function clause remains `peakmem <= ...`, and
+`peakmem(function)` still queries a declared whole-function bound. The checkpoint
 bound uses the same `sizeof`, `peakmem(function)`, and checked arithmetic as the
 function contract. At a checkpoint, `sizeof` can also name a local in scope;
 the query uses only its type, even if the value is moved or uninitialized.
@@ -96,12 +99,12 @@ fn example()
     peakmem <= 2 * sizeof([u32; 4]),
 {
     let original = [1u32, 2, 3, 4];
-    assert(peakmem <= sizeof(original));
+    assert(current(peakmem) <= sizeof(original));
     {
         let copy = original;
-        assert(peakmem <= sizeof(original) + sizeof(copy));
+        assert(current(peakmem) <= sizeof(original) + sizeof(copy));
     }
-    assert(peakmem <= 2 * sizeof(original));
+    assert(current(peakmem) <= 2 * sizeof(original));
 }
 ```
 
@@ -579,3 +582,10 @@ source storage costs or whole-function bounds.
 - All 12 example-runner tests matching `resource_` passed. All five passing
   project examples also verified, compiled, and ran directly. Both expected
   failures were rejected at their documented locations.
+
+The subsequent `current(peakmem)` spelling preserves these rules. Validation
+passed with 223 resource tests (26 checkpoint tests), the same 1,076 selected
+upstream tests, eight parser tests, and 12 example-runner tests. Ordinary calls
+to functions named `current` remain logical expressions. The updated passing
+checkpoint example also verified, compiled, and ran; the failing example was
+rejected at its `current(peakmem)` assertion.

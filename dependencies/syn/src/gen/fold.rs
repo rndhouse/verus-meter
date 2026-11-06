@@ -1421,8 +1421,12 @@ where
         crate::AssertExpr::Logical(_binding_0) => {
             crate::AssertExpr::Logical(Box::new(f.fold_expr(*_binding_0)))
         }
-        crate::AssertExpr::PeakMem(_binding_0) => {
-            crate::AssertExpr::PeakMem(Box::new(f.fold_signature_resources(*_binding_0)))
+        crate::AssertExpr::PeakMem(_binding_0, _binding_1, _binding_2) => {
+            crate::AssertExpr::PeakMem(
+                f.fold_ident(_binding_0),
+                _binding_1,
+                Box::new(f.fold_signature_resources(*_binding_2)),
+            )
         }
     }
 }
