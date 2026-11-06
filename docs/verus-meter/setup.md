@@ -14,8 +14,11 @@ instructions belong to upstream Verus.
 - Rust: `1.99.1`, with components pinned by `rust-toolchain.toml`.
 - Z3: `4.16.0`, obtained with `source/tools/get-z3.sh`.
 
-Resource contracts are not implemented yet. See [design.md](design.md) for scope
-and the next investigation.
+Start with [model.md](model.md) for the current resource rules, supported subset,
+source organisation, and example commands. [design.md](design.md) records the
+broader project goals. Historical milestones and their validation are preserved
+in [experiment.md](experiment.md), [slices-and-sort.md](slices-and-sort.md), and
+[calls.md](calls.md).
 
 ## Local build environment
 
@@ -48,6 +51,15 @@ export GIT_CONFIG_COUNT=1
 export GIT_CONFIG_KEY_0='url.git@github.com:.insteadOf'
 export GIT_CONFIG_VALUE_0='https://github.com/'
 cargo make build
+```
+
+When the serialized VIR representation or verifier binary changes, Cargo may
+reuse an incompatible cached `vstd.vir`. Rebuild vstd explicitly after installing
+the updated verifier:
+
+```sh
+cargo clean --manifest-path vstd/Cargo.toml -p vstd --release
+cargo verus build --release --manifest-path vstd/Cargo.toml
 ```
 
 These environment variables apply to the current shell and its child processes.
