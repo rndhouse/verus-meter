@@ -171,3 +171,28 @@ fn memory_sections_reject_invalid_budgets() {
         assert!(parse_str::<ItemFn>(&format!("fn f() {{ {body} }}")).is_err());
     }
 }
+
+#[test]
+fn conditional_resource_budgets_round_trip() {
+    for budget in [
+        "sizeof(flag) + if flag { sizeof([u32; 8]) } else { sizeof([u32; 4]) }",
+        "if count <= 4 { 16 } else { 32 }",
+        "2 * (if a && !b { 32 } else { if b { 16 } else { 0 } })",
+    ] {
+        let parsed: ItemFn = parse_str(&format!("fn f() peakmem <= {budget}, {{}}")).unwrap();
+        let printed = parsed.to_token_stream().to_string();
+        let reparsed: ItemFn = parse_str(&printed).unwrap();
+        assert_eq!(printed, reparsed.to_token_stream().to_string());
+    }
+}
+
+#[test]
+fn conditional_resource_budgets_require_both_formula_branches() {
+    for budget in [
+        "if flag { 4 }",
+        "if flag { let x = 4; x } else { 0 }",
+        "if flag { 4 } else { runtime_value }",
+    ] {
+        assert!(parse_str::<ItemFn>(&format!("fn f() peakmem <= {budget} {{}}")).is_err());
+    }
+}

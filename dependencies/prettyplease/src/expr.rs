@@ -110,6 +110,15 @@ impl Printer {
     fn resource_budget(&mut self, budget: &verus_syn::ResourceExpr) {
         use verus_syn::ResourceExpr;
         match budget {
+            ResourceExpr::If(_, condition, _, then_budget, _, _, else_budget) => {
+                self.word("if ");
+                self.expr(condition, FixupContext::new_condition());
+                self.word(" { ");
+                self.resource_budget(then_budget);
+                self.word(" } else { ");
+                self.resource_budget(else_budget);
+                self.word(" }");
+            }
             ResourceExpr::Literal(n) => self.word(n.to_string()),
             ResourceExpr::Paren(_, expr) => {
                 self.word("(");
@@ -1691,6 +1700,17 @@ fn parseable_as_stmt(mut expr: &Expr) -> bool {
 #[cfg(test)]
 mod resource_tests {
     use quote::quote;
+
+    #[test]
+    fn conditional_budget_round_trip() {
+        let file = verus_syn::parse_file(
+            "fn f() { peakmem <= sizeof(flag) + if flag { 32 } else { 16 } { let x = 1; } }",
+        )
+        .unwrap();
+        let pretty = crate::unparse(&file);
+        let reparsed = verus_syn::parse_file(&pretty).unwrap();
+        assert_eq!(quote!(#file).to_string(), quote!(#reparsed).to_string());
+    }
 
     #[test]
     fn memory_sections_keep_executable_contents() {

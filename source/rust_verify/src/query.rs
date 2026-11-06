@@ -584,10 +584,10 @@ impl<'tcx> Query<'tcx> {
         }
 
         // All local signatures and mode-checked bodies are now available. Check
-        // storage and reject call cycles before exporting summaries or rewriting
-        // temporary places during resolution inference.
+        // fixed storage bounds, generate conditional proof obligations, and reject
+        // call cycles before export or resolution inference rewrites temporary places.
         let reports = vir::resource_storage::check_crate(
-            &cratex.functions,
+            &mut cratex.functions,
             &cratex.datatypes,
             &resource_modes,
         )

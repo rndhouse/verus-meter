@@ -6431,6 +6431,35 @@
           {
             "syn": "ExprPath"
           }
+        ],
+        "If": [
+          {
+            "token": "If"
+          },
+          {
+            "box": {
+              "syn": "Expr"
+            }
+          },
+          {
+            "group": "Brace"
+          },
+          {
+            "box": {
+              "syn": "ResourceExpr"
+            }
+          },
+          {
+            "token": "Else"
+          },
+          {
+            "group": "Brace"
+          },
+          {
+            "box": {
+              "syn": "ResourceExpr"
+            }
+          }
         ]
       }
     },

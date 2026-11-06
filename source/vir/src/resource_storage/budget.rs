@@ -19,6 +19,7 @@ pub enum BudgetExprX {
     Function(Fun),
     Add(BudgetExpr, BudgetExpr),
     Mul(BudgetExpr, BudgetExpr),
+    If(Expr, BudgetExpr, BudgetExpr),
 }
 
 struct Resolver<'a> {
@@ -61,6 +62,11 @@ impl Resolver<'_> {
 
     fn expr(&mut self, expr: &BudgetExpr) -> Result<u64, VirErr> {
         match &expr.x {
+            // Retain a safe envelope for existing argument-free peakmem queries
+            // and callers. The function body separately proves its conditional bound.
+            BudgetExprX::If(_, then_budget, else_budget) => {
+                Ok(self.expr(then_budget)?.max(self.expr(else_budget)?))
+            }
             BudgetExprX::Literal(n) => Ok(*n),
             BudgetExprX::SizeOf(typ) => self.layouts.size(typ, &expr.span),
             BudgetExprX::Function(name) => self.function(name, &expr.span),
@@ -102,6 +108,30 @@ pub(super) fn resolve(
 /// Body budget formulas refer to already resolved function contracts. Their
 /// references do not add executable calls or introduce new contract cycles.
 pub(super) fn evaluate_body_budget(
+    expr: &BudgetExpr,
+    budgets: &HashMap<Fun, u64>,
+    functions: &HashMap<Fun, Function>,
+    layouts: &Layouts,
+) -> Result<u64, VirErr> {
+    if is_conditional(expr) {
+        return Err(error(
+            &expr.span,
+            "conditional memory bounds currently require a function contract; section and checkpoint bounds remain fixed",
+        ));
+    }
+    evaluate_envelope(expr, budgets, functions, layouts)
+}
+
+// Inspect only this formula; peakmem(function) deliberately remains an envelope.
+pub(super) fn is_conditional(expr: &BudgetExpr) -> bool {
+    match &expr.x {
+        BudgetExprX::If(..) => true,
+        BudgetExprX::Add(a, b) | BudgetExprX::Mul(a, b) => is_conditional(a) || is_conditional(b),
+        _ => false,
+    }
+}
+
+pub(super) fn evaluate_envelope(
     expr: &BudgetExpr,
     budgets: &HashMap<Fun, u64>,
     functions: &HashMap<Fun, Function>,

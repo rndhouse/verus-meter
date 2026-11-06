@@ -12,6 +12,15 @@ use vir::resource_storage::{BudgetExpr, BudgetExprX};
 
 pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<BudgetExpr, VirErr> {
     let node = match expr.kind {
+        ExprKind::If(condition, then_expr, Some(else_expr)) => {
+            let ghost = BodyCtxt { in_ghost: true, ..bctx.clone() };
+            let condition =
+                crate::rust_to_vir_expr::expr_to_vir(&ghost, condition)?.to_spec_expr(&ghost);
+            BudgetExprX::If(condition, lower(bctx, then_expr)?, lower(bctx, else_expr)?)
+        }
+        ExprKind::Block(block, _) if block.stmts.is_empty() && block.expr.is_some() => {
+            return lower(bctx, block.expr.unwrap());
+        }
         ExprKind::Lit(lit) => match lit.node {
             LitKind::Int(n, _) => BudgetExprX::Literal(u64::try_from(n.get()).map_err(|_| {
                 vir::messages::error(

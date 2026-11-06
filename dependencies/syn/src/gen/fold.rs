@@ -4570,6 +4570,25 @@ where
                 f.fold_expr_path(_binding_2),
             )
         }
+        crate::ResourceExpr::If(
+            _binding_0,
+            _binding_1,
+            _binding_2,
+            _binding_3,
+            _binding_4,
+            _binding_5,
+            _binding_6,
+        ) => {
+            crate::ResourceExpr::If(
+                _binding_0,
+                Box::new(f.fold_expr(*_binding_1)),
+                _binding_2,
+                Box::new(f.fold_resource_expr(*_binding_3)),
+                _binding_4,
+                _binding_5,
+                Box::new(f.fold_resource_expr(*_binding_6)),
+            )
+        }
     }
 }
 pub fn fold_return_pat<F>(f: &mut F, node: crate::ReturnPat) -> crate::ReturnPat

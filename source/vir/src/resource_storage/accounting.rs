@@ -14,16 +14,25 @@ pub struct StorageReport {
     pub peak: u64,
     pub budget: u64,
     pub events: Vec<StorageEvent>,
+    pub(super) reservations: Vec<(Span, u64)>,
+    pub(super) conditional: bool,
 }
 
 impl StorageReport {
     pub fn diagnostics(&self, span: &Span) -> Vec<VirErrAs> {
         let mut result = vec![VirErrAs::Note(note(
             span,
-            format!(
-                "resource model {MODEL_NAME}: peak {} bytes, budget {} bytes",
-                self.peak, self.budget,
-            ),
+            if self.conditional {
+                format!(
+                    "resource model {MODEL_NAME}: structural peak {} bytes, conditional budget envelope {} bytes; allocation obligations require Verus proofs",
+                    self.peak, self.budget
+                )
+            } else {
+                format!(
+                    "resource model {MODEL_NAME}: peak {} bytes, budget {} bytes",
+                    self.peak, self.budget
+                )
+            },
         ))];
         result.extend(self.events.iter().map(|event| {
             VirErrAs::Note(note(
@@ -61,7 +70,13 @@ impl Accounting {
         Self {
             live: 0,
             peak_span: span.clone(),
-            report: StorageReport { peak: 0, budget, events: Vec::new() },
+            report: StorageReport {
+                peak: 0,
+                budget,
+                events: Vec::new(),
+                reservations: Vec::new(),
+                conditional: false,
+            },
         }
     }
 
@@ -90,6 +105,7 @@ impl Accounting {
             self.report.peak = self.live;
             self.peak_span = span.clone();
         }
+        self.report.reservations.push((span.clone(), self.live));
         self.event(span, format!("reserve {bytes} bytes for {reason}"));
         Ok(())
     }
@@ -108,6 +124,12 @@ impl Accounting {
 
     pub(super) fn finish(self, function_span: &Span) -> Result<StorageReport, VirErr> {
         self.finish_scope(function_span, "function exit", "local storage budget exceeded")
+    }
+
+    pub(super) fn finish_conditional(mut self, span: &Span) -> StorageReport {
+        self.release(span, self.live, "function exit");
+        self.report.conditional = true;
+        self.report
     }
 
     pub(super) fn finish_section(self, section_span: &Span) -> Result<StorageReport, VirErr> {

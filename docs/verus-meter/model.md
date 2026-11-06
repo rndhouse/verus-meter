@@ -27,12 +27,15 @@ fn example()
 The `peakmem <= ...` clause comes after the other function clauses. Its budget is a
 compile-time expression built from nonnegative `u64` literals (unsuffixed or
 suffixed `u64`), `sizeof` and `peakmem` queries, addition, multiplication, and
-parentheses:
+parentheses. Function contracts can also select between budget formulas with
+`if condition { ... } else { ... }`, as described below:
 
 - `sizeof(buffer)` queries the model size of a named parameter's type.
   An `&mut SortBuffer` parameter costs 8 bytes; it excludes the backing struct.
 - `peakmem(sorting::insertion_sort)` queries the function's **declared**
-  budget, including any slack. Function paths and import aliases use resolved
+  budget, including any slack. For a conditional contract it currently uses a
+  conservative envelope: the maximum at each conditional in the formula.
+  Function paths and import aliases use resolved
   Rust identities. Only eligible annotated functions in the same crate qualify.
 - `sizeof(SortBuffer)` queries a type directly, including when the
   local value does not yet exist at the function's signature. It uses the same
@@ -82,6 +85,59 @@ custom indexing, casts, division, shifts, destructuring/wildcard bindings,
 Calls with generic/dynamic targets, imported callees, and recursive call graphs
 are also rejected. Supporting a construct in Verus does not automatically give
 it a resource rule.
+
+## Conditional function bounds
+
+A function can select a workspace allowance using its inputs:
+
+```rust
+fn workspace(large: bool)
+    peakmem <= sizeof(large)
+        + if large { sizeof([u32; 8]) } else { sizeof([u32; 4]) },
+{
+    if large { let scratch = [0u32; 8]; }
+    else { let scratch = [0u32; 4]; }
+}
+```
+
+The [conditional workspace example](../../examples/resource/memory/resource_conditional.rs)
+demonstrates this first integration with Verus's proof machinery. The structural
+checker derives charges at local declarations, aggregate construction, argument
+handoff, calls, and section entry. It inserts ordinary proof obligations that
+each resulting live total fits the conditional bound. Parameter storage is checked
+at function entry. Because the bound has a stable entry-state meaning, bounding
+every reservation also bounds the function's peak. There is no user-writable
+memory counter and no additional runtime code.
+
+These obligations occur in the original control flow, so Verus can use branch
+conditions, function preconditions, preceding proofs, and loop invariants. For
+example, `requires count <= 4` can prove that a branch guarded by `count > 4` is
+unreachable. The budget predicate need not be spelled identically to the branch
+condition. This uses ordinary verification, with the usual consequences of
+assumptions and verification-skipping options.
+
+This first slice has explicit boundaries:
+
+- Budget predicates support comparisons and Boolean operators over immutable
+  `bool`, `u32`, and `usize` input parameters. Mutable inputs, reference contents,
+  ghost inputs, arbitrary spec-function calls, and side-effecting expressions
+  are rejected. Snapshot and general spec-expression support remain future work.
+- Branch budgets use the existing formula language and may contain nested
+  conditionals. The conservative arithmetic envelope must fit in `u64`, and all
+  branches are checked for unsupported types, invalid queries, and budget cycles.
+- Calls and `peakmem(function)` currently use the conservative declared envelope,
+  even when the actual argument would select a smaller allowance. Argument-aware
+  budget instantiation remains a separate next step.
+- Sections and checkpoints still require fixed bounds and retain their structural
+  accounting rules. A conditional function may contain fixed-budget sections;
+  the parent's proof covers its live storage plus each entered section's allowance.
+- Functions with fixed contracts retain the existing structural checker. Their
+  unreachable branches still contribute. Conditional contracts use generated
+  obligations instead of rejecting their whole-body structural maximum up front.
+
+Failures point to the reservation that cannot be shown to fit, with the contract
+as a secondary location. Traces distinguish the structural peak and conservative
+budget envelope from the proof obligations; a trace alone is not a proof result.
 
 ## Memory checkpoints
 
@@ -355,7 +411,7 @@ about how a compiler stores values:
 | Initialization | The destination is reserved while its initializer runs. A helper called during initialization therefore overlaps that destination. |
 | Calls | Caller-owned storage remains live. Each parameter has one slot; the callee's declared budget includes it. Declared slack is intentionally retained for compositional contracts. |
 | Sections | Each section checks its own workspace from zero. Its parent retains existing storage and reserves the child's declared allowance, including slack. |
-| Control flow | Alternative branches use a maximum, and iterations reuse their block's storage. Unreachable branches still contribute to the structural bound. |
+| Control flow | Alternative branches use a maximum, and iterations reuse their block's storage. Unreachable branches still contribute to structural reports and fixed contracts; conditional contracts use Verus to check reservations on reachable paths. |
 | Standalone aggregates | An explicitly written aggregate expression without a destination owns one temporary result. Scalar expression evaluation has no storage charge. This is a deliberate distinction in the current object model. |
 
 The most consequential lifetime choice is charging moved-from slots until scope
@@ -378,11 +434,15 @@ runs once local functions have passed mode checking, before resolution inference
 or AST simplification rewrites temporary places, and before exporting the crate.
 Body checkpoints and section headers have dedicated VIR nodes retained through
 mode checking. The checker validates section budgets, checkpoint path prefixes,
-and loop histories, then erases the metadata before export. Executable section
-bodies remain intact; resource annotations never become assumptions in functional proofs.
+and loop histories, then erases the metadata before export. Generated conditional
+assertions remain for normal verification. Executable section bodies remain intact;
+resource annotations never become unchecked assumptions in functional proofs.
 
-It computes structural bounds directly using checked arithmetic, without an SMT
-counter or reliance on user assertions. Standalone aggregate expressions leave
+It computes structural charges directly using checked arithmetic. Fixed bounds
+are checked without SMT; conditional function bounds generate ordinary Verus
+assertions at reservation sites, with an immutable-input budget expression.
+The instrumentation checks that every recorded reservation receives an obligation.
+Standalone aggregate expressions leave
 their result charged; other expressions add no inferred slots. Completed blocks
 restore their entry total. Source spans identify reservations,
 releases, and the first maximum in traces and budget errors. Branch traces show
@@ -415,6 +475,7 @@ responsibility:
 | [accounting.rs](../../source/vir/src/resource_storage/accounting.rs) | Private live/peak state, checked reservations/releases, trace events, budget diagnostics |
 | [analysis.rs](../../source/vir/src/resource_storage/analysis.rs) | Function entry, lexical scopes, branch/loop histories, and checkpoint checking |
 | [sections.rs](../../source/vir/src/resource_storage/sections.rs) | Independent section accounting and composition with the parent's declared storage |
+| [symbolic.rs](../../source/vir/src/resource_storage/symbolic.rs) | Conditional predicate validation and Verus obligations at reservation sites |
 | [places.rs](../../source/vir/src/resource_storage/places.rs) | Source-place validation, reads and borrows |
 | [construction.rs](../../source/vir/src/resource_storage/construction.rs) | Aggregate destinations, nested construction, copies and moves |
 | [calls.rs](../../source/vir/src/resource_storage/calls.rs) | Argument handoff, callee budgets and intrinsic evaluation |
@@ -435,6 +496,7 @@ Rust-to-VIR lowering. The checker has no dependency on rustc internals.
 | [Keeping an array copy (expected failure)](../../examples/resource/memory/expected-failures/resource_array_copy.rs) | Rejected: peak 32 exceeds the declared budget of 16 |
 | [Memory checkpoints](../../examples/resource/memory/resource_checkpoints.rs) | 32, with checkpoints before, during, and after copying |
 | [Nested workspace sections](../../examples/resource/memory/resource_sections.rs) | 48 in the function; 32 in the outer section; 16 in the inner section |
+| [Conditional workspace](../../examples/resource/memory/resource_conditional.rs) | 33 for a large task; 17 for a small task; callers reserve the declared envelope of 33 |
 | [Tighter checkpoint (expected failure)](../../examples/resource/memory/expected-failures/resource_checkpoint.rs) | Function budget 32 fits; checkpoint bound 16 fails |
 
 Use the development environment in [setup.md](setup.md). From `source`:
@@ -443,7 +505,7 @@ Use the development environment in [setup.md](setup.md). From `source`:
 cargo build --release -p rust_verify
 VERUS_Z3_PATH="$PWD/z3" ./target-verus/release/verus ../examples/resource/memory/resource_calls.rs --trace --compile -o target-verus/resource-calls
 ./target-verus/resource-calls
-cargo test --release -p rust_verify_test --test resource_storage --test resource_storage_slices --test resource_storage_calls --test resource_storage_structs --test resource_storage_budgets --test resource_storage_initialization --test resource_storage_model --test resource_checkpoints --test resource_sections --test resource_array_copy
+cargo test --release -p rust_verify_test --test resource_storage --test resource_storage_slices --test resource_storage_calls --test resource_storage_structs --test resource_storage_budgets --test resource_storage_initialization --test resource_storage_model --test resource_checkpoints --test resource_sections --test resource_conditional --test resource_array_copy
 ```
 
 The integration suites are grouped into basic storage, slices/arithmetic,
@@ -657,3 +719,23 @@ costs and the enclosing function's obligation.
 - The nested workspace example verified, compiled, and ran. A separate compiled
   harness verified a postcondition and checked the result at runtime, confirming
   that writes through nested sections survive erasure of resource annotations.
+
+## Conditional contract validation (v5)
+
+This first symbolic step changes how conditional function bounds are proved;
+fixed contracts and source storage charges retain their previous rules.
+
+- Release workspace and installed verifier builds passed. A fresh vstd build
+  reported 2,226 verified and zero errors.
+- All 273 resource tests passed, including 28 conditional tests. They cover
+  selected branch allowances, equivalent predicates, preconditions, local
+  decisions, shadowing, parameter costs, structs, standalone aggregates,
+  initializer and argument calls, mutable borrows, loops, fixed sections,
+  conservative callee envelopes, and rejection of unsupported predicates.
+- All 12 resource parser tests and both formatter resource tests passed. The
+  formatter tests used the isolated manifest described above.
+- The same 1,076 selected upstream tests passed, with eight ignored. All 14
+  example-runner tests matching `resource_` passed.
+- The conditional workspace example verified, compiled, and ran. A separate
+  compiled harness proved a conditional postcondition and checked both runtime
+  outcomes after writes through a mutable reference.

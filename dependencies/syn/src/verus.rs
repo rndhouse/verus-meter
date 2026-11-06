@@ -224,7 +224,7 @@ ast_struct! {
 }
 
 ast_struct! {
-    /// A compile-time resource budget expression.
+    /// A resource budget formula, optionally conditional on function inputs.
     pub struct SignatureResources {
         pub token: Token![peakmem],
         pub le_token: Token![<=],
@@ -243,7 +243,7 @@ ast_struct! {
 }
 
 ast_enum! {
-    /// The compile-time resource language, separate from executable expressions.
+    /// Resource formulas, with ordinary expressions for conditional predicates.
     /// A bare `sizeof` path may name a parameter; other arguments denote types.
     pub enum ResourceExpr {
         Literal(LitInt),
@@ -252,6 +252,7 @@ ast_enum! {
         Mul(Box<ResourceExpr>, Token![*], Box<ResourceExpr>),
         SizeOf(Ident, token::Paren, Type),
         PeakMem(Ident, token::Paren, ExprPath),
+        If(Token![if], Box<Expr>, token::Brace, Box<ResourceExpr>, Token![else], token::Brace, Box<ResourceExpr>),
     }
 }
 
@@ -1473,6 +1474,32 @@ pub mod parsing {
     }
 
     fn resource_atom(input: ParseStream) -> Result<ResourceExpr> {
+        if input.peek(Token![if]) {
+            let if_token = input.parse()?;
+            let condition = input.call(Expr::parse_without_eager_brace)?;
+            let then_content;
+            let then_brace = braced!(then_content in input);
+            let then_budget = then_content.parse()?;
+            if !then_content.is_empty() {
+                return Err(then_content.error("expected a budget expression"));
+            }
+            let else_token = input.parse()?;
+            let else_content;
+            let else_brace = braced!(else_content in input);
+            let else_budget = else_content.parse()?;
+            if !else_content.is_empty() {
+                return Err(else_content.error("expected a budget expression"));
+            }
+            return Ok(ResourceExpr::If(
+                if_token,
+                Box::new(condition),
+                then_brace,
+                Box::new(then_budget),
+                else_token,
+                else_brace,
+                Box::new(else_budget),
+            ));
+        }
         if input.peek(token::Paren) {
             let content;
             let paren = parenthesized!(content in input);
@@ -2554,6 +2581,21 @@ mod printing {
     impl ToTokens for ResourceExpr {
         fn to_tokens(&self, tokens: &mut TokenStream) {
             match self {
+                ResourceExpr::If(
+                    if_token,
+                    condition,
+                    then_brace,
+                    then_budget,
+                    else_token,
+                    else_brace,
+                    else_budget,
+                ) => {
+                    if_token.to_tokens(tokens);
+                    condition.to_tokens(tokens);
+                    then_brace.surround(tokens, |tokens| then_budget.to_tokens(tokens));
+                    else_token.to_tokens(tokens);
+                    else_brace.surround(tokens, |tokens| else_budget.to_tokens(tokens));
+                }
                 ResourceExpr::Literal(n) => n.to_tokens(tokens),
                 ResourceExpr::Paren(paren, expr) => {
                     paren.surround(tokens, |tokens| expr.to_tokens(tokens));

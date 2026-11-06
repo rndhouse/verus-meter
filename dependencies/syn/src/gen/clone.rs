@@ -2566,6 +2566,17 @@ impl Clone for crate::ResourceExpr {
             crate::ResourceExpr::PeakMem(v0, v1, v2) => {
                 crate::ResourceExpr::PeakMem(v0.clone(), v1.clone(), v2.clone())
             }
+            crate::ResourceExpr::If(v0, v1, v2, v3, v4, v5, v6) => {
+                crate::ResourceExpr::If(
+                    v0.clone(),
+                    v1.clone(),
+                    v2.clone(),
+                    v3.clone(),
+                    v4.clone(),
+                    v5.clone(),
+                    v6.clone(),
+                )
+            }
         }
     }
 }

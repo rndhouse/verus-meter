@@ -279,6 +279,11 @@ macro_rules! quote_spanned_builtin {
 fn lower_memory_budget(expr: &verus_syn::ResourceExpr, parameters: &[Ident]) -> TokenStream {
     use verus_syn::ResourceExpr;
     match expr {
+        ResourceExpr::If(_, condition, _, then_budget, _, _, else_budget) => {
+            let then_budget = lower_memory_budget(then_budget, parameters);
+            let else_budget = lower_memory_budget(else_budget, parameters);
+            quote_spanned!(expr.span() => (if #condition { #then_budget } else { #else_budget }))
+        }
         ResourceExpr::Literal(n) => n.to_token_stream(),
         ResourceExpr::Paren(_, e) => {
             let e = lower_memory_budget(e, parameters);
@@ -1308,8 +1313,9 @@ impl Visitor {
         }
 
         if let Some(verus_syn::SignatureResources { token, budget, .. }) = resources {
-            // Resource expressions deliberately bypass the general spec visitor:
-            // sizes/budgets are compile-time metadata, not mathematical u64 terms.
+            // Formula leaves remain model metadata, not runtime u64 arithmetic.
+            // Conditional predicates use ordinary scalar expression syntax;
+            // typed lowering validates the supported predicate subset.
             // `args` contains only the parameter names produced by
             // inputs_to_tokens/verus_inputs_to_tokens, separated by commas.
             let parameters: Vec<_> = args

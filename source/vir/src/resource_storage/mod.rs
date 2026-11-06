@@ -3,7 +3,8 @@
 //! `model` defines the policy; `layout` checks concrete type sizes and struct
 //! fields; `budget` resolves declared budget expressions and their dependencies;
 //! `accounting` owns live/peak totals and traces; `sections` checks nested
-//! workspace contracts and composes their bounds with the parent.
+//! workspace contracts and composes their bounds with the parent. `symbolic`
+//! turns conditional contracts into ordinary Verus proof obligations.
 //! `construction` accounts for aggregate initialization; `analysis`, `places`,
 //! and `calls` interpret other supported executable VIR. This
 //! module validates the crate-wide call graph before publishing any reports.
@@ -20,6 +21,7 @@ mod layout;
 mod model;
 mod places;
 mod sections;
+mod symbolic;
 
 pub use accounting::{StorageEvent, StorageReport};
 pub use budget::{BudgetExpr, BudgetExprX};
@@ -32,11 +34,12 @@ use model::unsupported;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Check every local contract before exporting any summary. Call accounting
-/// uses declared bounds, whose validity follows by induction over this acyclic
-/// executable call graph. Never rely on functional termination to bound storage.
+/// Check structural rules and generate conditional obligations before export.
+/// Call accounting uses declared bounds; together with the function proofs,
+/// their validity follows over this acyclic executable call graph. Never rely
+/// on functional termination to bound storage.
 pub fn check_crate(
-    functions: &[Function],
+    functions: &mut [Function],
     datatypes: &[Datatype],
     modes: &HashMap<Fun, Arc<ResolutionInfo>>,
 ) -> Result<Vec<(Span, StorageReport)>, VirErr> {
@@ -45,7 +48,7 @@ pub fn check_crate(
     let budgets = budget::resolve(functions, &function_map, &layouts)?;
     let mut graph = crate::scc::Graph::new();
     let mut reports = Vec::new();
-    for function in functions {
+    for function in functions.iter() {
         if let Some(checked) = analysis::check(
             function,
             modes.get(&function.x.name).map(Arc::as_ref),
@@ -57,7 +60,7 @@ pub fn check_crate(
             for (callee, _) in &checked.calls {
                 graph.add_edge(function.x.name.clone(), callee.clone());
             }
-            reports.push((function, checked));
+            reports.push((function.clone(), checked));
         }
     }
     graph.compute_sccs();
@@ -72,11 +75,21 @@ pub fn check_crate(
             }
         }
     }
+    // Materialize ordinary proof obligations only after checking all structural
+    // rules and call cycles. No user-controlled memory counter is introduced.
+    for (function, checked) in &reports {
+        if let Some(bound) = &checked.symbolic_bound {
+            let updated = symbolic::instrument(function, bound, &checked.report, &layouts)?;
+            let target = functions.iter_mut().find(|f| f.x.name == function.x.name).unwrap();
+            *target = updated;
+        }
+    }
     Ok(reports.into_iter().map(|(f, checked)| (f.span.clone(), checked.report)).collect())
 }
 
-/// Erase resource annotations only after the entire crate's storage checks succeed.
-/// They cannot be exported as unchecked claims or become logical assumptions.
+/// Erase metadata after the crate's structural checks and instrumentation succeed.
+/// Generated conditional assertions remain in the body for normal verification;
+/// metadata must never become unchecked logical assumptions.
 pub fn erase_annotations(functions: &mut [Function]) -> Result<(), VirErr> {
     for function in functions {
         // Unannotated functions were checked for forbidden annotations above.

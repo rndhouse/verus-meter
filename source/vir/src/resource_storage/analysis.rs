@@ -11,6 +11,7 @@ use std::collections::HashMap;
 pub(super) struct FunctionAnalysis {
     pub(super) report: StorageReport,
     pub(super) calls: Vec<(Fun, Span)>,
+    pub(super) symbolic_bound: Option<Expr>,
 }
 
 pub(super) struct Checkpoint {
@@ -333,8 +334,13 @@ pub(super) fn check(
             analysis.storage.reserve(&param.span, bytes, "parameter slot")?;
         }
     }
+    let symbolic_bound = super::symbolic::function_bound(function, budgets, functions, layouts)?;
     analysis.discard(body)?;
     analysis.check_checkpoints()?;
-    let report = analysis.storage.finish(&function.span)?;
-    Ok(Some(FunctionAnalysis { report, calls: analysis.calls }))
+    let report = if symbolic_bound.is_some() {
+        analysis.storage.finish_conditional(&function.span)
+    } else {
+        analysis.storage.finish(&function.span)?
+    };
+    Ok(Some(FunctionAnalysis { report, calls: analysis.calls, symbolic_bound }))
 }
