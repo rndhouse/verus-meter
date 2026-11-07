@@ -352,7 +352,7 @@ impl Analysis<'_> {
                     super::contracts::literal(&checkpoint.span, checkpoint.budget),
                 ));
             }
-            if checkpoint.peak.bytes > checkpoint.budget {
+            if checkpoint.peak.bytes > u128::from(checkpoint.budget) {
                 return Err(error(
                     &checkpoint.span,
                     format!(

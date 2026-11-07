@@ -94,32 +94,32 @@ impl Analysis<'_> {
                 "callee storage budget is smaller than its parameter and result storage",
             )
         })?;
-        let caller_live = self.storage.live_expression(&expr.span);
-        // Parameters are already included in the callee's declared peak.
+        // Argument evaluation may release heap storage. Compose the callee's
+        // budget with what remains live now, including the parameter and result
+        // destinations already reserved above. Credit those destinations once;
+        // the peaks reached during argument evaluation were recorded separately.
         if let Some(bound) = bound.filter(|_| constant.is_none()) {
+            let live_at_call = self.storage.live_expression(&expr.span);
             let extra = super::contracts::subtract(
                 &expr.span,
                 bound.clone(),
                 super::contracts::literal(&expr.span, supplied),
             );
-            let cost = super::contracts::add(&expr.span, caller_live, extra);
+            let cost = super::contracts::add(&expr.span, live_at_call, extra);
             if super::contracts::numeric_input(&bound) {
                 self.storage.symbolic_cost(&expr.span, cost);
-                self.storage.release(&expr.span, parameters, "callee return");
-                self.result_owner =
-                    self.complete_ownership_call(expr, callee, args, &mut transferred)?;
-                self.calls.push((target.clone(), expr.span.clone()));
-                return Ok(retained);
+            } else {
+                self.storage.record_call(&expr.span, additional, cost);
             }
-            self.storage.reserve_call(&expr.span, additional, cost)?;
+            self.storage.release(&expr.span, parameters, "callee return");
         } else {
             self.storage.reserve(
                 &expr.span,
                 additional,
                 &format!("callee peak for {}", crate::ast_util::fun_as_friendly_rust_name(target)),
             )?;
+            self.storage.release(&expr.span, budget - result_size, "callee return");
         }
-        self.storage.release(&expr.span, budget - result_size, "callee return");
         self.result_owner = self.complete_ownership_call(expr, callee, args, &mut transferred)?;
         self.calls.push((target.clone(), expr.span.clone()));
         Ok(retained)

@@ -9,6 +9,208 @@ fn assert_memory_failure(err: TestErr) {
 }
 
 test_verify_one_file! {
+    #[test] unused_conditional_maximum_can_exceed_live_storage_range verus_code! {
+        fn helper(flag: bool)
+            mem_peak <= if flag { 18446744073709551615 } else { 1 },
+        {}
+        fn caller(flag: bool) requires !flag, mem_peak <= 2 {
+            helper(flag);
+            helper(flag);
+            let later = 0u8;
+        }
+    } => Ok(())
+}
+
+test_verify_one_file! {
+    #[test] selected_conditional_maximum_must_still_fit verus_code! {
+        fn helper(flag: bool)
+            mem_peak <= if flag { 18446744073709551615 } else { 1 },
+        {}
+        fn caller(flag: bool) requires flag, mem_peak <= 18446744073709551615 {
+            helper(flag);
+        }
+    } => Err(err) => assert_memory_failure(err)
+}
+
+test_verify_one_file! {
+    #[test] unused_conditional_maximum_with_dynamic_backing verus_code! {
+        use vstd::prelude::*;
+        fn helper(flag: bool)
+            mem_peak <= if flag { 18446744073709551615 } else { 1 },
+        {}
+        fn caller(cap: usize, flag: bool)
+            requires cap <= 4, !flag,
+            mem_peak <= 50,
+        {
+            let owner = Vec::<u32>::with_capacity(cap);
+            helper(flag);
+            drop(owner);
+            let later = [0u8; 8];
+        }
+    } => Ok(())
+}
+
+test_verify_one_file! {
+    #[test] large_conditional_envelope_keeps_dynamic_backing_charged verus_code! {
+        use vstd::prelude::*;
+        fn helper(flag: bool)
+            mem_peak <= if flag { 18446744073709551615 } else { 1 },
+        {}
+        fn caller(cap: usize, flag: bool)
+            requires cap <= 4, !flag,
+            mem_peak <= 49,
+        {
+            let owner = Vec::<u32>::with_capacity(cap);
+            helper(flag);
+        }
+    } => Err(err) => assert_memory_failure(err)
+}
+
+test_verify_one_file! {
+    #[test] unused_conditional_maximum_with_return_destination verus_code! {
+        fn helper(flag: bool) -> (result: u8)
+            ensures result == 7,
+            mem_peak <= if flag { 18446744073709551615 } else { 2 },
+        { 7 }
+        fn caller(flag: bool) requires !flag, mem_peak <= 3 {
+            let result = helper(flag);
+            assert(result == 7);
+        }
+    } => Ok(())
+}
+
+test_verify_one_file! {
+    #[test] unused_conditional_maximum_inside_section verus_code! {
+        fn helper(flag: bool)
+            mem_peak <= if flag { 18446744073709551615 } else { 1 },
+        {}
+        fn caller(flag: bool) requires !flag, mem_peak <= 3 {
+            mem_peak <= 2 {
+                let local = 0u8;
+                helper(flag);
+            }
+            assert(current(mem_peak) <= 3);
+        }
+    } => Ok(())
+}
+
+test_verify_one_file! {
+    #[test] overflowing_conditional_envelope_remains_in_checkpoint verus_code! {
+        fn helper(flag: bool)
+            mem_peak <= if flag { 18446744073709551615 } else { 1 },
+        {}
+        fn caller(flag: bool) requires !flag, mem_peak <= 2 {
+            helper(flag);
+            assert(current(mem_peak) <= 18446744073709551615);
+        }
+    } => Err(err) => assert_vir_error_msg(err, "peak 18446744073709551616 bytes exceeds bound 18446744073709551615 bytes")
+}
+
+test_verify_one_file! {
+    #[test] conditional_call_after_argument_drop verus_code! {
+        use vstd::prelude::*;
+        fn helper(flag: bool, done: ())
+            mem_peak <= mem_size(flag) + if flag { 32 } else { 0 },
+        {
+            if flag { let scratch = [0u8; 32]; }
+        }
+        fn caller(flag: bool) mem_peak <= 42 {
+            let owner = Box::new([0u8; 32]);
+            helper(flag, { drop(owner); });
+            assert(current(mem_peak) <= 42);
+        }
+    } => Ok(())
+}
+
+test_verify_one_file! {
+    #[test] argument_storage_before_drop_still_counts verus_code! {
+        use vstd::prelude::*;
+        fn helper(flag: bool, done: ())
+            mem_peak <= mem_size(flag) + if flag { 32 } else { 0 },
+        {
+            if flag { let scratch = [0u8; 32]; }
+        }
+        fn caller(flag: bool) mem_peak <= 41 {
+            let owner = Box::new([0u8; 32]);
+            helper(flag, { drop(owner); });
+        }
+    } => Err(err) => assert_vir_error_msg(err, "peak 42 bytes exceeds budget 41 bytes")
+}
+
+test_verify_one_file! {
+    #[test] conditional_call_after_dynamic_argument_drop verus_code! {
+        use vstd::prelude::*;
+        fn helper(flag: bool, done: ())
+            mem_peak <= mem_size(flag) + if flag { 32 } else { 0 },
+        {
+            if flag { let scratch = [0u8; 32]; }
+        }
+        fn caller(cap: usize, flag: bool) requires cap <= 4, mem_peak <= 66 {
+            let owner = Vec::<u32>::with_capacity(cap);
+            helper(flag, { drop(owner); });
+            assert(current(mem_peak) <= 66);
+        }
+    } => Ok(())
+}
+
+test_verify_one_file! {
+    #[test] runtime_call_after_argument_drop verus_code! {
+        use vstd::prelude::*;
+        fn helper(cap: usize, done: ())
+            requires cap <= 4,
+            mem_peak <= mem_size(cap) + mem_size(Vec<u32>) + cap * mem_size(u32),
+        {
+            let scratch = Vec::<u32>::with_capacity(cap);
+        }
+        fn caller(cap: usize) requires cap <= 4, mem_peak <= 64 {
+            let owner = Box::new([0u8; 32]);
+            helper(cap, { drop(owner); });
+            assert(current(mem_peak) <= 64);
+        }
+    } => Ok(())
+}
+
+test_verify_one_file! {
+    #[test] conditional_return_after_argument_drop verus_code! {
+        use vstd::prelude::*;
+        fn helper(flag: bool, done: ()) -> (result: u32)
+            ensures result == 7,
+            mem_peak <= mem_size(flag) + mem_size(u32) + if flag { 32 } else { 0 },
+        {
+            if flag { let scratch = [0u8; 32]; }
+            7
+        }
+        fn initialized(flag: bool) mem_peak <= 46 {
+            let owner = Box::new([0u8; 32]);
+            let result = helper(flag, { drop(owner); });
+            assert(result == 7);
+            assert(current(mem_peak) <= 46);
+        }
+        fn discarded(flag: bool) mem_peak <= 46 {
+            let owner = Box::new([0u8; 32]);
+            helper(flag, { drop(owner); });
+            assert(current(mem_peak) <= 46);
+        }
+    } => Ok(())
+}
+
+test_verify_one_file! {
+    #[test] argument_drop_keeps_other_owners_charged verus_code! {
+        use vstd::prelude::*;
+        fn helper(flag: bool, done: ())
+            mem_peak <= mem_size(flag) + if flag { 64 } else { 0 },
+        {
+            if flag { let scratch = [0u8; 64]; }
+        }
+        fn caller(flag: bool) mem_peak <= 113 {
+            let released = Box::new([0u8; 32]);
+            let retained = Box::new([0u8; 32]);
+            helper(flag, { drop(released); });
+        }
+    } => Err(err) => assert_memory_failure(err)
+}
+
+test_verify_one_file! {
     #[test] constant_call_query verus_code! {
 use vstd::prelude::*;
 fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {

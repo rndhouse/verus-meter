@@ -12,7 +12,9 @@ pub struct StorageEvent {
 }
 
 pub struct StorageReport {
-    pub peak: u64,
+    // A conservative call envelope can exceed u64 even when its selected cost
+    // fits. Actual reservations and declared budgets still use the u64 model.
+    pub peak: u128,
     pub budget: u64,
     pub events: Vec<StorageEvent>,
     pub(super) reservations: Vec<(Span, u64)>,
@@ -49,7 +51,7 @@ impl StorageReport {
 /// A path's high-water mark, including the source that established it.
 #[derive(Clone)]
 pub(super) struct Peak {
-    pub(super) bytes: u64,
+    pub(super) bytes: u128,
     pub(super) span: Span,
     pub(super) costs: Vec<(Span, Expr)>,
 }
@@ -116,8 +118,8 @@ impl Accounting {
             .live
             .checked_add(bytes)
             .ok_or_else(|| unsupported(span, "storage totals exceeding u64"))?;
-        if self.live > self.report.peak {
-            self.report.peak = self.live;
+        if u128::from(self.live) > self.report.peak {
+            self.report.peak = u128::from(self.live);
             self.peak_span = span.clone();
         }
         if self.dynamic.is_empty() {
@@ -129,25 +131,26 @@ impl Accounting {
         Ok(())
     }
 
-    // Keep an envelope for traces/checkpoints, but prove the instantiated cost
-    // instead of treating that envelope as a required allocation.
-    pub(super) fn reserve_call(
-        &mut self,
-        span: &Span,
-        additional: u64,
-        cost: Expr,
-    ) -> Result<(), VirErr> {
-        self.reserve(span, additional, "callee budget envelope")?;
-        if additional != 0 {
-            if self.dynamic.is_empty() {
-                self.report.reservations.pop();
-            } else {
-                self.report.call_costs.pop();
-            }
+    // The call is an instantaneous cost: its maximum belongs to the peak, not
+    // live storage. Keep that envelope for traces/checkpoints, including values
+    // above u64, while only the instantiated cost must fit the enclosing budget.
+    pub(super) fn record_call(&mut self, span: &Span, additional: u64, cost: Expr) {
+        let envelope = u128::from(self.live) + u128::from(additional);
+        if envelope > self.report.peak {
+            self.report.peak = envelope;
+            self.peak_span = span.clone();
+        }
+        if additional != 0 && !self.dynamic.is_empty() {
+            let envelope_cost = super::contracts::add(
+                span,
+                self.live_expression(span),
+                super::contracts::literal(span, additional),
+            );
+            self.peak_costs.push((span.clone(), envelope_cost));
         }
         self.report.call_costs.push((span.clone(), cost));
         self.report.conditional = true;
-        Ok(())
+        self.event(span, format!("callee budget envelope: fixed peak {envelope} bytes"));
     }
 
     pub(super) fn live_expression(&self, span: &Span) -> Expr {
