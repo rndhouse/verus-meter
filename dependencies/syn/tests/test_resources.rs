@@ -31,7 +31,6 @@ fn malformed_resource_clauses_are_rejected() {
         "fn f() resources heap_bytes <= 8 {}",
         "fn f() resources mem_peak <= 8 {}",
         "fn f() mem_peak < 8 {}",
-        "fn f() mem_peak <= BUDGET {}",
         "fn f() mem_peak <= -1 {}",
         "fn f() mem_peak <= 18446744073709551616 {}",
         "fn f() mem_peak <= 8u32 {}",
@@ -69,6 +68,8 @@ fn resource_clause_ends_where_clause() {
 #[test]
 fn expressive_budgets_round_trip() {
     for budget in [
+        "BUDGET",
+        "mem_size(n) + n * mem_size(u32)",
         "4 + 4",
         "mem_size(x) + mem_peak(module::f)",
         "2 * (mem_size([u32; 8]) + 4u64)",
@@ -86,6 +87,16 @@ fn expressive_budgets_round_trip() {
         let reparsed: ItemFn = parse_str(&printed).unwrap();
         assert_eq!(printed, reparsed.to_token_stream().to_string());
     }
+}
+
+#[test]
+fn bare_budget_names_are_quantities() {
+    // Name resolution and restrictions on quantities belong to the verifier.
+    let parsed: ItemFn = parse_str("fn f() mem_peak <= BUDGET {}").unwrap();
+    let verus_syn::ResourceExpr::Quantity(name) = parsed.sig.spec.resources.unwrap().budget else {
+        panic!("expected a quantity")
+    };
+    assert_eq!(name, "BUDGET");
 }
 
 #[test]
@@ -108,6 +119,7 @@ fn memory_checkpoints_round_trip_alongside_logical_assertions() {
     for statement in [
         "assert(current(mem_peak) <= mem_size(local) + mem_peak(helper));",
         "assert(current(mem_peak) <= 2 * mem_size([u32; 4]));",
+        "assert(current(mem_peak) <= x);",
         "assert(mem_peak(local) <= 10);",
         "assert(current(local) <= 10);",
         "assert(module::current(mem_peak) <= 10);",
@@ -129,14 +141,13 @@ fn memory_checkpoints_round_trip_alongside_logical_assertions() {
 }
 
 #[test]
-fn checkpoints_reject_proof_overrides_and_runtime_budgets() {
+fn checkpoints_reject_proof_overrides_and_malformed_budgets() {
     for statement in [
         "assert(mem_peak <= 0);",
         "assert(current(mem_peak) < 0);",
         "assert(current(mem_peak) == 0);",
         "assert(current(mem_peak) <= mem_size(x)) by { }",
         "assert(current(mem_peak) <= 0) by(compute)",
-        "assert(current(mem_peak) <= x);",
         "assert(current(mem_peak) <= mem_size(make()));",
         "assert(current(mem_peak) <= 4 - 1);",
     ] {
@@ -148,6 +159,7 @@ fn checkpoints_reject_proof_overrides_and_runtime_budgets() {
 fn memory_sections_round_trip_and_end_statements() {
     for body in [
         "mem_peak <= 0 {} let x = 1;",
+        "mem_peak <= unknown {}",
         "mem_peak <= mem_size(x) { mem_peak <= 0 {} } mem_peak <= 0 {};",
         "#[allow(unused)] mem_peak <= 2 * (mem_size([u32; 4]) + mem_peak(helper)) { let x = 1; }",
         "let x = mem_peak <= 0 {};",
@@ -168,7 +180,6 @@ fn memory_sections_round_trip_and_end_statements() {
 #[test]
 fn memory_sections_reject_invalid_budgets() {
     for body in [
-        "mem_peak <= unknown {}",
         "mem_peak <= mem_size(make()) {}",
         "mem_peak <= 4 - 1 {}",
         "mem_peak <= 4;",
@@ -182,6 +193,7 @@ fn conditional_resource_budgets_round_trip() {
     for budget in [
         "mem_size(flag) + if flag { mem_size([u32; 8]) } else { mem_size([u32; 4]) }",
         "if count <= 4 { 16 } else { 32 }",
+        "if flag { 4 } else { runtime_value }",
         "2 * (if a && !b { 32 } else { if b { 16 } else { 0 } })",
     ] {
         let parsed: ItemFn = parse_str(&format!("fn f() mem_peak <= {budget}, {{}}")).unwrap();
@@ -193,11 +205,7 @@ fn conditional_resource_budgets_round_trip() {
 
 #[test]
 fn conditional_resource_budgets_require_both_formula_branches() {
-    for budget in [
-        "if flag { 4 }",
-        "if flag { let x = 4; x } else { 0 }",
-        "if flag { 4 } else { runtime_value }",
-    ] {
+    for budget in ["if flag { 4 }", "if flag { let x = 4; x } else { 0 }"] {
         assert!(parse_str::<ItemFn>(&format!("fn f() mem_peak <= {budget} {{}}")).is_err());
     }
 }

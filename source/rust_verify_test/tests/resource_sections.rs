@@ -3,6 +3,14 @@
 mod common;
 use common::*;
 
+test_verify_one_file! {
+    #[test] runtime_section_bound_is_rejected verus_code! {
+        fn f(n: u64) mem_peak <= mem_size(n) {
+            mem_peak <= n {}
+        }
+    } => Err(err) => assert_vir_error_msg(err, "immutable Boolean or native integer input parameters")
+}
+
 #[test]
 fn nested_workspace_example() {
     verify_one_file(

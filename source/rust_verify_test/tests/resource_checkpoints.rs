@@ -4,6 +4,14 @@ mod common;
 use common::*;
 
 test_verify_one_file! {
+    #[test] runtime_checkpoint_bound_is_rejected verus_code! {
+        fn f(n: u64) mem_peak <= mem_size(n) {
+            assert(current(mem_peak) <= n);
+        }
+    } => Err(err) => assert_vir_error_msg(err, "immutable Boolean or native integer input parameters")
+}
+
+test_verify_one_file! {
     #[test] current_function_calls_remain_logical_assertions verus_code! {
         spec fn current(x: u32) -> u32 { x }
         fn f(x: u32) mem_peak <= mem_size(x) {

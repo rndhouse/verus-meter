@@ -340,6 +340,11 @@ fn runtime_queries_require_arguments() {
 #[test]
 fn quantities_require_stable_unsigned_inputs() {
     rejects(
+        "named_constant_quantity",
+        "const BUDGET: u64 = 16; fn f() mem_peak <= BUDGET {}",
+        "memory budget predicates currently support scalar input comparisons and Boolean operators",
+    );
+    rejects(
         "signed_quantity",
         "fn f(n: i32) mem_peak <= mem_size(n) + n {}",
         "memory quantities require immutable unsigned integers",
