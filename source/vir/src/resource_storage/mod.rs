@@ -8,7 +8,7 @@
 //! for checked helpers; `vectors` checks reserved capacity. `contracts`
 //! specializes declared formulas with stable scalar arguments. `symbolic`
 //! turns conditional contracts into ordinary Verus proof obligations.
-//! `values` handles result destinations and Option arms;
+//! `returns` shares moved result charges; `values` handles Option arms;
 //! `construction` accounts for aggregate initialization; `analysis`, `places`,
 //! and `calls` interpret other supported executable VIR. This
 //! module validates the crate-wide call graph before publishing any reports.
@@ -27,6 +27,7 @@ mod layout;
 mod model;
 mod ownership;
 mod places;
+mod returns;
 mod sections;
 mod symbolic;
 mod values;
@@ -62,7 +63,8 @@ pub fn check_crate(
     let mut graph = crate::scc::Graph::new();
     let mut reports = Vec::new();
     let mut returned = HashMap::new();
-    for function in &ownership::order(functions, &layouts)? {
+    let mut return_parameters = HashMap::new();
+    for function in &returns::order(functions)? {
         if let Some(checked) = analysis::check(
             function,
             modes.get(&function.x.name).map(Arc::as_ref),
@@ -70,9 +72,13 @@ pub fn check_crate(
             &layouts,
             &budgets,
             &returned,
+            &return_parameters,
         )? {
             if let Some(summary) = &checked.returned {
                 returned.insert(function.x.name.clone(), summary.clone());
+            }
+            if let Some(index) = checked.return_parameter {
+                return_parameters.insert(function.x.name.clone(), index);
             }
             graph.add_node(function.x.name.clone());
             for (callee, _) in &checked.calls {
@@ -106,6 +112,7 @@ pub fn check_crate(
                 &checked.obligations,
                 &checked.checks,
                 &checked.report,
+                checked.return_parameter,
                 &layouts,
                 fresh_span,
             )?;

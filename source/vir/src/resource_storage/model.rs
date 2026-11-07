@@ -5,7 +5,7 @@ use crate::messages::{Span, error};
 use serde::{Deserialize, Serialize};
 use vir_macros::ToDebugSNode;
 
-pub(super) const MODEL_NAME: &str = "lexical-slots-v5-64";
+pub(super) const MODEL_NAME: &str = "lexical-slots-v6-64";
 pub(super) const WORD_BYTES: u64 = 8;
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToDebugSNode)]

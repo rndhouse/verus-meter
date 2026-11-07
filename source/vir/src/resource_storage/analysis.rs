@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 pub(super) struct FunctionAnalysis {
     pub(super) report: StorageReport,
     pub(super) returned: Option<super::ownership::Returned>,
+    pub(super) return_parameter: Option<usize>,
     pub(super) calls: Vec<(Fun, Span)>,
     pub(super) symbolic_bound: Option<Expr>,
     pub(super) obligations: Vec<(Span, Expr, Expr)>,
@@ -24,6 +25,8 @@ pub(super) struct Checkpoint {
 }
 
 pub(super) struct Analysis<'a> {
+    pub(super) return_source: Option<VarIdent>,
+    pub(super) return_parameters: &'a HashMap<Fun, usize>,
     pub(super) returned: &'a HashMap<Fun, super::ownership::Returned>,
     pub(super) result_owner: Option<super::heap::Owner>,
     pub(super) budgets: &'a HashMap<Fun, u64>,
@@ -40,6 +43,11 @@ pub(super) struct Analysis<'a> {
 }
 
 impl Analysis<'_> {
+    fn slot_size(&self, name: &VarIdent, typ: &Typ, span: &Span) -> Result<u64, VirErr> {
+        let bytes = self.layouts.size(typ, span)?;
+        Ok(if self.return_source.as_ref() == Some(name) { 0 } else { bytes })
+    }
+
     pub(super) fn discard(&mut self, expr: &Expr) -> Result<(), VirErr> {
         let result = self.expr(expr)?;
         self.storage.release(&expr.span, result, "consumed expression result");
@@ -121,7 +129,7 @@ impl Analysis<'_> {
                     if binding.user_mut == Some(false) && super::contracts::scalar(&binding.typ) {
                         self.stable_scalars.insert(binding.name.clone());
                     }
-                    let bytes = self.layouts.size(&binding.typ, &stmt.span)?;
+                    let bytes = self.slot_size(&binding.name, &binding.typ, &stmt.span)?;
                     self.storage.reserve(&stmt.span, bytes, "local slot")?;
                     locals.push((stmt.span.clone(), bytes, binding.name.clone()));
                     if self.layouts.owner(&binding.typ) {
@@ -372,6 +380,7 @@ pub(super) fn check(
     layouts: &Layouts,
     budgets: &HashMap<Fun, u64>,
     returned: &HashMap<Fun, super::ownership::Returned>,
+    return_parameters: &HashMap<Fun, usize>,
 ) -> Result<Option<FunctionAnalysis>, VirErr> {
     let Some(&budget) = budgets.get(&function.x.name) else {
         if let Some(body) = &function.x.body {
@@ -402,7 +411,14 @@ pub(super) fn check(
     let modes = modes.ok_or_else(|| {
         unsupported(&function.span, "functions without execution-mode information")
     })?;
+    let return_source = super::returns::source(body, return_parameters);
+    let return_parameter = f
+        .params
+        .iter()
+        .position(|p| p.x.mode == Mode::Exec && return_source.as_ref() == Some(&p.x.name));
     let mut analysis = Analysis {
+        return_source,
+        return_parameters,
         returned,
         result_owner: None,
         budgets,
@@ -438,7 +454,7 @@ pub(super) fn check(
                     super::heap::Owner { input: Some(index), ..Default::default() },
                 );
             }
-            let bytes = layouts.size(&param.x.typ, &param.span)?;
+            let bytes = analysis.slot_size(&param.x.name, &param.x.typ, &param.span)?;
             analysis.storage.reserve(&param.span, bytes, "parameter slot")?;
         }
     }
@@ -463,6 +479,7 @@ pub(super) fn check(
     Ok(Some(FunctionAnalysis {
         report,
         returned,
+        return_parameter,
         calls: analysis.calls,
         symbolic_bound,
         obligations: analysis.obligations,

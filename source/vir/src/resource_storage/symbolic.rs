@@ -91,6 +91,7 @@ pub(super) fn instrument(
     obligations: &[(Span, Expr, Expr)],
     checks: &[(Span, Expr)],
     report: &StorageReport,
+    return_parameter: Option<usize>,
     layouts: &Layouts,
     fresh_span: &dyn Fn(&Span) -> Span,
 ) -> Result<Function, VirErr> {
@@ -201,7 +202,10 @@ pub(super) fn instrument(
         }
     }
     let mut parameters = layouts.return_size(&function.x.outer_ret.x.typ, &function.span)?;
-    for p in function.x.params.iter().filter(|p| p.x.mode == Mode::Exec) {
+    for (index, p) in function.x.params.iter().enumerate() {
+        if p.x.mode != Mode::Exec || return_parameter == Some(index) {
+            continue;
+        }
         parameters = parameters
             .checked_add(layouts.size(&p.x.typ, &p.span)?)
             .ok_or_else(|| error(&p.span, "parameter storage exceeds u64"))?;

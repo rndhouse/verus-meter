@@ -9,7 +9,6 @@ use super::contracts;
 use super::heap::Owner;
 use super::model::unsupported;
 use crate::ast::*;
-use std::collections::{HashMap, HashSet};
 
 #[derive(Clone)]
 pub(super) enum Returned {
@@ -103,62 +102,4 @@ impl Analysis<'_> {
         }
         Ok(Some(owner))
     }
-}
-
-/// Only owned results require a callee summary before checking the caller.
-/// Ordinary call cycles are still rejected by the complete checked call graph.
-pub(super) fn order(
-    functions: &[Function],
-    layouts: &super::layout::Layouts,
-) -> Result<Vec<Function>, VirErr> {
-    fn visit(
-        function: &Function,
-        functions: &HashMap<Fun, Function>,
-        layouts: &super::layout::Layouts,
-        active: &mut HashSet<Fun>,
-        done: &mut HashSet<Fun>,
-        ordered: &mut Vec<Function>,
-    ) -> Result<(), VirErr> {
-        if done.contains(&function.x.name) {
-            return Ok(());
-        }
-        if !active.insert(function.x.name.clone()) {
-            return Err(unsupported(
-                &function.span,
-                "recursive storage contracts (including mutual recursion)",
-            ));
-        }
-        if function.x.attrs.resource_contract.is_some() {
-            if let Some(body) = &function.x.body {
-                crate::ast_visitor::expr_visitor_check(body, &mut |_, expr| {
-                    if let ExprX::Call {
-                        target: CallTarget::Fun(CallTargetKind::Static, target, _, _, _),
-                        ..
-                    } = &expr.x
-                    {
-                        if let Some(callee) = functions.get(target) {
-                            if layouts.owner(&callee.x.outer_ret.x.typ)
-                                && callee.x.attrs.resource_contract.is_some()
-                            {
-                                visit(callee, functions, layouts, active, done, ordered)?;
-                            }
-                        }
-                    }
-                    Ok::<(), VirErr>(())
-                })?;
-            }
-        }
-        active.remove(&function.x.name);
-        done.insert(function.x.name.clone());
-        ordered.push(function.clone());
-        Ok(())
-    }
-    let map = functions.iter().map(|f| (f.x.name.clone(), f.clone())).collect();
-    let mut active = HashSet::new();
-    let mut done = HashSet::new();
-    let mut ordered = Vec::new();
-    for function in functions {
-        visit(function, &map, layouts, &mut active, &mut done, &mut ordered)?;
-    }
-    Ok(ordered)
 }

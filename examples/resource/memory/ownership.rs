@@ -21,19 +21,19 @@ fn make_buffer() -> Buffer
 // Hand a buffer back without allocating a second copy.
 //
 // The caller keeps the incoming allocation charged throughout this call.
-// This helper budgets its input and result handles.
+// Moving the handle into the result transfers its charge too.
 fn hand_back(buffer: Buffer) -> Buffer
-    mem_peak <= 2 * mem_size(Buffer),
+    mem_peak <= mem_size(Buffer),
 {
     buffer
 }
 
 // Keep a single allocation alive through a change of owner.
 //
-// Both local handle slots remain charged until scope exit. The helper needs
-// another handle while it runs, but the heap buffer is counted only once.
+// Both named local handles remain charged until scope exit. The handoff shares
+// its charge with the receiving destination; the heap buffer stays counted once.
 fn main()
-    mem_peak <= 3 * mem_size(Buffer) + mem_size([u32; 4]),
+    mem_peak <= 2 * mem_size(Buffer) + mem_size([u32; 4]),
 {
     let original = make_buffer();
     let received = hand_back(original);

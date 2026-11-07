@@ -31,12 +31,12 @@ fn box_factory_retains_allocation() {
 #[test]
 fn box_forwarding_does_not_duplicate_allocation() {
     let code = "fn caller() mem_peak <= BOUND { let first = Box::new([0u8;16]); let second = forward(first); }
-        fn forward(b: Box<[u8;16]>) -> Box<[u8;16]> mem_peak <= 16 { b }";
-    verifies("box_forward", &code.replace("BOUND", "40"));
+        fn forward(b: Box<[u8;16]>) -> Box<[u8;16]> mem_peak <= 8 { b }";
+    verifies("box_forward", &code.replace("BOUND", "32"));
     rejects(
         "box_forward_short",
-        &code.replace("BOUND", "39"),
-        "peak 40 bytes exceeds budget 39 bytes",
+        &code.replace("BOUND", "31"),
+        "peak 32 bytes exceeds budget 31 bytes",
     );
 }
 #[test]
@@ -63,9 +63,9 @@ fn input_backing_remains_charged_through_consuming_call() {
 fn returned_local_and_nested_blocks() {
     verifies(
         "box_return_local",
-        "fn make() -> Box<[u8;16]> mem_peak <= 40 {
+        "fn make() -> Box<[u8;16]> mem_peak <= 32 {
         let b = { let inner = Box::new([0u8;16]); inner }; b
-    } fn f() mem_peak <= 40 { let b = make(); }",
+    } fn f() mem_peak <= 32 { let b = make(); }",
     );
 }
 #[test]
@@ -73,8 +73,8 @@ fn nested_factory_argument() {
     verifies(
         "nested_factory_argument",
         "fn make() -> Box<[u8;16]> mem_peak <= 24 { Box::new([0u8;16]) }
-        fn forward(b: Box<[u8;16]>) -> Box<[u8;16]> mem_peak <= 16 { b }
-        fn f() mem_peak <= 32 { let b = forward(make()); }",
+        fn forward(b: Box<[u8;16]>) -> Box<[u8;16]> mem_peak <= 8 { b }
+        fn f() mem_peak <= 24 { let b = forward(make()); }",
     );
 }
 #[test]
@@ -88,8 +88,8 @@ fn vector_factory_and_forwarded_capacity() {
         "vector_factory",
         "fn make(n: usize) -> (r: Vec<u32>) requires n <= 4, ensures r.len() == 0,
         mem_peak <= 32 + n * 4 { Vec::with_capacity(n) }
-        fn forward(v: Vec<u32>) -> (r: Vec<u32>) ensures r == v, mem_peak <= 48 { v }
-        fn f(n: usize) requires 0 < n <= 4, mem_peak <= 80 + n * 4 {
+        fn forward(v: Vec<u32>) -> (r: Vec<u32>) ensures r == v, mem_peak <= 24 { v }
+        fn f(n: usize) requires 0 < n <= 4, mem_peak <= 56 + n * 4 {
             let first = make(n); let mut second = forward(first); second.push(7);
             assert(second[0] == 7);
         }",
@@ -163,14 +163,14 @@ fn returned_heap_failure_points_to_second_call() {
 
 #[test]
 fn multiple_owned_inputs_return_second() {
-    let code = "fn second(a: Box<[u8;16]>, b: Box<[u8;16]>) -> Box<[u8;16]> mem_peak <= 24 { b }
+    let code = "fn second(a: Box<[u8;16]>, b: Box<[u8;16]>) -> Box<[u8;16]> mem_peak <= 16 { b }
         fn f() mem_peak <= BOUND { let a = Box::new([0u8;16]); let b = Box::new([0u8;16]);
             let c = second(a, b); let d = Box::new([0u8;16]); }";
-    verifies("second_input", &code.replace("BOUND", "72"));
+    verifies("second_input", &code.replace("BOUND", "64"));
     rejects(
         "second_input_short",
-        &code.replace("BOUND", "71"),
-        "peak 72 bytes exceeds budget 71 bytes",
+        &code.replace("BOUND", "63"),
+        "peak 64 bytes exceeds budget 63 bytes",
     );
 }
 #[test]
@@ -186,7 +186,7 @@ fn owning_argument_is_live_during_later_arguments() {
 }
 #[test]
 fn forwarded_vector_keeps_original_capacity() {
-    let code = "fn forward(v: Vec<u32>) -> (r: Vec<u32>) ensures r == v, mem_peak <= 48 { v }
+    let code = "fn forward(v: Vec<u32>) -> (r: Vec<u32>) ensures r == v, mem_peak <= 24 { v }
         fn f() mem_peak <= 100 { let a = Vec::<u32>::with_capacity(1);
             let mut b = forward(a); b.push(1); b.push(2); }";
     rejects("forwarded_capacity_enforced", code, "vector capacity exceeded");
@@ -206,8 +206,8 @@ fn dynamic_return_through_multiple_helpers() {
 }
 #[test]
 fn incoming_vector_can_pop_and_forward() {
-    verifies("incoming_pop", "fn pop(mut v: Vec<u32>) -> (r: Vec<u32>) ensures r.len() <= v.len(), mem_peak <= 48 { v.pop(); v }
-        fn f() mem_peak <= 76 { let mut a = Vec::<u32>::with_capacity(1); a.push(3); let b = pop(a); }");
+    verifies("incoming_pop", "fn pop(mut v: Vec<u32>) -> (r: Vec<u32>) ensures r.len() <= v.len(), mem_peak <= 24 { v.pop(); v }
+        fn f() mem_peak <= 52 { let mut a = Vec::<u32>::with_capacity(1); a.push(3); let b = pop(a); }");
 }
 #[test]
 fn consume_dynamic_vector_releases_reservation() {
@@ -258,7 +258,7 @@ fn discarded_factories_release_their_allocations() {
 fn zero_sized_owned_payload() {
     verifies(
         "zero_sized_owner",
-        "fn forward(b: Box<[u8;0]>) -> Box<[u8;0]> mem_peak <= 16 { b }
-        fn f() mem_peak <= 24 { let a = Box::new([0u8;0]); let b = forward(a); }",
+        "fn forward(b: Box<[u8;0]>) -> Box<[u8;0]> mem_peak <= 8 { b }
+        fn f() mem_peak <= 16 { let a = Box::new([0u8;0]); let b = forward(a); }",
     );
 }

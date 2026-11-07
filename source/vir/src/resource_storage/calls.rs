@@ -65,6 +65,9 @@ impl Analysis<'_> {
                 ));
             }
             let bytes = self.layouts.size(&param.x.typ, &param.span)?;
+            // A moved parameter/result is one value. Its caller-provided
+            // destination already covers this argument's storage.
+            let bytes = if self.return_parameters.get(target) == Some(&index) { 0 } else { bytes };
             parameters = parameters
                 .checked_add(bytes)
                 .ok_or_else(|| unsupported(&expr.span, "parameter storage exceeding u64"))?;
