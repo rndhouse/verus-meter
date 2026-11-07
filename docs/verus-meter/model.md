@@ -83,7 +83,7 @@ of Rust's physical representation. `Some`, `None`, by-value
 match binding gets its own slot for that arm. Verus still requires proof that
 `unwrap` receives `Some`. See [using a popped value](../../examples/resource/memory/options.rs).
 
-Returning heap owners or references, borrowed temporary results, match guards,
+Returning references, borrowed temporary results, match guards,
 and explicit early `return` remain unsupported.
 
 ## Fixed-size heap objects
@@ -94,13 +94,12 @@ and explicit early `return` remain unsupported.
 rule as local initialization. Allocator metadata, padding, and physical allocation
 strategies are outside the model.
 
-Moving a box between locals transfers its heap charge. Borrowing its contents
+Moving a box transfers its heap charge. Borrowing its contents
 keeps that charge with the owner. Explicit `drop` or the owner's scope exit releases
 the heap object; local variable slots still count until their own scopes end.
 See [heap buffer reuse](../../examples/resource/memory/heap.rs) and
 [two allocations that exceed their allowance](../../examples/resource/memory/expected-failures/heap_overlap.rs).
 
-For now, boxes must stay within their function: helpers borrow their contents.
 Box reassignment, nested boxes, owning struct fields, and custom destructors are
 unsupported. Branches, loops, and budgeted sections may create and consume their
 own boxes, but cannot move or drop owners from outside that region. Custom
@@ -108,7 +107,7 @@ allocator types remain unsupported.
 
 ## Vectors without growth
 
-A local `Vec<T>` reserves storage once with `Vec::with_capacity(capacity)`.
+A `Vec<T>` reserves storage once with `Vec::with_capacity(capacity)`.
 Its handle costs `mem_size(Vec<T>)` (24 model bytes), and its backing storage
 costs `capacity * mem_size(T)`, even when empty. The requested capacity is the
 model's limit; allocator over-allocation is outside the guarantee.
@@ -125,11 +124,32 @@ runtime formulas; an argument-free query requires a fixed envelope.
 
 The subset supports fixed-size non-owning elements, pushes, pops returning `Option<T>`,
 length, indexing, and borrowing elements through `as_slice` or `as_mut_slice`.
-Helpers take slices; owning or borrowed vector parameters, growth, and reassignment
-remain unsupported.
+Helpers can take ownership or borrow slices of the elements. Pushes into an incoming
+vector need a capacity contract, which is not yet supported. Borrowed vector
+parameters, growth, and reassignment also remain unsupported.
 
 See [collecting selected numbers](../../examples/resource/memory/vectors.rs) and
 [a push that requires growth](../../examples/resource/memory/expected-failures/vector_growth.rs).
+
+## Passing heap ownership between helpers
+
+Helpers can consume or return a `Box<T>` or `Vec<T>`. The caller keeps incoming
+allocations charged throughout the call; the helper's budget covers its handles
+and any additional storage it needs. Consumed allocations stop counting when the
+call finishes. This remains conservative if a helper drops an input earlier.
+
+A returned allocation stays charged under its new owner. Forwarding an input
+preserves its existing charge; returning a fresh allocation adds that storage to
+the caller's live memory. The checker derives these transfers from the helper's
+body. See [ownership transfer](../../examples/resource/memory/ownership.rs) and
+[an overlapping-allocation failure](../../examples/resource/memory/expected-failures/heap_returns.rs).
+
+Returned vectors preserve their reservations, including capacities supplied through
+immutable scalar inputs. Callers can use them to prove subsequent pushes fit.
+See [a vector factory](../../examples/resource/memory/vector_returns.rs).
+For now, fresh returned capacities must depend only on literals or immutable inputs,
+and owning results must follow a single tail-expression path. Conditional ownership
+returns and owners inside structs or `Option` remain unsupported.
 
 ## Dividing work into sections
 
@@ -199,7 +219,7 @@ callee's maximum allowance, even if a proof established a tighter bound at the c
 
 Checked functions must be safe, nongeneric, and have a verified body.
 The supported subset includes `bool`, all native integers, fixed integer arrays,
-concrete structs, non-owning `Option` values, local fixed-size boxes and vectors
+concrete structs, non-owning `Option` values, fixed-size boxes and vectors
 without growth, supported
 references and integer slices,
 indexing, branches, while loops, and calls to checked functions in the same crate. Integer addition,

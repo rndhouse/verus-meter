@@ -19,9 +19,11 @@ automatically; contracts add no runtime tracking.
 Functions can refer to helper functions' budgets, divide work into independently
 checked sections, and check the peak reached at a particular point. Conditional
 contracts can give different inputs different allowances and preserve them through
-helper calls. Local boxes and vectors without growth can also carry checked
+helper calls. Boxes and vectors without growth can also carry checked
 heap allowances; vector budgets can scale with a runtime capacity. Helpers can
 return values, including `Option`, with result storage counted once across the call.
+Heap ownership can pass between helpers; returned allocations remain charged
+until their new owner releases them.
 
 Bounds describe declared storage and supported heap objects under a fixed memory
 model. Physical stack size and allocator overhead are outside the guarantee.
