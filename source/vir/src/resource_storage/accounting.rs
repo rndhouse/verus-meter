@@ -3,7 +3,8 @@
 use super::model::{MODEL_NAME, unsupported};
 use crate::ast::{Expr, VirErr, VirErrAs};
 use crate::messages::{Span, error, note};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 pub struct StorageEvent {
     pub span: Span,
@@ -62,7 +63,19 @@ impl Peak {
             self.bytes = other.bytes;
             self.span = other.span.clone();
         }
-        self.costs.extend(other.costs.iter().cloned());
+        // Cloned peaks share the same obligation expressions. Keep their common
+        // history once when joining branches or adding a loop's iteration peak
+        // to a checkpoint. A span can have multiple distinct charges, so span
+        // identity alone is not enough to identify a shared obligation.
+        let mut seen: HashSet<_> =
+            self.costs.iter().map(|(span, cost)| (span.id, Arc::as_ptr(cost))).collect();
+        self.costs.extend(
+            other
+                .costs
+                .iter()
+                .filter(|(span, cost)| seen.insert((span.id, Arc::as_ptr(cost))))
+                .cloned(),
+        );
     }
 }
 
@@ -225,5 +238,53 @@ impl Accounting {
             .secondary_span(scope_span));
         }
         Ok(self.report)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn span() -> Span {
+        Span {
+            raw_span: Arc::new(()),
+            id: 1,
+            data: Arc::new([]),
+            as_string: "peak merge test".into(),
+        }
+    }
+
+    #[test]
+    fn repeated_branch_joins_keep_shared_cost_once() {
+        let span = span();
+        let mut storage = Accounting::new(&span, 100);
+        storage.symbolic_cost(&span, super::super::contracts::literal(&span, 8));
+        let mut peak = storage.peak();
+        for _ in 0..64 {
+            let sibling = peak.clone();
+            peak.merge(&sibling);
+            assert_eq!(peak.costs.len(), 1);
+        }
+    }
+
+    #[test]
+    fn overlapping_peaks_preserve_distinct_charges_at_the_same_span() {
+        let span = span();
+        let cost = |n| (span.clone(), super::super::contracts::literal(&span, n));
+        let shared = cost(8);
+        let left = cost(16);
+        let right = cost(32);
+        let mut peak =
+            Peak { bytes: 16, span: span.clone(), costs: vec![shared.clone(), left.clone()] };
+        let other =
+            Peak { bytes: 32, span: span.clone(), costs: vec![shared.clone(), right.clone()] };
+        peak.merge(&other);
+        peak.merge(&other);
+        assert_eq!(peak.bytes, 32);
+        assert_eq!(peak.costs.len(), 3);
+        for (actual, expected) in peak.costs.iter().zip([shared, left, right]) {
+            assert_eq!(actual.0.id, expected.0.id);
+            assert!(Arc::ptr_eq(&actual.1, &expected.1));
+        }
     }
 }

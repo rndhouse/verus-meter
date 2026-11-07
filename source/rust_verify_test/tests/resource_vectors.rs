@@ -440,3 +440,41 @@ fn checkpoint_includes_retained_dynamic_backing_and_call() {
         "conditional memory budget exceeded",
     );
 }
+
+#[test]
+fn symbolic_checkpoint_after_repeated_branches() {
+    let branches = "if flag {}\n".repeat(32);
+    let body = format!(
+        "fn f(cap: usize, flag: bool) requires cap <= 4, mem_peak <= 49 {{
+            let v = Vec::<u32>::with_capacity(cap);
+            {branches}
+            assert(current(mem_peak) <= BOUND);
+        }}"
+    );
+    verifies("repeated_symbolic_branches", &body.replace("BOUND", "49"));
+    rejects(
+        "repeated_symbolic_branches_short",
+        &body.replace("BOUND", "48"),
+        "conditional memory budget exceeded",
+    );
+}
+
+#[test]
+fn symbolic_checkpoint_retains_costs_from_both_branches() {
+    let body = "fn f(cap: usize, flag: bool)
+        requires cap == 4, SELECTOR,
+        mem_peak <= 100,
+    {
+        let v = Vec::<u32>::with_capacity(cap);
+        if flag { let a = [0u8; 24]; } else { let b = [0u8; 32]; }
+        assert(current(mem_peak) <= BOUND);
+    }";
+    verifies("symbolic_branch_costs", &body.replace("SELECTOR", "true").replace("BOUND", "81"));
+    for (selector, bound) in [("flag", "72"), ("!flag", "80")] {
+        rejects(
+            "symbolic_branch_costs_short",
+            &body.replace("SELECTOR", selector).replace("BOUND", bound),
+            "conditional memory budget exceeded",
+        );
+    }
+}
