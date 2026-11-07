@@ -54,21 +54,21 @@ fn forwarding_chain_keeps_one_charge() {
     );
 }
 #[test]
-fn intermediate_named_handles_still_count() {
+fn intermediate_moves_keep_one_charge() {
     let code = "fn f(b: Box<u32>) -> Box<u32> mem_peak <= BOUND { let next = b; next }";
-    verifies("named_handles", &code.replace("BOUND", "16"));
+    verifies("named_handles", &code.replace("BOUND", "8"));
     rejects(
         "named_handles_short",
-        &code.replace("BOUND", "15"),
-        "peak 16 bytes exceeds budget 15 bytes",
+        &code.replace("BOUND", "7"),
+        "peak 8 bytes exceeds budget 7 bytes",
     );
 }
 #[test]
 fn fresh_result_is_independent() {
     rejects(
         "independent_handle",
-        "fn f(b: Box<u32>) -> Box<u32> mem_peak <= 12 { Box::new(7u32) }",
-        "peak 20 bytes exceeds budget 12 bytes",
+        "fn f(b: Box<u32>) -> Box<u32> mem_peak <= 19 { Box::new(7u32) }",
+        "peak 20 bytes exceeds budget 19 bytes",
     );
     verifies(
         "independent_handle_fits",
@@ -152,11 +152,10 @@ fn option_match_can_hand_back_a_common_source() {
     );
 }
 #[test]
-fn distinct_return_sources_keep_a_conservative_bound() {
-    rejects(
+fn distinct_return_sources_share_existing_values() {
+    verifies(
         "different_branch_sources",
         "struct Data { value: u32 } fn f(a: Data, b: Data, c: bool) -> Data
         mem_peak <= 9 { if c { a } else { b } }",
-        "peak 13 bytes exceeds budget 9 bytes",
     );
 }

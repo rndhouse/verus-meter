@@ -12,6 +12,7 @@ pub(super) struct FunctionAnalysis {
     pub(super) report: StorageReport,
     pub(super) returned: Option<super::ownership::Returned>,
     pub(super) return_parameter: Option<usize>,
+    pub(super) profiles: Vec<super::lifetime::Profile>,
     pub(super) calls: Vec<(Fun, Span)>,
     pub(super) symbolic_bound: Option<Expr>,
     pub(super) obligations: Vec<Obligation>,
@@ -25,7 +26,9 @@ pub(super) struct Checkpoint {
 }
 
 pub(super) struct Analysis<'a> {
-    pub(super) return_source: Option<VarIdent>,
+    pub(super) slots: HashMap<VarIdent, super::lifetime::Value>,
+    pub(super) produced: Option<super::lifetime::Value>,
+    pub(super) profiles: &'a HashMap<Fun, Vec<super::lifetime::Profile>>,
     pub(super) return_parameters: &'a HashMap<Fun, usize>,
     pub(super) returned: &'a HashMap<Fun, super::ownership::Returned>,
     pub(super) result_owner: Option<super::heap::Owner>,
@@ -43,11 +46,6 @@ pub(super) struct Analysis<'a> {
 }
 
 impl Analysis<'_> {
-    fn slot_size(&self, name: &VarIdent, typ: &Typ, span: &Span) -> Result<u64, VirErr> {
-        let bytes = self.layouts.size(typ, span)?;
-        Ok(if self.return_source.as_ref() == Some(name) { 0 } else { bytes })
-    }
-
     pub(super) fn discard(&mut self, expr: &Expr) -> Result<(), VirErr> {
         let result = self.expr(expr)?;
         self.storage.release(&expr.span, result, "consumed expression result");
@@ -71,7 +69,7 @@ impl Analysis<'_> {
                 }
             }
         }
-        self.block_value(expr, stmts, tail, destination)
+        self.block_value(expr, stmts, tail, destination, false)
     }
 
     pub(super) fn block_contents(
@@ -80,7 +78,16 @@ impl Analysis<'_> {
         stmts: &[Stmt],
         tail: &Option<Expr>,
     ) -> Result<(), VirErr> {
-        self.block_value(expr, stmts, tail, false)
+        self.block_value(expr, stmts, tail, false, false)
+    }
+
+    pub(super) fn block_new(
+        &mut self,
+        expr: &Expr,
+        stmts: &Stmts,
+        tail: &Option<Expr>,
+    ) -> Result<(), VirErr> {
+        self.block_value(expr, stmts, tail, false, true)
     }
 
     fn block_value(
@@ -89,9 +96,8 @@ impl Analysis<'_> {
         stmts: &[Stmt],
         tail: &Option<Expr>,
         destination: bool,
+        new_value: bool,
     ) -> Result<(), VirErr> {
-        let entry = self.storage.live();
-        let entry_owners = self.heap.owners.clone();
         let mut locals = Vec::new();
         self.storage.event(&expr.span, "enter lexical scope".into());
         for stmt in stmts.iter() {
@@ -129,45 +135,38 @@ impl Analysis<'_> {
                     if binding.user_mut == Some(false) && super::contracts::scalar(&binding.typ) {
                         self.stable_scalars.insert(binding.name.clone());
                     }
-                    let bytes = self.slot_size(&binding.name, &binding.typ, &stmt.span)?;
-                    self.storage.reserve(&stmt.span, bytes, "local slot")?;
-                    locals.push((stmt.span.clone(), bytes, binding.name.clone()));
+                    locals.push((stmt.span.clone(), binding.name.clone()));
+                    let value = if let Some(init) = init {
+                        self.produce_place(init, &binding.typ, binding.copy, &stmt.span)?
+                    } else {
+                        self.fresh_value(&stmt.span, &binding.typ)?
+                    };
+                    self.slots.insert(binding.name.clone(), value);
                     if self.layouts.owner(&binding.typ) {
-                        let init = init
-                            .as_ref()
+                        let owner = self
+                            .result_owner
+                            .take()
                             .ok_or_else(|| unsupported(&stmt.span, "uninitialized heap owners"))?;
-                        self.initialize_owner(&binding.name, init, &binding.typ)?;
-                    } else if let Some(init) = init {
-                        self.initialize(init, &binding.typ)?;
+                        self.heap.owners.insert(binding.name.clone(), owner);
                     }
                 }
             }
         }
         if let Some(tail) = tail {
-            if destination {
+            if new_value {
+                self.produced = Some(self.produce(tail)?);
+            } else if destination {
                 self.initialize_expr(tail)?;
             } else {
                 self.discard(tail)?;
             }
         }
-        for (span, bytes, name) in locals.into_iter().rev() {
+        for (span, name) in locals.into_iter().rev() {
             self.drop_owner(&name, &span)?;
-            self.storage.release(&span, bytes, "local scope exit");
+            if let Some(value) = self.slots.remove(&name) {
+                self.release_value(value, &span);
+            }
         }
-        let released = entry_owners
-            .iter()
-            .filter(|(name, _)| !self.heap.owners.contains_key(*name))
-            .try_fold(0u64, |sum, (_, bytes)| sum.checked_add(bytes.bytes))
-            .ok_or_else(|| unsupported(&expr.span, "storage totals exceeding u64"))?;
-        assert_eq!(
-            self.storage.live(),
-            entry
-                .checked_sub(released)
-                .and_then(
-                    |n| n.checked_add(self.result_owner.as_ref().map_or(0, |owner| owner.bytes))
-                )
-                .expect("balanced heap ownership")
-        );
         self.storage.event(&expr.span, "exit lexical scope".into());
         Ok(())
     }
@@ -176,11 +175,10 @@ impl Analysis<'_> {
     /// charge; scalar/reference operations introduce no implicit objects.
     pub(super) fn expr(&mut self, expr: &Expr) -> Result<u64, VirErr> {
         if self.layouts.owner(&expr.typ) {
-            let bytes = self.layouts.size(&expr.typ, &expr.span)?;
-            self.storage.reserve(&expr.span, bytes, "standalone owner handle")?;
-            let owner = self.owner_expr(expr)?;
+            let value = self.produce(expr)?;
+            let owner = self.result_owner.take().expect("produced owner");
             self.release_owner(owner, &expr.span);
-            return Ok(bytes);
+            return self.expression_value(value, &expr.span);
         }
         if let Some(bytes) = self.value_expr(expr)? {
             return Ok(bytes);
@@ -230,14 +228,32 @@ impl Analysis<'_> {
             }
             ExprX::Const(Constant::Bool(_) | Constant::Int(_)) => {}
             ExprX::Ctor(Dt::Tuple(0), _, fields, None) if fields.is_empty() => {}
-            ExprX::ReadPlace(place, kind) if matches!(kind.preliminary_kind, ReadKind::Unused) => {
+            ExprX::ReadPlace(place, kind)
+                if matches!(kind.preliminary_kind, ReadKind::Unused | ReadKind::UnusedCopy) =>
+            {
                 if let PlaceX::Temporary(value) = &place.x {
                     // Rust-to-VIR wraps non-unit expression statements in an
                     // unused temporary place. It is the expression's result,
                     // not an additional copy or a reference with extended lifetime.
                     return self.expr(value);
                 }
+                if matches!(kind.preliminary_kind, ReadKind::Unused)
+                    && matches!(place.x, PlaceX::Local(_))
+                {
+                    let value = self.take_value(place)?;
+                    self.release_value(value, &expr.span);
+                    return Ok(0);
+                }
                 return self.read(place, &expr.typ);
+            }
+            ExprX::ReadPlace(place, kind)
+                if matches!(kind.preliminary_kind, ReadKind::Move(_))
+                    && crate::ast_util::types_equal(&place.typ, &expr.typ)
+                    && matches!(place.x, PlaceX::Local(_)) =>
+            {
+                let value = self.take_value(place)?;
+                self.release_value(value, &expr.span);
+                return Ok(0);
             }
             ExprX::ReadPlace(place, kind) => {
                 return if matches!(kind.preliminary_kind, ReadKind::ImmutBor) {
@@ -276,7 +292,18 @@ impl Analysis<'_> {
                 }
                 operands = self.expr(lhs)? + self.expr(rhs)?;
             }
-            ExprX::Call { .. } => return self.call_expr(expr, false),
+            ExprX::Call { .. } => {
+                let bytes = self.call_expr(expr, false)?;
+                return if let Some(value) = self.produced.take() {
+                    self.expression_value(value, &expr.span)
+                } else {
+                    Ok(bytes)
+                };
+            }
+            ExprX::Match(scrutinee, arms, _) => {
+                self.option_match(expr, scrutinee, arms, false)?;
+                return Ok(0);
+            }
             ExprX::Assign { place, rhs, op, typ, .. } => {
                 if self.layouts.owner(typ) {
                     return Err(unsupported(&expr.span, "reassignment of heap owners"));
@@ -284,28 +311,21 @@ impl Analysis<'_> {
                 if op.as_ref().is_some_and(|op| !arithmetic(op)) {
                     return Err(unsupported(&expr.span, "this compound assignment"));
                 }
-                // The destination owns the result, for every supported type.
-                // Keep RHS-before-LHS evaluation and all ordinary validation.
-                self.initialize_expr(rhs)?;
+                if let PlaceX::Local(name) = &place.x {
+                    if self.slots.get(name).is_none_or(|v| v.bytes == 0) {
+                        let value = self.produce(rhs)?;
+                        self.slots.insert(name.clone(), value);
+                    } else {
+                        self.initialize_expr(rhs)?;
+                    }
+                } else {
+                    self.initialize_expr(rhs)?;
+                }
                 self.access(place, typ)?;
                 return Ok(0);
             }
             ExprX::If(cond, then_expr, else_expr) if unit(&expr.typ) => {
-                let protection = self.heap.protect();
-                self.discard(cond)?;
-                let prefix_peak = self.storage.peak();
-                self.storage.event(&expr.span, "analyze then alternative".into());
-                self.discard(then_expr)?;
-                let mut joined_peak = self.storage.peak();
-                // A checkpoint in one alternative cannot have visited its sibling.
-                self.storage.set_peak(prefix_peak);
-                if let Some(else_expr) = else_expr {
-                    self.storage.event(&expr.span, "analyze else alternative".into());
-                    self.discard(else_expr)?;
-                }
-                joined_peak.merge(&self.storage.peak());
-                self.storage.set_peak(joined_peak);
-                self.heap.unprotect(protection);
+                self.conditional(expr, cond, then_expr, else_expr.as_ref(), false)?;
                 return Ok(0);
             }
             ExprX::Loop {
@@ -372,6 +392,7 @@ pub(super) fn check(
     budgets: &HashMap<Fun, u64>,
     returned: &HashMap<Fun, super::ownership::Returned>,
     return_parameters: &HashMap<Fun, usize>,
+    profiles: &HashMap<Fun, Vec<super::lifetime::Profile>>,
 ) -> Result<Option<FunctionAnalysis>, VirErr> {
     let Some(&budget) = budgets.get(&function.x.name) else {
         if let Some(body) = &function.x.body {
@@ -402,13 +423,10 @@ pub(super) fn check(
     let modes = modes.ok_or_else(|| {
         unsupported(&function.span, "functions without execution-mode information")
     })?;
-    let return_source = super::returns::source(body, return_parameters);
-    let return_parameter = f
-        .params
-        .iter()
-        .position(|p| p.x.mode == Mode::Exec && return_source.as_ref() == Some(&p.x.name));
     let mut analysis = Analysis {
-        return_source,
+        slots: HashMap::new(),
+        produced: None,
+        profiles,
         return_parameters,
         returned,
         result_owner: None,
@@ -427,8 +445,7 @@ pub(super) fn check(
     if f.outer_ret.x.mode != Mode::Exec {
         return Err(unsupported(&function.span, "ghost or tracked return values"));
     }
-    let result_size = layouts.return_size(&f.outer_ret.x.typ, &function.span)?;
-    analysis.storage.reserve(&function.span, result_size, "function result destination")?;
+    layouts.return_size(&f.outer_ret.x.typ, &function.span)?;
     for (index, param) in f.params.iter().enumerate() {
         analysis.var_modes.insert(param.x.name.clone(), param.x.mode);
         if param.x.mode == Mode::Exec {
@@ -440,21 +457,30 @@ pub(super) fn check(
                 ));
             }
             if layouts.owner(&param.x.typ) {
+                analysis.storage.add_input(index);
                 analysis.heap.owners.insert(
                     param.x.name.clone(),
                     super::heap::Owner { input: Some(index), ..Default::default() },
                 );
             }
-            let bytes = analysis.slot_size(&param.x.name, &param.x.typ, &param.span)?;
-            analysis.storage.reserve(&param.span, bytes, "parameter slot")?;
+            let mut value = analysis.fresh_value(&param.span, &param.x.typ)?;
+            value.parameter = Some(index);
+            analysis.slots.insert(param.x.name.clone(), value);
         }
     }
     let symbolic_bound = super::symbolic::function_bound(function, budgets, functions, layouts)?;
-    if unit(&f.outer_ret.x.typ) {
-        analysis.discard(body)?;
-    } else {
-        analysis.initialize_expr(body)?;
-    }
+    let result = analysis.produce(body)?;
+    let return_parameter = result.parameter;
+    let profiles = analysis
+        .storage
+        .points()
+        .iter()
+        .map(|p| super::lifetime::Profile {
+            cost: p.cost.clone(),
+            result: !p.values.is_disjoint(&result.origins),
+            inputs: p.inputs.clone(),
+        })
+        .collect();
     let returned = super::ownership::summarize(function, analysis.result_owner.take())?;
     analysis.check_checkpoints()?;
     let report = if symbolic_bound.is_some() {
@@ -464,13 +490,17 @@ pub(super) fn check(
     };
     let bound =
         symbolic_bound.clone().unwrap_or_else(|| super::contracts::literal(&function.span, budget));
-    analysis.obligations.extend(
-        report.call_costs.iter().map(|(span, cost)| Obligation { span: span.clone(), cost: cost.clone(), bound: bound.clone(), kind: CheckKind::Function }),
-    );
+    analysis.obligations.extend(report.call_costs.iter().map(|(span, cost)| Obligation {
+        span: span.clone(),
+        cost: cost.clone(),
+        bound: bound.clone(),
+        kind: CheckKind::Function,
+    }));
     Ok(Some(FunctionAnalysis {
         report,
         returned,
         return_parameter,
+        profiles,
         calls: analysis.calls,
         symbolic_bound,
         obligations: analysis.obligations,

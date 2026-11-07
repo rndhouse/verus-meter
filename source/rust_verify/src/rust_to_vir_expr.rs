@@ -256,7 +256,11 @@ impl ExprOrPlace {
         }
 
         let p = self.to_place(bctx, span, ty)?;
-        let rk = vir::ast::ReadKind::Unused;
+        let rk = if bctx.is_copy(ty) {
+            vir::ast::ReadKind::UnusedCopy
+        } else {
+            vir::ast::ReadKind::Unused
+        };
         let rk = UnfinalizedReadKind { preliminary_kind: rk, id: bctx.ctxt.unique_read_kind_id() };
         Ok(bctx.ctxt.spanned_typed_new_vir(&p.span, &p.typ, ExprX::ReadPlace(p.clone(), rk)))
     }

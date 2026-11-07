@@ -20,7 +20,7 @@ pub(super) fn function_bound(
 ) -> Result<Option<Expr>, VirErr> {
     let bound = super::contracts::function_bound(function, budgets, functions, layouts)?;
     let declared_conditional = match &function.x.attrs.resource_contract {
-        Some(super::model::ResourceContract::LexicalSlotsV5Expr { budget }) => {
+        Some(super::model::ResourceContract::SourceValuesV7Expr { budget }) => {
             super::budget::is_conditional(budget)
         }
         _ => false,
@@ -43,13 +43,19 @@ fn obligation(check: &Obligation) -> Option<Stmt> {
         },
         _ => "conditional memory budget exceeded: cannot prove the required model bytes fit the declared bound".into(),
     };
-    let assertion = SpannedTyped::new(span, &unit_typ(), ExprX::AssertAssume {
-        is_assume: false,
-        expr: mk_ineq(span, cost, bound, InequalityOp::Le),
-        msg: Some(if matches!(kind, CheckKind::Checkpoint) {
-            error(&bound.span, message).secondary_span(span)
-        } else { error(span, message).secondary_span(&bound.span) }),
-    });
+    let assertion = SpannedTyped::new(
+        span,
+        &unit_typ(),
+        ExprX::AssertAssume {
+            is_assume: false,
+            expr: mk_ineq(span, cost, bound, InequalityOp::Le),
+            msg: Some(if matches!(kind, CheckKind::Checkpoint) {
+                error(&bound.span, message).secondary_span(span)
+            } else {
+                error(span, message).secondary_span(&bound.span)
+            }),
+        },
+    );
     Some(Spanned::new(span.clone(), StmtX::Expr(assertion)))
 }
 
@@ -114,11 +120,17 @@ pub(super) fn instrument(
     let mut parameter_spans: HashSet<_> = function.x.params.iter().map(|p| p.span.id).collect();
     parameter_spans.insert(function.span.id);
     for check in obligations {
-        let Some(statement) = obligation(check) else { continue; };
+        let Some(statement) = obligation(check) else {
+            continue;
+        };
         if parameter_spans.contains(&check.span.id) {
             entry_checks.push(statement);
         } else {
-            sites.entry(check.span.id).or_insert_with(|| (check.span.clone(), Vec::new())).1.push(statement);
+            sites
+                .entry(check.span.id)
+                .or_insert_with(|| (check.span.clone(), Vec::new()))
+                .1
+                .push(statement);
         }
     }
     for (span, condition) in checks {
@@ -206,8 +218,11 @@ pub(super) fn instrument(
             range_checks(bound, &mk_bool(&function.span, true), &mut entry_checks);
         }
     }
-    let body = if entry_checks.is_empty() { body } else {
-        let checks = entry_checks.iter()
+    let body = if entry_checks.is_empty() {
+        body
+    } else {
+        let checks = entry_checks
+            .iter()
             .map(|check| crate::ast_visitor::map_stmt_spans(check, &mut |span| fresh_span(span)))
             .collect();
         mk_block(&fresh_span(&body.span), checks, Some(body))

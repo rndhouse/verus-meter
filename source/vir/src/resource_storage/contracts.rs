@@ -127,6 +127,13 @@ fn simplify(expr: &Expr) -> Expr {
                                 ExprX::Const(Constant::Int(a + b)),
                             );
                         }
+                        BinaryOp::Arith(ArithOp::Sub(_)) => {
+                            return SpannedTyped::new(
+                                &expr.span,
+                                &expr.typ,
+                                ExprX::Const(Constant::Int(a - b)),
+                            );
+                        }
                         BinaryOp::Arith(ArithOp::Mul(_)) => {
                             return SpannedTyped::new(
                                 &expr.span,
@@ -192,7 +199,7 @@ pub(super) fn function_bound(
     functions: &HashMap<Fun, Function>,
     layouts: &Layouts,
 ) -> Result<Expr, VirErr> {
-    let Some(ResourceContract::LexicalSlotsV5Expr { budget }) = &function.x.attrs.resource_contract
+    let Some(ResourceContract::SourceValuesV7Expr { budget }) = &function.x.attrs.resource_contract
     else {
         return Err(error(&function.span, "mem_peak requires a declared resource contract"));
     };
@@ -330,9 +337,30 @@ pub(super) fn subtract(span: &Span, a: Expr, b: Expr) -> Expr {
     if constant(&b) == Some(0) {
         return a;
     }
-    SpannedTyped::new(
+    simplify(&SpannedTyped::new(
         span,
         &int_typ(),
         ExprX::Binary(BinaryOp::Arith(ArithOp::Sub(OverflowBehavior::Allow)), a, b),
+    ))
+}
+
+pub(super) fn maximum(span: &Span, a: Expr, b: Expr) -> Expr {
+    if let (Some(a), Some(b)) = (constant(&a), constant(&b)) {
+        return literal(span, a.max(b));
+    }
+    SpannedTyped::new(
+        span,
+        &int_typ(),
+        ExprX::If(mk_ineq(span, &a, &b, InequalityOp::Ge), a, Some(b)),
+    )
+}
+pub(super) fn minimum(span: &Span, a: Expr, b: Expr) -> Expr {
+    if let (Some(a), Some(b)) = (constant(&a), constant(&b)) {
+        return literal(span, a.min(b));
+    }
+    SpannedTyped::new(
+        span,
+        &int_typ(),
+        ExprX::If(mk_ineq(span, &a, &b, InequalityOp::Le), a, Some(b)),
     )
 }

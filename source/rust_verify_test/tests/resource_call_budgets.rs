@@ -202,7 +202,7 @@ test_verify_one_file! {
         {
             if flag { let scratch = [0u8; 64]; }
         }
-        fn caller(flag: bool) mem_peak <= 113 {
+        fn caller(flag: bool) mem_peak <= 105 {
             let released = Box::new([0u8; 32]);
             let retained = Box::new([0u8; 32]);
             helper(flag, { drop(released); });
@@ -557,14 +557,14 @@ fn f(flag: bool) mem_peak <= if flag { 100 } else { 100 } { f(false); }
 }
 
 test_verify_one_file! {
-    #[test] fixed_local_costs_remain_structural verus_code! {
+    #[test] fixed_local_costs_use_reachability verus_code! {
 use vstd::prelude::*;
 fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
 fn f(flag: bool) requires !flag, mem_peak <= 18 { helper(flag); if false { let big = [0u32; 100]; } }
-    } => Err(err) => assert_vir_error_msg(err, "peak 401 bytes exceeds budget 18 bytes")
+    } => Ok(())
 }
 
 test_verify_one_file! {

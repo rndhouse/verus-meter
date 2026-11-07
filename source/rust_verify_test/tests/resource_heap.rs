@@ -47,16 +47,16 @@ fn move_transfers_one_allocation() {
     exact_peak(
         "move_transfers_one_allocation",
         r#"fn f() mem_peak <= BUDGET { let first = Box::new([0u8; 16]); let second = first; }"#,
-        32,
+        24,
     );
 }
 
 #[test]
-fn drop_releases_heap_but_keeps_slots() {
+fn drop_releases_handle_and_heap() {
     exact_peak(
-        "drop_releases_heap_but_keeps_slots",
+        "drop_releases_handle_and_heap",
         r#"fn f() mem_peak <= BUDGET { let first = Box::new([0u8; 16]); drop(first); let second = Box::new([0u8; 16]); }"#,
-        32,
+        24,
     );
 }
 
@@ -65,7 +65,7 @@ fn moved_owner_releases_once() {
     exact_peak(
         "moved_owner_releases_once",
         r#"fn f() mem_peak <= BUDGET { let first = Box::new([0u8; 16]); let second = first; drop(second); let third = Box::new([0u8; 16]); }"#,
-        40,
+        24,
     );
 }
 
@@ -74,7 +74,7 @@ fn inner_scope_can_consume_outer_owner() {
     exact_peak(
         "inner_scope_can_consume_outer_owner",
         r#"fn f() mem_peak <= BUDGET { let first = Box::new([0u8; 16]); { let moved = first; } let second = Box::new([0u8; 16]); }"#,
-        32,
+        24,
     );
 }
 
@@ -83,7 +83,7 @@ fn inner_scope_can_drop_outer_owner() {
     exact_peak(
         "inner_scope_can_drop_outer_owner",
         r#"fn f() mem_peak <= BUDGET { let first = Box::new([0u8; 16]); { drop(first); } let second = Box::new([0u8; 16]); }"#,
-        32,
+        24,
     );
 }
 
@@ -120,7 +120,7 @@ fn zero_sized_object_tracks_ownership() {
     exact_peak(
         "zero_sized_object_tracks_ownership",
         r#"fn f() mem_peak <= BUDGET { let first = Box::new(()); let second = first; drop(second); }"#,
-        16,
+        8,
     );
 }
 
@@ -312,7 +312,7 @@ fn aliases_preserve_intrinsic_identity() {
     exact_peak(
         "aliases_preserve_intrinsic_identity",
         r#"use std::boxed::Box as Owned; use std::mem::drop as release; fn f() mem_peak <= BUDGET { let data = Owned::new([0u8; 16]); release(data); let other = Owned::new([0u8; 16]); }"#,
-        32,
+        24,
     );
 }
 

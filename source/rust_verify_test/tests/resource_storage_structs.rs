@@ -100,9 +100,9 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] moving_struct_keeps_lexical_storage verus_code! {
+    #[test] moving_struct_transfers_its_charge verus_code! {
         struct Pair { a: u32, b: u32 }
-        fn f(p: Pair) mem_peak <= 16 { let moved = p; }
+        fn f(p: Pair) mem_peak <= 8 { let moved = p; }
     } => Ok(())
 }
 
@@ -152,11 +152,11 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] by_value_call_handoff_charges_struct verus_code! {
+    #[test] by_value_call_transfers_struct verus_code! {
         struct S { n: u32 }
         fn leaf(p: S) mem_peak <= 4 {}
-        fn f(p: S) mem_peak <= 7 { leaf(p); }
-    } => Err(err) => assert_vir_error_msg(err, "peak 8 bytes exceeds budget 7 bytes")
+        fn f(p: S) mem_peak <= 4 { leaf(p); }
+    } => Ok(())
 }
 
 test_verify_one_file! {
@@ -234,6 +234,7 @@ test_verify_one_file! {
 
 test_verify_one_file! {
     #[test] array_field_assignment_keeps_parameters verus_code! {
+        use vstd::prelude::*;
         struct S { values: [u32; 4] }
         fn f(p: &mut S, i: usize, j: usize)
             requires i < 4, j < 4,

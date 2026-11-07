@@ -215,7 +215,7 @@ test_verify_one_file! {
             let local = 0u32;
             leaf();
         }
-    } => Err(err) => assert_vir_error_msg(err, "storage totals exceeding u64")
+    } => Err(err) => assert_vir_error_msg(err, "conditional memory budget exceeded")
 }
 
 test_verify_one_file! {
@@ -233,7 +233,7 @@ test_verify_one_file! {
     #[test] callee_below_parameter_size_is_rejected verus_code! {
         fn caller() mem_peak <= 100 { leaf(0); }
         fn leaf(x: u32) mem_peak <= 0 {}
-    } => Err(err) => assert_vir_error_msg(err, "callee storage budget is smaller than its parameter and result storage")
+    } => Err(err) => assert_vir_error_msg(err, "peak 4 bytes exceeds budget 0 bytes")
 }
 
 test_verify_one_file! {

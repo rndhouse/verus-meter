@@ -65,8 +65,8 @@ impl Analysis<'_> {
         } else {
             None
         };
-        // Inputs remain live through the callee's entire declared peak. Only
-        // after that peak can consumed allocations give way to a fresh result.
+        // Call composition already checked the inputs at each point where they
+        // were live. Retain only the allocation that survives as the result.
         for owner in transferred.iter_mut().filter_map(Option::take) {
             self.release_owner(owner, &expr.span);
         }

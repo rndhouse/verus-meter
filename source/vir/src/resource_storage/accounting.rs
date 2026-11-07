@@ -1,5 +1,6 @@
 //! Checked live/peak accounting and source-located diagnostics.
 
+use super::contracts;
 use super::model::{MODEL_NAME, unsupported};
 use crate::ast::{Expr, VirErr, VirErrAs};
 use crate::messages::{Span, note};
@@ -7,7 +8,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 #[derive(Clone, Copy)]
-pub(super) enum CheckKind { Function, Section, Checkpoint }
+pub(super) enum CheckKind {
+    Function,
+    Section,
+    Checkpoint,
+}
 
 pub(super) struct Obligation {
     pub(super) span: Span,
@@ -16,12 +21,14 @@ pub(super) struct Obligation {
     pub(super) kind: CheckKind,
 }
 
+#[derive(Clone)]
 pub struct StorageEvent {
     pub span: Span,
     pub description: String,
     pub live: u64,
 }
 
+#[derive(Clone)]
 pub struct StorageReport {
     // A conservative call envelope can exceed u64 even when its selected cost
     // fits. Actual reservations and declared budgets still use the u64 model.
@@ -89,9 +96,27 @@ impl Peak {
     }
 }
 
-pub(super) struct Accounting {
-    live: u64,
+static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[derive(Clone, Default)]
+pub(super) struct Live {
+    fixed: u64,
     dynamic: HashMap<u64, Expr>,
+    values: HashMap<u64, u64>,
+    pub(super) inputs: HashSet<usize>,
+}
+
+#[derive(Clone)]
+pub(super) struct Point {
+    pub(super) cost: Expr,
+    pub(super) values: HashSet<u64>,
+    pub(super) inputs: HashSet<usize>,
+}
+
+#[derive(Clone)]
+pub(super) struct Accounting {
+    paths: Vec<Live>,
+    points: Vec<Point>,
     peak_costs: Vec<(Span, Expr)>,
     peak_span: Span,
     report: StorageReport,
@@ -100,8 +125,8 @@ pub(super) struct Accounting {
 impl Accounting {
     pub(super) fn new(span: &Span, budget: u64) -> Self {
         Self {
-            live: 0,
-            dynamic: HashMap::new(),
+            paths: vec![Live::default()],
+            points: Vec::new(),
             peak_costs: Vec::new(),
             peak_span: span.clone(),
             report: StorageReport {
@@ -115,8 +140,78 @@ impl Accounting {
         }
     }
 
+    pub(super) fn points(&self) -> &[Point] {
+        &self.points
+    }
+    pub(super) fn restore_live(&mut self, other: &Self) {
+        self.paths = other.paths.clone();
+    }
+    pub(super) fn join_live(&mut self, other: &Self) -> Result<(), VirErr> {
+        for path in &other.paths {
+            if !self.paths.iter().any(|p| {
+                p.fixed == path.fixed
+                    && p.values == path.values
+                    && p.inputs == path.inputs
+                    && p.dynamic.len() == path.dynamic.len()
+                    && p.dynamic
+                        .iter()
+                        .all(|(id, e)| path.dynamic.get(id).is_some_and(|v| Arc::ptr_eq(e, v)))
+            }) {
+                if self.paths.len() >= 1024 {
+                    return Err(unsupported(
+                        &self.peak_span,
+                        "more than 1024 distinct live ownership alternatives; divide the function into checked helpers",
+                    ));
+                }
+                self.paths.push(path.clone());
+            }
+        }
+        Ok(())
+    }
+    pub(super) fn add_input(&mut self, input: usize) {
+        for path in &mut self.paths {
+            path.inputs.insert(input);
+        }
+    }
+    pub(super) fn release_input(&mut self, input: usize) {
+        for path in &mut self.paths {
+            path.inputs.remove(&input);
+        }
+    }
+    pub(super) fn reserve_value(&mut self, span: &Span, bytes: u64) -> Result<u64, VirErr> {
+        let id = self.reserve_value_unchecked(bytes);
+        self.record_live(span)?;
+        Ok(id)
+    }
+    pub(super) fn reserve_value_unchecked(&mut self, bytes: u64) -> u64 {
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        for path in &mut self.paths {
+            path.values.insert(id, bytes);
+        }
+        id
+    }
+    pub(super) fn transfer_values(&mut self, ids: &HashSet<u64>, bytes: u64) -> u64 {
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        for path in &mut self.paths {
+            let present = ids.iter().any(|id| path.values.contains_key(id));
+            for id in ids {
+                path.values.remove(id);
+            }
+            if present {
+                path.values.insert(id, bytes);
+            }
+        }
+        id
+    }
+    pub(super) fn release_values(&mut self, ids: &HashSet<u64>) {
+        for path in &mut self.paths {
+            for id in ids {
+                path.values.remove(id);
+            }
+        }
+    }
     pub(super) fn live(&self) -> u64 {
-        self.live
+        self.paths.iter().map(|p| p.fixed + p.values.values().sum::<u64>()).max().unwrap_or(0)
     }
 
     pub(super) fn peak(&self) -> Peak {
@@ -133,71 +228,130 @@ impl Accounting {
         self.peak_span = peak.span;
     }
 
+    pub(super) fn record_live(&mut self, span: &Span) -> Result<(), VirErr> {
+        for path in &self.paths {
+            path.values
+                .values()
+                .try_fold(path.fixed, |a, b| a.checked_add(*b))
+                .ok_or_else(|| unsupported(span, "storage totals exceeding u64"))?;
+        }
+        let live = self.live();
+        if u128::from(live) > self.report.peak {
+            self.report.peak = live.into();
+            self.peak_span = span.clone();
+        }
+        self.report.reservations.push((span.clone(), live));
+        let paths = self.paths.clone();
+        for path in paths {
+            let cost = Self::path_expression(&path, span);
+            self.record_point(span, cost, &path);
+        }
+        Ok(())
+    }
     pub(super) fn reserve(&mut self, span: &Span, bytes: u64, reason: &str) -> Result<(), VirErr> {
         if bytes == 0 {
             return Ok(());
         }
-        self.live = self
-            .live
-            .checked_add(bytes)
-            .ok_or_else(|| unsupported(span, "storage totals exceeding u64"))?;
-        if u128::from(self.live) > self.report.peak {
-            self.report.peak = u128::from(self.live);
-            self.peak_span = span.clone();
+        for path in &mut self.paths {
+            path.fixed = path
+                .fixed
+                .checked_add(bytes)
+                .ok_or_else(|| unsupported(span, "storage totals exceeding u64"))?;
         }
-        self.report.reservations.push((span.clone(), self.live));
-        // Even a fixed cost must be checked where it executes: assumptions and
-        // control flow may make this site unreachable.
-        self.symbolic_cost(span, self.live_expression(span));
+        self.record_live(span)?;
         self.event(span, format!("reserve {bytes} bytes for {reason}"));
         Ok(())
     }
-
-    // Preserve the selected cost in checkpoint history as well as the function
-    // proof. An unselected contractual maximum is not an executed memory peak.
-    pub(super) fn record_call(&mut self, span: &Span, _additional: u64, cost: Expr) {
-        self.symbolic_cost(span, cost);
+    fn path_expression(path: &Live, span: &Span) -> Expr {
+        path.dynamic.values().cloned().fold(
+            contracts::literal(span, path.fixed + path.values.values().sum::<u64>()),
+            |a, b| contracts::add(span, a, b),
+        )
     }
-
     pub(super) fn live_expression(&self, span: &Span) -> Expr {
-        self.dynamic.values().cloned().fold(super::contracts::literal(span, self.live), |a, b| {
-            super::contracts::add(span, a, b)
-        })
+        self.paths
+            .iter()
+            .map(|p| Self::path_expression(p, span))
+            .reduce(|a, b| contracts::maximum(span, a, b))
+            .unwrap_or_else(|| contracts::literal(span, 0))
     }
-
     pub(super) fn reserve_dynamic(&mut self, span: &Span, cost: Expr) {
-        self.dynamic.insert(span.id, cost);
-        self.symbolic_cost(span, self.live_expression(span));
+        for path in &mut self.paths {
+            path.dynamic.insert(span.id, cost.clone());
+        }
+        self.record_live(span).expect("dynamic reservation preserves fixed storage");
     }
-
+    pub(super) fn dynamic_cost(&self, span: &Span, id: u64) -> Expr {
+        self.paths
+            .iter()
+            .filter_map(|p| p.dynamic.get(&id).cloned())
+            .reduce(|a, b| contracts::maximum(span, a, b))
+            .unwrap_or_else(|| contracts::literal(span, 0))
+    }
     pub(super) fn release_dynamic(&mut self, id: u64) {
-        assert!(self.dynamic.remove(&id).is_some(), "balanced dynamic ownership");
+        for path in &mut self.paths {
+            path.dynamic.remove(&id);
+        }
     }
-
-    pub(super) fn symbolic_cost(&mut self, span: &Span, cost: Expr) {
+    fn record_point(&mut self, span: &Span, cost: Expr, path: &Live) {
         self.report.call_costs.push((span.clone(), cost.clone()));
-        self.peak_costs.push((span.clone(), cost));
+        self.peak_costs.push((span.clone(), cost.clone()));
+        self.points.push(Point {
+            cost,
+            values: path.values.keys().copied().collect(),
+            inputs: path.inputs.clone(),
+        });
         self.report.conditional = true;
     }
-
+    #[cfg(test)]
+    pub(super) fn symbolic_cost(&mut self, span: &Span, cost: Expr) {
+        for path in self.paths.clone() {
+            self.record_point(span, cost.clone(), &path);
+        }
+    }
+    pub(super) fn call_cost(
+        &mut self,
+        span: &Span,
+        cost: Expr,
+        excluded_inputs: &HashSet<usize>,
+        result_ids: &HashSet<u64>,
+        result_live: bool,
+    ) {
+        for mut path in self.paths.clone() {
+            for input in excluded_inputs {
+                path.inputs.remove(input);
+            }
+            if !result_live {
+                for id in result_ids {
+                    path.values.remove(id);
+                }
+            }
+            self.record_point(span, cost.clone(), &path);
+        }
+    }
     pub(super) fn release(&mut self, span: &Span, bytes: u64, reason: &str) {
         if bytes == 0 {
             return;
         }
-        self.live = self.live.checked_sub(bytes).expect("balanced resource events");
+        for path in &mut self.paths {
+            path.fixed = path.fixed.checked_sub(bytes).expect("balanced resource events");
+        }
         self.event(span, format!("release {bytes} bytes for {reason}"));
     }
-
     pub(super) fn event(&mut self, span: &Span, description: String) {
-        self.report.events.push(StorageEvent { span: span.clone(), description, live: self.live });
+        self.report.events.push(StorageEvent {
+            span: span.clone(),
+            description,
+            live: self.live(),
+        });
     }
 
     pub(super) fn finish(self, function_span: &Span) -> Result<StorageReport, VirErr> {
         self.finish_scope(function_span, "function exit", "local storage budget exceeded")
     }
 
-    pub(super) fn finish_conditional(mut self, span: &Span) -> StorageReport {
-        self.release(span, self.live, "function exit");
+    pub(super) fn finish_conditional(mut self, _span: &Span) -> StorageReport {
+        self.paths.clear();
         self.report.conditional = true;
         self.report
     }
@@ -212,7 +366,8 @@ impl Accounting {
         exit: &str,
         _diagnostic: &str,
     ) -> Result<StorageReport, VirErr> {
-        self.release(scope_span, self.live, exit);
+        self.paths.clear();
+        self.event(scope_span, exit.into());
         Ok(self.report)
     }
 }
@@ -262,5 +417,47 @@ mod tests {
             assert_eq!(actual.0.id, expected.0.id);
             assert!(Arc::ptr_eq(&actual.1, &expected.1));
         }
+    }
+    #[test]
+    fn repeated_empty_branches_keep_one_live_state() {
+        let span = span();
+        let mut storage = Accounting::new(&span, 100);
+        storage.reserve_value(&span, 24).unwrap();
+        storage.reserve_dynamic(&span, super::super::contracts::literal(&span, 16));
+        for _ in 0..64 {
+            let sibling = storage.clone();
+            storage.join_live(&sibling).unwrap();
+            assert_eq!(storage.paths.len(), 1);
+        }
+    }
+
+    #[test]
+    fn joining_distinct_moves_preserves_each_remaining_value() {
+        let span = span();
+        let mut storage = Accounting::new(&span, 100);
+        let a = storage.reserve_value(&span, 16).unwrap();
+        let b = storage.reserve_value(&span, 16).unwrap();
+        let mut sibling = storage.clone();
+        storage.release_values(&[a].into_iter().collect());
+        sibling.release_values(&[b].into_iter().collect());
+        storage.join_live(&sibling).unwrap();
+        assert_eq!(storage.paths.len(), 2);
+        assert_eq!(storage.live(), 16);
+        storage.release_values(&[a, b].into_iter().collect());
+        assert_eq!(storage.live(), 0);
+    }
+    #[test]
+    fn excessive_distinct_states_produce_a_diagnostic() {
+        let span = span();
+        let mut storage = Accounting::new(&span, 100);
+        for _ in 1..1024 {
+            let mut alternative = Accounting::new(&span, 100);
+            alternative.reserve_value_unchecked(1);
+            storage.join_live(&alternative).unwrap();
+        }
+        let mut extra = Accounting::new(&span, 100);
+        extra.reserve_value_unchecked(1);
+        assert!(storage.join_live(&extra).is_err());
+        assert_eq!(storage.paths.len(), 1024);
     }
 }

@@ -125,15 +125,10 @@ fn owning_option_payload_remains_rejected() {
 }
 
 #[test]
-fn result_storage_counts_before_body() {
+fn result_storage_starts_when_produced() {
     verifies(
         "result_checkpoint",
-        "fn f() -> u32 mem_peak <= 4 { assert(current(mem_peak) <= 4); 7 }",
-    );
-    rejects(
-        "result_checkpoint_short",
-        "fn f() -> u32 mem_peak <= 4 { assert(current(mem_peak) <= 3); 7 }",
-        "mem_peak assertion failed: peak 4 bytes exceeds bound 3 bytes",
+        "fn f() -> u32 mem_peak <= 4 { assert(current(mem_peak) <= 0); 7 }",
     );
 }
 

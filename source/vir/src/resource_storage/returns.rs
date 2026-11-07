@@ -1,58 +1,8 @@
-//! Share a moved result's charge with the value it comes from.
-//!
-//! The result remains a destination in the model, but a parameter or local
-//! handed into it does not introduce a second value. Copies and newly
-//! constructed results keep independent charges. This is source-level value
-//! accounting, not a claim about compiler return-slot optimization.
+//! Check callees before callers so lifetime summaries are derived from verified bodies.
 
 use super::model::unsupported;
 use crate::ast::*;
 use std::collections::{HashMap, HashSet};
-
-/// Find a single source slot handed to the result on every supported tail path.
-/// Forwarding calls use the callee's checked parameter/result sharing summary.
-/// A join without a common source retains the conservative separate destination.
-pub(super) fn source(expr: &Expr, parameters: &HashMap<Fun, usize>) -> Option<VarIdent> {
-    match &expr.x {
-        ExprX::Block(_, Some(tail)) => source(tail, parameters),
-        ExprX::ReadPlace(place, kind) => match &place.x {
-            PlaceX::Local(name)
-                if matches!(kind.preliminary_kind, ReadKind::Move(_))
-                    && crate::ast_util::types_equal(&place.typ, &expr.typ) =>
-            {
-                Some(name.clone())
-            }
-            PlaceX::Temporary(value) if crate::ast_util::types_equal(&value.typ, &expr.typ) => {
-                source(value, parameters)
-            }
-            _ => None,
-        },
-        ExprX::Call {
-            target: CallTarget::Fun(CallTargetKind::Static, fun, typs, impls, _),
-            args,
-            post_args: None,
-            body: None,
-        } if typs.is_empty() && impls.is_empty() => {
-            let arg = args.get(*parameters.get(fun)?)?;
-            if crate::ast_util::types_equal(&arg.typ, &expr.typ) {
-                source(arg, parameters)
-            } else {
-                None
-            }
-        }
-        ExprX::If(_, yes, Some(no)) => {
-            let name = source(yes, parameters)?;
-            (source(no, parameters).as_ref() == Some(&name)).then_some(name)
-        }
-        ExprX::Match(_, arms, _) => {
-            let name = source(&arms.first()?.x.body, parameters)?;
-            arms.iter()
-                .all(|arm| source(&arm.x.body, parameters).as_ref() == Some(&name))
-                .then_some(name)
-        }
-        _ => None,
-    }
-}
 
 /// Results require callee summaries before checking the caller: allocation
 /// ownership and parameter/result sharing are both composed through calls.
@@ -83,9 +33,7 @@ pub(super) fn order(functions: &[Function]) -> Result<Vec<Function>, VirErr> {
                     } = &expr.x
                     {
                         if let Some(callee) = functions.get(target) {
-                            if !super::model::unit(&callee.x.outer_ret.x.typ)
-                                && callee.x.attrs.resource_contract.is_some()
-                            {
+                            if callee.x.attrs.resource_contract.is_some() {
                                 visit(callee, functions, active, done, ordered)?;
                             }
                         }

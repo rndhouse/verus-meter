@@ -10,7 +10,7 @@ use crate::ast::*;
 use crate::messages::Span;
 use std::collections::{HashMap, HashSet};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Heap {
     pub(super) owners: HashMap<VarIdent, Owner>,
     protected: HashSet<VarIdent>,
@@ -22,7 +22,7 @@ pub(super) struct Owner {
     pub(super) bytes: u64,
     pub(super) dynamic: Option<u64>,
     pub(super) capacity: Option<Expr>,
-    // Incoming backing remains charged by the caller throughout this invocation.
+    // The lifetime summary tells callers when this input allocation is released.
     pub(super) input: Option<usize>,
 }
 
@@ -86,23 +86,6 @@ impl Analysis<'_> {
         Ok(Some(bytes))
     }
 
-    pub(super) fn initialize_owner(
-        &mut self,
-        name: &VarIdent,
-        init: &Place,
-        typ: &Typ,
-    ) -> Result<(), VirErr> {
-        if !crate::ast_util::types_equal(&init.typ, typ) {
-            return Err(unsupported(&init.span, "this owning initializer coercion"));
-        }
-        let owner = match &init.x {
-            PlaceX::Temporary(expr) => self.owner_expr(expr)?,
-            _ => self.move_owner(init)?,
-        };
-        self.heap.owners.insert(name.clone(), owner);
-        Ok(())
-    }
-
     /// Evaluate into an existing handle destination and retain its allocation.
     pub(super) fn owner_expr(&mut self, expr: &Expr) -> Result<Owner, VirErr> {
         self.layouts.size(&expr.typ, &expr.span)?;
@@ -156,6 +139,9 @@ impl Analysis<'_> {
     }
 
     pub(super) fn release_owner(&mut self, owner: Owner, span: &Span) {
+        if let Some(input) = owner.input {
+            self.storage.release_input(input);
+        }
         if let Some(id) = owner.dynamic {
             self.storage.release_dynamic(id);
         }
@@ -193,7 +179,9 @@ impl Analysis<'_> {
             if !crate::ast_util::types_equal(&types[0], &place.typ) {
                 return Err(unsupported(&expr.span, "this heap drop coercion"));
             }
+            let value = self.take_value(place)?;
             let owner = self.move_owner(place)?;
+            self.release_value(value, &expr.span);
             self.release_owner(owner, &expr.span);
             return Ok(Some(0));
         }

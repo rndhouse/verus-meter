@@ -49,7 +49,7 @@ impl Resolver<'_> {
             return Err(error(span, "circular mem_peak reference").secondary_span(&function.span));
         }
         let budget = match contract {
-            ResourceContract::LexicalSlotsV5Expr { budget } => self.expr(budget)?,
+            ResourceContract::SourceValuesV7Expr { budget } => self.expr(budget)?,
             _ => {
                 return Err(error(
                     span,
@@ -210,7 +210,7 @@ pub(super) fn runtime(expr: &BudgetExpr, functions: &HashMap<Fun, Function>) -> 
         BudgetExprX::If(_, a, b) => runtime(a, functions) || runtime(b, functions),
         BudgetExprX::FunctionCall(f, _) => {
             match functions.get(f).and_then(|f| f.x.attrs.resource_contract.as_ref()) {
-                Some(ResourceContract::LexicalSlotsV5Expr { budget }) => runtime(budget, functions),
+                Some(ResourceContract::SourceValuesV7Expr { budget }) => runtime(budget, functions),
                 _ => false,
             }
         }

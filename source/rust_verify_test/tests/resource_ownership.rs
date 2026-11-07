@@ -32,11 +32,11 @@ fn box_factory_retains_allocation() {
 fn box_forwarding_does_not_duplicate_allocation() {
     let code = "fn caller() mem_peak <= BOUND { let first = Box::new([0u8;16]); let second = forward(first); }
         fn forward(b: Box<[u8;16]>) -> Box<[u8;16]> mem_peak <= 8 { b }";
-    verifies("box_forward", &code.replace("BOUND", "32"));
+    verifies("box_forward", &code.replace("BOUND", "24"));
     rejects(
         "box_forward_short",
-        &code.replace("BOUND", "31"),
-        "peak 32 bytes exceeds budget 31 bytes",
+        &code.replace("BOUND", "23"),
+        "peak 24 bytes exceeds budget 23 bytes",
     );
 }
 #[test]
@@ -48,15 +48,15 @@ fn box_consumed_allocation_released_after_call() {
     );
 }
 #[test]
-fn input_backing_remains_charged_through_consuming_call() {
+fn input_backing_ends_when_helper_drops_it() {
     let code =
         "fn consume(b: Box<[u8;16]>) mem_peak <= 32 { drop(b); let other = Box::new([0u8;16]); }
         fn f() mem_peak <= BOUND { let first = Box::new([0u8;16]); consume(first); }";
-    verifies("box_consume_retains", &code.replace("BOUND", "56"));
+    verifies("box_consume_retains", &code.replace("BOUND", "32"));
     rejects(
         "box_consume_short",
-        &code.replace("BOUND", "55"),
-        "peak 56 bytes exceeds budget 55 bytes",
+        &code.replace("BOUND", "31"),
+        "peak 32 bytes exceeds budget 31 bytes",
     );
 }
 #[test]
@@ -127,7 +127,7 @@ fn conditional_owner_return_rejected() {
     rejects(
         "conditional_owner",
         "fn f(c: bool) -> Box<u32> mem_peak <= 100 { if c { Box::new(1) } else { Box::new(2) } }",
-        "owning results other than",
+        "conditional heap ownership results",
     );
 }
 #[test]
@@ -166,11 +166,11 @@ fn multiple_owned_inputs_return_second() {
     let code = "fn second(a: Box<[u8;16]>, b: Box<[u8;16]>) -> Box<[u8;16]> mem_peak <= 16 { b }
         fn f() mem_peak <= BOUND { let a = Box::new([0u8;16]); let b = Box::new([0u8;16]);
             let c = second(a, b); let d = Box::new([0u8;16]); }";
-    verifies("second_input", &code.replace("BOUND", "64"));
+    verifies("second_input", &code.replace("BOUND", "48"));
     rejects(
         "second_input_short",
-        &code.replace("BOUND", "63"),
-        "peak 64 bytes exceeds budget 63 bytes",
+        &code.replace("BOUND", "47"),
+        "peak 48 bytes exceeds budget 47 bytes",
     );
 }
 #[test]

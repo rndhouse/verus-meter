@@ -3,7 +3,6 @@
 use super::analysis::Analysis;
 use super::model::{eligible, slice, unsupported};
 use crate::ast::*;
-use crate::messages::error;
 
 impl Analysis<'_> {
     fn call(
@@ -30,12 +29,6 @@ impl Analysis<'_> {
             return Err(unsupported(&expr.span, "this call signature"));
         }
         let result_size = self.layouts.return_size(&expr.typ, &expr.span)?;
-        if !destination {
-            self.storage.reserve(&expr.span, result_size, "call result destination")?;
-        }
-        let retained = if destination { 0 } else { result_size };
-        // Unsupported selectors retain the envelope. Never re-read mutable
-        // state or re-evaluate side effects in a generated pre-call assertion.
         let bound = super::contracts::instantiate(
             callee,
             args,
@@ -45,82 +38,118 @@ impl Analysis<'_> {
             self.layouts,
             false,
         )
-        .ok();
-        let constant = bound.as_ref().and_then(super::contracts::constant);
-        let budget = constant.unwrap_or(envelope);
+        .unwrap_or_else(|_| super::contracts::literal(&expr.span, envelope));
         let mut parameters = 0u64;
+        let mut values = vec![None; args.len()];
         let mut transferred = vec![None; args.len()];
         for (index, (arg, param)) in args.iter().zip(callee.x.params.iter()).enumerate() {
             if param.x.mode != Mode::Exec {
                 continue;
             }
             if !crate::ast_util::types_equal(&arg.typ, &param.x.typ) {
-                return Err(unsupported(
-                    &arg.span,
-                    &format!(
-                        "this call argument coercion ({} to {})",
-                        crate::ast_util::typ_to_diagnostic_str(&arg.typ),
-                        crate::ast_util::typ_to_diagnostic_str(&param.x.typ)
-                    ),
-                ));
+                return Err(unsupported(&arg.span, "this call argument coercion"));
             }
-            let bytes = self.layouts.size(&param.x.typ, &param.span)?;
-            // A moved parameter/result is one value. Its caller-provided
-            // destination already covers this argument's storage.
-            let bytes = if self.return_parameters.get(target) == Some(&index) { 0 } else { bytes };
+            let value = if let ExprX::TwoPhaseBorrowMut(place) = &arg.x {
+                self.borrow(place, &arg.typ)?;
+                self.fresh_value(&arg.span, &arg.typ)?
+            } else {
+                self.produce(arg)?
+            };
             parameters = parameters
-                .checked_add(bytes)
+                .checked_add(value.bytes)
                 .ok_or_else(|| unsupported(&expr.span, "parameter storage exceeding u64"))?;
-            // Every argument initializes its parameter's storage. Earlier
-            // parameters remain live during later argument evaluation.
-            self.storage.reserve(&arg.span, bytes, "callee parameter slot")?;
+            values[index] = Some(value);
             if self.layouts.owner(&param.x.typ) {
-                transferred[index] = Some(self.owner_expr(arg)?);
-                continue;
-            }
-            match &arg.x {
-                ExprX::TwoPhaseBorrowMut(place) => {
-                    self.borrow(place, &arg.typ)?;
-                }
-                _ => self.initialize_expr(arg)?,
+                transferred[index] = Some(
+                    self.result_owner
+                        .take()
+                        .ok_or_else(|| unsupported(&arg.span, "missing argument ownership"))?,
+                );
             }
         }
-        let supplied = parameters
-            .checked_add(result_size)
-            .ok_or_else(|| unsupported(&expr.span, "call destinations exceeding u64"))?;
-        let additional = budget.checked_sub(supplied).ok_or_else(|| {
-            error(
-                &callee.span,
-                "callee storage budget is smaller than its parameter and result storage",
-            )
-        })?;
-        // Argument evaluation may release heap storage. Compose the callee's
-        // budget with what remains live now, including the parameter and result
-        // destinations already reserved above. Credit those destinations once;
-        // the peaks reached during argument evaluation were recorded separately.
-        if let Some(bound) = bound.filter(|_| constant.is_none()) {
-            let live_at_call = self.storage.live_expression(&expr.span);
-            let extra = super::contracts::subtract(
-                &expr.span,
-                bound.clone(),
-                super::contracts::literal(&expr.span, supplied),
-            );
-            let cost = super::contracts::add(&expr.span, live_at_call, extra);
-            if super::contracts::numeric_input(&bound) {
-                self.storage.symbolic_cost(&expr.span, cost);
-            } else {
-                self.storage.record_call(&expr.span, additional, cost);
+        let c = &expr.span;
+        let mut base = super::contracts::subtract(
+            c,
+            self.storage.live_expression(c),
+            super::contracts::literal(c, parameters),
+        );
+        let mut input_costs = vec![super::contracts::literal(c, 0); args.len()];
+        let mut external_inputs = std::collections::HashSet::new();
+        for (index, owner) in transferred.iter().enumerate() {
+            if let Some(owner) = owner {
+                let mut cost = super::contracts::literal(c, owner.bytes);
+                if let Some(id) = owner.dynamic {
+                    cost = super::contracts::add(c, cost, self.storage.dynamic_cost(c, id));
+                }
+                base = super::contracts::subtract(c, base, cost.clone());
+                input_costs[index] = cost;
+                if let Some(input) = owner.input {
+                    external_inputs.insert(input);
+                }
             }
-            self.storage.release(&expr.span, parameters, "callee return");
+        }
+        let forwarded = self.return_parameters.get(target).and_then(|i| values[*i].clone());
+        for value in values.into_iter().flatten() {
+            self.release_value(value, c);
+        }
+        // Materialize the returned value only after the call's work. The checked
+        // profile below describes its presence during the call itself.
+        let mut result = if destination {
+            None
         } else {
-            self.storage.reserve(
-                &expr.span,
-                additional,
-                &format!("callee peak for {}", crate::ast_util::fun_as_friendly_rust_name(target)),
-            )?;
-            self.storage.release(&expr.span, budget - result_size, "callee return");
+            let id = self.storage.reserve_value_unchecked(result_size);
+            Some(super::lifetime::Value {
+                bytes: result_size,
+                ids: [id].into_iter().collect(),
+                origins: [id].into_iter().collect(),
+                parameter: None,
+            })
+        };
+        if let (Some(result), Some(forwarded)) = (&mut result, forwarded) {
+            result.parameter = forwarded.parameter;
+            result.origins.extend(forwarded.origins);
+        }
+        let result_ids = result.as_ref().map(|v| v.ids.clone()).unwrap_or_default();
+        let credit = super::contracts::literal(c, if destination { result_size } else { 0 });
+        // Contract slack remains available to the caller. Input allocations are
+        // accounted separately using their checked lifetimes in the body.
+        let allowance = super::contracts::add(
+            c,
+            base.clone(),
+            super::contracts::subtract(c, bound.clone(), credit.clone()),
+        );
+        self.storage.call_cost(c, allowance, &external_inputs, &result_ids, true);
+        let profiles = self
+            .profiles
+            .get(target)
+            .ok_or_else(|| unsupported(c, "a call without a checked lifetime summary"))?;
+        for point in profiles {
+            let cost =
+                super::contracts::substitute(&point.cost, callee, args, &self.stable_scalars)
+                    .unwrap_or_else(|_| bound.clone());
+            let mut cost = super::contracts::minimum(c, cost, bound.clone());
+            let mut excluded = external_inputs.clone();
+            for index in &point.inputs {
+                cost = super::contracts::add(c, cost, input_costs[*index].clone());
+                if let Some(input) = transferred[*index].as_ref().and_then(|o| o.input) {
+                    excluded.remove(&input);
+                }
+            }
+            if point.result {
+                cost = super::contracts::subtract(c, cost, credit.clone());
+            }
+            self.storage.call_cost(
+                c,
+                super::contracts::add(c, base.clone(), cost),
+                &excluded,
+                &result_ids,
+                point.result,
+            );
         }
         self.result_owner = self.complete_ownership_call(expr, callee, args, &mut transferred)?;
+        self.storage.record_live(c)?;
+        self.produced = result;
+        let retained = if destination { 0 } else { result_size };
         self.calls.push((target.clone(), expr.span.clone()));
         Ok(retained)
     }

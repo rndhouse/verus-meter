@@ -63,9 +63,9 @@ fn reference_locals_end_with_their_scopes() {
 }
 
 #[test]
-fn moved_slots_remain_charged_until_scope_exit() {
+fn moves_transfer_one_charge() {
     exact_peak(
-        "moved_slots_remain_charged_until_scope_exit",
+        "moves_transfer_one_charge",
         r#"
         struct Data { values: [u32; 4] }
         fn f() mem_peak <= BUDGET {
@@ -74,7 +74,7 @@ fn moved_slots_remain_charged_until_scope_exit() {
             let third = second;
         }
         "#,
-        48,
+        16,
     );
 }
 
@@ -89,7 +89,7 @@ fn scopes_allow_reuse_after_moves() {
             { let second = Data { values: [0u32; 4] }; let moved = second; }
         }
         "#,
-        32,
+        16,
     );
 }
 

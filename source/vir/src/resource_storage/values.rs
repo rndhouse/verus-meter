@@ -19,20 +19,9 @@ impl Analysis<'_> {
             }
             ExprX::If(cond, yes, no) => {
                 self.layouts.return_size(&expr.typ, &expr.span)?;
-                let protection = self.heap.protect();
-                self.discard(cond)?;
-                let prefix = self.storage.peak();
-                self.initialize_expr(yes)?;
-                let mut joined = self.storage.peak();
-                self.storage.set_peak(prefix);
-                if let Some(no) = no {
-                    self.initialize_expr(no)?;
-                }
-                joined.merge(&self.storage.peak());
-                self.storage.set_peak(joined);
-                self.heap.unprotect(protection);
+                self.conditional(expr, cond, yes, no.as_ref(), false)?;
             }
-            ExprX::Match(scrutinee, arms, _) => self.option_match(expr, scrutinee, arms)?,
+            ExprX::Match(scrutinee, arms, _) => self.option_match(expr, scrutinee, arms, false)?,
             _ => return Ok(false),
         }
         Ok(true)
@@ -42,13 +31,11 @@ impl Analysis<'_> {
         if let Some(result) = self.option_operation(expr, false)? {
             return Ok(Some(result));
         }
-        if matches!(&expr.x, ExprX::Match(..))
-            || (!unit(&expr.typ) && matches!(&expr.x, ExprX::Block(..) | ExprX::If(..)))
+        if !unit(&expr.typ)
+            && matches!(&expr.x, ExprX::Match(..) | ExprX::Block(..) | ExprX::If(..))
         {
-            let bytes = self.layouts.return_size(&expr.typ, &expr.span)?;
-            self.storage.reserve(&expr.span, bytes, "expression result destination")?;
-            self.value_into(expr)?;
-            return Ok(Some(bytes));
+            let value = self.produce(expr)?;
+            return Ok(Some(self.expression_value(value, &expr.span)?));
         }
         Ok(None)
     }
@@ -137,7 +124,13 @@ impl Analysis<'_> {
         }
     }
 
-    fn option_match(&mut self, expr: &Expr, scrutinee: &Place, arms: &Arms) -> Result<(), VirErr> {
+    pub(super) fn option_match(
+        &mut self,
+        expr: &Expr,
+        scrutinee: &Place,
+        arms: &Arms,
+        new_value: bool,
+    ) -> Result<(), VirErr> {
         if !self.layouts.option(&scrutinee.typ) {
             return Err(unsupported(&expr.span, "matches other than by-value Option matches"));
         }
@@ -152,26 +145,50 @@ impl Analysis<'_> {
             self.access(scrutinee, &scrutinee.typ)?;
             0
         };
-        let prefix = self.storage.peak();
-        let mut joined = prefix.clone();
+        let entry = self.branch_state();
+        let mut joined = None;
+        let mut result: Option<super::lifetime::Value> = None;
         for arm in arms.iter() {
             if !matches!(&arm.x.guard.x, ExprX::Const(Constant::Bool(true))) {
                 return Err(unsupported(&arm.span, "Option match guards"));
             }
-            self.storage.set_peak(prefix.clone());
+            self.restore_branch(&entry);
             let mut slots = Vec::new();
             self.option_pattern(&arm.x.pattern, &scrutinee.typ, &mut slots)?;
             // Bindings exist throughout the arm, including its guard/body.
-            for (_, bytes) in &slots {
-                self.storage.reserve(&arm.x.body.span, *bytes, "match binding slot")?;
+            for (name, bytes) in &slots {
+                let id = self.storage.reserve_value(&arm.x.body.span, *bytes)?;
+                self.slots.insert(
+                    name.clone(),
+                    super::lifetime::Value {
+                        bytes: *bytes,
+                        ids: [id].into_iter().collect(),
+                        origins: [id].into_iter().collect(),
+                        parameter: None,
+                    },
+                );
             }
-            self.initialize_expr(&arm.x.body)?;
-            for (_, bytes) in slots.iter().rev() {
-                self.storage.release(&arm.span, *bytes, "match binding scope exit");
+            if new_value {
+                let value = self.produce(&arm.x.body)?;
+                if let Some(result) = &mut result {
+                    result.merge(&value);
+                } else {
+                    result = Some(value);
+                }
+            } else {
+                self.initialize_expr(&arm.x.body)?;
             }
-            joined.merge(&self.storage.peak());
+            for (name, _) in slots.iter().rev() {
+                if let Some(value) = self.slots.remove(name) {
+                    self.release_value(value, &arm.span);
+                }
+            }
+            if let Some(joined) = &joined {
+                self.join_branch(joined)?;
+            }
+            joined = Some(self.branch_state());
         }
-        self.storage.set_peak(joined);
+        self.produced = result;
         self.storage.release(&expr.span, scratch, "match input consumed");
         self.heap.unprotect(protection);
         Ok(())

@@ -24,6 +24,7 @@ mod construction;
 mod contracts;
 mod heap;
 mod layout;
+mod lifetime;
 mod model;
 mod ownership;
 mod places;
@@ -64,6 +65,7 @@ pub fn check_crate(
     let mut reports = Vec::new();
     let mut returned = HashMap::new();
     let mut return_parameters = HashMap::new();
+    let mut profiles = HashMap::new();
     for function in &returns::order(functions)? {
         if let Some(checked) = analysis::check(
             function,
@@ -73,6 +75,7 @@ pub fn check_crate(
             &budgets,
             &returned,
             &return_parameters,
+            &profiles,
         )? {
             if let Some(summary) = &checked.returned {
                 returned.insert(function.x.name.clone(), summary.clone());
@@ -80,6 +83,7 @@ pub fn check_crate(
             if let Some(index) = checked.return_parameter {
                 return_parameters.insert(function.x.name.clone(), index);
             }
+            profiles.insert(function.x.name.clone(), checked.profiles.clone());
             graph.add_node(function.x.name.clone());
             for (callee, _) in &checked.calls {
                 graph.add_edge(function.x.name.clone(), callee.clone());

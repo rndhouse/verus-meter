@@ -258,13 +258,13 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] assumptions_cannot_reset_accounting verus_code! {
+    #[test] memory_proofs_respect_trusted_assumptions verus_code! {
         use vstd::prelude::*;
         fn example() mem_peak <= 0 {
             assume(false);
             let scratch = [0u32; 64];
         }
-    } => Err(err) => assert_vir_error_msg(err, "peak 256 bytes exceeds budget 0 bytes")
+    } => Ok(())
 }
 
 test_verify_one_file! {

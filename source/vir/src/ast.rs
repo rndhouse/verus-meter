@@ -1397,6 +1397,8 @@ pub enum ReadKind {
     Spec,
     /// Prophetic spec snapshot. (Not a move.)
     SpecAfterBorrow,
+    /// An unused Copy value: the original remains live.
+    UnusedCopy,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToDebugSNode, Clone, Copy)]

@@ -30,6 +30,15 @@ impl Analysis<'_> {
 
     /// Evaluate into storage already charged to a local, field, or parameter.
     pub(super) fn initialize_expr(&mut self, expr: &Expr) -> Result<(), VirErr> {
+        if let ExprX::ReadPlace(place, kind) = &expr.x {
+            if matches!(kind.preliminary_kind, ReadKind::Move(_))
+                && crate::ast_util::types_equal(&place.typ, &expr.typ)
+                && matches!(place.x, PlaceX::Local(_))
+            {
+                let value = self.take_value(place)?;
+                self.release_value(value, &expr.span);
+            }
+        }
         if self.layouts.owner(&expr.typ) {
             self.result_owner = Some(self.owner_expr(expr)?);
             return Ok(());
