@@ -5072,7 +5072,14 @@ impl VisitMut for Visitor {
         if is_external_code {
             self.inside_external_code += 1;
         }
+        let outer_bindings = std::mem::take(&mut self.resource_bindings);
+        self.resource_bindings = verus_inputs_to_tokens(&method.sig.inputs)
+            .1
+            .into_iter()
+            .filter_map(|t| if let TokenTree::Ident(id) = t { Some(id) } else { None })
+            .collect();
         visit_impl_item_fn_mut(self, method);
+        self.resource_bindings = outer_bindings;
         if is_external_code {
             self.inside_external_code -= 1;
         }

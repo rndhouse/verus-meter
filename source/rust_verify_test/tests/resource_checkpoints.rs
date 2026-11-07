@@ -12,6 +12,57 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
+    #[test] impl_parameters_in_checkpoints_and_sections verus_code! {
+        struct Worker {}
+        impl Worker {
+            fn associated(n: u32) mem_peak <= 2 * mem_size(n) {
+                assert(current(mem_peak) <= mem_size(n));
+                mem_peak <= mem_size(n) {
+                    let copy = n;
+                    assert(current(mem_peak) <= mem_size(copy));
+                }
+                assert(current(mem_peak) <= 2 * mem_size(n));
+            }
+            fn method(&self, n: u32) mem_peak <= mem_size(&Worker) + mem_size(n) {
+                assert(current(mem_peak) <= mem_size(&Worker) + mem_size(n));
+            }
+        }
+    } => Ok(())
+}
+
+test_verify_one_file! {
+    #[test] impl_parameter_checkpoint_still_enforces_bound verus_code! {
+        struct Worker {}
+        impl Worker {
+            fn work(n: u8) mem_peak <= 5 {
+                let extra = 0u32;
+                assert(current(mem_peak) <= mem_size(n));
+            }
+        }
+    } => Err(err) => assert_vir_error_msg(err, "peak 5 bytes exceeds bound 1 bytes")
+}
+
+test_verify_one_file! {
+    #[test] impl_resource_bindings_are_scoped verus_code! {
+        use vstd::prelude::*;
+        type Buffer = [u8; 16];
+        fn outer(Buffer: u32) mem_peak <= mem_size(Buffer) {
+            struct Worker {}
+            impl Worker {
+                fn with_parameter(Buffer: u32) mem_peak <= mem_size(Buffer) {
+                    assert(current(mem_peak) <= mem_size(Buffer));
+                }
+                fn without_parameter() mem_peak <= mem_size(Buffer) {
+                    let data = [0u8; 16];
+                    assert(current(mem_peak) <= mem_size(Buffer));
+                }
+            }
+            assert(current(mem_peak) <= mem_size(Buffer));
+        }
+    } => Ok(())
+}
+
+test_verify_one_file! {
     #[test] current_function_calls_remain_logical_assertions verus_code! {
         spec fn current(x: u32) -> u32 { x }
         fn f(x: u32) mem_peak <= mem_size(x) {
