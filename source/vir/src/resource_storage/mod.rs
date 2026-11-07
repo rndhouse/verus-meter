@@ -4,7 +4,8 @@
 //! fields; `budget` resolves declared budget expressions and their dependencies;
 //! `accounting` owns live/peak totals and traces; `sections` checks nested
 //! workspace contracts and composes their bounds with the parent.
-//! `heap` tracks local box ownership and allocation lifetimes. `contracts`
+//! `heap` tracks allocation lifetimes; `ownership` derives transfer summaries
+//! for checked helpers; `vectors` checks reserved capacity. `contracts`
 //! specializes declared formulas with stable scalar arguments. `symbolic`
 //! turns conditional contracts into ordinary Verus proof obligations.
 //! `values` handles result destinations and Option arms;
@@ -24,6 +25,7 @@ mod contracts;
 mod heap;
 mod layout;
 mod model;
+mod ownership;
 mod places;
 mod sections;
 mod symbolic;
@@ -59,14 +61,19 @@ pub fn check_crate(
     let budgets = budget::resolve(functions, &function_map, &layouts)?;
     let mut graph = crate::scc::Graph::new();
     let mut reports = Vec::new();
-    for function in functions.iter() {
+    let mut returned = HashMap::new();
+    for function in &ownership::order(functions, &layouts)? {
         if let Some(checked) = analysis::check(
             function,
             modes.get(&function.x.name).map(Arc::as_ref),
             &function_map,
             &layouts,
             &budgets,
+            &returned,
         )? {
+            if let Some(summary) = &checked.returned {
+                returned.insert(function.x.name.clone(), summary.clone());
+            }
             graph.add_node(function.x.name.clone());
             for (callee, _) in &checked.calls {
                 graph.add_edge(function.x.name.clone(), callee.clone());

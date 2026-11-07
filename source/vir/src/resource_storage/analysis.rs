@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 
 pub(super) struct FunctionAnalysis {
     pub(super) report: StorageReport,
+    pub(super) returned: Option<super::ownership::Returned>,
     pub(super) calls: Vec<(Fun, Span)>,
     pub(super) symbolic_bound: Option<Expr>,
     pub(super) obligations: Vec<(Span, Expr, Expr)>,
@@ -23,6 +24,8 @@ pub(super) struct Checkpoint {
 }
 
 pub(super) struct Analysis<'a> {
+    pub(super) returned: &'a HashMap<Fun, super::ownership::Returned>,
+    pub(super) result_owner: Option<super::heap::Owner>,
     pub(super) budgets: &'a HashMap<Fun, u64>,
     pub(super) layouts: &'a Layouts,
     pub(super) functions: &'a HashMap<Fun, Function>,
@@ -121,16 +124,11 @@ impl Analysis<'_> {
                     let bytes = self.layouts.size(&binding.typ, &stmt.span)?;
                     self.storage.reserve(&stmt.span, bytes, "local slot")?;
                     locals.push((stmt.span.clone(), bytes, binding.name.clone()));
-                    if self.layouts.vector(&binding.typ) {
-                        let init = init.as_ref().ok_or_else(|| {
-                            unsupported(&stmt.span, "uninitialized vector owners")
-                        })?;
-                        self.initialize_vector(&binding.name, init, &binding.typ)?;
-                    } else if super::heap::boxed(&binding.typ) {
+                    if self.layouts.owner(&binding.typ) {
                         let init = init
                             .as_ref()
-                            .ok_or_else(|| unsupported(&stmt.span, "uninitialized box owners"))?;
-                        self.initialize_box(&binding.name, init, &binding.typ)?;
+                            .ok_or_else(|| unsupported(&stmt.span, "uninitialized heap owners"))?;
+                        self.initialize_owner(&binding.name, init, &binding.typ)?;
                     } else if let Some(init) = init {
                         self.initialize(init, &binding.typ)?;
                     }
@@ -151,11 +149,16 @@ impl Analysis<'_> {
         let released = entry_owners
             .iter()
             .filter(|(name, _)| !self.heap.owners.contains_key(*name))
-            .try_fold(0u64, |sum, (_, bytes)| sum.checked_add(*bytes))
+            .try_fold(0u64, |sum, (_, bytes)| sum.checked_add(bytes.bytes))
             .ok_or_else(|| unsupported(&expr.span, "storage totals exceeding u64"))?;
         assert_eq!(
             self.storage.live(),
-            entry.checked_sub(released).expect("balanced heap ownership")
+            entry
+                .checked_sub(released)
+                .and_then(
+                    |n| n.checked_add(self.result_owner.as_ref().map_or(0, |owner| owner.bytes))
+                )
+                .expect("balanced heap ownership")
         );
         self.storage.event(&expr.span, "exit lexical scope".into());
         Ok(())
@@ -164,6 +167,13 @@ impl Analysis<'_> {
     /// Evaluate source expressions. Only a standalone aggregate leaves a storage
     /// charge; scalar/reference operations introduce no implicit objects.
     pub(super) fn expr(&mut self, expr: &Expr) -> Result<u64, VirErr> {
+        if self.layouts.owner(&expr.typ) {
+            let bytes = self.layouts.size(&expr.typ, &expr.span)?;
+            self.storage.reserve(&expr.span, bytes, "standalone owner handle")?;
+            let owner = self.owner_expr(expr)?;
+            self.release_owner(owner, &expr.span);
+            return Ok(bytes);
+        }
         if let Some(bytes) = self.value_expr(expr)? {
             return Ok(bytes);
         }
@@ -361,6 +371,7 @@ pub(super) fn check(
     functions: &HashMap<Fun, Function>,
     layouts: &Layouts,
     budgets: &HashMap<Fun, u64>,
+    returned: &HashMap<Fun, super::ownership::Returned>,
 ) -> Result<Option<FunctionAnalysis>, VirErr> {
     let Some(&budget) = budgets.get(&function.x.name) else {
         if let Some(body) = &function.x.body {
@@ -392,6 +403,8 @@ pub(super) fn check(
         unsupported(&function.span, "functions without execution-mode information")
     })?;
     let mut analysis = Analysis {
+        returned,
+        result_owner: None,
         budgets,
         layouts,
         functions,
@@ -409,22 +422,21 @@ pub(super) fn check(
     }
     let result_size = layouts.return_size(&f.outer_ret.x.typ, &function.span)?;
     analysis.storage.reserve(&function.span, result_size, "function result destination")?;
-    for param in f.params.iter() {
+    for (index, param) in f.params.iter().enumerate() {
         analysis.var_modes.insert(param.x.name.clone(), param.x.mode);
         if param.x.mode == Mode::Exec {
-            if layouts.vector(&param.x.typ)
-                || matches!(&*param.x.typ, TypX::MutRef(t) | TypX::Decorate(TypDecoration::Ref, _, t) if layouts.vector(t))
+            if matches!(&*param.x.typ, TypX::MutRef(t) | TypX::Decorate(TypDecoration::Ref, _, t) if layouts.vector(t))
             {
                 return Err(unsupported(
                     &param.span,
                     "vector parameters; borrow a slice of the elements instead",
                 ));
             }
-            if super::heap::boxed(&param.x.typ) {
-                return Err(unsupported(
-                    &param.span,
-                    "owning box parameters; borrow the heap object instead",
-                ));
+            if layouts.owner(&param.x.typ) {
+                analysis.heap.owners.insert(
+                    param.x.name.clone(),
+                    super::heap::Owner { input: Some(index), ..Default::default() },
+                );
             }
             let bytes = layouts.size(&param.x.typ, &param.span)?;
             analysis.storage.reserve(&param.span, bytes, "parameter slot")?;
@@ -436,6 +448,7 @@ pub(super) fn check(
     } else {
         analysis.initialize_expr(body)?;
     }
+    let returned = super::ownership::summarize(function, analysis.result_owner.take())?;
     analysis.check_checkpoints()?;
     let report = if symbolic_bound.is_some() {
         analysis.storage.finish_conditional(&function.span)
@@ -449,6 +462,7 @@ pub(super) fn check(
     );
     Ok(Some(FunctionAnalysis {
         report,
+        returned,
         calls: analysis.calls,
         symbolic_bound,
         obligations: analysis.obligations,

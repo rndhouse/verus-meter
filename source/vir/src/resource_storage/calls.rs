@@ -48,9 +48,9 @@ impl Analysis<'_> {
         .ok();
         let constant = bound.as_ref().and_then(super::contracts::constant);
         let budget = constant.unwrap_or(envelope);
-        let caller_live = self.storage.live_expression(&expr.span);
         let mut parameters = 0u64;
-        for (arg, param) in args.iter().zip(callee.x.params.iter()) {
+        let mut transferred = vec![None; args.len()];
+        for (index, (arg, param)) in args.iter().zip(callee.x.params.iter()).enumerate() {
             if param.x.mode != Mode::Exec {
                 continue;
             }
@@ -71,6 +71,10 @@ impl Analysis<'_> {
             // Every argument initializes its parameter's storage. Earlier
             // parameters remain live during later argument evaluation.
             self.storage.reserve(&arg.span, bytes, "callee parameter slot")?;
+            if self.layouts.owner(&param.x.typ) {
+                transferred[index] = Some(self.owner_expr(arg)?);
+                continue;
+            }
             match &arg.x {
                 ExprX::TwoPhaseBorrowMut(place) => {
                     self.borrow(place, &arg.typ)?;
@@ -87,17 +91,20 @@ impl Analysis<'_> {
                 "callee storage budget is smaller than its parameter and result storage",
             )
         })?;
+        let caller_live = self.storage.live_expression(&expr.span);
         // Parameters are already included in the callee's declared peak.
         if let Some(bound) = bound.filter(|_| constant.is_none()) {
             let extra = super::contracts::subtract(
                 &expr.span,
                 bound.clone(),
-                super::contracts::literal(&expr.span, result_size),
+                super::contracts::literal(&expr.span, supplied),
             );
             let cost = super::contracts::add(&expr.span, caller_live, extra);
             if super::contracts::numeric_input(&bound) {
                 self.storage.symbolic_cost(&expr.span, cost);
                 self.storage.release(&expr.span, parameters, "callee return");
+                self.result_owner =
+                    self.complete_ownership_call(expr, callee, args, &mut transferred)?;
                 self.calls.push((target.clone(), expr.span.clone()));
                 return Ok(retained);
             }
@@ -110,6 +117,7 @@ impl Analysis<'_> {
             )?;
         }
         self.storage.release(&expr.span, budget - result_size, "callee return");
+        self.result_owner = self.complete_ownership_call(expr, callee, args, &mut transferred)?;
         self.calls.push((target.clone(), expr.span.clone()));
         Ok(retained)
     }

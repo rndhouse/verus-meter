@@ -217,7 +217,6 @@ pub(super) fn instantiate(
     let bound = function_bound(function, budgets, functions, layouts)?;
     // Validate only selected parameters for executable calls: unrelated arguments
     // still follow normal executable accounting, including borrows and aggregates.
-    let mut substitutions = HashMap::new();
     if validate_all {
         for (arg, param) in args.iter().zip(function.x.params.iter()) {
             if param.x.mode != Mode::Exec
@@ -229,14 +228,20 @@ pub(super) fn instantiate(
                     "mem_peak call queries currently require scalar executable arguments",
                 ));
             }
-            substitutions.insert(param.x.name.clone(), predicate(arg, allowed)?);
+            predicate(arg, allowed)?;
         }
     }
-    let bound = crate::ast_visitor::map_expr_visitor(&bound, &|expr| {
+    substitute(&bound, function, args, allowed)
+}
+
+pub(super) fn substitute(
+    expression: &Expr,
+    function: &Function,
+    args: &Exprs,
+    allowed: &HashSet<VarIdent>,
+) -> Result<Expr, VirErr> {
+    let bound = crate::ast_visitor::map_expr_visitor(expression, &|expr| {
         if let ExprX::Var(name) = &expr.x {
-            if let Some(value) = substitutions.get(name) {
-                return Ok(value.clone());
-            }
             if let Some((arg, _)) =
                 args.iter().zip(function.x.params.iter()).find(|(_, p)| p.x.name == *name)
             {

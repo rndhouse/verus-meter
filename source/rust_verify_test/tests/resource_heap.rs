@@ -244,10 +244,10 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] owning_parameters_rejected verus_code! {
+    #[test] owning_parameters_supported verus_code! {
         use vstd::prelude::*;
         fn f(data: Box<[u8; 16]>) mem_peak <= 100 {}
-    } => Err(err) => assert_vir_error_msg(err, "owning box parameters")
+    } => Ok(())
 }
 
 test_verify_one_file! {

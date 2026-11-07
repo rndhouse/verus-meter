@@ -31,10 +31,8 @@ impl Analysis<'_> {
     /// Evaluate into storage already charged to a local, field, or parameter.
     pub(super) fn initialize_expr(&mut self, expr: &Expr) -> Result<(), VirErr> {
         if self.layouts.owner(&expr.typ) {
-            return Err(unsupported(
-                &expr.span,
-                "owning values outside a local move, borrow, or explicit drop",
-            ));
+            self.result_owner = Some(self.owner_expr(expr)?);
+            return Ok(());
         }
         if self.value_into(expr)? {
             return Ok(());

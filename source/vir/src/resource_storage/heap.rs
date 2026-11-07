@@ -5,17 +5,25 @@
 //! from outside the region until path-sensitive ownership joins are supported.
 
 use super::analysis::Analysis;
-use super::model::{WORD_BYTES, unsupported};
+use super::model::unsupported;
 use crate::ast::*;
 use crate::messages::Span;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Default)]
 pub(super) struct Heap {
-    pub(super) owners: HashMap<VarIdent, u64>,
+    pub(super) owners: HashMap<VarIdent, Owner>,
     protected: HashSet<VarIdent>,
-    pub(super) capacities: HashMap<VarIdent, Expr>,
-    pub(super) dynamic: HashMap<VarIdent, u64>,
+}
+
+/// The allocation follows its owner; lexical handle slots are accounted separately.
+#[derive(Clone, Default)]
+pub(super) struct Owner {
+    pub(super) bytes: u64,
+    pub(super) dynamic: Option<u64>,
+    pub(super) capacity: Option<Expr>,
+    // Incoming backing remains charged by the caller throughout this invocation.
+    pub(super) input: Option<usize>,
 }
 
 impl Heap {
@@ -29,7 +37,7 @@ impl Heap {
         self.protected = old;
     }
 
-    pub(super) fn take(&mut self, name: &VarIdent, span: &Span) -> Result<u64, VirErr> {
+    pub(super) fn take(&mut self, name: &VarIdent, span: &Span) -> Result<Owner, VirErr> {
         if self.protected.contains(name) {
             return Err(unsupported(
                 span,
@@ -78,35 +86,62 @@ impl Analysis<'_> {
         Ok(Some(bytes))
     }
 
-    pub(super) fn initialize_box(
+    pub(super) fn initialize_owner(
         &mut self,
         name: &VarIdent,
         init: &Place,
         typ: &Typ,
     ) -> Result<(), VirErr> {
         if !crate::ast_util::types_equal(&init.typ, typ) {
-            return Err(unsupported(&init.span, "this box initializer coercion"));
+            return Err(unsupported(&init.span, "this owning initializer coercion"));
         }
-        let bytes = match &init.x {
-            PlaceX::Temporary(expr) => {
-                if let Some(bytes) = self.allocate_box(expr)? {
-                    bytes
-                } else if let ExprX::ReadPlace(place, _) = &expr.x {
-                    self.move_owner(place)?
-                } else {
-                    return Err(unsupported(
-                        &expr.span,
-                        "box initializers other than Box::new or a local move",
-                    ));
-                }
-            }
+        let owner = match &init.x {
+            PlaceX::Temporary(expr) => self.owner_expr(expr)?,
             _ => self.move_owner(init)?,
         };
-        self.heap.owners.insert(name.clone(), bytes);
+        self.heap.owners.insert(name.clone(), owner);
         Ok(())
     }
 
-    pub(super) fn move_owner(&mut self, place: &Place) -> Result<u64, VirErr> {
+    /// Evaluate into an existing handle destination and retain its allocation.
+    pub(super) fn owner_expr(&mut self, expr: &Expr) -> Result<Owner, VirErr> {
+        self.layouts.size(&expr.typ, &expr.span)?;
+        if let Some(bytes) = self.allocate_box(expr)? {
+            return Ok(Owner { bytes, ..Owner::default() });
+        }
+        if let Some(owner) = self.allocate_vector(expr)? {
+            return Ok(owner);
+        }
+        match &expr.x {
+            ExprX::ReadPlace(place, kind)
+                if !matches!(kind.preliminary_kind, ReadKind::ImmutBor) =>
+            {
+                if let PlaceX::Temporary(value) = &place.x {
+                    self.owner_expr(value)
+                } else {
+                    self.move_owner(place)
+                }
+            }
+            ExprX::Block(stmts, tail) => {
+                self.block(expr, stmts, tail, true)?;
+                self.result_owner.take().ok_or_else(|| {
+                    unsupported(&expr.span, "an owning block without an owned result")
+                })
+            }
+            ExprX::Call { .. } => {
+                self.call_expr(expr, true)?;
+                self.result_owner
+                    .take()
+                    .ok_or_else(|| unsupported(&expr.span, "a call without an ownership summary"))
+            }
+            _ => Err(unsupported(
+                &expr.span,
+                "owning results other than constructors, local moves, blocks, or direct calls",
+            )),
+        }
+    }
+
+    pub(super) fn move_owner(&mut self, place: &Place) -> Result<Owner, VirErr> {
         let PlaceX::Local(name) = &place.x else {
             return Err(unsupported(&place.span, "heap ownership outside a named local"));
         };
@@ -114,34 +149,28 @@ impl Analysis<'_> {
             return Err(unsupported(&place.span, "this heap move"));
         }
         self.access(place, &place.typ)?;
-        let bytes = self.heap.take(name, &place.span)?;
+        let owner = self.heap.take(name, &place.span)?;
         self.storage
             .event(&place.span, "transfer heap ownership without copying the object".into());
-        Ok(bytes)
+        Ok(owner)
+    }
+
+    pub(super) fn release_owner(&mut self, owner: Owner, span: &Span) {
+        if let Some(id) = owner.dynamic {
+            self.storage.release_dynamic(id);
+        }
+        self.storage.release(span, owner.bytes, "drop heap object");
     }
 
     pub(super) fn drop_owner(&mut self, name: &VarIdent, span: &Span) -> Result<(), VirErr> {
         if self.heap.owners.contains_key(name) {
-            let bytes = self.heap.take(name, span)?;
-            if let Some(id) = self.heap.dynamic.remove(name) {
-                self.storage.release_dynamic(id);
-            }
-            self.heap.capacities.remove(name);
-            self.storage.release(span, bytes, "drop heap object");
+            let owner = self.heap.take(name, span)?;
+            self.release_owner(owner, span);
         }
         Ok(())
     }
 
     pub(super) fn heap_expr(&mut self, expr: &Expr) -> Result<Option<u64>, VirErr> {
-        if intrinsic(expr, ResourceIntrinsic::BoxNew).is_some() {
-            self.storage.reserve(&expr.span, WORD_BYTES, "standalone box handle")?;
-            let bytes = self.allocate_box(expr)?.unwrap();
-            return Ok(Some(
-                bytes
-                    .checked_add(WORD_BYTES)
-                    .ok_or_else(|| unsupported(&expr.span, "storage totals exceeding u64"))?,
-            ));
-        }
         if let Some(args) = intrinsic(expr, ResourceIntrinsic::HeapDrop) {
             // Expression decorations can retain an implicit Box dereference.
             // The instantiated parameter type distinguishes drop(box) from
@@ -164,14 +193,8 @@ impl Analysis<'_> {
             if !crate::ast_util::types_equal(&types[0], &place.typ) {
                 return Err(unsupported(&expr.span, "this heap drop coercion"));
             }
-            let bytes = self.move_owner(place)?;
-            if let PlaceX::Local(name) = &place.x {
-                if let Some(id) = self.heap.dynamic.remove(name) {
-                    self.storage.release_dynamic(id);
-                }
-                self.heap.capacities.remove(name);
-            }
-            self.storage.release(&expr.span, bytes, "explicit drop of heap object");
+            let owner = self.move_owner(place)?;
+            self.release_owner(owner, &expr.span);
             return Ok(Some(0));
         }
         Ok(None)

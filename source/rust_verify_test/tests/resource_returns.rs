@@ -116,17 +116,7 @@ fn option_predicates() {
 }
 
 #[test]
-fn returning_heap_owners_remains_rejected() {
-    rejects(
-        "return_box",
-        "fn f() -> Box<u32> mem_peak <= 100 { Box::new(7) }",
-        "owning or reference return values",
-    );
-    rejects(
-        "return_vector",
-        "fn f() -> Vec<u32> mem_peak <= 100 { Vec::<u32>::with_capacity(1) }",
-        "owning or reference return values",
-    );
+fn owning_option_payload_remains_rejected() {
     rejects(
         "option_owner",
         "fn f() mem_peak <= 100 { let v: Option<Box<u32>> = None; }",
@@ -256,7 +246,7 @@ fn unsupported_return_shapes() {
     rejects(
         "reference_return",
         "fn f(x: &u32) -> &u32 mem_peak <= 100 { x }",
-        "owning or reference return values",
+        "reference return values",
     );
     rejects(
         "early_return",

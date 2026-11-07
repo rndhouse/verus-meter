@@ -49,8 +49,8 @@ impl Layouts {
     }
 
     pub(super) fn return_size(&self, typ: &Typ, span: &Span) -> Result<u64, VirErr> {
-        if self.owner(typ) || matches!(&**typ, TypX::Decorate(..) | TypX::MutRef(_)) {
-            return Err(unsupported(span, "owning or reference return values"));
+        if !self.owner(typ) && matches!(&**typ, TypX::Decorate(..) | TypX::MutRef(_)) {
+            return Err(unsupported(span, "reference return values"));
         }
         self.size(typ, span)
     }
