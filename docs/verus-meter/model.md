@@ -28,15 +28,16 @@ constants are not yet supported as budget operands.
 
 ## What counts
 
-The model measures declared storage using fixed sizes under a 64-bit policy.
+The model counts live values and owned allocations using a fixed 64-bit policy.
 Struct sizes add their fields without padding. `mem_size` follows these rules;
 it does not report Rust's physical type layout. Native integers use their width
 in bytes (`u8`/`i8`: 1, through `u128`/`i128`: 16); `usize` and `isize` both use 8.
 Integer arrays multiply that size by their length.
 
-- Parameters and result storage count throughout the call. Moving a parameter
-  or local into the result shares one charge with that result. Other local slots
-  count until their block ends, even after a move or last use.
+- Parameters count from entry; new locals and results count when produced.
+  A move transfers one charge, including across a call or into a result. A copy
+  creates another value. Dropping a value ends its charge; last use alone does not.
+  An explicitly uninitialized declaration reserves its declared storage.
 - Initializing or assigning a value uses its destination's storage. An explicitly
   constructed array, struct, or `Option` without a destination counts once while evaluated.
 - Reading, indexing, arithmetic, and borrowing introduce no implicit storage.
@@ -54,7 +55,8 @@ and [structs](../../examples/resource/memory/structs.rs).
 During a call, the caller keeps its own live storage and also needs room for the
 callee's declared budget. Argument evaluation must fit too. The callee's budget
 already includes its parameters and result. When the call initializes an existing
-destination, that destination and the callee's result share one charge.
+destination, the result shares that charge once produced. Earlier callee work
+still overlaps the destination.
 
 Using `mem_peak(helper)` lets a caller follow changes to the helper's contract.
 It uses the declared allowance even when the helper currently needs less, so the
@@ -71,17 +73,12 @@ Checked helpers can return native integers, `bool`, fixed integer arrays,
 concrete structs, and `Option<T>` with supported non-owning payloads. Results
 use tail expressions, including value-producing blocks, `if`, and `match`.
 
-A function's budget includes its result storage throughout the call. Returning
-directly into a caller's local uses that local's destination, without counting
-another result buffer. Moving a parameter or local into the result transfers its
-charge: handing back a `Box<T>` needs one handle allowance, and forwarding calls
-preserve that sharing. Copies and independently constructed results still need
-separate storage. This follows Rust's move/copy distinction, without assuming a
-compiler optimization.
+A result starts counting when it is produced, so it need not overlap earlier
+scratch work. Moving an existing value into the result transfers its charge,
+even when different branches return different values. Copies and fresh results
+still require separate storage. These are source-level rules, independent of
+compiler optimizations.
 
-Sharing requires a common source across the return paths; joins with different
-sources keep a conservative separate result charge. Other named locals remain
-charged until scope exit. Intermediate results stay charged until consumed.
 See [returned buffers](../../examples/resource/memory/returns.rs)
 and [retaining too many results](../../examples/resource/memory/expected-failures/returned_buffers.rs).
 
@@ -104,7 +101,7 @@ strategies are outside the model.
 
 Moving a box transfers its heap charge. Borrowing its contents
 keeps that charge with the owner. Explicit `drop` or the owner's scope exit releases
-the heap object; local variable slots still count until their own scopes end.
+both the handle and the heap object.
 See [heap buffer reuse](../../examples/resource/memory/heap.rs) and
 [two allocations that exceed their allowance](../../examples/resource/memory/expected-failures/heap_overlap.rs).
 
@@ -141,10 +138,14 @@ See [collecting selected numbers](../../examples/resource/memory/vectors.rs) and
 
 ## Passing heap ownership between helpers
 
-Helpers can consume or return a `Box<T>` or `Vec<T>`. The caller keeps incoming
-allocations charged throughout the call; the helper's budget covers its handles
-and any additional storage it needs. Consumed allocations stop counting when the
-call finishes. This remains conservative if a helper drops an input earlier.
+Helpers can consume or return a `Box<T>` or `Vec<T>`. The helper's budget covers
+its handles and additional storage. Checked lifetime summaries tell callers
+when an incoming allocation stops counting: dropping it before later scratch
+work avoids charging the two together. This also works through nested calls.
+
+The declared allowance still applies, including unused slack. Lifetime summaries
+come from the checked body, so changing when a helper drops an input can change
+its callers' memory requirements even if its numerical allowance stays the same.
 
 A returned allocation stays charged under its new owner. Forwarding an input
 preserves its existing charge; returning a fresh allocation adds that storage to
@@ -246,3 +247,7 @@ than silently receiving a zero cost.
 A failure identifies the declaration, call, or checkpoint that cannot fit its
 bound. The [array-copy example](../../examples/resource/memory/expected-failures/array_copy.rs)
 shows a complete program deliberately rejected for exceeding its allowance.
+
+The analysis merges identical live states at branch joins. It reports an explicit
+complexity error above 1,024 distinct ownership alternatives rather than allowing
+unbounded path expansion. Checked helpers can divide such a function into smaller parts.

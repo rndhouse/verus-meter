@@ -12,7 +12,7 @@ type Buffer = [u32; 4];
 
 // Provide one buffer within a one-buffer allowance.
 //
-// Its result shares the caller's destination throughout the call.
+// Its result becomes the caller's buffer without an extra copy.
 fn make_buffer() -> Buffer
     mem_peak <= mem_size(Buffer),
 {

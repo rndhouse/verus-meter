@@ -30,10 +30,10 @@ fn hand_back(buffer: Buffer) -> Buffer
 
 // Keep a single allocation alive through a change of owner.
 //
-// Both named local handles remain charged until scope exit. The handoff shares
-// its charge with the receiving destination; the heap buffer stays counted once.
+// Each handoff transfers the existing handle and allocation. Renaming the owner
+// does not create another buffer or require another handle allowance.
 fn main()
-    mem_peak <= 2 * mem_size(Buffer) + mem_size([u32; 4]),
+    mem_peak <= mem_peak(make_buffer),
 {
     let original = make_buffer();
     let received = hand_back(original);
