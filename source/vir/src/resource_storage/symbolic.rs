@@ -3,7 +3,7 @@
 //! Costs still come exclusively from the structural model. Immutable scalar
 //! inputs give the budget a stable entry-state meaning without a ghost counter.
 
-use super::accounting::StorageReport;
+use super::accounting::{CheckKind, Obligation, StorageReport};
 use super::layout::Layouts;
 use crate::ast::*;
 use crate::ast_util::*;
@@ -32,13 +32,25 @@ pub(super) fn function_bound(
     })
 }
 
-fn obligation(span: &Span, cost: &Expr, bound: &Expr) -> Stmt {
+fn obligation(check: &Obligation) -> Option<Stmt> {
+    let Obligation { span, cost, bound, kind } = check;
+    let message = match (super::contracts::constant(cost), super::contracts::constant(bound)) {
+        (Some(cost), Some(bound)) if cost <= bound => return None,
+        (Some(cost), Some(bound)) => match kind {
+            CheckKind::Function => format!("local storage budget exceeded: peak {cost} bytes exceeds budget {bound} bytes"),
+            CheckKind::Section => format!("section storage budget exceeded: peak {cost} bytes exceeds budget {bound} bytes"),
+            CheckKind::Checkpoint => format!("mem_peak assertion failed: peak {cost} bytes exceeds bound {bound} bytes"),
+        },
+        _ => "conditional memory budget exceeded: cannot prove the required model bytes fit the declared bound".into(),
+    };
     let assertion = SpannedTyped::new(span, &unit_typ(), ExprX::AssertAssume {
         is_assume: false,
         expr: mk_ineq(span, cost, bound, InequalityOp::Le),
-        msg: Some(error(span, "conditional memory budget exceeded: cannot prove the required model bytes fit the declared bound").secondary_span(&bound.span)),
+        msg: Some(if matches!(kind, CheckKind::Checkpoint) {
+            error(&bound.span, message).secondary_span(span)
+        } else { error(span, message).secondary_span(&bound.span) }),
     });
-    Spanned::new(span.clone(), StmtX::Expr(assertion))
+    Some(Spanned::new(span.clone(), StmtX::Expr(assertion)))
 }
 
 // Formula arithmetic is mathematical, but every evaluated sum/product must
@@ -88,38 +100,26 @@ fn range_checks(expr: &Expr, guard: &Expr, checks: &mut Vec<Stmt>) {
 pub(super) fn instrument(
     function: &Function,
     bound: Option<&Expr>,
-    obligations: &[(Span, Expr, Expr)],
+    obligations: &[Obligation],
     checks: &[(Span, Expr)],
-    report: &StorageReport,
-    return_parameter: Option<usize>,
-    layouts: &Layouts,
+    _report: &StorageReport,
+    _return_parameter: Option<usize>,
+    _layouts: &Layouts,
     fresh_span: &dyn Fn(&Span) -> Span,
 ) -> Result<Function, VirErr> {
     // Inserted proofs must have fresh AST identities. Reusing an executable
     // allocation's identity confuses resolution inference for owned values.
-    let mut sites: HashMap<u64, (Span, u64)> = HashMap::new();
+    let mut sites: HashMap<u64, (Span, Vec<Stmt>)> = HashMap::new();
+    let mut entry_checks = Vec::new();
     let mut parameter_spans: HashSet<_> = function.x.params.iter().map(|p| p.span.id).collect();
     parameter_spans.insert(function.span.id);
-    for (span, bytes) in report.reservations.iter().filter(|_| bound.is_some()) {
-        if parameter_spans.contains(&span.id) {
-            continue;
+    for check in obligations {
+        let Some(statement) = obligation(check) else { continue; };
+        if parameter_spans.contains(&check.span.id) {
+            entry_checks.push(statement);
+        } else {
+            sites.entry(check.span.id).or_insert_with(|| (check.span.clone(), Vec::new())).1.push(statement);
         }
-        let site = sites.entry(span.id).or_insert((span.clone(), 0));
-        site.1 = site.1.max(*bytes);
-    }
-    let mut sites: HashMap<u64, (Span, Vec<Stmt>)> = sites
-        .into_iter()
-        .map(|(id, (span, bytes))| {
-            let check = obligation(&span, &super::contracts::literal(&span, bytes), bound.unwrap());
-            (id, (span, vec![check]))
-        })
-        .collect();
-    for (span, cost, bound) in obligations {
-        sites
-            .entry(span.id)
-            .or_insert_with(|| (span.clone(), Vec::new()))
-            .1
-            .push(obligation(span, cost, bound));
     }
     for (span, condition) in checks {
         let check = SpannedTyped::new(
@@ -201,32 +201,16 @@ pub(super) fn instrument(
             return Err(error(span, "unsupported conditional memory reservation site"));
         }
     }
-    let mut parameters = layouts.return_size(&function.x.outer_ret.x.typ, &function.span)?;
-    for (index, p) in function.x.params.iter().enumerate() {
-        if p.x.mode != Mode::Exec || return_parameter == Some(index) {
-            continue;
-        }
-        parameters = parameters
-            .checked_add(layouts.size(&p.x.typ, &p.span)?)
-            .ok_or_else(|| error(&p.span, "parameter storage exceeds u64"))?;
-    }
-    let body = if let Some(bound) = bound {
-        let check = obligation(
-            &function.span,
-            &super::contracts::literal(&function.span, parameters),
-            bound,
-        );
-        let mut checks = vec![check];
+    if let Some(bound) = bound {
         if super::contracts::numeric_input(bound) {
-            range_checks(bound, &mk_bool(&function.span, true), &mut checks);
+            range_checks(bound, &mk_bool(&function.span, true), &mut entry_checks);
         }
-        let checks = checks
-            .iter()
+    }
+    let body = if entry_checks.is_empty() { body } else {
+        let checks = entry_checks.iter()
             .map(|check| crate::ast_visitor::map_stmt_spans(check, &mut |span| fresh_span(span)))
             .collect();
-        mk_block(&fresh_span(&body.span), checks, Some(body.clone()))
-    } else {
-        body
+        mk_block(&fresh_span(&body.span), checks, Some(body))
     };
     let mut result = function.clone();
     Arc::make_mut(&mut result).x.body = Some(body);

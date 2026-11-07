@@ -2,9 +2,19 @@
 
 use super::model::{MODEL_NAME, unsupported};
 use crate::ast::{Expr, VirErr, VirErrAs};
-use crate::messages::{Span, error, note};
+use crate::messages::{Span, note};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+
+#[derive(Clone, Copy)]
+pub(super) enum CheckKind { Function, Section, Checkpoint }
+
+pub(super) struct Obligation {
+    pub(super) span: Span,
+    pub(super) cost: Expr,
+    pub(super) bound: Expr,
+    pub(super) kind: CheckKind,
+}
 
 pub struct StorageEvent {
     pub span: Span,
@@ -135,11 +145,10 @@ impl Accounting {
             self.report.peak = u128::from(self.live);
             self.peak_span = span.clone();
         }
-        if self.dynamic.is_empty() {
-            self.report.reservations.push((span.clone(), self.live));
-        } else {
-            self.symbolic_cost(span, self.live_expression(span));
-        }
+        self.report.reservations.push((span.clone(), self.live));
+        // Even a fixed cost must be checked where it executes: assumptions and
+        // control flow may make this site unreachable.
+        self.symbolic_cost(span, self.live_expression(span));
         self.event(span, format!("reserve {bytes} bytes for {reason}"));
         Ok(())
     }
@@ -201,26 +210,9 @@ impl Accounting {
         mut self,
         scope_span: &Span,
         exit: &str,
-        diagnostic: &str,
+        _diagnostic: &str,
     ) -> Result<StorageReport, VirErr> {
         self.release(scope_span, self.live, exit);
-        let (peak_span, required_peak) = self
-            .report
-            .reservations
-            .iter()
-            .max_by_key(|(_, n)| n)
-            .map(|(span, n)| (span, *n))
-            .unwrap_or((scope_span, 0));
-        if required_peak > self.report.budget {
-            return Err(error(
-                peak_span,
-                format!(
-                    "{diagnostic}: peak {} bytes exceeds budget {} bytes ({MODEL_NAME})",
-                    required_peak, self.report.budget,
-                ),
-            )
-            .secondary_span(scope_span));
-        }
         Ok(self.report)
     }
 }

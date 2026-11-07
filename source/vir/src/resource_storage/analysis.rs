@@ -1,6 +1,6 @@
 //! Function entry and structural traversal of executable expressions/scopes.
 
-use super::accounting::{Accounting, Peak, StorageReport};
+use super::accounting::{Accounting, CheckKind, Obligation, Peak, StorageReport};
 use super::layout::Layouts;
 use super::model::{arithmetic, eligible, unit, unsupported};
 use crate::ast::*;
@@ -14,7 +14,7 @@ pub(super) struct FunctionAnalysis {
     pub(super) return_parameter: Option<usize>,
     pub(super) calls: Vec<(Fun, Span)>,
     pub(super) symbolic_bound: Option<Expr>,
-    pub(super) obligations: Vec<(Span, Expr, Expr)>,
+    pub(super) obligations: Vec<Obligation>,
     pub(super) checks: Vec<(Span, Expr)>,
 }
 
@@ -38,7 +38,7 @@ pub(super) struct Analysis<'a> {
     pub(super) checkpoints: Vec<Checkpoint>,
     pub(super) stable_scalars: HashSet<VarIdent>,
     pub(super) heap: super::heap::Heap,
-    pub(super) obligations: Vec<(Span, Expr, Expr)>,
+    pub(super) obligations: Vec<Obligation>,
     pub(super) checks: Vec<(Span, Expr)>,
 }
 
@@ -346,21 +346,12 @@ impl Analysis<'_> {
     pub(super) fn check_checkpoints(&mut self) -> Result<(), VirErr> {
         for checkpoint in &self.checkpoints {
             for (span, cost) in &checkpoint.peak.costs {
-                self.obligations.push((
-                    span.clone(),
-                    cost.clone(),
-                    super::contracts::literal(&checkpoint.span, checkpoint.budget),
-                ));
-            }
-            if checkpoint.peak.bytes > u128::from(checkpoint.budget) {
-                return Err(error(
-                    &checkpoint.span,
-                    format!(
-                        "mem_peak assertion failed: peak {} bytes exceeds bound {} bytes",
-                        checkpoint.peak.bytes, checkpoint.budget,
-                    ),
-                )
-                .secondary_span(&checkpoint.peak.span));
+                self.obligations.push(Obligation {
+                    span: span.clone(),
+                    cost: cost.clone(),
+                    bound: super::contracts::literal(&checkpoint.span, checkpoint.budget),
+                    kind: CheckKind::Checkpoint,
+                });
             }
         }
         Ok(())
@@ -474,7 +465,7 @@ pub(super) fn check(
     let bound =
         symbolic_bound.clone().unwrap_or_else(|| super::contracts::literal(&function.span, budget));
     analysis.obligations.extend(
-        report.call_costs.iter().map(|(span, cost)| (span.clone(), cost.clone(), bound.clone())),
+        report.call_costs.iter().map(|(span, cost)| Obligation { span: span.clone(), cost: cost.clone(), bound: bound.clone(), kind: CheckKind::Function }),
     );
     Ok(Some(FunctionAnalysis {
         report,

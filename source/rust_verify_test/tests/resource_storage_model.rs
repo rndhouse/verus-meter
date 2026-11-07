@@ -114,15 +114,15 @@ fn iteration_count_does_not_multiply_workspace() {
 }
 
 #[test]
-fn constant_conditions_do_not_prune_the_structural_bound() {
+fn unreachable_storage_does_not_contribute() {
     exact_peak(
-        "constant_conditions_do_not_prune_the_structural_bound",
+        "unreachable_storage_does_not_contribute",
         r#"
         fn f() mem_peak <= BUDGET {
             if false { let workspace = [0u32; 8]; }
         }
         "#,
-        32,
+        0,
     );
 }
 

@@ -1,6 +1,6 @@
 //! Independently checked section contracts, composed like function contracts.
 
-use super::accounting::Accounting;
+use super::accounting::{Accounting, CheckKind, Obligation};
 use super::analysis::Analysis;
 use super::budget::{BudgetExpr, evaluate_body_budget};
 use crate::ast::*;
@@ -34,7 +34,7 @@ impl Analysis<'_> {
             report
                 .call_costs
                 .iter()
-                .map(|(span, cost)| (span.clone(), cost.clone(), bound.clone())),
+                .map(|(span, cost)| Obligation { span: span.clone(), cost: cost.clone(), bound: bound.clone(), kind: CheckKind::Section }),
         );
         self.storage.event(
             contract_span,

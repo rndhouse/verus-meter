@@ -215,8 +215,9 @@ immutable scalar locals. Mutable selectors and expressions outside this subset
 retain the conservative maximum. Argument-free `mem_peak(helper)` always uses
 that maximum.
 
-Fixed budgets still account structurally for local storage, including unreachable
-branches. Input-dependent call allowances are proved at the call site.
+Fixed and conditional budgets both check costs on the paths that execute them.
+Preconditions, branch conditions, and loop invariants can prove an expensive path
+unreachable. Input-dependent call allowances are proved at the call site.
 
 Sections and checkpoints require fixed bounds; constant call queries work in both.
 Runtime allocation charges are also checked against these fixed bounds.
