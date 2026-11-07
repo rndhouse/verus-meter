@@ -1,7 +1,5 @@
-#![feature(rustc_private)]
-#[macro_use]
-mod common;
-use common::*;
+use crate::common::*;
+use crate::verify_one_file;
 
 fn verifies(name: &str, code: &str) {
     verify_one_file(name, format!("use vstd::prelude::*; verus! {{ {code} }}"), &[]).unwrap();
@@ -322,20 +320,22 @@ fn returns_compose_with_sections() {
 fn returned_value_examples() {
     verify_one_file(
         "returns_example",
-        include_str!("../../../examples/resource/memory/returns.rs").into(),
+        include_str!("../../../../../examples/resource/memory/returns.rs").into(),
         &["--compile"],
     )
     .unwrap();
     verify_one_file(
         "options_example",
-        include_str!("../../../examples/resource/memory/options.rs").into(),
+        include_str!("../../../../../examples/resource/memory/options.rs").into(),
         &["--compile"],
     )
     .unwrap();
     let err = verify_one_file(
         "returned_buffers",
-        include_str!("../../../examples/resource/memory/expected-failures/returned_buffers.rs")
-            .into(),
+        include_str!(
+            "../../../../../examples/resource/memory/expected-failures/returned_buffers.rs"
+        )
+        .into(),
         &[],
     )
     .unwrap_err();

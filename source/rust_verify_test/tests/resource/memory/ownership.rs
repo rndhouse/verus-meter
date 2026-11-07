@@ -1,7 +1,5 @@
-#![feature(rustc_private)]
-#[macro_use]
-mod common;
-use common::*;
+use crate::common::*;
+use crate::verify_one_file;
 
 fn verifies(name: &str, code: &str) {
     verify_one_file(name, format!("use vstd::prelude::*; verus! {{ {code} }}"), &[]).unwrap();
@@ -142,8 +140,11 @@ fn recursive_owner_return_rejected() {
 #[test]
 fn ownership_examples() {
     for (name, code) in [
-        ("ownership", include_str!("../../../examples/resource/memory/ownership.rs")),
-        ("vector_returns", include_str!("../../../examples/resource/memory/vector_returns.rs")),
+        ("ownership", include_str!("../../../../../examples/resource/memory/ownership.rs")),
+        (
+            "vector_returns",
+            include_str!("../../../../../examples/resource/memory/vector_returns.rs"),
+        ),
     ] {
         verify_one_file(name, code.into(), &["--compile"]).unwrap();
     }
@@ -152,7 +153,8 @@ fn ownership_examples() {
 fn returned_heap_failure_points_to_second_call() {
     let err = verify_one_file(
         "heap_returns",
-        include_str!("../../../examples/resource/memory/expected-failures/heap_returns.rs").into(),
+        include_str!("../../../../../examples/resource/memory/expected-failures/heap_returns.rs")
+            .into(),
         &[],
     )
     .unwrap_err();

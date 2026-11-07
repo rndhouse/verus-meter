@@ -1,9 +1,8 @@
-#![feature(rustc_private)]
-#[macro_use]
-mod common;
-use common::*;
+use crate::common::*;
+use crate::verify_one_file;
 
-const SORT_EXAMPLE: &str = include_str!("../../../examples/resource/memory/insertion_sort.rs");
+const SORT_EXAMPLE: &str =
+    include_str!("../../../../../examples/resource/memory/insertion_sort.rs");
 
 #[test]
 fn insertion_sort_functional_and_resource_contracts() {

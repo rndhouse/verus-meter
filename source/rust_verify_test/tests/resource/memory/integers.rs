@@ -1,7 +1,5 @@
-#![feature(rustc_private)]
-#[macro_use]
-mod common;
-use common::*;
+use crate::common::*;
+use crate::verify_one_file;
 
 fn source(code: &str) -> String {
     format!("use vstd::prelude::*; verus! {{ {code} }}")
@@ -196,7 +194,7 @@ test_verify_one_file! {
 fn integer_example() {
     verify_one_file(
         "integer_example",
-        include_str!("../../../examples/resource/memory/integers.rs").into(),
+        include_str!("../../../../../examples/resource/memory/integers.rs").into(),
         &["--compile"],
     )
     .unwrap();

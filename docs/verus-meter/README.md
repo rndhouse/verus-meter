@@ -34,3 +34,12 @@ checked functions.
 - [Examples](../../examples/resource/memory): complete programs with explanatory comments.
 - [A deliberate violation](../../examples/resource/memory/expected-failures/array_copy.rs):
   an extra copy that makes verification fail.
+
+The [memory verifier tests](../../source/rust_verify_test/tests/resource/memory)
+run together from `source/`:
+
+```sh
+cargo test --release -p rust_verify_test --test resource memory:: -- --test-threads=2
+```
+
+Replace `memory::` with a topic such as `memory::ownership::` to select one suite.

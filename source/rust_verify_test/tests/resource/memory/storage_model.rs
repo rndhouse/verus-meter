@@ -1,7 +1,5 @@
-#![feature(rustc_private)]
-#[macro_use]
-mod common;
-use common::*;
+use crate::common::*;
+use crate::verify_one_file;
 
 // Boundary checks for the remaining model policies, independent of the examples.
 fn exact_peak(name: &str, code: &str, peak: u64) {

@@ -1,7 +1,5 @@
-#![feature(rustc_private)]
-#[macro_use]
-mod common;
-use common::*;
+use crate::common::*;
+use crate::verify_one_file;
 
 test_verify_one_file! {
     #[test] runtime_section_bound_is_rejected verus_code! {
@@ -15,7 +13,7 @@ test_verify_one_file! {
 fn nested_workspace_example() {
     verify_one_file(
         "nested_workspace_example",
-        include_str!("../../../examples/resource/memory/sections.rs").into(),
+        include_str!("../../../../../examples/resource/memory/sections.rs").into(),
         &["--compile"],
     )
     .unwrap();

@@ -1,7 +1,5 @@
-#![feature(rustc_private)]
-#[macro_use]
-mod common;
-use common::*;
+use crate::common::*;
+use crate::verify_one_file;
 
 fn assert_memory_failure(err: TestErr, source: &str) {
     assert_eq!(err.errors.len(), 1);
@@ -91,7 +89,7 @@ test_verify_one_file! {
 fn conditional_workspace_example() {
     verify_one_file(
         "conditional_workspace_example",
-        include_str!("../../../examples/resource/memory/conditional.rs").into(),
+        include_str!("../../../../../examples/resource/memory/conditional.rs").into(),
         &["--compile"],
     )
     .unwrap();

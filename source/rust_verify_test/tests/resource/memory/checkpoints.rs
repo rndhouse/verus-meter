@@ -1,7 +1,5 @@
-#![feature(rustc_private)]
-#[macro_use]
-mod common;
-use common::*;
+use crate::common::*;
+use crate::verify_one_file;
 
 test_verify_one_file! {
     #[test] runtime_checkpoint_bound_is_rejected verus_code! {
@@ -76,7 +74,7 @@ test_verify_one_file! {
 fn checkpoint_example() {
     verify_one_file(
         "checkpoint_example",
-        include_str!("../../../examples/resource/memory/checkpoints.rs").into(),
+        include_str!("../../../../../examples/resource/memory/checkpoints.rs").into(),
         &[],
     )
     .unwrap();
@@ -86,7 +84,8 @@ fn checkpoint_example() {
 fn failing_checkpoint_points_to_assertion() {
     let err = verify_one_file(
         "failing_checkpoint_points_to_assertion",
-        include_str!("../../../examples/resource/memory/expected-failures/checkpoint.rs").into(),
+        include_str!("../../../../../examples/resource/memory/expected-failures/checkpoint.rs")
+            .into(),
         &[],
     )
     .unwrap_err();

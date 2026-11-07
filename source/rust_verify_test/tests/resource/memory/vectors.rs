@@ -1,7 +1,5 @@
-#![feature(rustc_private)]
-#[macro_use]
-mod common;
-use common::*;
+use crate::common::*;
+use crate::verify_one_file;
 
 test_verify_one_file! {
     #[test] fixed_capacity verus_code! {
@@ -365,13 +363,14 @@ fn quantities_require_stable_unsigned_inputs() {
 fn vector_examples() {
     verify_one_file(
         "vector_example",
-        include_str!("../../../examples/resource/memory/vectors.rs").into(),
+        include_str!("../../../../../examples/resource/memory/vectors.rs").into(),
         &["--compile"],
     )
     .unwrap();
     let err = verify_one_file(
         "vector_growth",
-        include_str!("../../../examples/resource/memory/expected-failures/vector_growth.rs").into(),
+        include_str!("../../../../../examples/resource/memory/expected-failures/vector_growth.rs")
+            .into(),
         &[],
     )
     .unwrap_err();

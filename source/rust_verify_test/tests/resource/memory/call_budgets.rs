@@ -1,7 +1,5 @@
-#![feature(rustc_private)]
-#[macro_use]
-mod common;
-use common::*;
+use crate::common::*;
+use crate::verify_one_file;
 
 fn assert_memory_failure(err: TestErr) {
     assert!(!err.errors.is_empty());
@@ -579,7 +577,7 @@ fn g() mem_peak <= 0 * mem_peak(f({ let b = false; b })) {}
 fn call_budgets_example() {
     verify_one_file(
         "call_budgets_example",
-        include_str!("../../../examples/resource/memory/call_budgets.rs").into(),
+        include_str!("../../../../../examples/resource/memory/call_budgets.rs").into(),
         &["--compile"],
     )
     .unwrap();

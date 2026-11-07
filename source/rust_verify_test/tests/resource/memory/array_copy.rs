@@ -1,7 +1,5 @@
-#![feature(rustc_private)]
-#[macro_use]
-mod common;
-use common::*;
+use crate::common::*;
+use crate::verify_one_file;
 
 #[test]
 fn array_copy_exceeds_the_declared_budget() {
@@ -9,7 +7,8 @@ fn array_copy_exceeds_the_declared_budget() {
     // coexist, but the contract allows room for just one array.
     let err = verify_one_file(
         "array_copy_exceeds_the_declared_budget",
-        include_str!("../../../examples/resource/memory/expected-failures/array_copy.rs").into(),
+        include_str!("../../../../../examples/resource/memory/expected-failures/array_copy.rs")
+            .into(),
         &[],
     )
     .unwrap_err();

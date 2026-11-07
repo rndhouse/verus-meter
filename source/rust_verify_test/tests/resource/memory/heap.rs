@@ -1,7 +1,5 @@
-#![feature(rustc_private)]
-#[macro_use]
-mod common;
-use common::*;
+use crate::common::*;
+use crate::verify_one_file;
 
 fn exact_peak(name: &str, code: &str, peak: u64) {
     let source = |budget: u64| {
@@ -328,7 +326,7 @@ test_verify_one_file! {
 fn heap_example() {
     verify_one_file(
         "heap_example",
-        include_str!("../../../examples/resource/memory/heap.rs").into(),
+        include_str!("../../../../../examples/resource/memory/heap.rs").into(),
         &["--compile"],
     )
     .unwrap();
@@ -338,7 +336,8 @@ fn heap_example() {
 fn overlapping_heap_example_fails_at_second_allocation() {
     let err = verify_one_file(
         "heap_overlap",
-        include_str!("../../../examples/resource/memory/expected-failures/heap_overlap.rs").into(),
+        include_str!("../../../../../examples/resource/memory/expected-failures/heap_overlap.rs")
+            .into(),
         &[],
     )
     .unwrap_err();
