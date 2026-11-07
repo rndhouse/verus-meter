@@ -95,7 +95,7 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] overflowing_conditional_envelope_remains_in_checkpoint verus_code! {
+    #[test] unselected_conditional_envelope_does_not_inflate_checkpoint verus_code! {
         fn helper(flag: bool)
             mem_peak <= if flag { 18446744073709551615 } else { 1 },
         {}
@@ -103,7 +103,7 @@ test_verify_one_file! {
             helper(flag);
             assert(current(mem_peak) <= 18446744073709551615);
         }
-    } => Err(err) => assert_vir_error_msg(err, "peak 18446744073709551616 bytes exceeds bound 18446744073709551615 bytes")
+    } => Ok(())
 }
 
 test_verify_one_file! {
@@ -400,14 +400,14 @@ fn f(flag: bool) mem_peak <= 100 { mem_peak <= 17 { helper(flag); } }
 }
 
 test_verify_one_file! {
-    #[test] symbolic_checkpoint_remains_conservative verus_code! {
+    #[test] symbolic_checkpoint_preserves_selected_allowance verus_code! {
 use vstd::prelude::*;
 fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
 fn f(flag: bool) requires !flag, mem_peak <= 18 { helper(flag); assert(current(mem_peak) <= 18); }
-    } => Err(err) => assert_vir_error_msg(err, "mem_peak assertion failed: peak 34 bytes exceeds bound 18 bytes")
+    } => Ok(())
 }
 
 test_verify_one_file! {

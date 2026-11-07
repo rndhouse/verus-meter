@@ -144,26 +144,10 @@ impl Accounting {
         Ok(())
     }
 
-    // The call is an instantaneous cost: its maximum belongs to the peak, not
-    // live storage. Keep that envelope for traces/checkpoints, including values
-    // above u64, while only the instantiated cost must fit the enclosing budget.
-    pub(super) fn record_call(&mut self, span: &Span, additional: u64, cost: Expr) {
-        let envelope = u128::from(self.live) + u128::from(additional);
-        if envelope > self.report.peak {
-            self.report.peak = envelope;
-            self.peak_span = span.clone();
-        }
-        if additional != 0 && !self.dynamic.is_empty() {
-            let envelope_cost = super::contracts::add(
-                span,
-                self.live_expression(span),
-                super::contracts::literal(span, additional),
-            );
-            self.peak_costs.push((span.clone(), envelope_cost));
-        }
-        self.report.call_costs.push((span.clone(), cost));
-        self.report.conditional = true;
-        self.event(span, format!("callee budget envelope: fixed peak {envelope} bytes"));
+    // Preserve the selected cost in checkpoint history as well as the function
+    // proof. An unselected contractual maximum is not an executed memory peak.
+    pub(super) fn record_call(&mut self, span: &Span, _additional: u64, cost: Expr) {
+        self.symbolic_cost(span, cost);
     }
 
     pub(super) fn live_expression(&self, span: &Span) -> Expr {

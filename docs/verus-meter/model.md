@@ -220,8 +220,8 @@ branches. Input-dependent call allowances are proved at the call site.
 
 Sections and checkpoints require fixed bounds; constant call queries work in both.
 Runtime allocation charges are also checked against these fixed bounds.
-After a call with a conditional selector, checkpoints conservatively include the
-callee's maximum allowance, even if a proof established a tighter bound at the call.
+Checkpoints preserve the argument-specific allowance used at each call, including
+the proofs that select it; an unselected larger allowance does not inflate the peak.
 
 ## Current scope
 
