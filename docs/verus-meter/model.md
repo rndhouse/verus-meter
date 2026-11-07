@@ -34,8 +34,9 @@ it does not report Rust's physical type layout. Native integers use their width
 in bytes (`u8`/`i8`: 1, through `u128`/`i128`: 16); `usize` and `isize` both use 8.
 Integer arrays multiply that size by their length.
 
-- Parameters and result storage count throughout the call. Locals count from their declaration
-  until their block ends, even after a move or last use.
+- Parameters and result storage count throughout the call. Moving a parameter
+  or local into the result shares one charge with that result. Other local slots
+  count until their block ends, even after a move or last use.
 - Initializing or assigning a value uses its destination's storage. An explicitly
   constructed array, struct, or `Option` without a destination counts once while evaluated.
 - Reading, indexing, arithmetic, and borrowing introduce no implicit storage.
@@ -72,9 +73,16 @@ use tail expressions, including value-producing blocks, `if`, and `match`.
 
 A function's budget includes its result storage throughout the call. Returning
 directly into a caller's local uses that local's destination, without counting
-another result buffer. Named locals inside the helper remain charged until scope
-exit, including when one supplies the returned value. Results used as intermediate
-values stay charged until consumed. See [returned buffers](../../examples/resource/memory/returns.rs)
+another result buffer. Moving a parameter or local into the result transfers its
+charge: handing back a `Box<T>` needs one handle allowance, and forwarding calls
+preserve that sharing. Copies and independently constructed results still need
+separate storage. This follows Rust's move/copy distinction, without assuming a
+compiler optimization.
+
+Sharing requires a common source across the return paths; joins with different
+sources keep a conservative separate result charge. Other named locals remain
+charged until scope exit. Intermediate results stay charged until consumed.
+See [returned buffers](../../examples/resource/memory/returns.rs)
 and [retaining too many results](../../examples/resource/memory/expected-failures/returned_buffers.rs).
 
 `Option<T>` costs one tag byte plus `mem_size(T)` in either variant, regardless
