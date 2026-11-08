@@ -583,44 +583,15 @@ impl<'tcx> Query<'tcx> {
             return Err(err);
         }
 
-        // All local signatures and mode-checked bodies are now available. Check
-        // fixed storage bounds, generate conditional proof obligations, and reject
-        // call cycles before export or resolution inference rewrites temporary places.
-        let global_allocator = pre_crate
-            .ctxt
-            .tcx
-            .lang_items()
-            .global_alloc_ty()
-            .map(|id| vir::ast::Dt::Path(pre_crate.ctxt.def_id_to_vir_path(id)));
-        let reports = vir::resource::memory::check_crate(
-            &mut cratex.functions,
-            &cratex.datatypes,
+        // Check all mode-checked local bodies before export or resolution inference.
+        let memory_diagnostics = crate::resource::memory::pipeline::check(
+            &pre_crate.ctxt,
+            &mut cratex,
             &resource_modes,
-            global_allocator,
-            pre_crate
-                .ctxt
-                .tcx
-                .get_diagnostic_item(rustc_span::Symbol::intern("Vec"))
-                .map(|id| vir::ast::Dt::Path(pre_crate.ctxt.def_id_to_vir_path(id))),
-            pre_crate
-                .ctxt
-                .tcx
-                .get_diagnostic_item(rustc_span::Symbol::intern("Option"))
-                .map(|id| vir::ast::Dt::Path(pre_crate.ctxt.def_id_to_vir_path(id))),
-            &|span| {
-                let mut span = span.clone();
-                span.id = pre_crate.ctxt.spans.get_next_span_id();
-                span
-            },
+            self.args.trace,
         )
         .map_err(|e| self.emit_error(e))?;
-        vir::resource::memory::erase_annotations(&mut cratex.functions)
-            .map_err(|e| self.emit_error(e))?;
-        if self.args.trace {
-            for (span, report) in reports {
-                self.emit_diags(report.diagnostics(&span));
-            }
-        }
+        self.emit_diags(memory_diagnostics);
 
         let other_vir_crates = self.get_other_vir_crates()?;
         vir::traits::set_krate_dyn_compatibility(&other_vir_crates, &mut cratex);

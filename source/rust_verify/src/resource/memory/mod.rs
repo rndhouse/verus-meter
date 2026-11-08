@@ -2,3 +2,4 @@
 
 pub(crate) mod budget;
 pub(crate) mod intrinsics;
+pub(crate) mod pipeline;

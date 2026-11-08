@@ -35,9 +35,8 @@ pub struct MemoryReport {
     pub peak: u128,
     pub budget: u64,
     pub events: Vec<MemoryEvent>,
-    pub(super) reservations: Vec<(Span, u64)>,
     pub(super) conditional: bool,
-    pub(super) call_costs: Vec<(Span, Expr)>,
+    pub(super) cost_points: Vec<(Span, Expr)>,
 }
 
 impl MemoryReport {
@@ -133,9 +132,8 @@ impl Accounting {
                 peak: 0,
                 budget,
                 events: Vec::new(),
-                reservations: Vec::new(),
                 conditional: false,
-                call_costs: Vec::new(),
+                cost_points: Vec::new(),
             },
         }
     }
@@ -240,7 +238,6 @@ impl Accounting {
             self.report.peak = live.into();
             self.peak_span = span.clone();
         }
-        self.report.reservations.push((span.clone(), live));
         let paths = self.paths.clone();
         for path in paths {
             let cost = Self::path_expression(&path, span);
@@ -294,7 +291,7 @@ impl Accounting {
         }
     }
     fn record_point(&mut self, span: &Span, cost: Expr, path: &Live) {
-        self.report.call_costs.push((span.clone(), cost.clone()));
+        self.report.cost_points.push((span.clone(), cost.clone()));
         self.peak_costs.push((span.clone(), cost.clone()));
         self.points.push(Point {
             cost,

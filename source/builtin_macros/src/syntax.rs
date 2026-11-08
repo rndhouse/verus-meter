@@ -274,58 +274,10 @@ macro_rules! quote_spanned_builtin {
     }
 }
 
-/// Lower the small, parser-validated resource language without rewriting its
-/// arithmetic into spec operators. Argument borrows exist only in erased headers.
-fn lower_memory_budget(expr: &verus_syn::ResourceExpr, parameters: &[Ident]) -> TokenStream {
-    use verus_syn::ResourceExpr;
-    match expr {
-        ResourceExpr::If(_, condition, _, then_budget, _, _, else_budget) => {
-            let then_budget = lower_memory_budget(then_budget, parameters);
-            let else_budget = lower_memory_budget(else_budget, parameters);
-            quote_spanned!(expr.span() => (if #condition { #then_budget } else { #else_budget }))
-        }
-        ResourceExpr::Literal(n) => n.to_token_stream(),
-        ResourceExpr::Quantity(n) => {
-            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_quantity(&#n))
-        }
-        ResourceExpr::Paren(_, e) => {
-            let e = lower_memory_budget(e, parameters);
-            quote!((#e))
-        }
-        ResourceExpr::Add(left, op, right) => {
-            let left = lower_memory_budget(left, parameters);
-            let right = lower_memory_budget(right, parameters);
-            quote_spanned!(expr.span() => (#left #op #right))
-        }
-        ResourceExpr::Mul(left, op, right) => {
-            let left = lower_memory_budget(left, parameters);
-            let right = lower_memory_budget(right, parameters);
-            quote_spanned!(expr.span() => (#left #op #right))
-        }
-        ResourceExpr::MemSize(_, _, typ) => {
-            // A simple name matching a parameter denotes its type. All other
-            // arguments are Rust types, resolved by rustc (including aliases).
-            let mut unwrapped = typ;
-            while let Type::Paren(paren) = unwrapped {
-                unwrapped = &paren.elem;
-            }
-            if let Type::Path(path) = unwrapped {
-                if path.qself.is_none()
-                    && path.path.get_ident().is_some_and(|id| parameters.contains(id))
-                {
-                    return quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_mem_size_value(&#path));
-                }
-            }
-            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_mem_size_type::<#typ>())
-        }
-        ResourceExpr::MemPeakCall(_, _, call) => {
-            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_mem_peak_call(#call))
-        }
-        ResourceExpr::MemPeak(_, _, function) => {
-            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_mem_peak(&#function))
-        }
-    }
-}
+// Keep memory transforms in a child module so they can extend this visitor
+// without exposing its internal state to unrelated macro code.
+#[path = "resource/mod.rs"]
+mod resource;
 
 macro_rules! parse_quote_spanned_builtin {
     ($b:ident, $span:expr => $($tt:tt)*) => {
@@ -1329,7 +1281,7 @@ impl Visitor {
                 .into_iter()
                 .filter_map(|token| if let TokenTree::Ident(id) = token { Some(id) } else { None })
                 .collect();
-            let budget = lower_memory_budget(&budget, &parameters);
+            let budget = resource::memory::lower_budget(&budget, &parameters);
             spec_stmts.push(Stmt::Expr(
                 Expr::Verbatim(quote_spanned_builtin!(verus_builtin, token.span() =>
                     #verus_builtin::memory_budget(#budget)
@@ -3435,52 +3387,13 @@ impl Visitor {
         true
     }
 
-    /// Keep the executable block intact while attaching erased section metadata.
-    fn handle_resource_block(&mut self, expr: &mut Expr) -> bool {
-        if !matches!(expr, Expr::ResourceBlock(_)) {
-            return false;
-        }
-        let Expr::ResourceBlock(mut section) = take_expr(expr) else { unreachable!() };
-        let span = section.contract.token.span;
-        let attrs = section.attrs;
-        if self.inside_ghost > 0 || self.inside_external_code > 0 || self.inside_const {
-            *expr = quote_verbatim!(span, attrs => ::core::compile_error!("mem_peak sections require a verified exec function body"));
-            return true;
-        }
-        // Resolve mem_size names before visiting declarations in the section.
-        let budget = lower_memory_budget(&section.contract.budget, &self.resource_bindings);
-        self.visit_block_mut(&mut section.block);
-        if !self.erase_ghost.erase() {
-            section.block.stmts.insert(0, Stmt::Expr(
-                Expr::Verbatim(quote_spanned_builtin!(builtin, span => #builtin::resource_section(#budget))),
-                Some(Semi { spans: [span] }),
-            ));
-        }
-        *expr = Expr::Block(ExprBlock { attrs, label: None, block: section.block });
-        true
-    }
-
     /// Handle `assert` statements. Automatically wrap them in a proof block.
     fn handle_assert(&mut self, expr: &mut Expr) -> bool {
         let Expr::Assert(_) = expr else {
             return false;
         };
 
-        if matches!(expr, Expr::Assert(a) if matches!(a.expr, verus_syn::AssertExpr::MemPeak(..))) {
-            let Expr::Assert(assert) = take_expr(expr) else { unreachable!() };
-            let verus_syn::AssertExpr::MemPeak(_, _, resource) = assert.expr else {
-                unreachable!()
-            };
-            let span = assert.assert_token.span;
-            let attrs = assert.attrs;
-            *expr = if self.inside_ghost > 0 || self.inside_external_code > 0 || self.inside_const {
-                quote_verbatim!(span, attrs => ::core::compile_error!("mem_peak checkpoints require a verified exec function body"))
-            } else if self.erase_ghost.erase() {
-                quote_verbatim!(span, attrs => ())
-            } else {
-                let budget = lower_memory_budget(&resource.budget, &self.resource_bindings);
-                quote_verbatim!(builtin, span, attrs => #builtin::resource_assert_mem_peak(#budget))
-            };
+        if self.handle_memory_checkpoint(expr) {
             return true;
         }
 

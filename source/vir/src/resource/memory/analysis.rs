@@ -490,7 +490,7 @@ pub(super) fn check(
     };
     let bound =
         symbolic_bound.clone().unwrap_or_else(|| super::contracts::literal(&function.span, budget));
-    analysis.obligations.extend(report.call_costs.iter().map(|(span, cost)| Obligation {
+    analysis.obligations.extend(report.cost_points.iter().map(|(span, cost)| Obligation {
         span: span.clone(),
         cost: cost.clone(),
         bound: bound.clone(),

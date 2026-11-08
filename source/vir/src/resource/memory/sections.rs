@@ -31,7 +31,7 @@ impl Analysis<'_> {
         self.checkpoints = parent_checkpoints;
         let report = section.finish_section(contract_span);
         let bound = super::contracts::literal(contract_span, budget);
-        self.obligations.extend(report.call_costs.iter().map(|(span, cost)| Obligation {
+        self.obligations.extend(report.cost_points.iter().map(|(span, cost)| Obligation {
             span: span.clone(),
             cost: cost.clone(),
             bound: bound.clone(),
