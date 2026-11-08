@@ -54,7 +54,7 @@ mod pre_header;
 pub mod profiler;
 mod query;
 mod resolve_traits;
-mod resource_budget;
+mod resource;
 pub mod reveal_hide;
 mod rust_intrinsics_to_vir;
 pub mod rust_to_vir;

@@ -353,20 +353,7 @@ fn fn_call_or_assoc_const_to_vir<'tcx>(
     let typ_args = mk_typ_args(bctx, node_substs, f, expr.span)?;
     let impl_paths = get_impl_paths(bctx, f, node_substs, None, const_var, expr.span)?;
     let call_target_attrs = vir::ast::CallTargetAttrs {
-        resource_intrinsic: if let Some(intrinsic) =
-            crate::verus_items::resource_option_intrinsic(tcx, f)
-        {
-            Some(intrinsic)
-        } else if let Some(intrinsic) = crate::verus_items::resource_vec_intrinsic(tcx, f) {
-            Some(intrinsic)
-        } else if rust_item == Some(RustItem::BoxNew) {
-            Some(vir::ast::ResourceIntrinsic::BoxNew)
-        } else if tcx.is_diagnostic_item(rustc_span::Symbol::intern("mem_drop"), f) {
-            Some(vir::ast::ResourceIntrinsic::HeapDrop)
-        } else {
-            (tcx.lang_items().slice_len_fn() == Some(f))
-                .then_some(vir::ast::ResourceIntrinsic::SliceLen)
-        },
+        resource_intrinsic: crate::resource::memory::intrinsics::call(tcx, f, rust_item),
         autospec: autospec_usage,
         assume_external_allowed,
         const_var,
@@ -922,7 +909,7 @@ fn verus_item_to_vir<'tcx, 'a>(
                 SpecItem::LocalStorageBudget => {
                     record_spec_fn_pure_args_only(bctx, expr);
                     internal_err_unless!(args_len == 1, expr.span, "expected one resource budget");
-                    let budget = crate::resource_budget::lower(bctx, args[0])?;
+                    let budget = crate::resource::memory::budget::lower(bctx, args[0])?;
                     mk_expr(ExprX::Header(Arc::new(HeaderExprX::LocalStorageBudget(budget))))
                 }
                 SpecItem::ResourceSection => {
@@ -934,7 +921,7 @@ fn verus_item_to_vir<'tcx, 'a>(
                     }
                     record_spec_fn_pure_args_only(bctx, expr);
                     internal_err_unless!(args_len == 1, expr.span, "expected one section budget");
-                    let budget = crate::resource_budget::lower(bctx, args[0])?;
+                    let budget = crate::resource::memory::budget::lower(bctx, args[0])?;
                     mk_expr(ExprX::ResourceSection(budget))
                 }
                 SpecItem::ResourceAssertMemPeak => {
@@ -950,7 +937,7 @@ fn verus_item_to_vir<'tcx, 'a>(
                         expr.span,
                         "expected one checkpoint budget"
                     );
-                    let budget = crate::resource_budget::lower(bctx, args[0])?;
+                    let budget = crate::resource::memory::budget::lower(bctx, args[0])?;
                     mk_expr(ExprX::ResourceAssert(budget))
                 }
                 SpecItem::ResourceQuantity
