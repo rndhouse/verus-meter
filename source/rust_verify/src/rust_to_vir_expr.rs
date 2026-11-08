@@ -394,6 +394,7 @@ pub(crate) fn add_param_decls<'tcx>(
         atomic_update,
         unwind_spec,
         resource_budget: _,
+        resource_capacities: _,
         invariant_except_break: _,
         invariant: _,
         atomic_call_loop: _,

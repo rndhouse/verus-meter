@@ -1,6 +1,7 @@
 //! Memory contract verification, grouped by the behavior being checked.
 
 mod array_copy;
+mod borrowed_vectors;
 mod call_budgets;
 mod checkpoints;
 mod conditional;

@@ -5,7 +5,7 @@ use crate::messages::{Span, error};
 use serde::{Deserialize, Serialize};
 use vir_macros::ToDebugSNode;
 
-pub(super) const MODEL_NAME: &str = "source-values-v7-64";
+pub(super) const MODEL_NAME: &str = "source-values-v8-64";
 pub(super) const WORD_BYTES: u64 = 8;
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToDebugSNode)]
@@ -39,6 +39,11 @@ pub enum ResourceContract {
     /// Value lifetimes, move transfers, and checked call lifetime profiles.
     SourceValuesV7Expr {
         budget: super::BudgetExpr,
+    },
+    /// Borrowed vector helpers with explicit minimum model reservations.
+    SourceValuesV8Expr {
+        budget: super::BudgetExpr,
+        capacities: Vec<(VarIdent, super::BudgetExpr)>,
     },
 }
 

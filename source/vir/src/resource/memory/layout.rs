@@ -31,6 +31,17 @@ impl Layouts {
         matches!(&**typ, TypX::Datatype(name, _, _) if Some(name) == self.vector.as_ref())
     }
 
+    pub(super) fn borrowed_vector<'t>(&self, typ: &'t Typ) -> Option<&'t Typ> {
+        match &**typ {
+            TypX::MutRef(inner) | TypX::Decorate(TypDecoration::Ref, None, inner)
+                if self.vector(inner) =>
+            {
+                Some(inner)
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn option(&self, typ: &Typ) -> bool {
         matches!(&**typ, TypX::Datatype(name, _, _) if Some(name) == self.option.as_ref())
     }

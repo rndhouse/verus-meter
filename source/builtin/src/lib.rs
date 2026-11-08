@@ -155,6 +155,14 @@ pub fn memory_budget(_bytes: u64) {
     unimplemented!();
 }
 
+// Minimum reserved element count required by a checked vector helper.
+#[cfg(verus_keep_ghost)]
+#[rustc_diagnostic_item = "verus::verus_builtin::memory_capacity"]
+#[verifier::proof]
+pub fn memory_capacity<T: ?Sized>(_vector: &T, _elements: u64) {
+    unimplemented!();
+}
+
 // Internal markers emitted only inside resource headers. The verifier reads
 // their types/identities without evaluating, copying, or moving the argument.
 #[cfg(verus_keep_ghost)]

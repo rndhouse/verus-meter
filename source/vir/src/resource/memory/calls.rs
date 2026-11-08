@@ -29,6 +29,23 @@ impl Analysis<'_> {
         {
             return Err(unsupported(&expr.span, "this call signature"));
         }
+        let capacity_contracts = super::contracts::capacities(callee)?;
+        for (arg, param) in args.iter().zip(callee.x.params.iter()) {
+            if let Some(required) = capacity_contracts.get(&param.x.name) {
+                let (name, _, _) = self.vector_receiver(arg)?;
+                let available = self.vector_capacity(&name).ok_or_else(|| unsupported(
+                    &arg.span, "passing a vector without a capacity contract to a capacity-constrained helper"))?;
+                let required =
+                    super::contracts::substitute(required, callee, args, &self.stable_scalars)?;
+                self.checks.push((
+                    expr.span.clone(),
+                    crate::ast_util::mk_ineq(&expr.span, &required, &available, InequalityOp::Le),
+                ));
+            } else if self.layouts.borrowed_vector(&param.x.typ).is_some() {
+                // Also validate provenance when the callee needs no capacity.
+                self.vector_receiver(arg)?;
+            }
+        }
         let result_size = self.layouts.return_size(&expr.typ, &expr.span)?;
         let bound = super::contracts::instantiate(
             callee,

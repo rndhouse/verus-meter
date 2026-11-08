@@ -460,21 +460,47 @@ pub(super) fn check(
         return Err(unsupported(&function.span, "ghost or tracked return values"));
     }
     layouts.return_size(&f.outer_ret.x.typ, &function.span)?;
+    let capacities = super::contracts::capacities(function)?;
+    for name in capacities.keys() {
+        let Some(param) = f.params.iter().find(|p| p.x.name == *name) else {
+            return Err(unsupported(
+                &function.span,
+                "memory_capacity on anything other than a parameter",
+            ));
+        };
+        if param.x.mode != Mode::Exec
+            || (!layouts.vector(&param.x.typ) && layouts.borrowed_vector(&param.x.typ).is_none())
+        {
+            return Err(unsupported(
+                &param.span,
+                "memory_capacity on anything other than an executable vector parameter",
+            ));
+        }
+    }
     for (index, param) in f.params.iter().enumerate() {
         analysis.var_modes.insert(param.x.name.clone(), param.x.mode);
         if param.x.mode == Mode::Exec {
-            if matches!(&*param.x.typ, TypX::MutRef(t) | TypX::Decorate(TypDecoration::Ref, _, t) if layouts.vector(t))
-            {
-                return Err(unsupported(
-                    &param.span,
-                    "vector parameters; borrow a slice of the elements instead",
-                ));
+            if layouts.borrowed_vector(&param.x.typ).is_some() {
+                if param.x.user_mut {
+                    return Err(unsupported(
+                        &param.span,
+                        "mutable bindings for borrowed vector parameters",
+                    ));
+                }
+                analysis
+                    .heap
+                    .borrowed
+                    .insert(param.x.name.clone(), capacities.get(&param.x.name).cloned());
             }
             if layouts.owner(&param.x.typ) {
                 analysis.storage.add_input(index);
                 analysis.heap.owners.insert(
                     param.x.name.clone(),
-                    super::heap::Owner { input: Some(index), ..Default::default() },
+                    super::heap::Owner {
+                        input: Some(index),
+                        capacity: capacities.get(&param.x.name).cloned(),
+                        ..Default::default()
+                    },
                 );
             }
             let mut value = analysis.fresh_value(&param.span, &param.x.typ)?;

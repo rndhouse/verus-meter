@@ -20,7 +20,7 @@ pub(super) fn function_bound(
 ) -> Result<Option<Expr>, VirErr> {
     let bound = super::contracts::function_bound(function, budgets, functions, layouts)?;
     let declared_conditional = match &function.x.attrs.resource_contract {
-        Some(super::model::ResourceContract::SourceValuesV7Expr { budget }) => {
+        Some(super::model::ResourceContract::SourceValuesV8Expr { budget, .. }) => {
             super::budget::is_conditional(budget)
         }
         _ => false,
@@ -141,7 +141,7 @@ pub(super) fn instrument(
                 expr: condition.clone(),
                 msg: Some(error(
                     span,
-                    "vector capacity exceeded: cannot prove this push fits the reserved capacity",
+                    "vector capacity exceeded: cannot prove the operation fits the reserved capacity",
                 )),
             },
         );

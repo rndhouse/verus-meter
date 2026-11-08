@@ -2571,9 +2571,15 @@ pub(crate) fn finish_function<'tcx>(
     };
 
     let mut attrs = (*attrs).clone();
-    attrs.resource_contract = header
-        .resource_budget
-        .map(|budget| vir::resource::memory::ResourceContract::SourceValuesV7Expr { budget });
+    if header.resource_budget.is_none() && !header.resource_capacities.is_empty() {
+        return err_span(sig.span, "memory_capacity requires a mem_peak contract");
+    }
+    attrs.resource_contract = header.resource_budget.map(|budget| {
+        vir::resource::memory::ResourceContract::SourceValuesV8Expr {
+            budget,
+            capacities: header.resource_capacities,
+        }
+    });
     let attrs = Arc::new(attrs);
     let mut functionx = FunctionX {
         name,

@@ -111,6 +111,7 @@ pub(crate) enum SpecItem {
     InvMaskSet,
     Atomically,
     MemoryBudget,
+    MemoryCapacity,
     ResourceMemSizeValue,
     ResourceQuantity,
     ResourceMemSizeType,
@@ -535,6 +536,7 @@ fn verus_items_map() -> Vec<(&'static str, VerusItem)> {
         ("verus::verus_builtin::inv_mask_list_compl",     VerusItem::Spec(SpecItem::InvMaskListCompl)),
         ("verus::verus_builtin::inv_mask_set",            VerusItem::Spec(SpecItem::InvMaskSet)),
 
+        ("verus::verus_builtin::memory_capacity", VerusItem::Spec(SpecItem::MemoryCapacity)),
         ("verus::verus_builtin::memory_budget", VerusItem::Spec(SpecItem::MemoryBudget)),
         ("verus::verus_builtin::resource_mem_size_value", VerusItem::Spec(SpecItem::ResourceMemSizeValue)),
         ("verus::verus_builtin::resource_quantity", VerusItem::Spec(SpecItem::ResourceQuantity)),

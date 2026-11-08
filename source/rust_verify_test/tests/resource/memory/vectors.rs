@@ -313,7 +313,7 @@ fn reject_unsupported_vector_operations() {
         "reassignment of heap owners",
     );
     verifies("vector_owner_param", "fn f(v: Vec<u32>) mem_peak <= 24 {}");
-    rejects("vector_ref_param", "fn f(v: &mut Vec<u32>) mem_peak <= 100 {}", "vector parameters");
+    verifies("vector_ref_param", "fn f(v: &mut Vec<u32>) mem_peak <= 8 {}");
     rejects(
         "vector_nested_owner",
         "fn f() mem_peak <= 100 { let v = Vec::<Box<u32>>::with_capacity(1); }",

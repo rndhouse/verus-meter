@@ -56,10 +56,11 @@ impl Analysis<'_> {
         Ok(Some(owner))
     }
 
-    fn vector_receiver(&mut self, arg: &Expr) -> Result<(VarIdent, Typ), VirErr> {
+    /// Resolve a direct owner or a reborrow of a named vector parameter. Local
+    /// reference aliases need their own transfer model and remain unsupported.
+    pub(super) fn vector_receiver(&mut self, arg: &Expr) -> Result<(VarIdent, Typ, Expr), VirErr> {
         let place = match &arg.x {
-            ExprX::BorrowMut(p) | ExprX::TwoPhaseBorrowMut(p) => p,
-            ExprX::ReadPlace(p, kind) if matches!(kind.preliminary_kind, ReadKind::ImmutBor) => p,
+            ExprX::BorrowMut(p) | ExprX::TwoPhaseBorrowMut(p) | ExprX::ReadPlace(p, _) => p,
             _ => {
                 return Err(unsupported(
                     &arg.span,
@@ -67,14 +68,52 @@ impl Analysis<'_> {
                 ));
             }
         };
-        let PlaceX::Local(name) = &place.x else {
-            return Err(unsupported(&arg.span, "vector operations outside a named local owner"));
-        };
-        if !self.layouts.vector(&place.typ) {
-            return Err(unsupported(&arg.span, "this vector receiver"));
+        if let PlaceX::Temporary(value) = &place.x {
+            if self.layouts.borrowed_vector(&place.typ).is_some() {
+                return self.vector_receiver(value);
+            }
         }
-        self.access(place, &place.typ)?;
-        Ok((name.clone(), place.typ.clone()))
+        let (name, typ) = match &place.x {
+            PlaceX::Local(name) if self.layouts.vector(&place.typ) => (name, &place.typ),
+            PlaceX::Local(name) if self.heap.borrowed.contains_key(name) => (
+                name,
+                self.layouts
+                    .borrowed_vector(&place.typ)
+                    .ok_or_else(|| unsupported(&arg.span, "this vector receiver"))?,
+            ),
+            PlaceX::DerefMut(base) => {
+                let PlaceX::Local(name) = &base.x else {
+                    return Err(unsupported(
+                        &arg.span,
+                        "vector reborrows outside a named parameter",
+                    ));
+                };
+                if !self.heap.borrowed.contains_key(name) || !self.layouts.vector(&place.typ) {
+                    return Err(unsupported(
+                        &arg.span,
+                        "vector reborrows outside a named parameter",
+                    ));
+                }
+                (name, &place.typ)
+            }
+            _ => {
+                return Err(unsupported(
+                    &arg.span,
+                    "vector operations outside a named owner or parameter",
+                ));
+            }
+        };
+        self.access(place, typ)?;
+        let vector = place_to_spec_expr(place);
+        Ok((name.clone(), typ.clone(), vector))
+    }
+
+    pub(super) fn vector_capacity(&self, name: &VarIdent) -> Option<Expr> {
+        self.heap
+            .owners
+            .get(name)
+            .and_then(|o| o.capacity.clone())
+            .or_else(|| self.heap.borrowed.get(name).cloned().flatten())
     }
 
     pub(super) fn vector_expr(&mut self, expr: &Expr) -> Result<Option<u64>, VirErr> {
@@ -106,27 +145,17 @@ impl Analysis<'_> {
         let Some(receiver) = args.first() else {
             return Err(unsupported(&expr.span, "this vector operation"));
         };
-        let (name, typ) = self.vector_receiver(receiver)?;
+        let (name, typ, vector) = self.vector_receiver(receiver)?;
         if attrs.resource_intrinsic == Some(ResourceIntrinsic::VecPush) {
             if args.len() != 2 {
                 return Err(unsupported(&expr.span, "this vector push"));
             }
-            let capacity = self
-                .heap
-                .owners
-                .get(&name)
-                .and_then(|owner| owner.capacity.as_ref())
-                .ok_or_else(|| {
-                    unsupported(
-                        &expr.span,
-                        "push into an incoming vector without a capacity contract",
-                    )
-                })?
-                .clone();
+            let capacity = self.vector_capacity(&name).ok_or_else(|| {
+                unsupported(&expr.span, "push into an incoming vector without a capacity contract")
+            })?;
             let TypX::Datatype(_, types, _) = &*typ else { unreachable!() };
             // Read the current logical length at the push, so ordinary branches,
             // preconditions and loop invariants can establish available room.
-            let vector = SpannedTyped::new(&expr.span, &typ, ExprX::Var(name));
             let len = SpannedTyped::new(
                 &expr.span,
                 &Arc::new(TypX::Int(IntRange::USize)),

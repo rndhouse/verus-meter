@@ -14,6 +14,8 @@ use std::collections::{HashMap, HashSet};
 #[derive(Clone, Default)]
 pub(super) struct Heap {
     pub(super) owners: HashMap<VarIdent, Owner>,
+    // Borrowed parameters retain no allocation charge, only a minimum reservation.
+    pub(super) borrowed: HashMap<VarIdent, Option<Expr>>,
     protected: HashSet<VarIdent>,
 }
 

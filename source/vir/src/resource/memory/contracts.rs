@@ -199,7 +199,8 @@ pub(super) fn function_bound(
     functions: &HashMap<Fun, Function>,
     layouts: &Layouts,
 ) -> Result<Expr, VirErr> {
-    let Some(ResourceContract::SourceValuesV7Expr { budget }) = &function.x.attrs.resource_contract
+    let Some(ResourceContract::SourceValuesV8Expr { budget, .. }) =
+        &function.x.attrs.resource_contract
     else {
         return Err(error(&function.span, "mem_peak requires a declared resource contract"));
     };
@@ -363,4 +364,31 @@ pub(super) fn minimum(span: &Span, a: Expr, b: Expr) -> Expr {
         &int_typ(),
         ExprX::If(mk_ineq(span, &a, &b, InequalityOp::Le), a, Some(b)),
     )
+}
+
+/// Validate minimum element reservations independently of workspace budgets.
+pub(super) fn capacities(function: &Function) -> Result<HashMap<VarIdent, Expr>, VirErr> {
+    let mut result = HashMap::new();
+    let Some(ResourceContract::SourceValuesV8Expr { capacities, .. }) =
+        &function.x.attrs.resource_contract
+    else {
+        return Ok(result);
+    };
+    let allowed = inputs(function);
+    for (parameter, capacity) in capacities {
+        let value = match &capacity.x {
+            BudgetExprX::Literal(n) => literal(&capacity.span, *n),
+            BudgetExprX::Quantity(value) => quantity(value, &allowed)?,
+            _ => {
+                return Err(error(
+                    &capacity.span,
+                    "memory_capacity expects a literal or immutable unsigned input parameter",
+                ));
+            }
+        };
+        if result.insert(parameter.clone(), value).is_some() {
+            return Err(error(&capacity.span, "duplicate memory_capacity for a parameter"));
+        }
+    }
+    Ok(result)
 }

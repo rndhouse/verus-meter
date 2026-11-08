@@ -129,12 +129,56 @@ runtime formulas; an argument-free query requires a fixed envelope.
 
 The subset supports fixed-size non-owning elements, pushes, pops returning `Option<T>`,
 length, indexing, and borrowing elements through `as_slice` or `as_mut_slice`.
-Helpers can take ownership or borrow slices of the elements. Pushes into an incoming
-vector need a capacity contract, which is not yet supported. Borrowed vector
-parameters, growth, and reassignment also remain unsupported.
+Helpers can take ownership, borrow the vector, or borrow slices of its elements.
+Pushes into an incoming vector require a capacity contract (see below). Growth
+and reassignment remain unsupported.
 
 See [collecting selected numbers](../../examples/resource/memory/vectors.rs) and
 [a push that requires growth](../../examples/resource/memory/expected-failures/vector_growth.rs).
+
+## Borrowed vector helpers and capacity contracts
+
+Helpers can accept `&Vec<T>` or `&mut Vec<T>`. The reference costs 8 model bytes;
+the caller retains the vector handle and backing allocation charges. Reading,
+indexing, slice access, and popping do not require a capacity contract.
+
+A helper that pushes declares a minimum reserved element count:
+
+```rust
+#[verifier::memory_capacity(values, capacity)]
+fn append(values: &mut Vec<u32>, capacity: usize, value: u32)
+    requires old(values).len() < capacity,
+    ensures final(values)@ == old(values)@.push(value),
+    mem_peak <= mem_size(values) + mem_size(capacity) + mem_size(value),
+{
+    values.push(value);
+}
+```
+
+The attribute is a resource precondition: `values` must have at least `capacity`
+reserved model elements. Its amount can be a nonnegative `u64` literal or an
+immutable unsigned input parameter of at most 64 bits. It counts elements, not
+bytes, and describes the model's reservation rather than Rust's physical
+allocator capacity. It requires a `mem_peak` contract and is erased with the
+other verification annotations.
+
+At each call in checked code, the verifier proves the actual reservation meets
+the requested minimum. Within the helper, each push must prove its current length
+is below that minimum, using ordinary preconditions, branches, or loop invariants.
+Resource preconditions do not introduce logical assumptions about vector contents.
+As with other resource guarantees, callers outside checked code must satisfy these
+resource preconditions to rely on the memory bound.
+
+Direct reborrows through nested helpers preserve the reservation. A helper asking
+for a smaller minimum does not reduce the caller's reservation. Ordinary `ensures`
+clauses describe updated length and contents so subsequent callers can use them.
+The attribute also supports incoming owned vectors; returning an input preserves
+its original reservation at the caller.
+
+For now, borrowed vector bindings must be immutable (the vector itself may be
+mutably borrowed), and arguments must resolve to named owners or borrowed
+parameters. Local reference aliases, replacement through `&mut Vec<T>`, and
+reallocation remain unsupported. See [vector helpers](../../examples/resource/memory/vector_helpers.rs).
 
 ## Passing heap ownership between helpers
 

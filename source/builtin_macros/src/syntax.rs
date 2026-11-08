@@ -1321,7 +1321,7 @@ impl Visitor {
         is_trait: bool,
         is_impl_fn: bool,
     ) -> Vec<Stmt> {
-        let mut stmts: Vec<Stmt> = Vec::new();
+        let mut stmts = self.take_capacity_contracts(attrs, sig);
         let mut unwrap_ghost_tracked: Vec<Stmt> = Vec::new();
 
         let has_body = semi_token.is_none();
