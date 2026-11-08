@@ -1,4 +1,4 @@
-//! Structural storage bounds on mode-checked, unsimplified VIR.
+//! Memory budgets on mode-checked, unsimplified VIR.
 //!
 //! `model` defines the policy; `layout` checks concrete type sizes and struct
 //! fields; `budget` resolves declared budget expressions and their dependencies;
@@ -8,7 +8,8 @@
 //! for checked helpers; `vectors` checks reserved capacity. `contracts`
 //! specializes declared formulas with stable scalar arguments. `symbolic`
 //! turns conditional contracts into ordinary Verus proof obligations.
-//! `returns` shares moved result charges; `values` handles Option arms;
+//! `returns` orders callees before callers; `lifetime` tracks moved values;
+//! `values` handles Option arms;
 //! `construction` accounts for aggregate initialization; `analysis`, `places`,
 //! and `calls` interpret other supported executable VIR. This
 //! module validates the crate-wide call graph before publishing any reports.

@@ -856,7 +856,7 @@ pub enum HeaderExprX {
     /// function calls `f`
     ExtraDependency(Fun),
     /// Compile-time budget for the experimental lexical-slots-v5-64 resource model.
-    LocalStorageBudget(crate::resource_storage::BudgetExpr),
+    LocalStorageBudget(crate::resource::memory::BudgetExpr),
     /// This function will not unwind
     NoUnwind,
     /// This function will not unwind if the given condition holds (function of arguments)
@@ -1363,9 +1363,9 @@ pub enum ExprX {
     /// Turn tracked &A into &B where B has A as a field
     ShrRefStructWrap(Expr, Expr, Typ, Typ, Ident, Ident),
     /// Checked and erased before export; never a logical assumption.
-    ResourceAssert(crate::resource_storage::BudgetExpr),
+    ResourceAssert(crate::resource::memory::BudgetExpr),
     /// First statement of an independently budgeted lexical block.
-    ResourceSection(crate::resource_storage::BudgetExpr),
+    ResourceSection(crate::resource::memory::BudgetExpr),
 }
 
 #[derive(Debug, Serialize, Deserialize, ToDebugSNode, Clone, Copy)]
@@ -1607,7 +1607,7 @@ pub type FunctionAttrs = Arc<FunctionAttrsX>;
 #[derive(Debug, Serialize, Deserialize, ToDebugSNode, Default, Clone)]
 pub struct FunctionAttrsX {
     /// Experimental source-storage contract; its variant identifies the cost model.
-    pub resource_contract: Option<crate::resource_storage::ResourceContract>,
+    pub resource_contract: Option<crate::resource::memory::ResourceContract>,
     /// Erasure and lifetime checking based on ghost blocks
     pub uses_ghost_blocks: bool,
     /// Inline spec function for SMT

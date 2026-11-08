@@ -592,7 +592,7 @@ impl<'tcx> Query<'tcx> {
             .lang_items()
             .global_alloc_ty()
             .map(|id| vir::ast::Dt::Path(pre_crate.ctxt.def_id_to_vir_path(id)));
-        let reports = vir::resource_storage::check_crate(
+        let reports = vir::resource::memory::check_crate(
             &mut cratex.functions,
             &cratex.datatypes,
             &resource_modes,
@@ -614,7 +614,7 @@ impl<'tcx> Query<'tcx> {
             },
         )
         .map_err(|e| self.emit_error(e))?;
-        vir::resource_storage::erase_annotations(&mut cratex.functions)
+        vir::resource::memory::erase_annotations(&mut cratex.functions)
             .map_err(|e| self.emit_error(e))?;
         if self.args.trace {
             for (span, report) in reports {

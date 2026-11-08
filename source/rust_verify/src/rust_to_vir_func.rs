@@ -2573,7 +2573,7 @@ pub(crate) fn finish_function<'tcx>(
     let mut attrs = (*attrs).clone();
     attrs.resource_contract = header
         .resource_budget
-        .map(|budget| vir::resource_storage::ResourceContract::SourceValuesV7Expr { budget });
+        .map(|budget| vir::resource::memory::ResourceContract::SourceValuesV7Expr { budget });
     let attrs = Arc::new(attrs);
     let mut functionx = FunctionX {
         name,

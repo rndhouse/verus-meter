@@ -84,7 +84,7 @@ pub struct Header {
     pub atomic_update: Option<Expr>,
     pub atomic_call_loop: bool,
     pub unwind_spec: Option<UnwindSpec>,
-    pub resource_budget: Option<crate::resource_storage::BudgetExpr>,
+    pub resource_budget: Option<crate::resource::memory::BudgetExpr>,
     pub extra_dependencies: Vec<Fun>,
     pub open_visibility_qualifier: Option<Visibility>,
 }

@@ -8,7 +8,7 @@ use rustc_hir::{BinOpKind, Expr, ExprKind};
 use rustc_middle::ty::TyKind;
 use vir::ast::VirErr;
 use vir::def::Spanned;
-use vir::resource_storage::{BudgetExpr, BudgetExprX};
+use vir::resource::memory::{BudgetExpr, BudgetExprX};
 
 pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<BudgetExpr, VirErr> {
     let node = match expr.kind {

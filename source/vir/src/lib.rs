@@ -64,7 +64,7 @@ pub mod recursive_types;
 pub mod resolution_inference;
 mod resolution_types;
 mod resolve_axioms;
-pub mod resource_storage;
+pub mod resource;
 pub mod safe_api;
 mod scc;
 pub mod sst;
