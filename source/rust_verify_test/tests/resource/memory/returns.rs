@@ -1,17 +1,6 @@
+use super::support::{rejects, verifies};
 use crate::common::*;
 use crate::verify_one_file;
-
-fn verifies(name: &str, code: &str) {
-    verify_one_file(name, format!("use vstd::prelude::*; verus! {{ {code} }}"), &[]).unwrap();
-}
-fn rejects(name: &str, code: &str, message: &str) {
-    let err = verify_one_file(name, format!("use vstd::prelude::*; verus! {{ {code} }}"), &[])
-        .unwrap_err();
-    assert!(
-        !err.errors.is_empty() && err.errors.iter().all(|e| e.message.contains(message)),
-        "expected {message}: {err:?}"
-    );
-}
 
 #[test]
 fn scalar_return() {

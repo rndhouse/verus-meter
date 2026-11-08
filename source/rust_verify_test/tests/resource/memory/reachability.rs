@@ -1,8 +1,6 @@
+use super::support::verifies;
 use crate::verify_one_file;
 
-fn verifies(name: &str, body: &str) {
-    verify_one_file(name, format!("use vstd::prelude::*; verus! {{ {body} }}"), &[]).unwrap();
-}
 #[test]
 fn fixed_budget_uses_preconditions() {
     verifies(

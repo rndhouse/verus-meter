@@ -1,17 +1,6 @@
+use super::support::exact_peak;
 use crate::common::*;
 use crate::verify_one_file;
-
-fn exact_peak(name: &str, code: &str, peak: u64) {
-    let source = |budget: u64| {
-        format!(
-            "use vstd::prelude::*; verus! {{ {} }}",
-            code.replace("BUDGET", &budget.to_string())
-        )
-    };
-    verify_one_file(name, source(peak), &[]).unwrap();
-    let err = verify_one_file(&format!("{name}_short"), source(peak - 1), &[]).unwrap_err();
-    assert_vir_error_msg(err, &format!("peak {peak} bytes exceeds budget {} bytes", peak - 1));
-}
 
 #[test]
 fn local_box() {

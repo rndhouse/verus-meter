@@ -1,9 +1,6 @@
+use super::support::verifies;
 use crate::common::*;
 use crate::verify_one_file;
-
-fn verifies(name: &str, code: &str) {
-    verify_one_file(name, format!("use vstd::prelude::*; verus! {{ {code} }}"), &[]).unwrap();
-}
 
 #[test]
 fn result_does_not_overlap_earlier_scratch() {

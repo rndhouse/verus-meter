@@ -1,3 +1,4 @@
+use super::support::{rejects, verifies};
 use crate::common::*;
 use crate::verify_one_file;
 
@@ -149,18 +150,6 @@ test_verify_one_file! {
             assert(current(mem_peak) <= 47);
         }
     } => Err(err) => assert_vir_error_msg(err, "conditional memory budget exceeded")
-}
-
-fn verifies(name: &str, body: &str) {
-    verify_one_file(name, format!("use vstd::prelude::*; verus! {{ {body} }}"), &[]).unwrap();
-}
-fn rejects(name: &str, body: &str, message: &str) {
-    let err = verify_one_file(name, format!("use vstd::prelude::*; verus! {{ {body} }}"), &[])
-        .unwrap_err();
-    assert!(
-        !err.errors.is_empty() && err.errors.iter().all(|e| e.message.contains(message)),
-        "expected {message}: {err:?}"
-    );
 }
 
 #[test]

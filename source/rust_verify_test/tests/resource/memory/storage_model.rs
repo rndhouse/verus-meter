@@ -1,20 +1,6 @@
-use crate::common::*;
-use crate::verify_one_file;
+use super::support::exact_peak;
 
 // Boundary checks for the remaining model policies, independent of the examples.
-fn exact_peak(name: &str, code: &str, peak: u64) {
-    let source = |budget| {
-        format!(
-            "use vstd::prelude::*; verus! {{ {} }}",
-            code.replace("BUDGET", &format!("{budget}u64")),
-        )
-    };
-    verify_one_file(name, source(peak), &[]).unwrap();
-    if peak > 0 {
-        let err = verify_one_file(&format!("{name}_short"), source(peak - 1), &[]).unwrap_err();
-        assert_vir_error_msg(err, &format!("peak {peak} bytes exceeds budget {} bytes", peak - 1));
-    }
-}
 
 #[test]
 fn fixed_size_policy_and_unpadded_fields() {

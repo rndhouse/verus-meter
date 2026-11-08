@@ -1,22 +1,9 @@
+use super::support::exact_peak;
 use crate::common::*;
 use crate::verify_one_file;
 
-fn source(code: &str) -> String {
-    format!("use vstd::prelude::*; verus! {{ {code} }}")
-}
-
 // Each width is exercised at its exact allowance and one byte below it. This
 // checks actual charges independently of mem_size's use in contract formulas.
-fn exact_peak(name: &str, code: &str, peak: u64) {
-    verify_one_file(name, source(&code.replace("BUDGET", &peak.to_string())), &[]).unwrap();
-    let error = verify_one_file(
-        &format!("{name}_short"),
-        source(&code.replace("BUDGET", &(peak - 1).to_string())),
-        &[],
-    )
-    .unwrap_err();
-    assert_vir_error_msg(error, &format!("peak {peak} bytes exceeds budget {} bytes", peak - 1));
-}
 
 fn integer_cases(typ: &str, bytes: u64) {
     let code = format!(
