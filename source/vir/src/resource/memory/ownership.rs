@@ -53,9 +53,14 @@ impl Analysis<'_> {
         transferred: &mut [Option<Owner>],
     ) -> Result<Option<Owner>, VirErr> {
         let summary = if self.layouts.owner(&expr.typ) {
-            Some(self.returned.get(&callee.x.name).ok_or_else(|| {
-                unsupported(&expr.span, "a call without a checked ownership summary")
-            })?)
+            Some(
+                self.summaries
+                    .get(&callee.x.name)
+                    .and_then(|summary| summary.returned.as_ref())
+                    .ok_or_else(|| {
+                        unsupported(&expr.span, "a call without a checked ownership summary")
+                    })?,
+            )
         } else {
             None
         };

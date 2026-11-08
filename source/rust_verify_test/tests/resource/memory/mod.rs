@@ -3,6 +3,7 @@
 mod array_copy;
 mod borrowed_vectors;
 mod call_budgets;
+mod call_graph;
 mod checkpoints;
 mod conditional;
 mod heap;

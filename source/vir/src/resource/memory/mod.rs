@@ -8,7 +8,9 @@
 //! for checked helpers; `vectors` checks reserved capacity. `contracts`
 //! specializes declared formulas with stable scalar arguments. `symbolic`
 //! turns conditional contracts into ordinary Verus proof obligations.
-//! `call_graph` orders callees before callers; `lifetime` tracks moved values;
+//! `call_graph` discovers executable edges, orders callees, and rejects cycles;
+//! `execution` shares proof/spec boundaries with accounting; `summary` keeps
+//! checked call facts together; `lifetime` tracks moved values;
 //! `values` handles Option arms;
 //! `construction` accounts for aggregate initialization; `analysis`, `places`,
 //! and `calls` interpret other supported executable VIR. This
@@ -24,6 +26,7 @@ mod call_graph;
 mod calls;
 mod construction;
 mod contracts;
+mod execution;
 mod footprint;
 mod heap;
 mod layout;
@@ -32,6 +35,7 @@ mod model;
 mod ownership;
 mod places;
 mod sections;
+mod summary;
 mod symbolic;
 mod values;
 mod vectors;
@@ -44,7 +48,6 @@ pub use model::ResourceContract;
 use crate::ast::*;
 use crate::messages::Span;
 use crate::resolution_inference::ResolutionInfo;
-use model::unsupported;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -64,46 +67,21 @@ pub fn check_crate(
     let function_map = functions.iter().map(|f| (f.x.name.clone(), f.clone())).collect();
     let layouts = layout::Layouts::new(datatypes, global_allocator, vector, option);
     let budgets = budget::resolve(functions, &function_map, &layouts)?;
-    let mut graph = crate::scc::Graph::new();
+    let graph = call_graph::CallGraph::new(&function_map, modes)?;
     let mut reports = Vec::new();
-    let mut returned = HashMap::new();
-    let mut return_parameters = HashMap::new();
-    let mut profiles = HashMap::new();
-    for function in &call_graph::order(functions)? {
+    let mut summaries = HashMap::new();
+    for function in &graph.order(functions)? {
         if let Some(checked) = analysis::check(
             function,
             modes.get(&function.x.name).map(Arc::as_ref),
             &function_map,
             &layouts,
             &budgets,
-            &returned,
-            &return_parameters,
-            &profiles,
+            &summaries,
         )? {
-            if let Some(summary) = &checked.returned {
-                returned.insert(function.x.name.clone(), summary.clone());
-            }
-            if let Some(index) = checked.return_parameter {
-                return_parameters.insert(function.x.name.clone(), index);
-            }
-            profiles.insert(function.x.name.clone(), checked.profiles.clone());
-            graph.add_node(function.x.name.clone());
-            for (callee, _) in &checked.calls {
-                graph.add_edge(function.x.name.clone(), callee.clone());
-            }
+            summaries.insert(function.x.name.clone(), checked.summary.clone());
+            graph.validate_calls(function, &checked.calls)?;
             reports.push((function.clone(), checked));
-        }
-    }
-    graph.compute_sccs();
-    for (function, checked) in &reports {
-        for (callee, span) in &checked.calls {
-            if graph.in_same_scc(&function.x.name, callee) {
-                return Err(unsupported(
-                    span,
-                    "recursive memory contracts (including mutual recursion)",
-                )
-                .secondary_span(&function.span));
-            }
         }
     }
     // Materialize ordinary proof obligations only after checking all structural

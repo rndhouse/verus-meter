@@ -11,9 +11,7 @@ use std::collections::{HashMap, HashSet};
 
 pub(super) struct FunctionAnalysis {
     pub(super) report: MemoryReport,
-    pub(super) returned: Option<super::ownership::Returned>,
-    pub(super) return_parameter: Option<usize>,
-    pub(super) profiles: Vec<super::lifetime::Profile>,
+    pub(super) summary: super::summary::FunctionSummary,
     pub(super) calls: Vec<(Fun, Span)>,
     pub(super) symbolic_bound: Option<Expr>,
     pub(super) obligations: Vec<Obligation>,
@@ -29,9 +27,7 @@ pub(super) struct Checkpoint {
 pub(super) struct Analysis<'a> {
     pub(super) slots: HashMap<VarIdent, super::lifetime::Value>,
     pub(super) produced: Option<super::lifetime::Value>,
-    pub(super) profiles: &'a HashMap<Fun, Vec<super::lifetime::Profile>>,
-    pub(super) return_parameters: &'a HashMap<Fun, usize>,
-    pub(super) returned: &'a HashMap<Fun, super::ownership::Returned>,
+    pub(super) summaries: &'a HashMap<Fun, super::summary::FunctionSummary>,
     pub(super) result_owner: Option<super::heap::Owner>,
     pub(super) budgets: &'a HashMap<Fun, u64>,
     pub(super) layouts: &'a Layouts,
@@ -109,8 +105,8 @@ impl Analysis<'_> {
         for stmt in stmts.iter() {
             match &stmt.x {
                 StmtX::Expr(e) => self.discard(e)?,
-                StmtX::Decl { pattern, mode, init, els, .. } => {
-                    if matches!(mode, Some((Mode::Spec | Mode::Proof, _))) {
+                StmtX::Decl { pattern, init, els, .. } => {
+                    if super::execution::ignored_statement(stmt, &self.var_modes) {
                         continue;
                     }
                     let PatternX::Var(binding) = &pattern.x else {
@@ -220,14 +216,7 @@ impl Analysis<'_> {
                 });
                 return Ok(0);
             }
-            ExprX::Ghost { alloc_wrapper: false, .. }
-            | ExprX::AssertAssume { .. }
-            | ExprX::AssertBy { .. }
-            | ExprX::AssertQuery { .. }
-            | ExprX::AssertCompute(..)
-            | ExprX::Fuel(..)
-            | ExprX::RevealString(..)
-            | ExprX::RevealByteString(..) => return Ok(0),
+            _ if super::execution::ignored_expression(expr) => return Ok(0),
             ExprX::Block(stmts, tail) => {
                 self.block(expr, stmts, tail, false)?;
                 return Ok(0);
@@ -404,9 +393,7 @@ pub(super) fn check(
     functions: &HashMap<Fun, Function>,
     layouts: &Layouts,
     budgets: &HashMap<Fun, u64>,
-    returned: &HashMap<Fun, super::ownership::Returned>,
-    return_parameters: &HashMap<Fun, usize>,
-    profiles: &HashMap<Fun, Vec<super::lifetime::Profile>>,
+    summaries: &HashMap<Fun, super::summary::FunctionSummary>,
 ) -> Result<Option<FunctionAnalysis>, VirErr> {
     let Some(&budget) = budgets.get(&function.x.name) else {
         if let Some(body) = &function.x.body {
@@ -440,9 +427,7 @@ pub(super) fn check(
     let mut analysis = Analysis {
         slots: HashMap::new(),
         produced: None,
-        profiles,
-        return_parameters,
-        returned,
+        summaries,
         result_owner: None,
         budgets,
         layouts,
@@ -538,9 +523,7 @@ pub(super) fn check(
     }));
     Ok(Some(FunctionAnalysis {
         report,
-        returned,
-        return_parameter,
-        profiles,
+        summary: super::summary::FunctionSummary { returned, return_parameter, profiles },
         calls: analysis.calls,
         symbolic_bound,
         obligations: analysis.obligations,

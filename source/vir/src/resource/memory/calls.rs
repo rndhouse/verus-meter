@@ -106,7 +106,11 @@ impl Analysis<'_> {
                 }
             }
         }
-        let forwarded = self.return_parameters.get(target).and_then(|i| values[*i].clone());
+        let summary = self
+            .summaries
+            .get(target)
+            .ok_or_else(|| unsupported(&expr.span, "a call without a checked function summary"))?;
+        let forwarded = summary.return_parameter.and_then(|i| values[i].clone());
         for value in values.into_iter().flatten() {
             self.release_value(value, c);
         }
@@ -136,10 +140,7 @@ impl Analysis<'_> {
             Footprint::allowance(bound.clone()).remove(c, MemoryKind::host_local(), credit.clone()),
         );
         self.storage.call_cost(c, allowance, &external_inputs, &result_ids, true);
-        let profiles = self
-            .profiles
-            .get(target)
-            .ok_or_else(|| unsupported(c, "a call without a checked lifetime summary"))?;
+        let profiles = &self.summaries[target].profiles;
         for point in profiles {
             let cost = point
                 .cost
