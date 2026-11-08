@@ -34,6 +34,7 @@ checked functions.
 - [Examples](../../examples/resource/memory): complete programs with explanatory comments.
 - [A deliberate violation](../../examples/resource/memory/expected-failures/array_copy.rs):
   an extra copy that makes verification fail.
+- [Maintaining the fork](integration.md): integration hooks and rebase checks.
 
 The [memory verifier tests](../../source/rust_verify_test/tests/resource/memory)
 run together from `source/`:
