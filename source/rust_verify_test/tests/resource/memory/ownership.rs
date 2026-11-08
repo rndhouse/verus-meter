@@ -133,7 +133,7 @@ fn recursive_owner_return_rejected() {
     rejects(
         "recursive_owner",
         "fn f() -> Box<u32> mem_peak <= 100 { f() }",
-        "recursive storage contracts",
+        "recursive memory contracts",
     );
 }
 

@@ -328,7 +328,7 @@ test_verify_one_file! {
     #[test] duplicate_internal_budgets_are_rejected verus_code! {
         use vstd::prelude::*;
         fn example() mem_peak <= 1000 {
-            verus_builtin::local_storage_budget(0);
+            verus_builtin::memory_budget(0);
         }
     } => Err(err) => assert_vir_error_msg(err, "only one mem_peak clause allowed")
 }

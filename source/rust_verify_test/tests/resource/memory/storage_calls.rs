@@ -120,14 +120,14 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] self_recursion_cannot_justify_zero_budget verus_code! {
         fn recursive() mem_peak <= 0 { recursive(); }
-    } => Err(err) => assert_vir_error_msg(err, "recursive storage contracts")
+    } => Err(err) => assert_vir_error_msg(err, "recursive memory contracts")
 }
 
 test_verify_one_file! {
     #[test] mutual_recursion_cannot_justify_zero_budget verus_code! {
         fn first() mem_peak <= 0 { second(); }
         fn second() mem_peak <= 0 { first(); }
-    } => Err(err) => assert_vir_error_msg(err, "recursive storage contracts")
+    } => Err(err) => assert_vir_error_msg(err, "recursive memory contracts")
 }
 
 test_verify_one_file! {
@@ -257,5 +257,5 @@ test_verify_one_file! {
         fn recursive() mem_peak <= 1 {
             if false { recursive(); }
         }
-    } => Err(err) => assert_vir_error_msg(err, "recursive storage contracts")
+    } => Err(err) => assert_vir_error_msg(err, "recursive memory contracts")
 }

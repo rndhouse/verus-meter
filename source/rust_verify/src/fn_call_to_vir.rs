@@ -68,7 +68,7 @@ pub(crate) fn fn_call_to_vir<'tcx>(
                         | SpecItem::Ensures
                         | SpecItem::Returns
                         | SpecItem::OpensInvariantMask
-                        | SpecItem::LocalStorageBudget
+                        | SpecItem::MemoryBudget
                         | SpecItem::NoUnwind
                         | SpecItem::NoUnwindWhen
                         | SpecItem::Decreases
@@ -657,7 +657,7 @@ fn verus_item_to_vir<'tcx, 'a>(
                     | SpecItem::InvMaskList
                     | SpecItem::InvMaskListCompl
                     | SpecItem::InvMaskSet
-                    | SpecItem::LocalStorageBudget
+                    | SpecItem::MemoryBudget
                     | SpecItem::NoUnwind
                     | SpecItem::NoUnwindWhen => (true, false),
 
@@ -906,11 +906,11 @@ fn verus_item_to_vir<'tcx, 'a>(
                     let header = Arc::new(HeaderExprX::DecreasesWhen(arg));
                     mk_expr(ExprX::Header(header))
                 }
-                SpecItem::LocalStorageBudget => {
+                SpecItem::MemoryBudget => {
                     record_spec_fn_pure_args_only(bctx, expr);
                     internal_err_unless!(args_len == 1, expr.span, "expected one resource budget");
                     let budget = crate::resource::memory::budget::lower(bctx, args[0])?;
-                    mk_expr(ExprX::Header(Arc::new(HeaderExprX::LocalStorageBudget(budget))))
+                    mk_expr(ExprX::Header(Arc::new(HeaderExprX::MemoryBudget(budget))))
                 }
                 SpecItem::ResourceSection => {
                     if bctx.in_ghost {

@@ -21,7 +21,7 @@ pub(super) fn order(functions: &[Function]) -> Result<Vec<Function>, VirErr> {
         if !active.insert(function.x.name.clone()) {
             return Err(unsupported(
                 &function.span,
-                "recursive storage contracts (including mutual recursion)",
+                "recursive memory contracts (including mutual recursion)",
             ));
         }
         if function.x.attrs.resource_contract.is_some() {

@@ -1,6 +1,6 @@
 //! Function entry and structural traversal of executable expressions/scopes.
 
-use super::accounting::{Accounting, CheckKind, Obligation, Peak, StorageReport};
+use super::accounting::{Accounting, CheckKind, MemoryReport, Obligation, Peak};
 use super::layout::Layouts;
 use super::model::{arithmetic, eligible, unit, unsupported};
 use crate::ast::*;
@@ -9,7 +9,7 @@ use crate::resolution_inference::ResolutionInfo;
 use std::collections::{HashMap, HashSet};
 
 pub(super) struct FunctionAnalysis {
-    pub(super) report: StorageReport,
+    pub(super) report: MemoryReport,
     pub(super) returned: Option<super::ownership::Returned>,
     pub(super) return_parameter: Option<usize>,
     pub(super) profiles: Vec<super::lifetime::Profile>,
@@ -484,9 +484,9 @@ pub(super) fn check(
     let returned = super::ownership::summarize(function, analysis.result_owner.take())?;
     analysis.check_checkpoints()?;
     let report = if symbolic_bound.is_some() {
-        analysis.storage.finish_conditional(&function.span)
+        analysis.storage.finish_conditional()
     } else {
-        analysis.storage.finish(&function.span)?
+        analysis.storage.finish(&function.span)
     };
     let bound =
         symbolic_bound.clone().unwrap_or_else(|| super::contracts::literal(&function.span, budget));

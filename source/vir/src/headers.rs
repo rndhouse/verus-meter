@@ -242,7 +242,7 @@ pub fn read_header_block(block: &mut Vec<Stmt>, allows: &HeaderAllows) -> Result
                         atomic_call_loop = true;
                         allowed = allows.loops();
                     }
-                    HeaderExprX::LocalStorageBudget(budget) => {
+                    HeaderExprX::MemoryBudget(budget) => {
                         if resource_budget.replace(budget.clone()).is_some() {
                             return Err(error(&stmt.span, "only one mem_peak clause allowed"));
                         }

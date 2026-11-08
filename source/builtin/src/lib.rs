@@ -149,9 +149,9 @@ pub fn opens_invariant_mask(_inv_mask: ()) {
 }
 
 #[cfg(verus_keep_ghost)]
-#[rustc_diagnostic_item = "verus::verus_builtin::local_storage_budget"]
+#[rustc_diagnostic_item = "verus::verus_builtin::memory_budget"]
 #[verifier::proof]
-pub fn local_storage_budget(_bytes: u64) {
+pub fn memory_budget(_bytes: u64) {
     unimplemented!();
 }
 

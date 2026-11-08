@@ -551,7 +551,7 @@ test_verify_one_file! {
     #[test] call_cycle_still_rejected verus_code! {
 use vstd::prelude::*;
 fn f(flag: bool) mem_peak <= if flag { 100 } else { 100 } { f(false); }
-    } => Err(err) => assert_vir_error_msg(err, "recursive storage contracts")
+    } => Err(err) => assert_vir_error_msg(err, "recursive memory contracts")
 }
 
 test_verify_one_file! {

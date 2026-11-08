@@ -1332,7 +1332,7 @@ impl Visitor {
             let budget = lower_memory_budget(&budget, &parameters);
             spec_stmts.push(Stmt::Expr(
                 Expr::Verbatim(quote_spanned_builtin!(verus_builtin, token.span() =>
-                    #verus_builtin::local_storage_budget(#budget)
+                    #verus_builtin::memory_budget(#budget)
                 )),
                 Some(Semi { spans: [token.span()] }),
             ));

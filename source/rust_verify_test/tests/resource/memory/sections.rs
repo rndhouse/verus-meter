@@ -25,7 +25,7 @@ test_verify_one_file! {
         fn f() mem_peak <= 128 {
             mem_peak <= 16 { let scratch = [0u32; 8]; }
         }
-    } => Err(err) => assert_vir_error_msg(err, "section storage budget exceeded: peak 32 bytes exceeds budget 16 bytes")
+    } => Err(err) => assert_vir_error_msg(err, "section memory budget exceeded: peak 32 bytes exceeds budget 16 bytes")
 }
 
 test_verify_one_file! {
@@ -35,7 +35,7 @@ test_verify_one_file! {
             let original = [0u32; 4];
             mem_peak <= mem_size(original) { let copy = original; }
         }
-    } => Err(err) => assert_vir_error_msg(err, "local storage budget exceeded: peak 32 bytes exceeds budget 16 bytes")
+    } => Err(err) => assert_vir_error_msg(err, "memory budget exceeded: peak 32 bytes exceeds budget 16 bytes")
 }
 
 test_verify_one_file! {
@@ -46,7 +46,7 @@ test_verify_one_file! {
                 mem_peak <= 64 {}
             }
         }
-    } => Err(err) => assert_vir_error_msg(err, "section storage budget exceeded: peak 68 bytes exceeds budget 64 bytes")
+    } => Err(err) => assert_vir_error_msg(err, "section memory budget exceeded: peak 68 bytes exceeds budget 64 bytes")
 }
 
 test_verify_one_file! {
@@ -117,7 +117,7 @@ test_verify_one_file! {
     #[test] callee_slack_is_not_hidden_by_section verus_code! {
         fn helper() mem_peak <= 64 {}
         fn f() mem_peak <= 64 { mem_peak <= 32 { helper(); } }
-    } => Err(err) => assert_vir_error_msg(err, "section storage budget exceeded: peak 64 bytes exceeds budget 32 bytes")
+    } => Err(err) => assert_vir_error_msg(err, "section memory budget exceeded: peak 64 bytes exceeds budget 32 bytes")
 }
 
 test_verify_one_file! {

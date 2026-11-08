@@ -29,7 +29,7 @@ impl Analysis<'_> {
         self.check_checkpoints()?;
         let section = std::mem::replace(&mut self.storage, parent);
         self.checkpoints = parent_checkpoints;
-        let report = section.finish_section(contract_span)?;
+        let report = section.finish_section(contract_span);
         let bound = super::contracts::literal(contract_span, budget);
         self.obligations.extend(report.call_costs.iter().map(|(span, cost)| Obligation {
             span: span.clone(),

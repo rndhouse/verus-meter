@@ -15,11 +15,11 @@ impl Analysis<'_> {
         let callee = self.functions.get(target).ok_or_else(|| {
             unsupported(
                 &expr.span,
-                "calls outside this crate; imported storage summaries are not supported",
+                "calls outside this crate; imported memory summaries are not supported",
             )
         })?;
         let Some(&envelope) = self.budgets.get(target) else {
-            return Err(unsupported(&expr.span, "calls without a current-model storage contract")
+            return Err(unsupported(&expr.span, "calls without a current-model memory contract")
                 .secondary_span(&callee.span));
         };
         eligible(callee)?;

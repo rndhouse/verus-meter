@@ -3,7 +3,7 @@
 //! Costs still come exclusively from the structural model. Immutable scalar
 //! inputs give the budget a stable entry-state meaning without a ghost counter.
 
-use super::accounting::{CheckKind, Obligation, StorageReport};
+use super::accounting::{CheckKind, Obligation};
 use super::layout::Layouts;
 use crate::ast::*;
 use crate::ast_util::*;
@@ -37,8 +37,8 @@ fn obligation(check: &Obligation) -> Option<Stmt> {
     let message = match (super::contracts::constant(cost), super::contracts::constant(bound)) {
         (Some(cost), Some(bound)) if cost <= bound => return None,
         (Some(cost), Some(bound)) => match kind {
-            CheckKind::Function => format!("local storage budget exceeded: peak {cost} bytes exceeds budget {bound} bytes"),
-            CheckKind::Section => format!("section storage budget exceeded: peak {cost} bytes exceeds budget {bound} bytes"),
+            CheckKind::Function => format!("memory budget exceeded: peak {cost} bytes exceeds budget {bound} bytes"),
+            CheckKind::Section => format!("section memory budget exceeded: peak {cost} bytes exceeds budget {bound} bytes"),
             CheckKind::Checkpoint => format!("mem_peak assertion failed: peak {cost} bytes exceeds bound {bound} bytes"),
         },
         _ => "conditional memory budget exceeded: cannot prove the required model bytes fit the declared bound".into(),
@@ -108,9 +108,6 @@ pub(super) fn instrument(
     bound: Option<&Expr>,
     obligations: &[Obligation],
     checks: &[(Span, Expr)],
-    _report: &StorageReport,
-    _return_parameter: Option<usize>,
-    _layouts: &Layouts,
     fresh_span: &dyn Fn(&Span) -> Span,
 ) -> Result<Function, VirErr> {
     // Inserted proofs must have fresh AST identities. Reusing an executable

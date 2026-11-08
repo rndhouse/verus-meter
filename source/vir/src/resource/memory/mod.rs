@@ -8,7 +8,7 @@
 //! for checked helpers; `vectors` checks reserved capacity. `contracts`
 //! specializes declared formulas with stable scalar arguments. `symbolic`
 //! turns conditional contracts into ordinary Verus proof obligations.
-//! `returns` orders callees before callers; `lifetime` tracks moved values;
+//! `call_graph` orders callees before callers; `lifetime` tracks moved values;
 //! `values` handles Option arms;
 //! `construction` accounts for aggregate initialization; `analysis`, `places`,
 //! and `calls` interpret other supported executable VIR. This
@@ -20,6 +20,7 @@
 mod accounting;
 mod analysis;
 mod budget;
+mod call_graph;
 mod calls;
 mod construction;
 mod contracts;
@@ -29,13 +30,12 @@ mod lifetime;
 mod model;
 mod ownership;
 mod places;
-mod returns;
 mod sections;
 mod symbolic;
 mod values;
 mod vectors;
 
-pub use accounting::{StorageEvent, StorageReport};
+pub use accounting::{MemoryEvent, MemoryReport};
 pub use budget::{BudgetExpr, BudgetExprX};
 pub use model::ResourceContract;
 
@@ -58,7 +58,7 @@ pub fn check_crate(
     vector: Option<Dt>,
     option: Option<Dt>,
     fresh_span: &dyn Fn(&Span) -> Span,
-) -> Result<Vec<(Span, StorageReport)>, VirErr> {
+) -> Result<Vec<(Span, MemoryReport)>, VirErr> {
     let function_map = functions.iter().map(|f| (f.x.name.clone(), f.clone())).collect();
     let layouts = layout::Layouts::new(datatypes, global_allocator, vector, option);
     let budgets = budget::resolve(functions, &function_map, &layouts)?;
@@ -67,7 +67,7 @@ pub fn check_crate(
     let mut returned = HashMap::new();
     let mut return_parameters = HashMap::new();
     let mut profiles = HashMap::new();
-    for function in &returns::order(functions)? {
+    for function in &call_graph::order(functions)? {
         if let Some(checked) = analysis::check(
             function,
             modes.get(&function.x.name).map(Arc::as_ref),
@@ -98,7 +98,7 @@ pub fn check_crate(
             if graph.in_same_scc(&function.x.name, callee) {
                 return Err(unsupported(
                     span,
-                    "recursive storage contracts (including mutual recursion)",
+                    "recursive memory contracts (including mutual recursion)",
                 )
                 .secondary_span(&function.span));
             }
@@ -116,9 +116,6 @@ pub fn check_crate(
                 checked.symbolic_bound.as_ref(),
                 &checked.obligations,
                 &checked.checks,
-                &checked.report,
-                checked.return_parameter,
-                &layouts,
                 fresh_span,
             )?;
             let target = functions.iter_mut().find(|f| f.x.name == function.x.name).unwrap();

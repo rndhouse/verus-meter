@@ -22,25 +22,25 @@ pub(super) struct Obligation {
 }
 
 #[derive(Clone)]
-pub struct StorageEvent {
+pub struct MemoryEvent {
     pub span: Span,
     pub description: String,
     pub live: u64,
 }
 
 #[derive(Clone)]
-pub struct StorageReport {
+pub struct MemoryReport {
     // A conservative call envelope can exceed u64 even when its selected cost
     // fits. Actual reservations and declared budgets still use the u64 model.
     pub peak: u128,
     pub budget: u64,
-    pub events: Vec<StorageEvent>,
+    pub events: Vec<MemoryEvent>,
     pub(super) reservations: Vec<(Span, u64)>,
     pub(super) conditional: bool,
     pub(super) call_costs: Vec<(Span, Expr)>,
 }
 
-impl StorageReport {
+impl MemoryReport {
     pub fn diagnostics(&self, span: &Span) -> Vec<VirErrAs> {
         let mut result = vec![VirErrAs::Note(note(
             span,
@@ -119,7 +119,7 @@ pub(super) struct Accounting {
     points: Vec<Point>,
     peak_costs: Vec<(Span, Expr)>,
     peak_span: Span,
-    report: StorageReport,
+    report: MemoryReport,
 }
 
 impl Accounting {
@@ -129,7 +129,7 @@ impl Accounting {
             points: Vec::new(),
             peak_costs: Vec::new(),
             peak_span: span.clone(),
-            report: StorageReport {
+            report: MemoryReport {
                 peak: 0,
                 budget,
                 events: Vec::new(),
@@ -339,36 +339,27 @@ impl Accounting {
         self.event(span, format!("release {bytes} bytes for {reason}"));
     }
     pub(super) fn event(&mut self, span: &Span, description: String) {
-        self.report.events.push(StorageEvent {
-            span: span.clone(),
-            description,
-            live: self.live(),
-        });
+        self.report.events.push(MemoryEvent { span: span.clone(), description, live: self.live() });
     }
 
-    pub(super) fn finish(self, function_span: &Span) -> Result<StorageReport, VirErr> {
-        self.finish_scope(function_span, "function exit", "local storage budget exceeded")
+    pub(super) fn finish(self, function_span: &Span) -> MemoryReport {
+        self.finish_scope(function_span, "function exit")
     }
 
-    pub(super) fn finish_conditional(mut self, _span: &Span) -> StorageReport {
+    pub(super) fn finish_conditional(mut self) -> MemoryReport {
         self.paths.clear();
         self.report.conditional = true;
         self.report
     }
 
-    pub(super) fn finish_section(self, section_span: &Span) -> Result<StorageReport, VirErr> {
-        self.finish_scope(section_span, "section exit", "section storage budget exceeded")
+    pub(super) fn finish_section(self, section_span: &Span) -> MemoryReport {
+        self.finish_scope(section_span, "section exit")
     }
 
-    fn finish_scope(
-        mut self,
-        scope_span: &Span,
-        exit: &str,
-        _diagnostic: &str,
-    ) -> Result<StorageReport, VirErr> {
+    fn finish_scope(mut self, scope_span: &Span, exit: &str) -> MemoryReport {
         self.paths.clear();
         self.event(scope_span, exit.into());
-        Ok(self.report)
+        self.report
     }
 }
 

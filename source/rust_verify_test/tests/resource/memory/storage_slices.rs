@@ -25,7 +25,7 @@ fn insertion_sort_added_workspace_breaks_contract() {
     assert_ne!(code, SORT_EXAMPLE);
     let err =
         verify_one_file("insertion_sort_added_workspace_breaks_contract", code, &[]).unwrap_err();
-    assert_any_vir_error_msg(err, "local storage budget exceeded");
+    assert_any_vir_error_msg(err, "memory budget exceeded");
 }
 
 #[test]

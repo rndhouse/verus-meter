@@ -855,8 +855,8 @@ pub enum HeaderExprX {
     /// `extra_dependency(f)` means that recursion-checking should act as if the current
     /// function calls `f`
     ExtraDependency(Fun),
-    /// Compile-time budget for the experimental lexical-slots-v5-64 resource model.
-    LocalStorageBudget(crate::resource::memory::BudgetExpr),
+    /// Declared memory bound, checked under the contract's versioned model.
+    MemoryBudget(crate::resource::memory::BudgetExpr),
     /// This function will not unwind
     NoUnwind,
     /// This function will not unwind if the given condition holds (function of arguments)
@@ -1606,7 +1606,7 @@ pub struct AutoExtEqual {
 pub type FunctionAttrs = Arc<FunctionAttrsX>;
 #[derive(Debug, Serialize, Deserialize, ToDebugSNode, Default, Clone)]
 pub struct FunctionAttrsX {
-    /// Experimental source-storage contract; its variant identifies the cost model.
+    /// Experimental memory contract; its variant identifies the cost model.
     pub resource_contract: Option<crate::resource::memory::ResourceContract>,
     /// Erasure and lifetime checking based on ghost blocks
     pub uses_ghost_blocks: bool,
