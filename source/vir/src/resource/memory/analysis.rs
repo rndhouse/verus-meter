@@ -1,6 +1,7 @@
 //! Function entry and structural traversal of executable expressions/scopes.
 
 use super::accounting::{Accounting, CheckKind, MemoryReport, Obligation, Peak};
+use super::footprint::MemoryKind;
 use super::layout::Layouts;
 use super::model::{arithmetic, eligible, unit, unsupported};
 use crate::ast::*;
@@ -48,7 +49,12 @@ pub(super) struct Analysis<'a> {
 impl Analysis<'_> {
     pub(super) fn discard(&mut self, expr: &Expr) -> Result<(), VirErr> {
         let result = self.expr(expr)?;
-        self.storage.release(&expr.span, result, "consumed expression result");
+        self.storage.release(
+            &expr.span,
+            MemoryKind::host_local(),
+            result,
+            "consumed expression result",
+        );
         Ok(())
     }
 
@@ -369,7 +375,10 @@ impl Analysis<'_> {
                 self.obligations.push(Obligation {
                     span: span.clone(),
                     cost: cost.clone(),
-                    bound: super::contracts::literal(&checkpoint.span, checkpoint.budget),
+                    bound: super::footprint::MemoryBudget::total(super::contracts::literal(
+                        &checkpoint.span,
+                        checkpoint.budget,
+                    )),
                     kind: CheckKind::Checkpoint,
                 });
             }
@@ -379,7 +388,12 @@ impl Analysis<'_> {
 
     pub(super) fn result(&mut self, expr: &Expr, operands: u64) -> Result<u64, VirErr> {
         self.layouts.size(&expr.typ, &expr.span)?;
-        self.storage.release(&expr.span, operands, "consumed aggregate operands");
+        self.storage.release(
+            &expr.span,
+            MemoryKind::host_local(),
+            operands,
+            "consumed aggregate operands",
+        );
         Ok(0)
     }
 }
@@ -493,7 +507,7 @@ pub(super) fn check(
     analysis.obligations.extend(report.cost_points.iter().map(|(span, cost)| Obligation {
         span: span.clone(),
         cost: cost.clone(),
-        bound: bound.clone(),
+        bound: super::footprint::MemoryBudget::total(bound.clone()),
         kind: CheckKind::Function,
     }));
     Ok(Some(FunctionAnalysis {

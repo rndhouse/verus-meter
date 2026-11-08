@@ -6,6 +6,7 @@
 
 use super::analysis::Analysis;
 use super::contracts;
+use super::footprint::MemoryKind;
 use super::heap::Owner;
 use super::model::unsupported;
 use crate::ast::*;
@@ -13,7 +14,7 @@ use crate::ast::*;
 #[derive(Clone)]
 pub(super) enum Returned {
     Input(usize),
-    Fresh { capacity: Option<Expr> },
+    Fresh { kind: MemoryKind, capacity: Option<Expr> },
 }
 
 pub(super) fn summarize(
@@ -40,7 +41,7 @@ pub(super) fn summarize(
             Ok(())
         })?;
     }
-    Ok(Some(Returned::Fresh { capacity: owner.capacity }))
+    Ok(Some(Returned::Fresh { kind: owner.kind, capacity: owner.capacity }))
 }
 
 impl Analysis<'_> {
@@ -73,7 +74,7 @@ impl Analysis<'_> {
         if forwarded.is_some() || summary.is_none() {
             return Ok(forwarded);
         }
-        let Some(Returned::Fresh { capacity }) = summary else { unreachable!() };
+        let Some(Returned::Fresh { kind, capacity }) = summary else { unreachable!() };
         let capacity = capacity
             .as_ref()
             .map(|capacity| contracts::substitute(capacity, callee, args, &self.stable_scalars))
@@ -92,12 +93,17 @@ impl Analysis<'_> {
                 })?,
             )
         };
-        let mut owner = Owner { capacity, ..Default::default() };
+        let mut owner = Owner { kind: kind.clone(), capacity, ..Default::default() };
         if let Some(bytes) = contracts::constant(&cost) {
-            self.storage.reserve(&expr.span, bytes, "returned heap allocation")?;
+            self.storage.reserve(
+                &expr.span,
+                owner.kind.clone(),
+                bytes,
+                "returned heap allocation",
+            )?;
             owner.bytes = bytes;
         } else {
-            self.storage.reserve_dynamic(&expr.span, cost);
+            self.storage.reserve_dynamic(&expr.span, owner.kind.clone(), cost);
             owner.dynamic = Some(expr.span.id);
         }
         Ok(Some(owner))

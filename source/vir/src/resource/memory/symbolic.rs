@@ -34,7 +34,9 @@ pub(super) fn function_bound(
 
 fn obligation(check: &Obligation) -> Option<Stmt> {
     let Obligation { span, cost, bound, kind } = check;
-    let message = match (super::contracts::constant(cost), super::contracts::constant(bound)) {
+    let cost = cost.select(span, &bound.selection);
+    let bound = &bound.amount;
+    let message = match (super::contracts::constant(&cost), super::contracts::constant(bound)) {
         (Some(cost), Some(bound)) if cost <= bound => return None,
         (Some(cost), Some(bound)) => match kind {
             CheckKind::Function => format!("memory budget exceeded: peak {cost} bytes exceeds budget {bound} bytes"),
@@ -48,7 +50,7 @@ fn obligation(check: &Obligation) -> Option<Stmt> {
         &unit_typ(),
         ExprX::AssertAssume {
             is_assume: false,
-            expr: mk_ineq(span, cost, bound, InequalityOp::Le),
+            expr: mk_ineq(span, &cost, bound, InequalityOp::Le),
             msg: Some(if matches!(kind, CheckKind::Checkpoint) {
                 error(&bound.span, message).secondary_span(span)
             } else {
@@ -227,4 +229,40 @@ pub(super) fn instrument(
     let mut result = function.clone();
     Arc::make_mut(&mut result).x.body = Some(body);
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::footprint::{Footprint, MemoryBudget, MemoryKind, MemorySelection};
+    use super::*;
+
+    #[test]
+    fn budget_obligations_select_the_requested_memory_kind() {
+        let span = Span {
+            raw_span: Arc::new(()),
+            id: 1,
+            data: Arc::new([]),
+            as_string: "kind budget".into(),
+        };
+        let gpu = MemoryKind::new("device.0.vram");
+        let cost =
+            Footprint::charge(MemoryKind::host_local(), super::super::contracts::literal(&span, 8))
+                .add(
+                    &span,
+                    Footprint::charge(gpu.clone(), super::super::contracts::literal(&span, 64)),
+                );
+        let check = |selection, bytes| Obligation {
+            span: span.clone(),
+            cost: cost.clone(),
+            bound: MemoryBudget {
+                selection,
+                amount: super::super::contracts::literal(&span, bytes),
+            },
+            kind: CheckKind::Function,
+        };
+        assert!(obligation(&check(MemorySelection::kind(MemoryKind::host_local()), 8)).is_none());
+        assert!(obligation(&check(MemorySelection::kind(gpu.clone()), 63)).is_some());
+        assert!(obligation(&check(MemorySelection::kind(gpu), 64)).is_none());
+        assert!(obligation(&check(MemorySelection::All, 71)).is_some());
+    }
 }

@@ -251,3 +251,32 @@ shows a complete program deliberately rejected for exceeding its allowance.
 The analysis merges identical live states at branch joins. It reports an explicit
 complexity error above 1,024 distinct ownership alternatives rather than allowing
 unbounded path expansion. Checked helpers can divide such a function into smaller parts.
+
+## Memory kinds in the accounting model
+
+The accounting core retains a memory kind alongside each charge. Current source
+values and owning handles use `host.local`; box objects and vector backing storage
+use `host.heap`. Local storage remains an abstract source-value cost, not a physical
+stack measurement. Type layout queries remain byte sizes: placement determines
+which kind receives the charge.
+
+Kinds are namespaced identities, rather than a closed enumeration. A future model
+can introduce identities such as `device.0.vram` without changing the accounting
+arithmetic. Supporting an allocator still requires checked rules for allocation,
+release, and ownership transfer; naming a kind does not provide those rules.
+Moves and returned allocations preserve their kind. Copying to another memory
+kind requires a separate charge while both allocations are live.
+
+Footprints retain simultaneous charges through branch joins, checkpoints, and
+function lifetime summaries. A selection can include one kind or a set of kinds;
+its peak is computed by selecting usage at each point and then taking the maximum.
+For example, successive phases using 100 local bytes and 100 heap bytes have a
+combined peak of 100, even though each individual kind peaks at 100.
+
+Existing `mem_peak` clauses continue to bound total usage. Internally, budgets
+pair a memory selection with a byte expression, and proof obligations project the
+footprint onto that selection. Reports expose the same selection mechanism.
+Source syntax for kind-specific clauses and device allocator models are not yet
+provided. A helper or section with only a total contract may spend its unused
+allowance in any kind; category queries conservatively retain that freedom rather
+than inferring a category-specific promise from the current implementation.

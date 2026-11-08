@@ -1,6 +1,7 @@
 //! Values begin contributing when produced. A move transfers an existing charge.
 
 use super::analysis::Analysis;
+use super::footprint::MemoryKind;
 use super::model::{unit, unsupported};
 use crate::ast::*;
 use crate::messages::Span;
@@ -16,7 +17,7 @@ pub(super) struct Value {
 
 #[derive(Clone)]
 pub(super) struct Profile {
-    pub(super) cost: Expr,
+    pub(super) cost: super::footprint::Footprint,
     pub(super) result: bool,
     pub(super) inputs: std::collections::HashSet<usize>,
 }
@@ -24,7 +25,7 @@ pub(super) struct Profile {
 impl Analysis<'_> {
     pub(super) fn fresh_value(&mut self, span: &Span, typ: &Typ) -> Result<Value, VirErr> {
         let bytes = self.layouts.size(typ, span)?;
-        let id = self.storage.reserve_value(span, bytes)?;
+        let id = self.storage.reserve_value(span, MemoryKind::host_local(), bytes)?;
         Ok(Value {
             bytes,
             origins: [id].into_iter().collect(),
@@ -55,7 +56,7 @@ impl Analysis<'_> {
 
     pub(super) fn expression_value(&mut self, value: Value, span: &Span) -> Result<u64, VirErr> {
         self.storage.release_values(&value.ids);
-        self.storage.reserve(span, value.bytes, "expression value")?;
+        self.storage.reserve(span, MemoryKind::host_local(), value.bytes, "expression value")?;
         Ok(value.bytes)
     }
 

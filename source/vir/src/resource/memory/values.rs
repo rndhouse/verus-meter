@@ -4,6 +4,7 @@
 //! destination when available; otherwise the result remains live until consumed.
 
 use super::analysis::Analysis;
+use super::footprint::MemoryKind;
 use super::model::{unit, unsupported};
 use crate::ast::*;
 
@@ -76,7 +77,12 @@ impl Analysis<'_> {
         } else {
             0
         };
-        self.storage.reserve(&expr.span, bytes, "Option payload result")?;
+        self.storage.reserve(
+            &expr.span,
+            MemoryKind::host_local(),
+            bytes,
+            "Option payload result",
+        )?;
         self.discard(&args[0])?;
         Ok(Some(bytes))
     }
@@ -138,7 +144,12 @@ impl Analysis<'_> {
         let protection = self.heap.protect();
         let scratch = if let PlaceX::Temporary(value) = &scrutinee.x {
             let bytes = self.layouts.size(&scrutinee.typ, &scrutinee.span)?;
-            self.storage.reserve(&value.span, bytes, "match input destination")?;
+            self.storage.reserve(
+                &value.span,
+                MemoryKind::host_local(),
+                bytes,
+                "match input destination",
+            )?;
             self.initialize_expr(value)?;
             bytes
         } else {
@@ -157,7 +168,11 @@ impl Analysis<'_> {
             self.option_pattern(&arm.x.pattern, &scrutinee.typ, &mut slots)?;
             // Bindings exist throughout the arm, including its guard/body.
             for (name, bytes) in &slots {
-                let id = self.storage.reserve_value(&arm.x.body.span, *bytes)?;
+                let id = self.storage.reserve_value(
+                    &arm.x.body.span,
+                    MemoryKind::host_local(),
+                    *bytes,
+                )?;
                 self.slots.insert(
                     name.clone(),
                     super::lifetime::Value {
@@ -189,7 +204,7 @@ impl Analysis<'_> {
             joined = Some(self.branch_state());
         }
         self.produced = result;
-        self.storage.release(&expr.span, scratch, "match input consumed");
+        self.storage.release(&expr.span, MemoryKind::host_local(), scratch, "match input consumed");
         self.heap.unprotect(protection);
         Ok(())
     }

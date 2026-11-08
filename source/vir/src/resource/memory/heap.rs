@@ -5,6 +5,7 @@
 //! from outside the region until path-sensitive ownership joins are supported.
 
 use super::analysis::Analysis;
+use super::footprint::MemoryKind;
 use super::model::unsupported;
 use crate::ast::*;
 use crate::messages::Span;
@@ -17,13 +18,20 @@ pub(super) struct Heap {
 }
 
 /// The allocation follows its owner; lexical handle slots are accounted separately.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(super) struct Owner {
+    pub(super) kind: MemoryKind,
     pub(super) bytes: u64,
     pub(super) dynamic: Option<u64>,
     pub(super) capacity: Option<Expr>,
     // The lifetime summary tells callers when this input allocation is released.
     pub(super) input: Option<usize>,
+}
+
+impl Default for Owner {
+    fn default() -> Self {
+        Self { kind: MemoryKind::host_heap(), bytes: 0, dynamic: None, capacity: None, input: None }
+    }
 }
 
 impl Heap {
@@ -79,7 +87,7 @@ impl Analysis<'_> {
         if !crate::ast_util::types_equal(inner, &args[0].typ) {
             return Err(unsupported(&args[0].span, "this box initializer coercion"));
         }
-        self.storage.reserve(&expr.span, bytes, "heap object")?;
+        self.storage.reserve(&expr.span, MemoryKind::host_heap(), bytes, "heap object")?;
         // Box::new is a model intrinsic: its argument initializes the heap object,
         // using the same destination rule as local and aggregate initializers.
         self.initialize_expr(&args[0])?;
@@ -145,7 +153,7 @@ impl Analysis<'_> {
         if let Some(id) = owner.dynamic {
             self.storage.release_dynamic(id);
         }
-        self.storage.release(span, owner.bytes, "drop heap object");
+        self.storage.release(span, owner.kind, owner.bytes, "drop heap object");
     }
 
     pub(super) fn drop_owner(&mut self, name: &VarIdent, span: &Span) -> Result<(), VirErr> {

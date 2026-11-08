@@ -2,6 +2,7 @@
 
 use super::analysis::Analysis;
 use super::contracts;
+use super::footprint::MemoryKind;
 use super::model::unsupported;
 use crate::ast::*;
 use crate::ast_util::*;
@@ -41,10 +42,15 @@ impl Analysis<'_> {
         );
         let mut owner = super::heap::Owner { capacity: Some(capacity), ..Default::default() };
         if let Some(n) = contracts::constant(&cost) {
-            self.storage.reserve(&expr.span, n, "vector backing storage")?;
+            self.storage.reserve(
+                &expr.span,
+                MemoryKind::host_heap(),
+                n,
+                "vector backing storage",
+            )?;
             owner.bytes = n;
         } else {
-            self.storage.reserve_dynamic(&expr.span, cost);
+            self.storage.reserve_dynamic(&expr.span, MemoryKind::host_heap(), cost);
             owner.dynamic = Some(expr.span.id);
         }
         Ok(Some(owner))

@@ -24,6 +24,7 @@ mod call_graph;
 mod calls;
 mod construction;
 mod contracts;
+mod footprint;
 mod heap;
 mod layout;
 mod lifetime;
@@ -37,6 +38,7 @@ mod vectors;
 
 pub use accounting::{MemoryEvent, MemoryReport};
 pub use budget::{BudgetExpr, BudgetExprX};
+pub use footprint::{Footprint, MemoryBudget, MemoryKind, MemorySelection};
 pub use model::ResourceContract;
 
 use crate::ast::*;

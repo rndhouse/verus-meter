@@ -5,6 +5,7 @@
 //! an aggregate expression without such a destination owns one result charge.
 
 use super::analysis::Analysis;
+use super::footprint::MemoryKind;
 use super::model::unsupported;
 use crate::ast::*;
 
@@ -80,7 +81,12 @@ impl Analysis<'_> {
         self.layouts.size(typ, &place.span)?;
         // Source and destination storage is already accounted for.
         let scratch = self.read(place, typ)?;
-        self.storage.release(&place.span, scratch, "source value consumed into destination");
+        self.storage.release(
+            &place.span,
+            MemoryKind::host_local(),
+            scratch,
+            "source value consumed into destination",
+        );
         Ok(())
     }
 
@@ -148,7 +154,12 @@ impl Analysis<'_> {
         };
         let bytes = self.layouts.size(&expr.typ, &expr.span)?;
         if !destination {
-            self.storage.reserve(&expr.span, bytes, "aggregate expression result")?;
+            self.storage.reserve(
+                &expr.span,
+                MemoryKind::host_local(),
+                bytes,
+                "aggregate expression result",
+            )?;
         }
         for field in fields {
             self.initialize_expr(field)?;

@@ -1,6 +1,7 @@
 //! Direct-call composition and compiler-identified resource intrinsics.
 
 use super::analysis::Analysis;
+use super::footprint::{Footprint, MemoryKind};
 use super::model::{eligible, slice, unsupported};
 use crate::ast::*;
 
@@ -68,12 +69,12 @@ impl Analysis<'_> {
             }
         }
         let c = &expr.span;
-        let mut base = super::contracts::subtract(
+        let mut base = self.storage.live_expression(c).remove(
             c,
-            self.storage.live_expression(c),
+            MemoryKind::host_local(),
             super::contracts::literal(c, parameters),
         );
-        let mut input_costs = vec![super::contracts::literal(c, 0); args.len()];
+        let mut input_costs = vec![Footprint::zero(c); args.len()];
         let mut external_inputs = std::collections::HashSet::new();
         for (index, owner) in transferred.iter().enumerate() {
             if let Some(owner) = owner {
@@ -81,8 +82,8 @@ impl Analysis<'_> {
                 if let Some(id) = owner.dynamic {
                     cost = super::contracts::add(c, cost, self.storage.dynamic_cost(c, id));
                 }
-                base = super::contracts::subtract(c, base, cost.clone());
-                input_costs[index] = cost;
+                base = base.remove(c, owner.kind.clone(), cost.clone());
+                input_costs[index] = Footprint::charge(owner.kind.clone(), cost);
                 if let Some(input) = owner.input {
                     external_inputs.insert(input);
                 }
@@ -97,7 +98,7 @@ impl Analysis<'_> {
         let mut result = if destination {
             None
         } else {
-            let id = self.storage.reserve_value_unchecked(result_size);
+            let id = self.storage.reserve_value_unchecked(MemoryKind::host_local(), result_size);
             Some(super::lifetime::Value {
                 bytes: result_size,
                 ids: [id].into_iter().collect(),
@@ -113,10 +114,9 @@ impl Analysis<'_> {
         let credit = super::contracts::literal(c, if destination { result_size } else { 0 });
         // Contract slack remains available to the caller. Input allocations are
         // accounted separately using their checked lifetimes in the body.
-        let allowance = super::contracts::add(
+        let allowance = base.add(
             c,
-            base.clone(),
-            super::contracts::subtract(c, bound.clone(), credit.clone()),
+            Footprint::allowance(bound.clone()).remove(c, MemoryKind::host_local(), credit.clone()),
         );
         self.storage.call_cost(c, allowance, &external_inputs, &result_ids, true);
         let profiles = self
@@ -124,27 +124,24 @@ impl Analysis<'_> {
             .get(target)
             .ok_or_else(|| unsupported(c, "a call without a checked lifetime summary"))?;
         for point in profiles {
-            let cost =
-                super::contracts::substitute(&point.cost, callee, args, &self.stable_scalars)
-                    .unwrap_or_else(|_| bound.clone());
-            let mut cost = super::contracts::minimum(c, cost, bound.clone());
+            let cost = point
+                .cost
+                .map(c, &|cost| {
+                    super::contracts::substitute(cost, callee, args, &self.stable_scalars)
+                })
+                .unwrap_or_else(|_| Footprint::allowance(bound.clone()));
+            let mut cost = cost.limit(c, bound.clone());
             let mut excluded = external_inputs.clone();
             for index in &point.inputs {
-                cost = super::contracts::add(c, cost, input_costs[*index].clone());
+                cost = cost.add(c, input_costs[*index].clone());
                 if let Some(input) = transferred[*index].as_ref().and_then(|o| o.input) {
                     excluded.remove(&input);
                 }
             }
             if point.result {
-                cost = super::contracts::subtract(c, cost, credit.clone());
+                cost = cost.remove(c, MemoryKind::host_local(), credit.clone());
             }
-            self.storage.call_cost(
-                c,
-                super::contracts::add(c, base.clone(), cost),
-                &excluded,
-                &result_ids,
-                point.result,
-            );
+            self.storage.call_cost(c, base.add(c, cost), &excluded, &result_ids, point.result);
         }
         self.result_owner = self.complete_ownership_call(expr, callee, args, &mut transferred)?;
         self.storage.record_live(c)?;

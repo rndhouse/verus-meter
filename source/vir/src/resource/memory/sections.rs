@@ -34,7 +34,7 @@ impl Analysis<'_> {
         self.obligations.extend(report.cost_points.iter().map(|(span, cost)| Obligation {
             span: span.clone(),
             cost: cost.clone(),
-            bound: bound.clone(),
+            bound: super::footprint::MemoryBudget::total(bound.clone()),
             kind: CheckKind::Section,
         }));
         self.storage.event(
@@ -46,8 +46,7 @@ impl Analysis<'_> {
         );
         // The parent relies on the declared contract, including slack, rather
         // than the implementation's measured peak. Siblings reuse this allowance.
-        self.storage.reserve(contract_span, budget, "section declared bound")?;
-        self.storage.release(contract_span, budget, "section exit");
+        self.storage.section_allowance(contract_span, budget)?;
         // A value originating outside the section belongs to the outer budget.
         // If the section consumed it, it must not remain live afterward.
         for (name, value) in parent_slots {
