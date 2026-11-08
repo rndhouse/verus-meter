@@ -7,6 +7,10 @@ mod memory;
 
 // Suites formerly had separate binaries and temporary-file namespaces. Keep
 // each test's inputs isolated now that the suites share one binary.
+#[expect(
+    clippy::result_large_err,
+    reason = "Preserve the upstream harness error type for its existing diagnostic assertions"
+)]
 fn verify_one_file(
     name: &str,
     code: String,

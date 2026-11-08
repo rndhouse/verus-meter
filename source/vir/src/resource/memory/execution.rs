@@ -3,6 +3,7 @@
 use crate::ast::*;
 use std::collections::HashMap;
 
+/// Identify proof-only expression regions that neither traversal should enter.
 pub(super) fn ignored_expression(expr: &Expr) -> bool {
     matches!(
         &expr.x,
@@ -17,6 +18,7 @@ pub(super) fn ignored_expression(expr: &Expr) -> bool {
     )
 }
 
+/// Exclude explicit or inferred ghost declarations before evaluating initializers.
 pub(super) fn ignored_statement(stmt: &Stmt, modes: &HashMap<VarIdent, Mode>) -> bool {
     if let StmtX::Decl { mode, pattern, .. } = &stmt.x {
         matches!(mode, Some((Mode::Spec | Mode::Proof, _)))

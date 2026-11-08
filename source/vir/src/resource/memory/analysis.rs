@@ -9,36 +9,63 @@ use crate::messages::{Span, error};
 use crate::resolution_inference::ResolutionInfo;
 use std::collections::{HashMap, HashSet};
 
+/// Checked facts and proof work awaiting publication by the crate-wide pass.
 pub(super) struct FunctionAnalysis {
+    /// Collected peaks and diagnostic events for this checked body.
     pub(super) report: MemoryReport,
+    /// Call-composition facts published only after body accounting succeeds.
     pub(super) summary: super::summary::FunctionSummary,
+    /// Executed direct call sites cross-checked against the canonical graph.
     pub(super) calls: Vec<(Fun, Span)>,
+    /// Declared bound when it must be proved as a formula rather than a constant.
     pub(super) symbolic_bound: Option<Expr>,
+    /// Memory inequalities to assert at their original execution sites.
     pub(super) obligations: Vec<Obligation>,
+    /// Additional safety conditions, such as reserved vector capacity.
     pub(super) checks: Vec<(Span, Expr)>,
 }
 
+/// A cumulative bound and the history visible where it is asserted.
 pub(super) struct Checkpoint {
+    // The assertion location used for diagnostics.
     span: Span,
+    // Maximum permitted cumulative model bytes at this assertion.
     budget: u64,
+    // Historical cost points that can precede this assertion.
     peak: Peak,
 }
 
+/// One function's evolving ownership state and already checked callee facts.
 pub(super) struct Analysis<'a> {
+    /// Live named values, including their identities across moves.
     pub(super) slots: HashMap<VarIdent, super::lifetime::Value>,
+    /// An expression result waiting to become a destination or return value.
     pub(super) produced: Option<super::lifetime::Value>,
+    /// Completed callee facts, available because checking proceeds callee first.
     pub(super) summaries: &'a HashMap<Fun, super::summary::FunctionSummary>,
+    /// Heap allocation retained by the expression currently producing an owner.
     pub(super) result_owner: Option<super::heap::Owner>,
+    /// Declared budget envelopes used for lookup and conservative fallbacks.
     pub(super) budgets: &'a HashMap<Fun, u64>,
+    /// Source-model sizes and supported ownership layouts.
     pub(super) layouts: &'a Layouts,
+    /// Local declarations used to validate signatures and instantiate contracts.
     pub(super) functions: &'a HashMap<Fun, Function>,
+    /// Resolved execution modes used to omit ghost storage and initializers.
     pub(super) var_modes: HashMap<VarIdent, Mode>,
+    /// Current live charges, alternative paths, and accumulated peak history.
     pub(super) storage: Accounting,
+    /// Executed direct call sites cross-checked against the canonical graph.
     pub(super) calls: Vec<(Fun, Span)>,
+    /// Pending cumulative-peak assertions and the history visible at each site.
     pub(super) checkpoints: Vec<Checkpoint>,
+    /// Immutable scalar names safe to reuse in generated budget formulas.
     pub(super) stable_scalars: HashSet<VarIdent>,
+    /// Allocation ownership and restrictions on transfers across regions.
     pub(super) heap: super::heap::Heap,
+    /// Memory inequalities to assert at their original execution sites.
     pub(super) obligations: Vec<Obligation>,
+    /// Additional safety conditions, such as reserved vector capacity.
     pub(super) checks: Vec<(Span, Expr)>,
 }
 

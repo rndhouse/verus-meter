@@ -8,17 +8,23 @@ use crate::resolution_inference::ResolutionInfo;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+/// Checked executable dependencies used before publishing any function summaries.
 pub(super) struct CallGraph {
+    // Per-function call sites in source order, keeping cycle diagnostics deterministic.
     edges: HashMap<Fun, Vec<(Fun, Span)>>,
 }
 
 struct Collector<'a> {
+    // Local declarations identify contracted callees and executable parameters.
     functions: &'a HashMap<Fun, Function>,
+    // Resolved local modes distinguish ghost declarations from runtime work.
     modes: &'a HashMap<VarIdent, Mode>,
+    // Calls found in this body, retaining their original diagnostic spans.
     edges: Vec<(Fun, Span)>,
 }
 
 impl AstVisitor<Walk, VirErr, NoScoper> for Collector<'_> {
+    /// Collect calls in executed expressions and arguments, excluding specifications.
     fn visit_expr(&mut self, expr: &Expr) -> Result<(), VirErr> {
         if execution::ignored_expression(expr) {
             return Ok(());
@@ -53,6 +59,8 @@ impl AstVisitor<Walk, VirErr, NoScoper> for Collector<'_> {
         }
         self.visit_expr_rec(expr)
     }
+
+    /// Prune erased declarations before descending into their initializers.
     fn visit_stmt(&mut self, stmt: &Stmt) -> Result<(), VirErr> {
         if execution::ignored_statement(stmt, self.modes) {
             Ok(())
@@ -60,18 +68,25 @@ impl AstVisitor<Walk, VirErr, NoScoper> for Collector<'_> {
             self.visit_stmt_rec(stmt)
         }
     }
+
+    /// Follow temporaries embedded in places, including calls producing aggregates.
     fn visit_place(&mut self, place: &Place) -> Result<(), VirErr> {
         self.visit_place_rec(place)
     }
+
+    /// Pattern bindings contain no executable work.
     fn visit_pattern(&mut self, _: &Pattern) -> Result<(), VirErr> {
         Ok(())
     }
+
+    /// Type metadata does not introduce executable call edges.
     fn visit_typ(&mut self, _: &Typ) -> Result<(), VirErr> {
         Ok(())
     }
 }
 
 impl CallGraph {
+    /// Discover the checked call edges using the same execution boundaries as accounting.
     pub(super) fn new(
         functions: &HashMap<Fun, Function>,
         modes: &HashMap<Fun, Arc<ResolutionInfo>>,
@@ -96,6 +111,7 @@ impl CallGraph {
 
     /// Visit callees first; a back edge rejects recursion at the originating call.
     pub(super) fn order(&self, functions: &[Function]) -> Result<Vec<Function>, VirErr> {
+        // Emit a callee before its callers, or diagnose the edge closing a cycle.
         fn visit(
             graph: &CallGraph,
             function: &Function,
@@ -141,11 +157,10 @@ impl CallGraph {
         function: &Function,
         calls: &[(Fun, Span)],
     ) -> Result<(), VirErr> {
+        let known: HashSet<_> =
+            self.edges[&function.x.name].iter().map(|(callee, site)| (callee, site.id)).collect();
         for (callee, span) in calls {
-            if !self.edges[&function.x.name]
-                .iter()
-                .any(|(target, site)| target == callee && site.id == span.id)
-            {
+            if !known.contains(&(callee, span.id)) {
                 return Err(error(
                     span,
                     "memory accounting reached a call absent from its executable call graph",
