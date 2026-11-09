@@ -19,10 +19,14 @@ A simple example:
 // Reverse a small buffer using either a copy or a sequence of swaps.
 //
 // The caller keeps paying for the borrowed array; mem_size(values) counts
-// only the reference. Copying needs another array; swapping needs one value.
+// only the reference. The `if` lets us specify a different memory bound for
+// each reversal strategy.
 fn reverse(values: &mut [u32; 4], use_scratch: bool)
-    mem_peak <= mem_size(values) + mem_size(use_scratch)
-        + if use_scratch { mem_size([u32; 4]) } else { mem_size(u32) },
+    mem_peak <= mem_size(values) + mem_size(use_scratch) + if use_scratch {
+        mem_size([u32; 4])
+    } else {
+        mem_size(u32)
+    },
 {
     if use_scratch {
         let copy = *values;
