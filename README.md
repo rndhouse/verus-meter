@@ -1,9 +1,8 @@
 # Verus Meter
 
 Verus Meter is an experimental fork of [Verus](https://github.com/verus-lang/verus)
-that adds resource contracts for Rust. A function declares a workspace budget,
-and verification catches changes that exceed it alongside checking functional
-correctness.
+that adds resource contracts for Rust. You can prove that your code produces
+the right results and stays within its memory budget.
 
 ```rust
 // Reverse a small buffer using a temporary copy.
@@ -56,8 +55,23 @@ checked functions.
 
 - [Memory contracts](docs/verus-meter/model.md): how to write and understand the guarantees.
 - [Examples](examples/resource/memory): complete programs with explanatory comments.
-- [A deliberate violation](examples/resource/memory/expected-failures/array_copy.rs):
-  an extra copy that makes verification fail.
+  - [Reusing workspace](examples/resource/memory/storage.rs): share a memory allowance across scopes, branches, and loops.
+  - [Calling helpers](examples/resource/memory/calls.rs): combine a caller's data with a helper's memory needs.
+  - [Checkpoints](examples/resource/memory/checkpoints.rs): check the peak reached at individual stages of an operation.
+  - [Sections](examples/resource/memory/sections.rs): divide a larger operation into independently budgeted pieces.
+  - [Conditional budgets](examples/resource/memory/conditional.rs): give different inputs different memory allowances.
+  - [Budgets across calls](examples/resource/memory/call_budgets.rs): preserve those input-specific allowances through a chain of helpers.
+  - [Returning buffers](examples/resource/memory/returns.rs): hand a buffer to its caller without counting its storage twice.
+  - [Heap buffers](examples/resource/memory/heap.rs): reuse a heap allowance by releasing each buffer before creating the next.
+  - [Ownership](examples/resource/memory/ownership.rs): track an allocation's cost as it passes between helpers.
+  - [Vectors](examples/resource/memory/vectors.rs): collect values while proving that every addition fits the reserved capacity.
+  - [Borrowing vectors](examples/resource/memory/vector_helpers.rs): let helpers use a vector within its existing reservation.
+  - [Returning vectors](examples/resource/memory/vector_returns.rs): create a reserved buffer in a helper and use it in the caller.
+  - [Optional results](examples/resource/memory/options.rs): keep a result after releasing the collection that held it.
+  - [Integer types](examples/resource/memory/integers.rs): adjust a counter while checking arithmetic safety and memory use.
+  - [Insertion sort](examples/resource/memory/insertion_sort.rs): prove sorting correctness with workspace that stays fixed as inputs grow.
+  - [Structs](examples/resource/memory/structs.rs): sort data inside a struct while budgeting for both the data and the sorting work.
+  - [Deliberate violations](examples/resource/memory/expected-failures): see verification reject extra copies, overlapping allocations, and vector growth.
 
 The [memory verifier tests](source/rust_verify_test/tests/resource/memory)
 run together from `source/`:
