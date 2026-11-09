@@ -36,6 +36,8 @@ pub(super) struct VectorState {
     pub(super) input: Option<usize>,
     /// Whether this body can replace the backing allocation.
     pub(super) changed: bool,
+    /// An inferred entry reservation whose no-growth uses are checked by Verus.
+    pub(super) reserved: bool,
     /// Bounds from helpers that need not relate to the retained capacity minimum.
     pub(super) floor: Expr,
 }
@@ -167,6 +169,7 @@ impl Growth {
             element,
             input,
             changed: false,
+            reserved: false,
             floor: contracts::literal(span, 0),
         });
         id
@@ -289,58 +292,4 @@ pub(super) fn retained_bound(state: &VectorState, function: &Function, bound: &E
         }
     }
     bound.clone()
-}
-
-impl super::analysis::Analysis<'_> {
-    /// Infer a useful invariant for a common fill loop. The generated invariant
-    /// is still proved at entry and at every back edge by Verus.
-    pub(super) fn fill_loop_invariants(&mut self, cond: &Expr, body: &Expr) -> Vec<Expr> {
-        let ExprX::Binary(BinaryOp::Inequality(InequalityOp::Lt), length, limit) = &cond.x else {
-            return vec![];
-        };
-        let ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), args, .. } = &length.x else {
-            return vec![];
-        };
-        if attrs.resource_intrinsic != Some(ResourceIntrinsic::VecLen) || args.len() != 1 {
-            return vec![];
-        }
-        let Ok((name, _, _)) = self.vector_receiver(&args[0]) else { return vec![] };
-        let Some(id) = self.vector_state(&name) else { return vec![] };
-        let state = &self.growth.vectors[id];
-        if state.input.is_none() || state.changed {
-            return vec![];
-        }
-        let Ok(limit) = contracts::quantity(limit, &self.stable_scalars) else { return vec![] };
-        let same = match (&limit.x, &state.minimum.x) {
-            (ExprX::Var(a), ExprX::Var(b)) => a == b,
-            (ExprX::Const(a), ExprX::Const(b)) => a == b,
-            _ => false,
-        };
-        if !same {
-            return vec![];
-        }
-        let mut pushes = 0;
-        let mut simple = true;
-        let _: Result<(), VirErr> = crate::ast_visitor::expr_visitor_check(body, &mut |_, expr| {
-            match &expr.x {
-                ExprX::Loop { .. } => simple = false,
-                ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), .. } => {
-                    match attrs.resource_intrinsic {
-                        Some(ResourceIntrinsic::VecPush) => pushes += 1,
-                        Some(ResourceIntrinsic::VecLen) => {}
-                        _ => simple = false,
-                    }
-                }
-                _ => {}
-            }
-            Ok(())
-        });
-        if !simple || pushes > 1 {
-            return vec![];
-        }
-        vec![
-            mk_eq(&cond.span, &state.bytes, &contracts::literal(&cond.span, 0)),
-            mk_eq(&cond.span, &state.capacity, &state.minimum),
-        ]
-    }
 }

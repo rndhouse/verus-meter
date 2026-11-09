@@ -6254,17 +6254,6 @@ impl Debug for Lite<syn::Signature> {
         formatter.finish()
     }
 }
-impl Debug for Lite<syn::SignatureCapacity> {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        let mut formatter = formatter.debug_struct("SignatureCapacity");
-        formatter.field("parameter", Lite(&self.value.parameter));
-        formatter.field("capacity", Lite(&self.value.capacity));
-        if self.value.comma.is_some() {
-            formatter.field("comma", &Present);
-        }
-        formatter.finish()
-    }
-}
 impl Debug for Lite<syn::SignatureDecreases> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         let mut formatter = formatter.debug_struct("SignatureDecreases");
@@ -6476,9 +6465,6 @@ impl Debug for Lite<syn::SignatureSpec> {
                 }
             }
             formatter.field("resources", Print::ref_cast(val));
-        }
-        if !self.value.capacities.is_empty() {
-            formatter.field("capacities", Lite(&self.value.capacities));
         }
         if let Some(val) = &self.value.with {
             #[derive(RefCast)]
@@ -8158,11 +8144,6 @@ impl Debug for Lite<syn::token::Match> {
 impl Debug for Lite<syn::token::Matches> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("Token![matches]")
-    }
-}
-impl Debug for Lite<syn::token::MemCapacity> {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("Token![mem_capacity]")
     }
 }
 impl Debug for Lite<syn::token::MemPeak> {

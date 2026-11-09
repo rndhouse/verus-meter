@@ -955,7 +955,6 @@ pub(crate) mod parsing {
                             || input.peek(Token![via])
                             || input.peek(Token![when])
                             || (input.peek(Token![mem_peak]) && input.peek2(Token![<=]))
-                            || (input.peek(Token![mem_capacity]) && input.peek2(token::Paren))
                             || input.peek(Token![no_unwind])
                             || input.peek(Token![opens_invariants])
                             || input.peek(Token![,])

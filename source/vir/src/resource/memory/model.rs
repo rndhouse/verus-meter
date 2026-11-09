@@ -5,7 +5,7 @@ use crate::messages::{Span, error};
 use serde::{Deserialize, Serialize};
 use vir_macros::ToDebugSNode;
 
-pub(super) const MODEL_NAME: &str = "source-values-v9-64";
+pub(super) const MODEL_NAME: &str = "source-values-v10-64";
 pub(super) const WORD_BYTES: u64 = 8;
 
 /// Current source-storage contract. This unreleased format has no legacy variants.
@@ -13,8 +13,6 @@ pub(super) const WORD_BYTES: u64 = 8;
 pub struct ResourceContract {
     /// Simultaneous workspace allowed by this function.
     pub budget: super::BudgetExpr,
-    /// Optional minimum reservations supplied by callers.
-    pub capacities: Vec<(VarIdent, super::BudgetExpr)>,
 }
 
 pub(super) fn unsupported(span: &Span, what: &str) -> VirErr {

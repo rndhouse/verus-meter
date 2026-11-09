@@ -8,6 +8,7 @@ mod checkpoints;
 mod conditional;
 mod growth;
 mod heap;
+mod inference;
 mod integers;
 mod lifetimes;
 mod ownership;

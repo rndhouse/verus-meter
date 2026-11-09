@@ -218,7 +218,7 @@ impl Analysis<'_> {
                 ));
             }
             let room = mk_ineq(&expr.span, &len, &capacity, InequalityOp::Lt);
-            if self.growth.section_protected.contains(&state_id) {
+            if state.reserved || self.growth.section_protected.contains(&state_id) {
                 self.checks.push((expr.span.clone(), room));
                 return Ok(Some(0));
             }

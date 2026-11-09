@@ -27,6 +27,10 @@ Register their modes for resolution inference, use fresh AST identities, and
 commit state updates after the executable operation. Generated loop invariants
 must be proved at entry and on back edges. Keep peak checks separate from retained
 allocation effects; caller-owned buffers must stay charged during helper calls.
+Infer reservation requirements bottom-up over the checked call graph. They are
+resource requirements, not logical assumptions: prove uses within the helper and
+prove each caller supplies the inferred reservation. Keep inference conservative
+and preserve proof/spec execution boundaries.
 
 Compiler upgrades need a review of borrow/coercion lowering, move/copy provenance,
 and the identities used for supported standard operations.

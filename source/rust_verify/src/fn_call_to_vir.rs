@@ -68,7 +68,6 @@ pub(crate) fn fn_call_to_vir<'tcx>(
                         | SpecItem::Ensures
                         | SpecItem::Returns
                         | SpecItem::OpensInvariantMask
-                        | SpecItem::MemoryCapacity
                         | SpecItem::MemoryBudget
                         | SpecItem::NoUnwind
                         | SpecItem::NoUnwindWhen
@@ -659,7 +658,6 @@ fn verus_item_to_vir<'tcx, 'a>(
                     | SpecItem::InvMaskList
                     | SpecItem::InvMaskListCompl
                     | SpecItem::InvMaskSet
-                    | SpecItem::MemoryCapacity
                     | SpecItem::MemoryBudget
                     | SpecItem::NoUnwind
                     | SpecItem::NoUnwindWhen => (true, false),
@@ -908,36 +906,6 @@ fn verus_item_to_vir<'tcx, 'a>(
                     let arg = mk_one_vir_arg(bctx, expr.span, &args)?;
                     let header = Arc::new(HeaderExprX::DecreasesWhen(arg));
                     mk_expr(ExprX::Header(header))
-                }
-                SpecItem::MemoryCapacity => {
-                    record_spec_fn_pure_args_only(bctx, expr);
-                    internal_err_unless!(args_len == 2, expr.span, "expected vector and capacity");
-                    let rustc_hir::ExprKind::AddrOf(_, _, value) = args[0].kind else {
-                        return err_span(expr.span, "mem_capacity expects a parameter name");
-                    };
-                    let ghost = BodyCtxt { in_ghost: true, ..bctx.clone() };
-                    let value =
-                        crate::rust_to_vir_expr::expr_to_vir(&ghost, value)?.to_spec_expr(&ghost);
-                    let name = match &value.x {
-                        ExprX::Var(name) => name,
-                        ExprX::ReadPlace(place, _) => match &place.x {
-                            vir::ast::PlaceX::Local(name) => name,
-                            _ => {
-                                return err_span(
-                                    expr.span,
-                                    "mem_capacity expects a parameter name",
-                                );
-                            }
-                        },
-                        _ => {
-                            return err_span(expr.span, "mem_capacity expects a parameter name");
-                        }
-                    };
-                    let capacity = crate::resource::memory::budget::lower(bctx, args[1])?;
-                    mk_expr(ExprX::Header(Arc::new(HeaderExprX::MemoryCapacity(
-                        name.clone(),
-                        capacity,
-                    ))))
                 }
                 SpecItem::MemoryBudget => {
                     record_spec_fn_pure_args_only(bctx, expr);

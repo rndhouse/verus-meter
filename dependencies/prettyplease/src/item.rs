@@ -1965,12 +1965,12 @@ mod resource_contract_tests {
     }
 
     #[test]
-    fn capacity_contracts_preserve_surrounding_specs_and_where_clauses() {
+    fn resource_contracts_preserve_surrounding_specs_and_where_clauses() {
         for source in [
-            "fn f(v: &Vec<u32>, n: usize) requires n > 0, ensures n > 0, mem_capacity(v) >= n, mem_peak <= 16, {}",
-            "fn f<T>(v: &Vec<T>) where T: Copy, mem_capacity(v) >= 1, mem_peak <= 8 {}",
-            "trait Helpers { fn f(v: &Vec<u32>) mem_capacity(v) >= 1, mem_peak <= 8; }",
-            "impl Helpers { fn f(v: &Vec<u32>) mem_capacity(v) >= 1, mem_peak <= 8 {} }",
+            "fn f(v: &Vec<u32>, n: usize) requires n > 0, ensures n > 0, mem_peak <= 16, {}",
+            "fn f<T>(v: &Vec<T>) where T: Copy, mem_peak <= 8 {}",
+            "trait Helpers { fn f(v: &Vec<u32>) mem_peak <= 8; }",
+            "impl Helpers { fn f(v: &Vec<u32>) mem_peak <= 8 {} }",
         ] {
             let file = verus_syn::parse_file(source).unwrap();
             let pretty = crate::unparse(&file);

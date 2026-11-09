@@ -998,7 +998,6 @@ impl Visitor {
         let opens_invariants = self.take_ghost(&mut spec.invariants);
         let unwind = self.take_ghost(&mut spec.unwind);
         let resources = self.take_ghost(&mut spec.resources);
-        let capacities = std::mem::take(&mut spec.capacities);
         debug_assert!(spec.atomic_spec.is_none());
 
         let (self_token_op, args) = inputs;
@@ -1269,20 +1268,6 @@ impl Visitor {
                 )),
                 Some(Semi { spans: [full_span] }),
             ));
-        }
-
-        if !self.erase_ghost.erase() {
-            for clause in capacities {
-                let span = clause.token.span;
-                let tokens = if resources.is_none() {
-                    quote_spanned!(span => ::core::compile_error!("mem_capacity requires a mem_peak contract"))
-                } else {
-                    let parameter = clause.parameter;
-                    let capacity = resource::memory::lower_budget(&clause.capacity, &[]);
-                    quote_spanned_builtin!(builtin, span => #builtin::memory_capacity(&#parameter, #capacity))
-                };
-                spec_stmts.push(Stmt::Expr(Expr::Verbatim(tokens), Some(Semi { spans: [span] })));
-            }
         }
 
         if let Some(verus_syn::SignatureResources { token, budget, .. }) = resources {
@@ -2293,7 +2278,6 @@ impl Visitor {
                 invariants: invariants,
                 unwind: unwind,
                 resources: None,
-                capacities: Vec::new(),
                 with: None,
             },
         };

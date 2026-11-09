@@ -211,83 +211,8 @@ fn conditional_resource_budgets_require_both_formula_branches() {
 }
 
 #[test]
-fn capacity_clauses_round_trip_with_other_contracts() {
-    for text in [
-        "fn f(v: &mut Vec<u32>, n: usize) requires n > 0, ensures n > 0, mem_capacity(v) >= n, mem_peak <= 16, {}",
-        "fn f(v: &mut Vec<u32>, n: usize) requires n > 0 mem_capacity(v) >= n mem_peak <= 16 {}",
-        "fn f(a: &Vec<u32>, b: &Vec<u32>) mem_peak <= 16, mem_capacity(a) >= 1, mem_capacity(b) >= 2, {}",
-        "fn f<T>(v: &Vec<T>) where T: Copy, mem_capacity(v) >= 1, mem_peak <= 8 {}",
-    ] {
-        let function: ItemFn = parse_str(text).unwrap();
-        assert!(!function.sig.spec.capacities.is_empty());
-        let printed = function.clone().to_token_stream().to_string();
-        let reparsed: ItemFn = parse_str(&printed).unwrap();
-        assert_eq!(printed, reparsed.to_token_stream().to_string());
-        assert!(reparsed.sig.spec.resources.is_some());
-    }
-}
-
-#[test]
-fn capacity_clauses_erase_with_the_other_specs() {
-    let mut function: ItemFn = parse_str(
-        "fn f(a: &Vec<u32>, b: &Vec<u32>) mem_capacity(a) >= 1, mem_capacity(b) >= 2, mem_peak <= 16 {}",
-    ).unwrap();
-    function.sig.spec.erase_spec_fields();
-    let rust = function.to_token_stream().to_string();
-    assert!(!rust.contains("mem_capacity"));
-    assert!(!rust.contains("mem_peak"));
-    assert!(function.sig.spec.capacities.is_empty());
-}
-
-#[test]
-fn malformed_capacity_clauses_are_rejected() {
-    for clause in [
-        "mem_capacity() >= 1",
-        "mem_capacity(a, b) >= 1",
-        "mem_capacity(v.field) >= 1",
-        "mem_capacity(make()) >= 1",
-        "mem_capacity(v) <= 1",
-        "mem_capacity(v) > 1",
-        "mem_capacity(v) == 1",
-        "mem_capacity(v) >= -1",
-        "mem_capacity(v) >= 18446744073709551616",
-        "mem_capacity(v) >= 1u32",
-        "mem_capacity(v) >=",
-    ] {
-        let text = format!("fn f(v: &Vec<u32>) {clause}, mem_peak <= 8 {{}}");
-        assert!(
-            parse_str::<ItemFn>(&text).is_err(),
-            "unexpectedly parsed {text}"
-        );
-    }
-}
-
-#[cfg(all(feature = "visit-mut", feature = "fold"))]
-#[test]
-fn capacity_clauses_participate_in_ast_transformations() {
-    use verus_syn::{fold::Fold, visit_mut::VisitMut, Ident};
-    struct Rename;
-    impl VisitMut for Rename {
-        fn visit_ident_mut(&mut self, ident: &mut Ident) {
-            if ident == "v" {
-                *ident = Ident::new("buffer", ident.span());
-            }
-        }
-    }
-    impl Fold for Rename {
-        fn fold_ident(&mut self, ident: Ident) -> Ident {
-            if ident == "n" {
-                Ident::new("capacity", ident.span())
-            } else {
-                ident
-            }
-        }
-    }
-    let mut function: ItemFn =
-        parse_str("fn f(v: &Vec<u32>, n: usize) mem_capacity(v) >= n, mem_peak <= 16 {}").unwrap();
-    Rename.visit_item_fn_mut(&mut function);
-    let function = Rename.fold_item_fn(function);
-    let clause = &function.sig.spec.capacities[0];
-    assert_eq!(clause.parameter, "buffer");
-    assert_eq!(clause.capacity.to_token_stream().to_string(), "capacity");
+fn removed_capacity_clause_is_rejected() {
+    assert!(
+        parse_str::<ItemFn>("fn f(v: &Vec<u32>) mem_capacity(v) >= 1, mem_peak <= 8 {}").is_err()
+    );
 }

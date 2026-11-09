@@ -2616,15 +2616,6 @@ impl PartialEq for crate::Signature {
     }
 }
 #[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
-impl Eq for crate::SignatureCapacity {}
-#[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
-impl PartialEq for crate::SignatureCapacity {
-    fn eq(&self, other: &Self) -> bool {
-        self.parameter == other.parameter && self.capacity == other.capacity
-            && self.comma == other.comma
-    }
-}
-#[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
 impl Eq for crate::SignatureDecreases {}
 #[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
 impl PartialEq for crate::SignatureDecreases {
@@ -2660,8 +2651,7 @@ impl PartialEq for crate::SignatureSpec {
             && self.default_ensures == other.default_ensures
             && self.returns == other.returns && self.decreases == other.decreases
             && self.invariants == other.invariants && self.unwind == other.unwind
-            && self.resources == other.resources && self.capacities == other.capacities
-            && self.with == other.with
+            && self.resources == other.resources && self.with == other.with
     }
 }
 #[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]

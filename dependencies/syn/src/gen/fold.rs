@@ -1074,12 +1074,6 @@ pub trait Fold {
     fn fold_signature(&mut self, i: crate::Signature) -> crate::Signature {
         fold_signature(self, i)
     }
-    fn fold_signature_capacity(
-        &mut self,
-        i: crate::SignatureCapacity,
-    ) -> crate::SignatureCapacity {
-        fold_signature_capacity(self, i)
-    }
     fn fold_signature_decreases(
         &mut self,
         i: crate::SignatureDecreases,
@@ -4704,22 +4698,6 @@ where
         spec: f.fold_signature_spec(node.spec),
     }
 }
-pub fn fold_signature_capacity<F>(
-    f: &mut F,
-    node: crate::SignatureCapacity,
-) -> crate::SignatureCapacity
-where
-    F: Fold + ?Sized,
-{
-    crate::SignatureCapacity {
-        token: node.token,
-        paren_token: node.paren_token,
-        parameter: f.fold_ident(node.parameter),
-        ge_token: node.ge_token,
-        capacity: f.fold_resource_expr(node.capacity),
-        comma: node.comma,
-    }
-}
 pub fn fold_signature_decreases<F>(
     f: &mut F,
     node: crate::SignatureDecreases,
@@ -4779,7 +4757,6 @@ where
         invariants: (node.invariants).map(|it| f.fold_signature_invariants(it)),
         unwind: (node.unwind).map(|it| f.fold_signature_unwind(it)),
         resources: (node.resources).map(|it| f.fold_signature_resources(it)),
-        capacities: fold_vec(node.capacities, f, F::fold_signature_capacity),
         with: (node.with).map(|it| f.fold_with_spec_on_fn(it)),
     }
 }

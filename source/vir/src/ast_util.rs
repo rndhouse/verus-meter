@@ -1417,7 +1417,6 @@ impl HeaderExprX {
             | HeaderExprX::ExtraDependency(_)
             | HeaderExprX::OpenVisibilityQualifier(_)
             | HeaderExprX::MemoryBudget(_)
-            | HeaderExprX::MemoryCapacity(..)
             | HeaderExprX::NoUnwind
             | HeaderExprX::NoUnwindWhen(_) => "beginning of the function body",
 

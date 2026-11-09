@@ -6,7 +6,8 @@
 //! workspace contracts and composes their bounds with the parent.
 //! `heap` tracks allocation lifetimes; `ownership` derives transfer summaries
 //! for checked helpers; `vectors` handles operations and `growth` maintains erased
-//! capacity/retained-byte state. `contracts`
+//! capacity/retained-byte state; `inference` derives checked entry reservations.
+//! `contracts`
 //! specializes declared formulas with stable scalar arguments. `symbolic`
 //! turns conditional contracts into ordinary Verus proof obligations.
 //! `call_graph` discovers executable edges, orders callees, and rejects cycles;
@@ -31,6 +32,7 @@ mod execution;
 mod footprint;
 mod growth;
 mod heap;
+mod inference;
 mod layout;
 mod lifetime;
 mod model;

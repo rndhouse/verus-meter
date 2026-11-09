@@ -84,7 +84,6 @@ pub struct Header {
     pub atomic_update: Option<Expr>,
     pub atomic_call_loop: bool,
     pub unwind_spec: Option<UnwindSpec>,
-    pub resource_capacities: Vec<(VarIdent, crate::resource::memory::BudgetExpr)>,
     pub resource_budget: Option<crate::resource::memory::BudgetExpr>,
     pub extra_dependencies: Vec<Fun>,
     pub open_visibility_qualifier: Option<Visibility>,
@@ -108,7 +107,6 @@ pub fn read_header_block(block: &mut Vec<Stmt>, allows: &HeaderAllows) -> Result
     let mut atomic_call_loop = false;
     let mut unwind_spec: Option<UnwindSpec> = None;
     let mut resource_budget = None;
-    let mut resource_capacities = Vec::new();
     let mut open_visibility_qualifier: Option<Visibility> = None;
     let mut n = 0;
     let mut unwrap_parameter_allowed = true;
@@ -244,9 +242,6 @@ pub fn read_header_block(block: &mut Vec<Stmt>, allows: &HeaderAllows) -> Result
                         atomic_call_loop = true;
                         allowed = allows.loops();
                     }
-                    HeaderExprX::MemoryCapacity(parameter, capacity) => {
-                        resource_capacities.push((parameter.clone(), capacity.clone()));
-                    }
                     HeaderExprX::MemoryBudget(budget) => {
                         if resource_budget.replace(budget.clone()).is_some() {
                             return Err(error(&stmt.span, "only one mem_peak clause allowed"));
@@ -321,7 +316,6 @@ pub fn read_header_block(block: &mut Vec<Stmt>, allows: &HeaderAllows) -> Result
         atomic_call_loop,
         unwind_spec,
         resource_budget,
-        resource_capacities,
         extra_dependencies,
         open_visibility_qualifier,
     })

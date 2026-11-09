@@ -22,7 +22,7 @@ test_verify_one_file! {
         fn append(v: &mut Vec<u32>, cap: usize, value: u32)
             requires old(v).len() < cap,
             ensures final(v)@ == old(v)@.push(value),
-            mem_capacity(v) >= cap, mem_peak <= 20,
+            mem_peak <= 20,
         { v.push(value); }
         fn run() mem_peak <= 52 {
             let mut v = Vec::<u32>::with_capacity(2);
@@ -39,12 +39,12 @@ test_verify_one_file! {
         fn append(v: &mut Vec<u32>, cap: usize)
             requires old(v).len() < cap,
             ensures final(v)@ == old(v)@.push(7),
-            mem_capacity(v) >= cap, mem_peak <= 16,
+            mem_peak <= 16,
         { v.push(7); }
         fn forward(v: &mut Vec<u32>, cap: usize)
             requires old(v).len() < cap,
             ensures final(v)@ == old(v)@.push(7),
-            mem_capacity(v) >= cap, mem_peak <= 32,
+            mem_peak <= 32,
         { append(v, cap); }
         fn run() mem_peak <= 60 {
             let mut v = Vec::<u32>::with_capacity(1);
@@ -59,7 +59,7 @@ test_verify_one_file! {
         use vstd::prelude::*;
         fn append(v: &mut Vec<u32>, cap: usize)
             requires old(v).len() < cap,
-            mem_capacity(v) >= cap, mem_peak <= 16,
+            mem_peak <= 16,
         { v.push(1); }
         fn run() mem_peak <= 100 {
             let mut v = Vec::<u32>::with_capacity(1);
@@ -71,7 +71,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] borrowed_push_requires_room verus_code! {
         use vstd::prelude::*;
-        fn append(v: &mut Vec<u32>, cap: usize) mem_capacity(v) >= cap, mem_peak <= 16 { v.push(1); }
+        fn append(v: &mut Vec<u32>, cap: usize) mem_peak <= 16 { v.push(1); }
     } => Err(err) => assert_vir_error_msg(err, "memory budget exceeded")
 }
 
@@ -109,7 +109,7 @@ test_verify_one_file! {
         fn fill(v: &mut Vec<u32>, cap: usize)
             requires old(v).len() <= cap,
             ensures final(v).len() == cap,
-            mem_capacity(v) >= cap, mem_peak <= 40,
+            mem_peak <= 40,
         {
             while v.len() < cap
                 invariant v.len() <= cap,
@@ -129,12 +129,12 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] smaller_contract_does_not_shrink_callers_reservation verus_code! {
+    #[test] inferred_requirement_preserves_callers_reservation verus_code! {
         use vstd::prelude::*;
         fn first(v: &mut Vec<u32>)
             requires old(v).len() == 0,
             ensures final(v).len() == 1,
-            mem_capacity(v) >= 1, mem_peak <= 8,
+            mem_peak <= 8,
         { v.push(1); }
         fn run() mem_peak <= 40 {
             let mut v = Vec::<u32>::with_capacity(2);
@@ -146,12 +146,12 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] owned_vector_capacity_contract verus_code! {
+    #[test] owned_vector_capacity_is_inferred verus_code! {
         use vstd::prelude::*;
         fn append(mut v: Vec<u32>, cap: usize) -> (result: Vec<u32>)
             requires v.len() < cap,
             ensures result@ == v@.push(3),
-            mem_capacity(v) >= cap, mem_peak <= 32,
+            mem_peak <= 32,
         { v.push(3); v }
         fn run() mem_peak <= 64 {
             let v = Vec::<u32>::with_capacity(2);
@@ -165,19 +165,19 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] zero_size_elements_can_grow verus_code! {
         use vstd::prelude::*;
-        fn push(v: &mut Vec<()>) mem_capacity(v) >= 0, mem_peak <= 8 { v.push(()); }
+        fn push(v: &mut Vec<()>) mem_peak <= 8 { v.push(()); }
     } => Ok(())
 }
 
 test_verify_one_file! {
-    #[test] unused_capacity_precondition_is_enforced verus_code! {
+    #[test] read_only_helpers_need_no_reservation verus_code! {
         use vstd::prelude::*;
-        fn helper(v: &Vec<u32>) mem_capacity(v) >= 2, mem_peak <= 8 {}
+        fn helper(v: &Vec<u32>) mem_peak <= 8 {}
         fn run() mem_peak <= 100 {
             let v = Vec::<u32>::with_capacity(1);
             helper(&v);
         }
-    } => Err(err) => assert_vir_error_msg(err, "vector capacity exceeded")
+    } => Ok(())
 }
 
 test_verify_one_file! {
@@ -195,30 +195,10 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] mutable_borrow_binding_cannot_reuse_capacity_contract verus_code! {
+    #[test] mutable_borrow_binding_is_rejected verus_code! {
         use vstd::prelude::*;
-        fn helper(mut v: &mut Vec<u32>) mem_capacity(v) >= 2, mem_peak <= 100 {}
+        fn helper(mut v: &mut Vec<u32>) mem_peak <= 100 {}
     } => Err(err) => assert_vir_error_msg(err, "mutable bindings for borrowed vector parameters")
-}
-
-test_verify_one_file! {
-    #[test] duplicate_capacity_rejected verus_code! {
-        use vstd::prelude::*;
-        fn helper(v: &Vec<u32>) mem_capacity(v) >= 1, mem_capacity(v) >= 2, mem_peak <= 8 {}
-    } => Err(err) => assert_vir_error_msg(err, "duplicate mem_capacity")
-}
-
-test_verify_one_file! {
-    #[test] capacity_requires_vector_parameter verus_code! {
-        fn helper(n: usize) mem_capacity(n) >= 1, mem_peak <= 8 {}
-    } => Err(err) => assert_vir_error_msg(err, "executable vector parameter")
-}
-
-test_verify_one_file! {
-    #[test] mutable_capacity_input_rejected verus_code! {
-        use vstd::prelude::*;
-        fn helper(v: &Vec<u32>, mut cap: usize) mem_capacity(v) >= cap, mem_peak <= 16 {}
-    } => Err(err) => assert_vir_error_msg(err, "immutable")
 }
 
 #[test]
@@ -243,11 +223,11 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] unknown_capacity_cannot_be_forwarded_as_known verus_code! {
+    #[test] read_only_helpers_forward_unknown_capacity verus_code! {
         use vstd::prelude::*;
-        fn inspect(v: &Vec<u32>) mem_capacity(v) >= 1, mem_peak <= 8 {}
+        fn inspect(v: &Vec<u32>) mem_peak <= 8 {}
         fn forward(v: &Vec<u32>) mem_peak <= 16 { inspect(v); }
-    } => Err(err) => assert_vir_error_msg(err, "vector capacity exceeded")
+    } => Ok(())
 }
 
 test_verify_one_file! {
@@ -263,21 +243,12 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] capacity_contract_without_budget_rejected verus_code! {
-        use vstd::prelude::*;
-        fn helper(v: &Vec<u32>) mem_capacity(v) >= 1, {}
-    } => Err(err) => assert_vir_error_msg(err, "mem_capacity requires a mem_peak contract")
-}
-
-test_verify_one_file! {
-    #[test] multiple_capacity_clauses_after_peak verus_code! {
+    #[test] multiple_vector_requirements_are_inferred verus_code! {
         use vstd::prelude::*;
         fn append(a: &mut Vec<u32>, b: &mut Vec<u32>)
             requires old(a).len() == 0, old(b).len() == 0,
             ensures final(a).len() == 1, final(b).len() == 1,
             mem_peak <= 16,
-            mem_capacity(a) >= 1,
-            mem_capacity(b) >= 2,
         { a.push(1); b.push(2); }
         fn run() mem_peak <= 76 {
             let mut a = Vec::<u32>::with_capacity(1);
@@ -289,18 +260,10 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] capacity_clause_is_not_a_logical_assumption verus_code! {
+    #[test] inference_is_not_a_logical_assumption verus_code! {
         use vstd::prelude::*;
-        fn helper(v: &Vec<u32>) mem_capacity(v) >= 4, mem_peak <= 8 {
+        fn helper(v: &Vec<u32>) mem_peak <= 8 {
             assert(v.len() == 4);
         }
     } => Err(err) => assert_vir_error_msg(err, "assertion failed")
-}
-
-test_verify_one_file! {
-    #[test] capacity_clause_rejects_arbitrary_expressions verus_code! {
-        use vstd::prelude::*;
-        fn helper(v: &Vec<u32>, cap: usize)
-            mem_capacity(v) >= cap + 1, mem_peak <= 16 {}
-    } => Err(err) => assert_vir_error_msg(err, "mem_capacity expects a literal or immutable unsigned input parameter")
 }

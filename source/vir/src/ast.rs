@@ -857,7 +857,6 @@ pub enum HeaderExprX {
     ExtraDependency(Fun),
     /// Declared memory bound, checked under the contract's versioned model.
     MemoryBudget(crate::resource::memory::BudgetExpr),
-    MemoryCapacity(VarIdent, crate::resource::memory::BudgetExpr),
     /// This function will not unwind
     NoUnwind,
     /// This function will not unwind if the given condition holds (function of arguments)

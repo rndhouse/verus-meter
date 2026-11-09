@@ -197,54 +197,54 @@ building a `Vec<u32>` with at most `n` pushes. See
 [preallocated vectors](../../examples/resource/memory/vectors.rs), and
 [unbudgeted growth](../../examples/resource/memory/expected-failures/vector_growth.rs).
 
-## Borrowed vector helpers and capacity contracts
+## Vector helpers and inferred reservations
 
-Helpers can accept `&Vec<T>` or `&mut Vec<T>`. The reference costs 8 model bytes;
-the caller retains the vector handle and backing allocation charges. Reading,
-indexing, slice access, and popping do not require a capacity contract.
-
-A helper can optionally require a minimum reserved element count to prove tighter bounds:
+Helpers can accept `Vec<T>`, `&Vec<T>`, or `&mut Vec<T>`. A reference costs
+8 model bytes; the caller retains the backing allocation charge during the call.
+The verifier tracks reservations internally, including through nested helpers.
+There is no capacity annotation.
 
 ```rust
 fn append(values: &mut Vec<u32>, capacity: usize, value: u32)
     requires old(values).len() < capacity,
     ensures final(values)@ == old(values)@.push(value),
-    mem_capacity(values) >= capacity,
     mem_peak <= mem_size(values) + mem_size(capacity) + mem_size(value),
 {
     values.push(value);
 }
 ```
 
-The `mem_capacity` clause is a resource precondition: `values` must have at least `capacity`
-reserved model elements. Its amount can be a nonnegative `u64` literal or an
-immutable unsigned input parameter of at most 64 bits. It counts elements, not
-bytes, and describes the model's reservation rather than Rust's physical
-allocator capacity. It requires a `mem_peak` contract and is erased with the
-other verification annotations. Capacity clauses may appear before or after
-`mem_peak`; use one clause per vector parameter when a helper needs multiple
-reservations.
+This budget covers the helper's parameters and leaves no room for a replacement
+buffer. From the length bound, the verifier infers that the incoming vector
+needs at least `capacity` reserved elements. It checks every push in the helper
+against that reservation and checks every call against the caller's tracked
+allocation. These are ordinary proof obligations: inference adds no assumptions
+about vector length or contents. A caller with insufficient reservation fails
+verification even if its own budget is larger.
 
-At each call in checked code, the verifier proves the actual reservation meets
-the requested minimum. Within the helper, preconditions, branches, and loop invariants can prove that
-pushes fit the reservation; otherwise their possible growth must fit the budget.
-Resource preconditions do not introduce logical assumptions about vector contents.
-As with other resource guarantees, callers outside checked code must satisfy these
-resource preconditions to rely on the memory bound.
+Inference recognizes length comparisons with constants and immutable unsigned
+inputs in preconditions, branch guards, and loop conditions. It accounts for
+successive pushes, propagates requirements through checked helpers, and preserves
+conditions depending on scalar inputs. Loop proofs still need ordinary length
+invariants. This is conservative inference, not a general solver for arbitrary
+length formulas; when a candidate cannot be proved, verification fails.
 
-Direct reborrows through nested helpers preserve the reservation. A helper asking
-for a smaller minimum does not reduce the caller's reservation. Ordinary `ensures`
-clauses describe updated length and contents so subsequent callers can use them.
-The clause also supports incoming owned vectors. A helper may grow either an
-owned input or a mutable borrowed vector without a capacity clause. Its budget
-covers replacement allocations; the caller retains the original buffer charge
-during the call. Checked summaries update the caller's retained-byte bound after
-return, conservatively using the helper's declared allowance when necessary.
-This may require more budget than an exact implementation-specific summary.
+Reading, indexing, popping, and forwarding a read-only vector need no reservation.
+A smaller inferred requirement does not shrink the caller's reservation. Ordinary
+`ensures` clauses describe updated lengths and contents for subsequent operations.
+When a helper's budget covers growth, it can allocate replacement buffers and its
+summary updates the caller's retained-byte bound, conservatively using the
+helper's declared allowance when necessary.
 
-For now, borrowed vector bindings must be immutable (the vector itself may be
-mutably borrowed), and arguments must resolve to named owners or borrowed
-parameters. Local reference aliases and replacement through `&mut Vec<T>` remain unsupported. See [vector helpers](../../examples/resource/memory/vector_helpers.rs).
+A vector helper's memory guarantee is contextual: inferred reservations must be
+satisfied by its caller. Keep allocation and helper calls inside checked code to
+establish the complete guarantee; an unchecked caller does not establish those
+resource requirements merely by satisfying the ordinary `requires` clause.
+
+Borrowed vector bindings must be immutable (the vector itself may be mutably
+borrowed), and arguments must resolve to named owners or borrowed parameters.
+Local reference aliases and replacement through `&mut Vec<T>` remain unsupported.
+See [vector helpers](../../examples/resource/memory/vector_helpers.rs).
 
 ## Passing heap ownership between helpers
 

@@ -85,7 +85,6 @@ a.struct[title="struct syn::token::Lt"],
 a.struct[title="struct syn::token::Macro"],
 a.struct[title="struct syn::token::Match"],
 a.struct[title="struct syn::token::Matches"],
-a.struct[title="struct syn::token::MemCapacity"],
 a.struct[title="struct syn::token::MemPeak"],
 a.struct[title="struct syn::token::Minus"],
 a.struct[title="struct syn::token::MinusEq"],
@@ -255,7 +254,6 @@ a.struct[title="struct syn::token::Lt"]::before,
 a.struct[title="struct syn::token::Macro"]::before,
 a.struct[title="struct syn::token::Match"]::before,
 a.struct[title="struct syn::token::Matches"]::before,
-a.struct[title="struct syn::token::MemCapacity"]::before,
 a.struct[title="struct syn::token::MemPeak"]::before,
 a.struct[title="struct syn::token::Minus"]::before,
 a.struct[title="struct syn::token::MinusEq"]::before,
@@ -685,10 +683,6 @@ a.struct[title="struct syn::token::Match"]::before {
 
 a.struct[title="struct syn::token::Matches"]::before {
 	content: "Token![matches]";
-}
-
-a.struct[title="struct syn::token::MemCapacity"]::before {
-	content: "Token![mem_capacity]";
 }
 
 a.struct[title="struct syn::token::MemPeak"]::before {
@@ -1189,7 +1183,6 @@ a.struct[title="struct syn::token::AssumeSpecification"]::after,
 a.struct[title="struct syn::token::DefaultEnsures"]::after,
 a.struct[title="struct syn::token::InnerMask"]::after,
 a.struct[title="struct syn::token::InvariantEnsures"]::after,
-a.struct[title="struct syn::token::MemCapacity"]::after,
 a.struct[title="struct syn::token::MemPeak"]::after,
 a.struct[title="struct syn::token::NoUnwind"]::after,
 a.struct[title="struct syn::token::OpensInvariants"]::after,

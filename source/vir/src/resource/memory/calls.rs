@@ -29,12 +29,16 @@ impl Analysis<'_> {
         {
             return Err(unsupported(&expr.span, "this call signature"));
         }
-        let capacity_contracts = super::contracts::capacities(callee)?;
-        for (arg, param) in args.iter().zip(callee.x.params.iter()) {
-            if let Some(required) = capacity_contracts.get(&param.x.name) {
+        let summary = self
+            .summaries
+            .get(target)
+            .ok_or_else(|| unsupported(&expr.span, "a call without a checked function summary"))?;
+        for (index, (arg, param)) in args.iter().zip(callee.x.params.iter()).enumerate() {
+            if let Some(required) = summary.reservations.get(&index) {
                 let (name, _, _) = self.vector_receiver(arg)?;
-                let available = self.vector_capacity(&name).ok_or_else(|| unsupported(
-                    &arg.span, "passing a vector without a capacity contract to a capacity-constrained helper"))?;
+                let available = self.vector_capacity(&name).ok_or_else(|| {
+                    unsupported(&arg.span, "passing an untracked vector to a checked helper")
+                })?;
                 let required =
                     super::contracts::substitute(required, callee, args, &self.stable_scalars)?;
                 self.checks.push((
@@ -42,7 +46,6 @@ impl Analysis<'_> {
                     crate::ast_util::mk_ineq(&expr.span, &required, &available, InequalityOp::Le),
                 ));
             } else if self.layouts.borrowed_vector(&param.x.typ).is_some() {
-                // Also validate provenance when the callee needs no capacity.
                 self.vector_receiver(arg)?;
             }
         }

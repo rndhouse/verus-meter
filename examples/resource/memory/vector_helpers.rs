@@ -1,5 +1,6 @@
 // Helpers borrow a vector while its owner keeps paying for the allocation.
-// Capacity contracts describe reserved model elements, not allocator over-allocation.
+// The verifier infers the reservation needed by append from its length bound
+// and checks that the caller supplies it. No capacity annotation is needed.
 use vstd::prelude::*;
 
 verus! {
@@ -9,7 +10,6 @@ fn append(values: &mut Vec<u32>, capacity: usize, value: u32)
         old(values).len() < capacity,
     ensures
         final(values)@ == old(values)@.push(value),
-    mem_capacity(values) >= capacity,
     mem_peak <= mem_size(values) + mem_size(capacity) + mem_size(value),
 {
     values.push(value);

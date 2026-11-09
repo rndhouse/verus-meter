@@ -187,7 +187,6 @@ fn is_header_verus_item(verus_item: &VerusItem) -> bool {
             | SpecItem::DecreasesBy
             | SpecItem::RecommendsBy
             | SpecItem::OpensInvariantMask
-            | SpecItem::MemoryCapacity
             | SpecItem::MemoryBudget
             | SpecItem::NoUnwind
             | SpecItem::NoUnwindWhen => true,

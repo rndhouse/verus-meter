@@ -364,7 +364,6 @@ impl Analysis<'_> {
                 atomic_call: false,
                 ..
             } if unit(&expr.typ) => {
-                let fill_invariants = self.fill_loop_invariants(cond, body);
                 let loop_scalars = self.stable_scalars.clone();
                 let entry = self.storage.live();
                 let ids: Vec<_> = self
@@ -391,7 +390,6 @@ impl Analysis<'_> {
                 self.heap.unprotect(protection);
                 let mut invariants =
                     self.growth.invariants(&expr.span, &ids, &loop_scalars, &self.bound);
-                invariants.extend(fill_invariants);
                 invariants.push(crate::ast_util::mk_ineq(
                     &expr.span,
                     &live,
@@ -500,23 +498,14 @@ pub(super) fn check(
         return Err(unsupported(&function.span, "ghost or tracked return values"));
     }
     layouts.return_size(&f.outer_ret.x.typ, &function.span)?;
-    let capacities = super::contracts::capacities(function)?;
-    for name in capacities.keys() {
-        let Some(param) = f.params.iter().find(|p| p.x.name == *name) else {
-            return Err(unsupported(
-                &function.span,
-                "mem_capacity on anything other than a parameter",
-            ));
-        };
-        if param.x.mode != Mode::Exec
-            || (!layouts.vector(&param.x.typ) && layouts.borrowed_vector(&param.x.typ).is_none())
-        {
-            return Err(unsupported(
-                &param.span,
-                "mem_capacity on anything other than an executable vector parameter",
-            ));
-        }
-    }
+    let capacities = super::inference::infer(
+        function,
+        layouts,
+        summaries,
+        functions,
+        &analysis.bound,
+        &modes.var_modes,
+    )?;
     for (index, param) in f.params.iter().enumerate() {
         analysis.var_modes.insert(param.x.name.clone(), param.x.mode);
         if param.x.mode == Mode::Exec {
@@ -553,6 +542,7 @@ pub(super) fn check(
                     Some(index),
                     allocation,
                 );
+                analysis.growth.vectors[state].reserved = capacities.contains_key(&param.x.name);
                 analysis.storage.set_allocation(
                     allocation,
                     MemoryKind::host_heap(),
@@ -606,6 +596,12 @@ pub(super) fn check(
     Ok(Some(FunctionAnalysis {
         report,
         summary: super::summary::FunctionSummary {
+            reservations: f
+                .params
+                .iter()
+                .enumerate()
+                .filter_map(|(i, p)| capacities.get(&p.x.name).cloned().map(|c| (i, c)))
+                .collect(),
             returned,
             return_parameter,
             profiles,
