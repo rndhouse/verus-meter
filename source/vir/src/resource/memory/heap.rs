@@ -23,13 +23,20 @@ pub(super) struct Heap {
 /// The allocation follows its owner; lexical handle slots are accounted separately.
 #[derive(Clone)]
 pub(super) struct Owner {
+    /// Memory kind charged for the owned allocation, independently of its handle.
     pub(super) kind: MemoryKind,
+    /// Fixed portion of the live charge, released when this owner is consumed.
     pub(super) bytes: u64,
+    /// Identity of any symbolic portion of the live charge.
     pub(super) dynamic: Option<u64>,
+    /// Byte-size expression supplied by a fresh allocation's constructor or summary.
+    /// Incoming allocations use their caller's charge instead.
+    pub(super) extent: Option<Expr>,
+    /// Original vector reservation used when exporting an unchanged fresh result.
     pub(super) capacity: Option<Expr>,
     /// Vector proof-state identity, preserved when its handle moves.
     pub(super) vector: Option<usize>,
-    // The lifetime summary tells callers when this input allocation is released.
+    /// Input provenance used to compose the allocation's lifetime at calls.
     pub(super) input: Option<usize>,
 }
 
@@ -39,6 +46,7 @@ impl Default for Owner {
             kind: MemoryKind::host_heap(),
             bytes: 0,
             dynamic: None,
+            extent: None,
             capacity: None,
             vector: None,
             input: None,
@@ -110,7 +118,11 @@ impl Analysis<'_> {
     pub(super) fn owner_expr(&mut self, expr: &Expr) -> Result<Owner, VirErr> {
         self.layouts.size(&expr.typ, &expr.span)?;
         if let Some(bytes) = self.allocate_box(expr)? {
-            return Ok(Owner { bytes, ..Owner::default() });
+            return Ok(Owner {
+                bytes,
+                extent: Some(super::contracts::literal(&expr.span, bytes)),
+                ..Owner::default()
+            });
         }
         if let Some(owner) = self.allocate_vector(expr)? {
             return Ok(owner);

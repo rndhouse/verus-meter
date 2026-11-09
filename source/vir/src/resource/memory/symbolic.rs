@@ -12,6 +12,25 @@ use crate::messages::{Span, error};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+/// Write an erased model integer; instrumentation gives each use fresh AST IDs.
+pub(super) fn assign(span: &Span, variable: &Expr, value: Expr) -> Stmt {
+    let ExprX::Var(name) = &variable.x else { unreachable!() };
+    Spanned::new(
+        span.clone(),
+        StmtX::Expr(SpannedTyped::new(
+            span,
+            &unit_typ(),
+            ExprX::Assign {
+                place: SpannedTyped::new(span, &int_typ(), PlaceX::Local(name.clone())),
+                rhs: value,
+                op: None,
+                typ: int_typ(),
+                resolve: false,
+            },
+        )),
+    )
+}
+
 pub(super) fn function_bound(
     function: &Function,
     budgets: &HashMap<Fun, u64>,

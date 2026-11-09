@@ -537,7 +537,10 @@ pub(super) fn check(
                         .get(&param.x.name)
                         .cloned()
                         .unwrap_or_else(|| super::contracts::literal(&param.span, 0)),
-                    super::contracts::literal(&param.span, 0),
+                    super::footprint::Charge {
+                        kind: MemoryKind::host_heap(),
+                        amount: super::contracts::literal(&param.span, 0),
+                    },
                     layouts.vector_element(typ, &param.span)?,
                     Some(index),
                     allocation,
@@ -546,7 +549,7 @@ pub(super) fn check(
                 analysis.storage.set_allocation(
                     allocation,
                     MemoryKind::host_heap(),
-                    analysis.growth.vectors[state].bytes.clone(),
+                    analysis.growth.vectors[state].backing.bytes.clone(),
                 );
                 if let Some(owner) = analysis.heap.owners.get_mut(&param.x.name) {
                     owner.vector = Some(state);
@@ -573,12 +576,14 @@ pub(super) fn check(
             inputs: p.inputs.clone(),
         })
         .collect();
-    let returned = super::ownership::summarize(
+    let result_owner = analysis.result_owner.take();
+    let (returned_capacity, replacement) = super::vector_calls::summarize_result(
         function,
-        analysis.result_owner.take(),
+        result_owner.as_ref(),
         &analysis.growth,
         &analysis.bound,
     )?;
+    let returned = super::ownership::summarize(function, result_owner.as_ref(), replacement)?;
     analysis.check_checkpoints()?;
     let report = if symbolic_bound.is_some() {
         analysis.storage.finish_conditional()
@@ -596,29 +601,42 @@ pub(super) fn check(
     Ok(Some(FunctionAnalysis {
         report,
         summary: super::summary::FunctionSummary {
-            reservations: f
-                .params
-                .iter()
-                .enumerate()
-                .filter_map(|(i, p)| capacities.get(&p.x.name).cloned().map(|c| (i, c)))
-                .collect(),
-            returned,
+            vectors: super::vector_calls::VectorSummary {
+                returned_capacity,
+                reservations: f
+                    .params
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, p)| capacities.get(&p.x.name).cloned().map(|c| (i, c)))
+                    .collect(),
+            },
+
             return_parameter,
             profiles,
-            growth: analysis
-                .heap
-                .borrowed
-                .values()
-                .filter_map(|id| {
-                    let state = &analysis.growth.vectors[*id];
-                    state.changed.then(|| {
-                        (
-                            state.input.unwrap(),
-                            super::growth::retained_bound(state, function, &analysis.bound),
-                        )
+            allocations: super::allocations::AllocationSummary {
+                returned,
+                retained: analysis
+                    .heap
+                    .borrowed
+                    .values()
+                    .filter_map(|id| {
+                        let state = &analysis.growth.vectors[*id];
+                        state.backing.changed.then(|| {
+                            (
+                                state.backing.input.unwrap(),
+                                super::footprint::Charge {
+                                    kind: state.backing.kind.clone(),
+                                    amount: super::growth::retained_bound(
+                                        state,
+                                        function,
+                                        &analysis.bound,
+                                    ),
+                                },
+                            )
+                        })
                     })
-                })
-                .collect(),
+                    .collect(),
+            },
         },
         calls: analysis.calls,
         symbolic_bound,

@@ -5,6 +5,7 @@
 //! keeps paying for that allocation while the callee pays for replacement buffers.
 
 use super::contracts;
+use super::symbolic::assign;
 use crate::ast::*;
 use crate::ast_util::*;
 use crate::def::Spanned;
@@ -18,28 +19,16 @@ pub(super) struct VectorState {
     pub(super) capacity: Expr,
     /// Initial reservation remains a lower bound because supported operations never shrink.
     pub(super) minimum: Expr,
-    /// Constructor charge, or zero for an allocation supplied by the caller.
-    pub(super) initial_bytes: Expr,
     /// Direct pushes require length-dependent loop bounds; helper effects have stable bounds.
     pub(super) pushes: usize,
-    /// Upper bound for retained backing storage charged in this function.
-    pub(super) bytes: Expr,
     /// Scratch snapshot prevents a transition from reading its own updated state.
     pub(super) next_capacity: Expr,
-    /// Retained-byte snapshot committed after the executable operation.
-    pub(super) next_bytes: Expr,
-    /// Stable identity of this allocation's charge across moves and branches.
-    pub(super) allocation: u64,
     /// Model size of one non-owning element.
     pub(super) element: u64,
-    /// Original parameter, if this allocation came from the caller.
-    pub(super) input: Option<usize>,
-    /// Whether this body can replace the backing allocation.
-    pub(super) changed: bool,
     /// An inferred entry reservation whose no-growth uses are checked by Verus.
     pub(super) reserved: bool,
-    /// Bounds from helpers that need not relate to the retained capacity minimum.
-    pub(super) floor: Expr,
+    /// Container-independent byte state and allocation identity.
+    pub(super) backing: super::allocations::RetainedAllocation,
 }
 
 #[derive(Default)]
@@ -85,24 +74,6 @@ pub(super) fn grown_capacity(span: &Span, length: Expr, element: u64) -> Expr {
     )
 }
 
-pub(super) fn assign(span: &Span, variable: &Expr, value: Expr) -> Stmt {
-    let ExprX::Var(name) = &variable.x else { unreachable!() };
-    Spanned::new(
-        span.clone(),
-        StmtX::Expr(SpannedTyped::new(
-            span,
-            &unit_typ(),
-            ExprX::Assign {
-                place: SpannedTyped::new(span, &int_typ(), PlaceX::Local(name.clone())),
-                rhs: value,
-                op: None,
-                typ: int_typ(),
-                resolve: false,
-            },
-        )),
-    )
-}
-
 impl Growth {
     pub(super) fn revision(&self) -> usize {
         self.before.values().map(Vec::len).sum::<usize>()
@@ -113,7 +84,7 @@ impl Growth {
         &mut self,
         span: &Span,
         capacity: Expr,
-        bytes: Expr,
+        size: super::footprint::Charge<Expr>,
         element: u64,
         input: Option<usize>,
         allocation: u64,
@@ -153,24 +124,27 @@ impl Growth {
         let upper = variable("bytes");
         let next_capacity = variable("next_capacity");
         let next_bytes = variable("next_bytes");
-        self.before
-            .entry(span.id)
-            .or_default()
-            .extend([assign(span, &lower, capacity.clone()), assign(span, &upper, bytes.clone())]);
+        self.before.entry(span.id).or_default().extend([
+            assign(span, &lower, capacity.clone()),
+            assign(span, &upper, size.amount.clone()),
+        ]);
         self.vectors.push(VectorState {
             capacity: lower,
             minimum: capacity,
-            initial_bytes: bytes,
             pushes: 0,
-            bytes: upper,
             next_capacity,
-            next_bytes,
-            allocation,
             element,
-            input,
-            changed: false,
             reserved: false,
-            floor: contracts::literal(span, 0),
+            backing: super::allocations::RetainedAllocation {
+                id: allocation,
+                kind: size.kind,
+                initial_bytes: size.amount,
+                bytes: upper,
+                next_bytes,
+                input,
+                changed: false,
+                floor: contracts::literal(span, 0),
+            },
         });
         id
     }
@@ -189,10 +163,10 @@ impl Growth {
             let zero = contracts::literal(span, 0);
             result.push(mk_ineq(span, &state.minimum, &state.capacity, InequalityOp::Le));
             result.push(mk_ineq(span, &zero, &state.capacity, InequalityOp::Le));
-            result.push(mk_ineq(span, &zero, &state.bytes, InequalityOp::Le));
+            result.push(mk_ineq(span, &zero, &state.backing.bytes, InequalityOp::Le));
             let mut in_scope = true;
             let _: Result<(), VirErr> =
-                crate::ast_visitor::expr_visitor_check(&state.floor, &mut |_, expr| {
+                crate::ast_visitor::expr_visitor_check(&state.backing.floor, &mut |_, expr| {
                     if let ExprX::Var(name) = &expr.x {
                         in_scope &= allowed.contains(name);
                     }
@@ -201,7 +175,7 @@ impl Growth {
             // A helper may use a scalar declared inside this loop. Its expression
             // cannot escape into the header; the checked function budget is a
             // sound, in-scope bound for the live replacement instead.
-            let floor = if in_scope { state.floor.clone() } else { fallback.clone() };
+            let floor = if in_scope { state.backing.floor.clone() } else { fallback.clone() };
             let upper = contracts::maximum(
                 span,
                 floor.clone(),
@@ -212,37 +186,30 @@ impl Growth {
                 ),
             );
             let upper = if state.pushes == 0 {
-                contracts::maximum(span, state.initial_bytes.clone(), floor)
+                contracts::maximum(span, state.backing.initial_bytes.clone(), floor)
             } else {
                 upper
             };
-            result.push(mk_ineq(span, &state.bytes, &upper, InequalityOp::Le));
+            result.push(mk_ineq(span, &state.backing.bytes, &upper, InequalityOp::Le));
         }
         result
     }
 }
 
 impl super::analysis::Analysis<'_> {
-    pub(super) fn retain_vector_growth(&mut self, span: &Span, id: usize, bound: Expr) {
-        if contracts::constant(&bound) == Some(0) {
-            return;
+    pub(super) fn retain_vector_growth(
+        &mut self,
+        span: &Span,
+        id: usize,
+        replacement: super::footprint::Charge<Expr>,
+    ) -> Result<(), VirErr> {
+        if let Some((snapshot, commit)) =
+            self.growth.vectors[id].backing.retain(span, &replacement)?
+        {
+            self.growth.updates.entry(span.id).or_default().push(snapshot);
+            self.growth.after.entry(span.id).or_default().push(commit);
         }
-        let state = &mut self.growth.vectors[id];
-        // The old buffer is retained on the no-growth path, the replacement on
-        // the growth path. Keep their maximum, never their sum after the call.
-        let upper = contracts::maximum(span, state.bytes.clone(), bound.clone());
-        self.growth.updates.entry(span.id).or_default().push(assign(
-            span,
-            &state.next_bytes,
-            upper,
-        ));
-        self.growth.after.entry(span.id).or_default().push(assign(
-            span,
-            &state.bytes,
-            state.next_bytes.clone(),
-        ));
-        state.floor = contracts::maximum(span, state.floor.clone(), bound);
-        state.changed = true;
+        Ok(())
     }
 }
 
@@ -278,7 +245,7 @@ pub(super) fn retained_bound(state: &VectorState, function: &Function, bound: &E
     if state.element == 0 {
         return contracts::literal(&function.span, 0);
     }
-    if let (Some(input), Some(budget)) = (state.input, contracts::constant(bound)) {
+    if let (Some(input), Some(budget)) = (state.backing.input, contracts::constant(bound)) {
         let minimum = contracts::constant(&grown_capacity(
             &function.span,
             contracts::literal(&function.span, 0),

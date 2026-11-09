@@ -5,7 +5,9 @@
 //! `accounting` owns live/peak totals and traces; `sections` checks nested
 //! workspace contracts and composes their bounds with the parent.
 //! `heap` tracks allocation lifetimes; `ownership` derives transfer summaries
-//! for checked helpers; `vectors` handles operations and `growth` maintains erased
+//! for checked helpers; `allocations` shares byte-size, transfer, replacement, and
+//! retained-storage effects across containers. `vector_calls` adapts vector facts
+//! at call boundaries; `vectors` handles operations and `growth` maintains erased
 //! capacity/retained-byte state; `inference` derives checked entry reservations.
 //! `contracts`
 //! specializes declared formulas with stable scalar arguments. `symbolic`
@@ -22,6 +24,7 @@
 //! The authoritative model is documented in `docs/verus-meter/model.md`.
 
 mod accounting;
+mod allocations;
 mod analysis;
 mod budget;
 mod call_graph;
@@ -43,6 +46,7 @@ mod spec_budget;
 mod summary;
 mod symbolic;
 mod values;
+mod vector_calls;
 mod vectors;
 
 pub use accounting::{MemoryEvent, MemoryReport};

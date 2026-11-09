@@ -279,7 +279,7 @@ impl Inference<'_> {
                     }
                 } else if let Some(summary) = self.summaries.get(target) {
                     let callee = &self.functions[target];
-                    for (index, required) in &summary.reservations {
+                    for (index, required) in &summary.vectors.reservations {
                         if let Some(name) = parameter(&args[*index], &self.vectors) {
                             match contracts::substitute(required, callee, args, &self.scalars) {
                                 Ok(required) => merge(&mut self.requirements, name, required),

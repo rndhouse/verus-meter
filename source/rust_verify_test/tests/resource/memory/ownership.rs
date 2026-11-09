@@ -251,3 +251,35 @@ fn zero_sized_owned_payload() {
         fn f() mem_peak <= 16 { let a = Box::new([0u8;0]); let b = forward(a); }",
     );
 }
+
+#[test]
+fn vector_input_can_be_replaced_by_a_box_without_retaining_its_buffer() {
+    let code = "fn replace(v: Vec<u32>) -> Box<[u8;16]> mem_peak <= 32 {
+            drop(v); Box::new([0u8;16])
+        }
+        fn run() mem_peak <= BOUND {
+            let v = Vec::<u32>::with_capacity(4);
+            let b = replace(v);
+            let scratch = [0u8;32];
+        }";
+    verifies("vector_to_box", &code.replace("BOUND", "56"));
+    rejects("vector_to_box_short", &code.replace("BOUND", "55"), "memory budget exceeded");
+}
+
+#[test]
+fn box_input_can_be_replaced_by_a_runtime_sized_vector() {
+    verifies(
+        "box_to_runtime_vector",
+        "
+        fn replace(b: Box<[u8;16]>, n: usize) -> (v: Vec<u16>)
+            requires n <= 4, ensures v.len() == 0,
+            mem_peak <= 40 + 2 * n,
+        { drop(b); Vec::with_capacity(n) }
+        fn run(n: usize) requires n <= 4, mem_peak <= 64 + 2 * n {
+            let b = Box::new([0u8;16]);
+            let v = replace(b, n);
+            drop(v);
+            let scratch = [0u8;56];
+        }",
+    );
+}

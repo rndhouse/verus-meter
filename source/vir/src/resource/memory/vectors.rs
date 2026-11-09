@@ -2,7 +2,8 @@
 
 use super::analysis::Analysis;
 use super::contracts;
-use super::footprint::MemoryKind;
+use super::footprint::{Charge, MemoryKind};
+use super::heap::Owner;
 use super::model::unsupported;
 use crate::ast::*;
 use crate::ast_util::*;
@@ -40,7 +41,8 @@ impl Analysis<'_> {
             contracts::literal(&expr.span, self.layouts.vector_element(&expr.typ, &expr.span)?),
             capacity.clone(),
         );
-        let mut owner = super::heap::Owner { capacity: Some(capacity), ..Default::default() };
+        let mut owner =
+            Owner { capacity: Some(capacity), extent: Some(cost.clone()), ..Default::default() };
         if let Some(n) = contracts::constant(&cost) {
             self.storage.reserve(
                 &expr.span,
@@ -57,7 +59,7 @@ impl Analysis<'_> {
         let state = self.growth.new_vector(
             &expr.span,
             owner.capacity.clone().unwrap(),
-            cost,
+            Charge { kind: owner.kind.clone(), amount: cost },
             self.layouts.vector_element(&expr.typ, &expr.span)?,
             None,
             allocation,
@@ -75,9 +77,9 @@ impl Analysis<'_> {
         owner.dynamic = Some(allocation);
         owner.vector = Some(state);
         self.storage.set_allocation(
-            self.growth.vectors[state].allocation,
+            self.growth.vectors[state].backing.id,
             owner.kind.clone(),
-            self.growth.vectors[state].bytes.clone(),
+            self.growth.vectors[state].backing.bytes.clone(),
         );
         Ok(Some(owner))
     }
@@ -237,22 +239,23 @@ impl Analysis<'_> {
             );
             // Reserve the replacement before releasing the old buffer. A lower
             // bound may underestimate real capacity, so this can overcount growth.
-            let temporary = super::accounting::Accounting::fresh_allocation();
-            self.storage.set_allocation(temporary, MemoryKind::host_heap(), extra.clone());
-            self.storage.record_live(&expr.span)?;
-            self.storage.release_dynamic(temporary);
-            let retained = contracts::maximum(&expr.span, state.bytes.clone(), extra);
+            self.storage.replacement_peak(
+                &expr.span,
+                &Charge { kind: state.backing.kind.clone(), amount: extra.clone() },
+            )?;
+            let retained =
+                super::allocations::retained_bytes(&expr.span, state.backing.bytes.clone(), extra);
             let mut lower = contracts::maximum(
                 &expr.span,
                 capacity.clone(),
                 contracts::add(&expr.span, len, contracts::literal(&expr.span, 1)),
             );
-            if state.input.is_none() && state.element != 0 {
+            if state.backing.input.is_none() && state.element != 0 {
                 // Equality of a sound lower and upper bound establishes exact
                 // capacity, so local vectors can retain all their new spare room.
                 let exact = mk_eq(
                     &expr.span,
-                    &state.bytes,
+                    &state.backing.bytes,
                     &contracts::multiply(
                         &expr.span,
                         capacity.clone(),
@@ -263,14 +266,18 @@ impl Analysis<'_> {
                 lower = super::growth::select(&expr.span, exact, exact_lower, lower);
             }
             self.growth.updates.entry(expr.span.id).or_default().extend([
-                super::growth::assign(&expr.span, &state.next_capacity, lower),
-                super::growth::assign(&expr.span, &state.next_bytes, retained),
+                super::symbolic::assign(&expr.span, &state.next_capacity, lower),
+                super::symbolic::assign(&expr.span, &state.backing.next_bytes, retained),
             ]);
             self.growth.after.entry(expr.span.id).or_default().extend([
-                super::growth::assign(&expr.span, &state.bytes, state.next_bytes.clone()),
-                super::growth::assign(&expr.span, &state.capacity, state.next_capacity.clone()),
+                super::symbolic::assign(
+                    &expr.span,
+                    &state.backing.bytes,
+                    state.backing.next_bytes.clone(),
+                ),
+                super::symbolic::assign(&expr.span, &state.capacity, state.next_capacity.clone()),
             ]);
-            self.growth.vectors[state_id].changed = true;
+            self.growth.vectors[state_id].backing.changed = true;
             self.growth.vectors[state_id].pushes += 1;
         } else if index {
             if args.len() != 2 {

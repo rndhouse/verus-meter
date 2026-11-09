@@ -32,6 +32,16 @@ resource requirements, not logical assumptions: prove uses within the helper and
 prove each caller supplies the inferred reservation. Keep inference conservative
 and preserve proof/spec execution boundaries.
 
+Allocation summaries in [allocations.rs](../../source/vir/src/resource/memory/allocations.rs)
+carry memory kinds, byte-size expressions, input provenance, and retained effects.
+Lifetime profiles carry temporary peaks, including old/new allocation overlap.
+Constructors supply byte extents, so owning call composition does not reconstruct
+sizes from return types. Keep container facts, such as vector capacity in elements,
+in adapters such as [vector_calls.rs](../../source/vir/src/resource/memory/vector_calls.rs).
+New owning containers should reuse these effects and supply only their layout,
+operation rules, and any additional proof facts. This separation does not itself
+add support for dynamically sized boxes.
+
 Compiler upgrades need a review of borrow/coercion lowering, move/copy provenance,
 and the identities used for supported standard operations.
 

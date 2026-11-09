@@ -29,26 +29,7 @@ impl Analysis<'_> {
         {
             return Err(unsupported(&expr.span, "this call signature"));
         }
-        let summary = self
-            .summaries
-            .get(target)
-            .ok_or_else(|| unsupported(&expr.span, "a call without a checked function summary"))?;
-        for (index, (arg, param)) in args.iter().zip(callee.x.params.iter()).enumerate() {
-            if let Some(required) = summary.reservations.get(&index) {
-                let (name, _, _) = self.vector_receiver(arg)?;
-                let available = self.vector_capacity(&name).ok_or_else(|| {
-                    unsupported(&arg.span, "passing an untracked vector to a checked helper")
-                })?;
-                let required =
-                    super::contracts::substitute(required, callee, args, &self.stable_scalars)?;
-                self.checks.push((
-                    expr.span.clone(),
-                    crate::ast_util::mk_ineq(&expr.span, &required, &available, InequalityOp::Le),
-                ));
-            } else if self.layouts.borrowed_vector(&param.x.typ).is_some() {
-                self.vector_receiver(arg)?;
-            }
-        }
+        self.check_vector_call(expr, callee, args)?;
         let result_size = self.layouts.return_size(&expr.typ, &expr.span)?;
         let bound = super::contracts::instantiate(
             callee,
@@ -171,22 +152,7 @@ impl Analysis<'_> {
             }
             self.storage.call_cost(c, base.add(c, cost), &excluded, &result_ids, point.result);
         }
-        for (index, bound) in &self.summaries[target].growth.clone() {
-            let (name, _, _) = self.vector_receiver(&args[*index])?;
-            let id = self
-                .vector_state(&name)
-                .ok_or_else(|| unsupported(c, "untracked mutable vector argument"))?;
-            let bound = super::contracts::substitute(bound, callee, args, &self.stable_scalars)?;
-            if self.growth.section_protected.contains(&id)
-                && super::contracts::constant(&bound) != Some(0)
-            {
-                return Err(unsupported(
-                    c,
-                    "growing an enclosing vector through a helper inside a memory section",
-                ));
-            }
-            self.retain_vector_growth(c, id, bound);
-        }
+        self.apply_vector_call_effects(expr, callee, args)?;
         self.result_owner = self.complete_ownership_call(expr, callee, args, &mut transferred)?;
         self.storage.record_live(c)?;
         self.produced = result;
