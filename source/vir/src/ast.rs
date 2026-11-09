@@ -231,16 +231,16 @@ pub enum IntRange {
 pub enum TypDecoration {
     /// &T
     Ref,
-    /// Box<T>
+    /// `Box<T>`
     /// This is complicated due to the Allocator type argument; see `TypDecorationArg`.
     Box,
-    /// Rc<T>
+    /// `Rc<T>`
     Rc,
-    /// Arc<T>
+    /// `Arc<T>`
     Arc,
-    /// Ghost<T>
+    /// `Ghost<T>`
     Ghost,
-    /// Tracked<T>
+    /// `Tracked<T>`
     Tracked,
     /// !, represented as Never<()>
     Never,
@@ -298,7 +298,7 @@ pub enum TypX {
     AnonymousClosure(Typs, Typ, ClosureKind, usize),
     /// Corresponds to Rust's FnDef type
     /// Typs are generic type args
-    /// If Fun is a trait function, then the Option<Fun> has the statically resolved
+    /// If Fun is a trait function, then the `Option<Fun>` has the statically resolved
     /// function if it exists. Similar to ImplPaths, this is technically redundant
     /// (because it follows from the types), but it is not easy to compute without
     /// storing it here. We need it because it is useful for determining which
@@ -327,14 +327,14 @@ pub enum TypX {
     Boxed(Typ),
     /// Type parameter (inherently SMT-boxed, and cannot be unboxed)
     TypParam(Ident),
-    /// Projection such as <D as T<S>>::X or <A as T>::X (SMT-boxed, and can sometimes be unboxed)
+    /// Projection such as `<D as T<S>>::X` or `<A as T>::X` (SMT-boxed, and can sometimes be unboxed)
     Projection {
         // trait_typ_args[0] is Self type
         trait_typ_args: Typs,
         trait_path: Path,
         name: Ident,
     },
-    /// <T as Pointee>::Metadata (see https://doc.rust-lang.org/beta/core/ptr/trait.Pointee.html)
+    /// `<T as Pointee>::Metadata` (see <https://doc.rust-lang.org/beta/core/ptr/trait.Pointee.html>)
     /// For the msot part, this should be treated identically to a Projection, but the AIR
     /// encoding is special.
     PointeeMetadata(Typ),
@@ -357,7 +357,7 @@ pub enum TriggerAnnotation {
     AllTriggers,
     /// Each trigger group is named by either Some integer, or the unnamed group None.
     /// (None is just another name; it is no different from an integer-named group.)
-    /// Example: #[trigger] expr is translated into Trigger(None) applied to expr
+    /// Example: `#[trigger]` expr is translated into Trigger(None) applied to expr
     /// Example: #[trigger(1, 2, 3)] expr is translated into three Trigger ops wrapped around expr
     ///   (Trigger(Some(1)), Trigger(Some(2)), Trigger(Some(3)))
     Trigger(Option<u64>),
@@ -380,7 +380,7 @@ pub enum ModeCoercion {
 /// Primitive 0-argument operations
 #[derive(Clone, Debug, Serialize, Deserialize, Hash, ToDebugSNode)]
 pub enum NullaryOpr {
-    /// convert a const generic into an expression, as in fn f<const N: usize>() -> usize { N }
+    /// Convert a const generic into an expression, as in `fn f<const N: usize>() -> usize { N }`.
     ConstGeneric(Typ),
     /// predicate representing a satisfied trait bound T(t1, ..., tn) for trait T
     TraitBound(TraitId, Typs),
@@ -1196,7 +1196,7 @@ pub enum ExprX {
         body: Option<Expr>,
     },
     /// Construct datatype value of type Path and variant Ident,
-    /// with field initializers Binders<Expr> and an optional ".." update expression.
+    /// with field initializers `Binders<Expr>` and an optional ".." update expression.
     /// For tuple-style variants, the fields are named "0", "1", etc.
     /// (See [`crate::def::positional_field_ident`])
     /// Fields can appear **in any order** even for tuple variants.
@@ -1251,7 +1251,7 @@ pub enum ExprX {
     /// This flag may be set by resolution analysis.
     ///
     /// Note that the right-hand-side is evaluated BEFORE the left-hand-side (place).
-    /// See: [https://doc.rust-lang.org/reference/expressions/operator-expr.html#r-expr.assign.evaluation-order]
+    /// See: <https://doc.rust-lang.org/reference/expressions/operator-expr.html#r-expr.assign.evaluation-order>
     /// (Also note that this does not apply to overloaded compound assignment, which should
     /// lower to a Call node instead.)
     Assign { place: Place, rhs: Expr, op: Option<BinaryOp>, typ: Typ, resolve: bool },
@@ -1330,14 +1330,14 @@ pub enum ExprX {
     /// Creates a mutable borrow from the given place
     BorrowMut(Place),
     /// A "two-phase" mutable borrow. These are often created when Rust inserts implicit
-    /// borrows. See [https://rustc-dev-guide.rust-lang.org/borrow_check/two_phase_borrows.html].
+    /// borrows. See <https://rustc-dev-guide.rust-lang.org/borrow_check/two_phase_borrows.html>.
     ///
     /// This node can only appear as an argument to a Call or to a Ctor;
     /// the semantics of a TwoPhaseBorrowMut node are contextual.
     /// It is the structure of the parent node that determines where the "second phase"
     /// of the borrow is.
     TwoPhaseBorrowMut(Place),
-    /// Borrow from a tracked place to get &mut Tracked<T>
+    /// Borrow from a tracked place to get &mut `Tracked<T>`
     BorrowMutTracked(Place),
     /// In exec/tracked code ExprX::BorrowMut(PlaceX::DerefMut(place))
     /// (with bool true = TwoPhaseBorrowMut)
@@ -1544,7 +1544,7 @@ pub struct ParamX {
 }
 
 /// Represents different levels of sizedness introduced by
-/// https://github.com/rust-lang/rfcs/pull/3729.  For now we treat MetaSized and
+/// <https://github.com/rust-lang/rfcs/pull/3729>.  For now we treat MetaSized and
 /// PointeeSized identically (like ?Sized previously), but we distinguish them
 /// here since we may need to make this handling more precise going forward.
 #[derive(Copy, Debug, Serialize, Deserialize, ToDebugSNode, Clone, PartialEq, Eq, Hash)]
@@ -1574,12 +1574,12 @@ pub enum GenericBoundX {
     ConstTyp(Typ, Typ),
 }
 
-/// When instantiating type S<A> with A = T in a recursive type definition,
+/// When instantiating type `S<A>` with A = T in a recursive type definition,
 /// is T allowed to include the one of recursively defined types?
 /// Example:
-///   enum Foo { Rec(S<Box<Foo>>), None }
-///   enum Bar { Rec(S<Box<Bar>>) }
-///   (instantiates A with recursive type Box<Foo> or Box<Bar>)
+///   `enum Foo { Rec(S<Box<Foo>>), None }`
+///   `enum Bar { Rec(S<Box<Bar>>) }`
+///   (instantiates A with recursive type `Box<Foo>` or `Box<Bar>`)
 #[derive(Debug, Serialize, Deserialize, ToDebugSNode, Clone, Copy, PartialEq, Eq)]
 pub enum AcceptRecursiveType {
     /// rejects the Foo example above
@@ -1654,14 +1654,14 @@ pub struct FunctionAttrsX {
     /// is type invariant
     pub is_type_invariant_fn: bool,
     /// Marked with external_body or external_fn_specification
-    /// TODO: might be duplicate with https://github.com/verus-lang/verus/pull/1473
+    /// TODO: might be duplicate with <https://github.com/verus-lang/verus/pull/1473>
     pub is_external_body: bool,
     /// Is the function marked unsafe (i.e., with the Rust keyword 'unsafe')
     pub is_unsafe: bool,
     /// Does the exec trait function disallow impls from extending the ensures clause
     /// (this makes it safe to remove a termination check from the exec function,
     /// thereby indirectly allowing the exec function to express nontermination)
-    /// See https://github.com/verus-lang/verus/discussions/2661 .
+    /// See <https://github.com/verus-lang/verus/discussions/2661> .
     pub impls_cannot_extend_spec: bool,
     /// Whether to assume that this function terminates
     pub exec_assume_termination: bool,
@@ -1979,7 +1979,7 @@ pub enum DynCompatible {
     Reject { reason: String },
     /// The trait satisfies Verus's requirements, but has a ?Sized blanket impl,
     /// for which there is currently a known Rust unsoundness with dyn
-    /// (see https://github.com/rust-lang/rust/issues/57893 );
+    /// (see <https://github.com/rust-lang/rust/issues/57893> );
     /// we can remove this case when the Rust issue is fixed.
     RejectUnsizedBlanketImpl { trait_path: Path },
 }
@@ -2005,7 +2005,7 @@ pub struct TraitX {
     pub external_trait_extension: Option<(Path, Path)>,
 }
 
-/// impl<typ_params> trait_name<trait_typ_args[1..]> for trait_typ_args[0] { type name = typ; }
+/// `impl<typ_params> trait_name<trait_typ_args[1..]> for trait_typ_args[0] { type name = typ; }`
 pub type AssocTypeImpl = Arc<Spanned<AssocTypeImplX>>;
 #[derive(Clone, Debug, Serialize, Deserialize, ToDebugSNode)]
 pub struct AssocTypeImplX {

@@ -3,7 +3,7 @@
 //! Operates on VIR's SST representation
 //!
 //! Current target is supporting proof by computation
-//! https://github.com/secure-foundations/verus/discussions/120
+//! <https://github.com/secure-foundations/verus/discussions/120>
 
 use crate::ast::{
     ArchWordBits, ArrayKind, BitwiseOp, ComputeMode, Constant, CrateId, Dt, Fun, Ident,

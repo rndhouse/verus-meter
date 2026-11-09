@@ -178,6 +178,8 @@
 //! # Example
 //!
 //! ```
+//! # use verus_syn as syn;
+//! # use verus_prettyplease as prettyplease;
 //! // [dependencies]
 //! // prettyplease = "0.2"
 //! // syn = { version = "2", default-features = false, features = ["full", "parsing"] }
@@ -365,6 +367,9 @@ mod ring;
 mod stmt;
 mod token;
 mod ty;
+
+#[cfg(feature = "verbatim")]
+extern crate verus_syn as syn;
 
 use crate::algorithm::Printer;
 use verus_syn::Expr;

@@ -853,7 +853,7 @@ pub mod parsing {
                     let content;
                     let paren_token = parenthesized!(content in input);
                     let checked = Box::new(content.parse()?);
-                    if !matches!(&*checked, Ident { .. }) || checked.to_string() != "checked" {
+                    if !matches!(&*checked, Ident { .. }) || *checked != "checked" {
                         return Err(content.error("expected `spec(checked)`"));
                     }
                     if !content.is_empty() {
@@ -1648,7 +1648,7 @@ pub mod parsing {
         fn parse(input: ParseStream) -> Result<Self> {
             let ret_pat =
                 if input.peek2(Token![=>]) || (input.peek2(Token![:]) && input.peek4(Token![=>])) {
-                    let mut pat = Pat::parse_single(&input)?;
+                    let mut pat = Pat::parse_single(input)?;
                     if input.peek(Token![:]) {
                         let colon_token = input.parse()?;
                         let ty = input.parse()?;
@@ -1797,7 +1797,7 @@ pub mod parsing {
             let or1_token: Token![|] = input.parse()?;
             let mut inputs = Punctuated::new();
             while !input.peek(Token![|]) {
-                let mut pat = Pat::parse_single(&input)?;
+                let mut pat = Pat::parse_single(input)?;
                 if input.peek(Token![:]) {
                     let colon_token = input.parse()?;
                     let ty = input.parse()?;
@@ -2054,7 +2054,7 @@ pub mod parsing {
             let type_: Type = input.parse()?;
             let is_token: Token![is] = input.parse()?;
             let size_ident: Ident = input.parse()?;
-            if size_ident.to_string() != "size" {
+            if size_ident != "size" {
                 return Err(input.error("expected `size`"));
             }
             let size_eq_token: Token![==] = input.parse()?;
@@ -2063,7 +2063,7 @@ pub mod parsing {
             let align = if input.peek(Token![,]) {
                 let comma: Token![,] = input.parse()?;
                 let align_ident: Ident = input.parse()?;
-                if align_ident.to_string() != "align" {
+                if align_ident != "align" {
                     return Err(input.error("expected `align`"));
                 }
                 let align_eq_token: Token![==] = input.parse()?;
@@ -2124,7 +2124,7 @@ pub mod parsing {
         fn parse(input: ParseStream) -> Result<Self> {
             Ok(Self {
                 token: input.parse()?,
-                pat: Pat::parse_single(&input)?,
+                pat: Pat::parse_single(input)?,
             })
         }
     }
@@ -3258,7 +3258,7 @@ pub(crate) fn parse_matches(
     big_and: bool,
 ) -> Result<Expr> {
     let matches_token: Token![matches] = input.parse()?;
-    let pat = Pat::parse_single(&input)?;
+    let pat = Pat::parse_single(input)?;
 
     let op_expr = if input.peek(Token![&&&]) {
         if big_and {
@@ -3314,13 +3314,13 @@ pub(crate) fn parse_matches(
 #[cfg(feature = "full")]
 pub(crate) fn parse_prefix_binop(
     input: crate::parse::ParseStream,
-    attrs: &Vec<Attribute>,
+    attrs: &[Attribute],
     big_and_only: bool,
 ) -> Result<Option<Expr>> {
     use crate::expr::parsing::AllowStruct;
 
     if input.peek(Token![&&&]) {
-        if attrs.len() != 0 {
+        if !attrs.is_empty() {
             return Err(input.error("`&&&` cannot have attributes"));
         }
         let mut exprs: Vec<BigAndExpr> = Vec::new();
@@ -3347,7 +3347,7 @@ pub(crate) fn parse_prefix_binop(
         }
         Ok(Some(Expr::BigAnd(BigAnd { exprs })))
     } else if !big_and_only && input.peek(Token![|||]) {
-        if attrs.len() != 0 {
+        if !attrs.is_empty() {
             return Err(input.error("`|||` cannot have attributes"));
         }
         let mut exprs: Vec<BigOrExpr> = Vec::new();
@@ -3580,14 +3580,14 @@ impl parse::Parse for WithSpecOnExpr {
         }
         let outputs = if input.peek(Token![=>]) {
             let token = input.parse()?;
-            let outs = Pat::parse_single(&input)?;
+            let outs = Pat::parse_single(input)?;
             Some((token, outs))
         } else {
             None
         };
         let follows = if input.peek(Token![|=]) {
             let token = input.parse()?;
-            let outs = Pat::parse_single(&input)?;
+            let outs = Pat::parse_single(input)?;
             Some((token, outs))
         } else {
             None
@@ -3653,17 +3653,13 @@ pub fn rejoin_tokens(stream: proc_macro2::TokenStream) -> proc_macro2::TokenStre
                     continue;
                 }
             }
-            (Some(('!', Alone, s1)), Some(("has", s2))) => {
-                if adjacent(s1, s2) {
-                    tokens[i] = TokenTree::Ident(proc_macro2::Ident::new(
-                        "hasnt",
-                        s1.join(s2).unwrap_or(s1),
-                    ));
-                    tokens.remove(i + 1);
-                    i += 1;
-                    till -= 1;
-                    continue;
-                }
+            (Some(('!', Alone, s1)), Some(("has", s2))) if adjacent(s1, s2) => {
+                tokens[i] =
+                    TokenTree::Ident(proc_macro2::Ident::new("hasnt", s1.join(s2).unwrap_or(s1)));
+                tokens.remove(i + 1);
+                i += 1;
+                till -= 1;
+                continue;
             }
             _ => {}
         }
@@ -3709,27 +3705,22 @@ pub fn rejoin_tokens(stream: proc_macro2::TokenStream) -> proc_macro2::TokenStre
                 Some(('~', Alone, _)),
                 Some(('~', Alone, s2)),
                 Some(('=', Alone, s3)),
-            ) => {
-                if adjacent(s2, s3) {
-                    tokens[i] = mk_joint_punct(t0);
-                    tokens[i + 1] = mk_joint_punct(t1_pun);
-                    tokens[i + 2] = mk_joint_punct(t2);
-                }
+            ) if adjacent(s2, s3) => {
+                tokens[i] = mk_joint_punct(t0);
+                tokens[i + 1] = mk_joint_punct(t1_pun);
+                tokens[i + 2] = mk_joint_punct(t2);
             }
             _ => {}
         }
         i += 1;
     }
     for tt in &mut tokens {
-        match tt {
-            TokenTree::Group(group) => {
-                let mut new_group = Group::new(group.delimiter(), rejoin_tokens(group.stream()));
-                new_group.set_span(group.span());
-                *group = new_group;
-            }
-            _ => {}
+        if let TokenTree::Group(group) = tt {
+            let mut new_group = Group::new(group.delimiter(), rejoin_tokens(group.stream()));
+            new_group.set_span(group.span());
+            *group = new_group;
         }
     }
     use std::iter::FromIterator;
-    proc_macro2::TokenStream::from_iter(tokens.into_iter())
+    proc_macro2::TokenStream::from_iter(tokens)
 }

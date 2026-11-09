@@ -1205,13 +1205,11 @@ pub(crate) mod parsing {
             input.parse().map(Item::Union)
         } else if lookahead.peek(Token![trait]) {
             input.call(parse_trait_or_trait_alias)
-        } else if lookahead.peek(Token![auto]) && ahead.peek2(Token![trait]) {
-            input.parse().map(Item::Trait)
-        } else if lookahead.peek(Token![const]) && ahead.peek2(Token![trait]) {
-            input.parse().map(Item::Trait)
-        } else if lookahead.peek(Token![const])
-            && ahead.peek2(Token![unsafe])
-            && ahead.peek3(Token![trait])
+        } else if (lookahead.peek(Token![auto]) || lookahead.peek(Token![const]))
+            && ahead.peek2(Token![trait])
+            || (lookahead.peek(Token![const])
+                && ahead.peek2(Token![unsafe])
+                && ahead.peek3(Token![trait]))
         {
             input.parse().map(Item::Trait)
         } else if lookahead.peek(Token![impl])

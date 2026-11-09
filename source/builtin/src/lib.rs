@@ -2597,7 +2597,7 @@ macro_rules! decreases_to_internal {
 /// which can be useful when making assertions about decreases clauses.
 /// Notes:
 /// - decreases_to! desugars to a call to is_smaller_than_lexicographic.
-/// - you can write #[trigger](decreases_to!(b => a)) to trigger on height(a).
+/// - you can write `#[trigger]`(decreases_to!(b => a)) to trigger on height(a).
 ///   (in the SMT encoding, height is a function call and is a useful trigger,
 ///   while is_smaller_than/is_smaller_than_lexicographic is not a function call
 ///   and is not a useful trigger.)

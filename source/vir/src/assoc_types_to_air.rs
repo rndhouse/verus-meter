@@ -1,7 +1,7 @@
 //! Example:
 //!   trait View { type V; }
 //!   impl View for u8 { type V = u8; }
-//!   impl<A> View for Vec<u8> { type V = Seq<A> }
+//!   `impl<A> View for Vec<u8> { type V = Seq<A> }`
 //! We need to compute type ids for View::V.
 //! In the SMT encoding, we write a function that computes View::V as a function of the self type
 //! (and also possibly any trait type parameters):

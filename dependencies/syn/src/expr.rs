@@ -1725,14 +1725,14 @@ pub(crate) mod parsing {
                     expr,
                 }))
             }
-        } else if input.peek(Token![*]) || input.peek(Token![!]) || input.peek(Token![-]) {
-            expr_unary(input, attrs, allow_struct).map(Expr::Unary)
-        } else if input.peek(Token![proof]) && input.peek2(token::Brace) {
-            expr_unary(input, attrs, allow_struct).map(Expr::Unary)
-        } else if input.peek2(Token![|])
-            && (input.peek(Token![forall])
-                || input.peek(Token![exists])
-                || input.peek(Token![choose]))
+        } else if input.peek(Token![*])
+            || input.peek(Token![!])
+            || input.peek(Token![-])
+            || (input.peek(Token![proof]) && input.peek2(token::Brace))
+            || (input.peek2(Token![|])
+                && (input.peek(Token![forall])
+                    || input.peek(Token![exists])
+                    || input.peek(Token![choose])))
         {
             expr_unary(input, attrs, allow_struct).map(Expr::Unary)
         } else {

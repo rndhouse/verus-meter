@@ -9,7 +9,7 @@ mutated again*. In fact, it is crucial that this can happen before the end of a 
 Consider:
 
 ```
-fn example<'a>(pair: &'a mut (u64, u64) -> &'a mut u64 {
+fn example<'a>(pair: &'a mut (u64, u64)) -> &'a mut u64 {
     &mut (*pair).0
 }
 ```
@@ -23,7 +23,7 @@ is still resolved at the end of the function.
 We effectively elaborate this example to look like this:
 
 ```
-fn example<'a>(pair: &'a mut (u64, u64) -> &'a mut u64 {
+fn example<'a>(pair: &'a mut (u64, u64)) -> &'a mut u64 {
     let return_value = &mut (*pair).0;    // mutates `pair`
     // resolve `pair` here
     return return_value;                  // moves `return_value`

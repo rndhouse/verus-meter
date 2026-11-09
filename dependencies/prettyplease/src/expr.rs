@@ -517,7 +517,21 @@ impl Printer {
         self.outer_attrs(&expr.attrs);
         self.expr_beginning_of_line(&expr.func, needs_paren, beginning_of_line, left_fixup);
         self.word("(");
-        self.call_args(&expr.args);
+        if matches!(&*expr.func, Expr::Path(p) if p.path.is_ident("mem_size"))
+            && expr.args.len() == 1
+        {
+            if let Expr::Verbatim(tokens) = &expr.args[0] {
+                if let Ok(typ) = verus_syn::parse2::<verus_syn::Type>(tokens.clone()) {
+                    self.ty(&typ);
+                } else {
+                    self.call_args(&expr.args);
+                }
+            } else {
+                self.call_args(&expr.args);
+            }
+        } else {
+            self.call_args(&expr.args);
+        }
         self.word(")");
     }
 
@@ -1000,7 +1014,15 @@ impl Printer {
         if expr.mutability.is_some() {
             self.word("mut ");
         }
-        self.subexpr(&expr.expr, right_prec < Precedence::Prefix, right_fixup);
+        // Three adjacent ampersands mean a conjunction in Verus syntax.
+        let conjunction = expr.mutability.is_none()
+            && matches!(&*expr.expr, Expr::Reference(a) if a.mutability.is_none()
+                && matches!(&*a.expr, Expr::Reference(_)));
+        self.subexpr(
+            &expr.expr,
+            conjunction || right_prec < Precedence::Prefix,
+            right_fixup,
+        );
     }
 
     fn expr_repeat(&mut self, expr: &ExprRepeat) {

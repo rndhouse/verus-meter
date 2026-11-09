@@ -854,7 +854,7 @@ pub(crate) mod parsing {
                     return Ok(content.peek(token::Colon) && !content.peek(Token![::]));
                 }
             }
-            return Ok(false);
+            Ok(false)
         }
 
         pub(crate) fn parse(input: ParseStream, allow_plus: bool) -> Result<Self> {

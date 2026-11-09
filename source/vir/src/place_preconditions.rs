@@ -12,7 +12,7 @@ evaluate the second index. Does that mean the `a = b` assignment could invalidat
 bounds-check that was performed previously?
  - If `a` is an array then no, because the length of the array is fixed
  - If `a` is a slice then yes, so rustc checks for this case and disallows it.
-   (See [https://doc.rust-lang.org/1.93.0/nightly-rustc/rustc_middle/mir/enum.FakeReadCause.html#variant.ForIndex])
+   (See <https://doc.rust-lang.org/1.93.0/nightly-rustc/rustc_middle/mir/enum.FakeReadCause.html#variant.ForIndex>)
 Either way this is fine for us; either we don't have to worry about it or the bounds-check
 is unaffected by the assignment.
 
@@ -29,7 +29,7 @@ depends on whether the index is for an array or slice (since for the slice, we n
 the field access to get the length).
 
 To summarize, the evaluation order for a place expression with only array accesses:
-  local.foo[e1].bar[e2]
+  `local.foo[e1].bar[e2]`
 Would be:
   - evaluate e1
   - bounds-check e1

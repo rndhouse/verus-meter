@@ -1,3 +1,6 @@
+use verus_prettyplease as prettyplease;
+use verus_syn as syn;
+
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::ToTokens as _;
 use std::mem;
@@ -10,10 +13,9 @@ use syn::{
     ExprConst, ExprContinue, ExprField, ExprForLoop, ExprIf, ExprIndex, ExprLet, ExprLit, ExprLoop,
     ExprMacro, ExprMatch, ExprMethodCall, ExprPath, ExprRange, ExprRawAddr, ExprReference,
     ExprReturn, ExprStruct, ExprTry, ExprTryBlock, ExprUnary, ExprUnsafe, ExprWhile, ExprYield,
-    File, GenericArgument, Generics, Item, ItemConst, Label, Lifetime, LifetimeParam, Lit, LitInt,
-    Macro, MacroDelimiter, Member, Pat, PatWild, Path, PathArguments, PathSegment,
-    PointerMutability, QSelf, RangeLimits, ReturnType, Stmt, StmtMacro, Token, Type, TypeInfer,
-    TypeParam, TypePath, UnOp, Visibility,
+    File, GenericArgument, Generics, Item, Label, Lifetime, LifetimeParam, Lit, LitInt, Macro,
+    MacroDelimiter, Member, Pat, PatWild, Path, PathArguments, PathSegment, PointerMutability,
+    QSelf, RangeLimits, ReturnType, Stmt, StmtMacro, Token, Type, TypeParam, TypePath, UnOp,
 };
 
 struct FlattenParens;
@@ -237,6 +239,7 @@ fn test_permutations() -> ExitCode {
         // Expr::Call
         iter(depth, &mut |expr| {
             f(Expr::Call(ExprCall {
+                atomically: None,
                 // `$expr()`
                 attrs: Vec::new(),
                 func: Box::new(expr),
@@ -262,6 +265,12 @@ fn test_permutations() -> ExitCode {
         // Expr::Closure
         iter(depth, &mut |expr| {
             f(Expr::Closure(ExprClosure {
+                proof_fn: None,
+                options: None,
+                requires: None,
+                ensures: None,
+                invariants: None,
+                inner_attrs: Vec::new(),
                 // `|| $expr`
                 attrs: Vec::new(),
                 lifetimes: None,
@@ -481,6 +490,12 @@ fn test_permutations() -> ExitCode {
 
             // Expr::Closure
             f(Expr::Closure(ExprClosure {
+                proof_fn: None,
+                options: None,
+                requires: None,
+                ensures: None,
+                invariants: None,
+                inner_attrs: Vec::new(),
                 // `|| -> T {}`
                 attrs: Vec::new(),
                 lifetimes: None,
@@ -493,6 +508,8 @@ fn test_permutations() -> ExitCode {
                 or2_token: Token![|](span),
                 output: ReturnType::Type(
                     Token![->](span),
+                    None,
+                    None,
                     Box::new(Type::Path(TypePath {
                         qself: None,
                         path: Path::from(Ident::new("T", span)),
@@ -536,6 +553,11 @@ fn test_permutations() -> ExitCode {
             // Expr::ForLoop
             iter(depth, &mut |expr| {
                 f(Expr::ForLoop(ExprForLoop {
+                    expr_name: None,
+                    invariant_except_break: None,
+                    invariant: None,
+                    ensures: None,
+                    decreases: None,
                     // `for _ in $expr {}`
                     attrs: Vec::new(),
                     label: None,
@@ -552,6 +574,11 @@ fn test_permutations() -> ExitCode {
                     },
                 }));
                 f(Expr::ForLoop(ExprForLoop {
+                    expr_name: None,
+                    invariant_except_break: None,
+                    invariant: None,
+                    ensures: None,
+                    decreases: None,
                     // `'a: for _ in $expr {}`
                     attrs: Vec::new(),
                     label: Some(Label {
@@ -588,6 +615,11 @@ fn test_permutations() -> ExitCode {
 
             // Expr::Loop
             f(Expr::Loop(ExprLoop {
+                invariant_except_break: None,
+                invariant: None,
+                invariant_ensures: None,
+                ensures: None,
+                decreases: None,
                 // `loop {}`
                 attrs: Vec::new(),
                 label: None,
@@ -598,6 +630,11 @@ fn test_permutations() -> ExitCode {
                 },
             }));
             f(Expr::Loop(ExprLoop {
+                invariant_except_break: None,
+                invariant: None,
+                invariant_ensures: None,
+                ensures: None,
+                decreases: None,
                 // `'a: loop {}`
                 attrs: Vec::new(),
                 label: Some(Label {
@@ -699,6 +736,7 @@ fn test_permutations() -> ExitCode {
             // Expr::MethodCall
             iter(depth, &mut |expr| {
                 f(Expr::MethodCall(ExprMethodCall {
+                    atomically: None,
                     // `$expr.method()`
                     attrs: Vec::new(),
                     receiver: Box::new(expr.clone()),
@@ -709,6 +747,7 @@ fn test_permutations() -> ExitCode {
                     args: Punctuated::new(),
                 }));
                 f(Expr::MethodCall(ExprMethodCall {
+                    atomically: None,
                     // `$expr.method::<T>()`
                     attrs: Vec::new(),
                     receiver: Box::new(expr),
@@ -779,6 +818,11 @@ fn test_permutations() -> ExitCode {
             // Expr::While
             iter(depth, &mut |expr| {
                 f(Expr::While(ExprWhile {
+                    invariant_except_break: None,
+                    invariant: None,
+                    invariant_ensures: None,
+                    ensures: None,
+                    decreases: None,
                     // `while $expr {}`
                     attrs: Vec::new(),
                     label: None,
@@ -790,6 +834,11 @@ fn test_permutations() -> ExitCode {
                     },
                 }));
                 f(Expr::While(ExprWhile {
+                    invariant_except_break: None,
+                    invariant: None,
+                    invariant_ensures: None,
+                    ensures: None,
+                    decreases: None,
                     // `'a: while $expr {}`
                     attrs: Vec::new(),
                     label: Some(Label {
@@ -832,25 +881,11 @@ fn test_permutations() -> ExitCode {
         }};
     }
     let mut assert = |mut original: Expr| {
-        let span = Span::call_site();
-        // `const _: () = $expr;`
+        // `const _: _ = $expr;`
         let pretty = prettyplease::unparse(&File {
             shebang: None,
             attrs: Vec::new(),
-            items: Vec::from([Item::Const(ItemConst {
-                attrs: Vec::new(),
-                vis: Visibility::Inherited,
-                const_token: Token![const](span),
-                ident: Ident::from(Token![_](span)),
-                generics: Generics::default(),
-                colon_token: Token![:](span),
-                ty: Box::new(Type::Infer(TypeInfer {
-                    underscore_token: Token![_](span),
-                })),
-                eq_token: Token![=](span),
-                expr: Box::new(original.clone()),
-                semi_token: Token![;](span),
-            })]),
+            items: vec![syn::parse_quote!(const _: _ = #original;)],
         });
         let mut parsed = match syn::parse_file(&pretty) {
             Ok(parsed) => parsed,
@@ -860,7 +895,7 @@ fn test_permutations() -> ExitCode {
             [Item::Const(item)] => item,
             _ => unreachable!(),
         };
-        let mut parsed = mem::replace(&mut *item.expr, Expr::PLACEHOLDER);
+        let mut parsed = mem::replace(item.expr.as_mut().unwrap().as_mut(), Expr::PLACEHOLDER);
         AsIfPrinted.visit_expr_mut(&mut original);
         FlattenParens.visit_expr_mut(&mut parsed);
         if original != parsed {
@@ -883,7 +918,7 @@ fn test_permutations() -> ExitCode {
                     [Item::Const(item)] => item,
                     _ => unreachable!(),
                 };
-                if original == *item.expr {
+                if original == **item.expr.as_ref().unwrap() {
                     fail!("redundant parens: {}", pretty);
                 }
             }

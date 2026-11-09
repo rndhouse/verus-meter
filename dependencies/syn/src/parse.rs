@@ -649,7 +649,7 @@ impl<'a> ParseBuffer<'a> {
                 .skip()
                 .and_then(Cursor::skip)
                 .and_then(Cursor::skip)
-                .map_or(false, peek)
+                .is_some_and(peek)
         }
 
         let _ = token;
