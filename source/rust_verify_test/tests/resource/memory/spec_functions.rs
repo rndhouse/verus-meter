@@ -137,7 +137,7 @@ fn executable_argument_is_rejected() {
         spec fn bytes(b: bool) -> nat { if b { 16 } else { 0 } }
         fn f() mem_peak <= bytes(select()) {}
     "#,
-        "memory budgets require a local, nongeneric spec function",
+        "memory budget spec functions must return nat or u64",
     );
 }
 
@@ -236,4 +236,80 @@ fn spec_budget_example_compiles() {
         &["--compile"],
     )
     .unwrap();
+}
+
+#[test]
+fn model_sizes_inside_spec_bodies() {
+    verifies(
+        "sizes",
+        r#"
+        struct Buffer { words: [u32; 4], ready: bool }
+        spec fn bytes() -> nat { mem_size(Buffer) }
+        fn f() mem_peak <= bytes() { let b = Buffer { words: [0u32;4], ready: false }; }
+    "#,
+    );
+}
+
+#[test]
+fn parameter_size_inside_spec_body() {
+    verifies(
+        "param_size",
+        r#"
+        spec fn bytes(n: u32) -> nat { mem_size(n) }
+        fn f() mem_peak <= bytes(0) { let n = 0u32; }
+    "#,
+    );
+}
+
+#[test]
+fn returned_formula_captures_parameters() {
+    verifies(
+        "formula",
+        r#"
+        spec fn formula(per_item: nat) -> spec_fn(nat) -> nat {
+            |n: nat| mem_size(Vec<u32>) + per_item * n
+        }
+        fn f(n: usize)
+            requires n <= 100,
+            mem_peak <= mem_size(n) + formula(4)(n as nat),
+        { let values = Vec::<u32>::with_capacity(n); }
+        fn caller() mem_peak <= 40 { f(2); }
+    "#,
+    );
+}
+
+#[test]
+fn returned_formula_cannot_underbudget() {
+    rejects(
+        "small_formula",
+        r#"
+        spec fn formula() -> spec_fn(nat) -> nat { |n: nat| n }
+        fn f() mem_peak <= formula()(15) { let data = [0u32;4]; }
+    "#,
+        "conditional memory budget exceeded",
+    );
+}
+
+#[test]
+fn size_query_in_formula_argument() {
+    verifies(
+        "size_argument",
+        r#"
+        spec fn bytes(n: nat) -> nat { n }
+        fn f() mem_peak <= bytes(mem_size([u32;4])) { let a = [0u32;4]; }
+    "#,
+    );
+}
+
+#[test]
+fn size_query_does_not_evaluate_argument() {
+    rejects(
+        "unevaluated",
+        r#"
+        fn make() -> u32 { 1 }
+        spec fn bytes() -> nat { mem_size(make()) }
+        fn f() mem_peak <= bytes() {}
+    "#,
+        "expected",
+    );
 }

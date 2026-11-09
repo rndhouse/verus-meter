@@ -973,10 +973,30 @@ fn verus_item_to_vir<'tcx, 'a>(
                     let budget = crate::resource::memory::budget::lower(bctx, args[0])?;
                     mk_expr(ExprX::ResourceAssert(budget))
                 }
+                SpecItem::ResourceMemSizeValue | SpecItem::ResourceMemSizeType => {
+                    record_spec_fn_pure_args_only(bctx, expr);
+                    let typ = bctx.mid_ty_to_vir(expr.span, &node_substs.type_at(0))?;
+                    let target = CallTarget::Fun(
+                        vir::ast::CallTargetKind::Static,
+                        Arc::new(FunX { path: bctx.ctxt.def_id_to_vir_path(f) }),
+                        Arc::new(vec![typ]),
+                        Arc::new(vec![]),
+                        vir::ast::CallTargetAttrs {
+                            autospec: AutospecUsage::Final,
+                            const_var: false,
+                            assume_external_allowed: false,
+                            resource_intrinsic: Some(vir::ast::ResourceIntrinsic::MemSize),
+                        },
+                    );
+                    mk_expr(ExprX::Call {
+                        target,
+                        args: Arc::new(vec![]),
+                        post_args: None,
+                        body: None,
+                    })
+                }
                 SpecItem::ResourceSpecBudget
                 | SpecItem::ResourceQuantity
-                | SpecItem::ResourceMemSizeValue
-                | SpecItem::ResourceMemSizeType
                 | SpecItem::ResourceMemPeak
                 | SpecItem::ResourceMemPeakCall => err_span(
                     expr.span,

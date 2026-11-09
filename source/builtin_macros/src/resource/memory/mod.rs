@@ -74,6 +74,34 @@ pub(in crate::syntax) fn lower_budget(
 }
 
 impl Visitor {
+    /// Resolve type queries in specifications without evaluating their operands.
+    pub(in crate::syntax) fn handle_spec_mem_size(&mut self, expr: &mut Expr) -> bool {
+        if self.inside_ghost == 0 {
+            return false;
+        }
+        let Expr::Call(call) = expr else {
+            return false;
+        };
+        let Expr::Path(path) = &*call.func else {
+            return false;
+        };
+        if !path.path.is_ident("mem_size") {
+            return false;
+        }
+        let span = expr.span();
+        let query = verus_syn::parse2::<verus_syn::ResourceExpr>(expr.to_token_stream());
+        *expr = match query {
+            Ok(query) => {
+                let bindings = self.resource_bindings.clone();
+                let value = lower_budget(self, &query, &bindings);
+                Expr::Verbatim(quote_spanned_builtin!(builtin, span =>
+                    #builtin::spec_cast_integer::<_, #builtin::nat>(#value)))
+            }
+            Err(error) => Expr::Verbatim(error.to_compile_error()),
+        };
+        true
+    }
+
     /// Minimum model reservation for a vector parameter, erased with contracts.
     pub(in crate::syntax) fn take_capacity_contracts(
         &mut self,

@@ -15,20 +15,14 @@ pub(crate) fn check(
     modes: &HashMap<Fun, Arc<ResolutionInfo>>,
     trace: bool,
 ) -> Result<Vec<VirErrAs>, VirErr> {
-    let global_allocator =
-        ctxt.tcx.lang_items().global_alloc_ty().map(|id| Dt::Path(ctxt.def_id_to_vir_path(id)));
-    let diagnostic_type = |name| {
-        ctxt.tcx
-            .get_diagnostic_item(rustc_span::Symbol::intern(name))
-            .map(|id| Dt::Path(ctxt.def_id_to_vir_path(id)))
-    };
+    let (global_allocator, vector, option) = identities(ctxt);
     let reports = vir::resource::memory::check_crate(
         &mut krate.functions,
         &krate.datatypes,
         modes,
         global_allocator,
-        diagnostic_type("Vec"),
-        diagnostic_type("Option"),
+        vector,
+        option,
         &|span| {
             let mut span = span.clone();
             span.id = ctxt.spans.get_next_span_id();
@@ -41,4 +35,31 @@ pub(crate) fn check(
     } else {
         Vec::new()
     })
+}
+
+fn identities(ctxt: &Context<'_>) -> (Option<Dt>, Option<Dt>, Option<Dt>) {
+    let global_allocator =
+        ctxt.tcx.lang_items().global_alloc_ty().map(|id| Dt::Path(ctxt.def_id_to_vir_path(id)));
+    let diagnostic_type = |name| {
+        ctxt.tcx
+            .get_diagnostic_item(rustc_span::Symbol::intern(name))
+            .map(|id| Dt::Path(ctxt.def_id_to_vir_path(id)))
+    };
+    (global_allocator, diagnostic_type("Vec"), diagnostic_type("Option"))
+}
+
+/// Resolve model type sizes before ordinary well-formedness and mode checking.
+pub(crate) fn resolve_sizes(
+    ctxt: &Context<'_>,
+    krate: &KrateX,
+    function: &vir::ast::Function,
+) -> Result<vir::ast::Function, VirErr> {
+    let (global_allocator, vector, option) = identities(ctxt);
+    vir::resource::memory::resolve_sizes(
+        function,
+        &krate.datatypes,
+        global_allocator,
+        vector,
+        option,
+    )
 }

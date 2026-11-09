@@ -1804,11 +1804,26 @@ pub(crate) mod parsing {
         loop {
             if input.peek(token::Paren) {
                 let content;
+                let paren_token = parenthesized!(content in input);
+                // mem_size takes a type, which need not be a Rust expression
+                // (for example Vec<u32>). Preserve its tokens for macro lowering.
+                let args = if matches!(&e, Expr::Path(p) if p.path.is_ident("mem_size")) {
+                    let begin = content.fork();
+                    let _: crate::Type = content.parse()?;
+                    if !content.is_empty() {
+                        return Err(content.error("expected one mem_size type or name"));
+                    }
+                    let mut args = Punctuated::new();
+                    args.push(Expr::Verbatim(verbatim::between(&begin, &content)));
+                    args
+                } else {
+                    content.parse_terminated(Expr::parse, Token![,])?
+                };
                 e = Expr::Call(ExprCall {
                     attrs: Vec::new(),
                     func: Box::new(e),
-                    paren_token: parenthesized!(content in input),
-                    args: content.parse_terminated(Expr::parse, Token![,])?,
+                    paren_token,
+                    args,
                     atomically: input.parse()?,
                 });
             } else if input.peek(Token![->]) {

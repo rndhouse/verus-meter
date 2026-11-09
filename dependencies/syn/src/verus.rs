@@ -1531,15 +1531,22 @@ pub mod parsing {
             );
         if !query && ahead.peek(token::Paren) {
             let function: ExprPath = input.parse()?;
-            let content;
-            let paren_token = parenthesized!(content in input);
-            return Ok(ResourceExpr::SpecCall(crate::ExprCall {
-                attrs: Vec::new(),
-                func: Box::new(Expr::Path(function)),
-                atomically: None,
-                paren_token,
-                args: content.parse_terminated(Expr::parse, Token![,])?,
-            }));
+            let mut function = Expr::Path(function);
+            loop {
+                let content;
+                let paren_token = parenthesized!(content in input);
+                let call = crate::ExprCall {
+                    attrs: Vec::new(),
+                    func: Box::new(function),
+                    atomically: None,
+                    paren_token,
+                    args: content.parse_terminated(Expr::parse, Token![,])?,
+                };
+                if !input.peek(token::Paren) {
+                    return Ok(ResourceExpr::SpecCall(call));
+                }
+                function = Expr::Call(call);
+            }
         }
         let name: Ident = input.parse()?;
         if name != "mem_size" && name != "mem_peak" {

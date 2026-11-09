@@ -66,6 +66,7 @@ fn expressive_budgets_round_trip() {
     for budget in [
         "BUDGET",
         "budgets::workspace(flag, n as nat)",
+        "budgets::formula(4)(n as nat)",
         "mem_size(n) + workspace(n) * 2",
         "workspace::<u32>()",
         "mem_size(n) + n * mem_size(u32)",

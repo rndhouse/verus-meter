@@ -272,7 +272,8 @@ pub(super) fn lower(
     let x = match &expr.x {
         BudgetExprX::Quantity(value) => return quantity(value, allowed),
         BudgetExprX::SpecCall(value) => {
-            return super::spec_budget::validate(value, allowed, functions);
+            let value = super::resolve_size_expression(value, layouts)?;
+            return super::spec_budget::validate(&value, allowed, functions);
         }
         BudgetExprX::Literal(n) => return Ok(literal(&expr.span, *n)),
         BudgetExprX::MemSize(typ) => {

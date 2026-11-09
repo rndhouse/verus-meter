@@ -132,3 +132,44 @@ pub fn erase_annotations(functions: &mut [Function]) -> Result<(), VirErr> {
     }
     Ok(())
 }
+
+/// Replace specification type queries with constants from the source memory model.
+/// This runs before ordinary function checking; only compiler-tagged queries qualify.
+pub fn resolve_sizes(
+    function: &Function,
+    datatypes: &[Datatype],
+    global_allocator: Option<Dt>,
+    vector: Option<Dt>,
+    option: Option<Dt>,
+) -> Result<Function, VirErr> {
+    let layouts = layout::Layouts::new(datatypes, global_allocator, vector, option);
+    crate::ast_visitor::map_function_visitor_env(
+        function,
+        &mut air::scope_map::ScopeMap::new(),
+        &mut (),
+        &|_, _, expr| resolve_size_node(expr, &layouts),
+        &|_, _, stmt| Ok(vec![stmt.clone()]),
+        &|_, typ| Ok(typ.clone()),
+        &|_, _, place| Ok(place.clone()),
+        &|_, _, pattern| Ok(pattern.clone()),
+    )
+}
+
+/// Fold compiler-tagged size queries in bodies and erased budget expressions.
+fn resolve_size_expression(expr: &Expr, layouts: &layout::Layouts) -> Result<Expr, VirErr> {
+    crate::ast_visitor::map_expr_visitor(expr, &|expr| resolve_size_node(expr, layouts))
+}
+
+fn resolve_size_node(expr: &Expr, layouts: &layout::Layouts) -> Result<Expr, VirErr> {
+    if let ExprX::Call { target: CallTarget::Fun(_, _, types, _, attrs), .. } = &expr.x {
+        if attrs.resource_intrinsic == Some(ResourceIntrinsic::MemSize) {
+            let bytes = layouts.size(&types[0], &expr.span)?;
+            return Ok(SpannedTyped::new(
+                &expr.span,
+                &expr.typ,
+                ExprX::Const(crate::ast_util::const_int_from_u128(bytes as u128)),
+            ));
+        }
+    }
+    Ok(expr.clone())
+}

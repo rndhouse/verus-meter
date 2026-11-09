@@ -4580,7 +4580,8 @@ impl VisitMut for Visitor {
         self.handle_atomic_call(expr);
         self.normalize_expr_proof_note_attrs(expr);
 
-        if self.handle_resource_block(expr)
+        if self.handle_spec_mem_size(expr)
+            || self.handle_resource_block(expr)
             || self.chain_operators(expr)
             || self.closure_quant_operators(expr)
             || self.handle_binary_ops(expr)

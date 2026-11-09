@@ -501,6 +501,13 @@ impl<'tcx> Query<'tcx> {
         let function = vir::traits::demote_external_traits_function_calls(&lookup, &function)
             .map_err(|e| self.emit_error(e))?;
 
+        let function = crate::resource::memory::pipeline::resolve_sizes(
+            ctxt,
+            &pre_crate.krate_without_funs,
+            &function,
+        )
+        .map_err(|e| self.emit_error(e))?;
+
         // WF checking
 
         let initial_wf = self.get_initial_wf_results()?;

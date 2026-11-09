@@ -32,7 +32,7 @@ constants are not yet supported as budget operands.
 A function budget can call a local `spec fn` returning `nat` or `u64`:
 
 ```rust
-spec fn element_bytes(capacity: nat) -> nat { 4 * capacity }
+spec fn element_bytes(capacity: nat) -> nat { mem_size(u32) * capacity }
 
 fn collect(capacity: usize)
     requires capacity <= 1024,
@@ -56,9 +56,26 @@ support for executable enums in memory-checked code.
 
 Use `mem_peak(helper(arguments))` when referring to a helper whose budget calls
 a spec function; no constant envelope is inferred from a spec function's body.
-Sections and checkpoints still require fixed bounds. `mem_size` inside spec
-function bodies and function-valued budgets are not yet supported.
-See [named budget formulas](../../examples/resource/memory/spec_budgets.rs).
+Sections and checkpoints still require fixed bounds.
+
+Inside specifications, `mem_size(Type)` and `mem_size(parameter)` return a `nat`
+using the same model as memory clauses. They inspect types without evaluating
+or copying the argument. Supported concrete structs use their field sizes.
+Generic layouts remain unsupported.
+
+A spec function may return a formula that captures its parameters:
+
+```rust
+spec fn budget_for(element_bytes: nat) -> spec_fn(nat) -> nat {
+    |count: nat| mem_size(Vec<u32>) + element_bytes * count
+}
+```
+
+A function clause can apply it as `budget_for(4)(capacity as nat)`. The factory
+must be a local verified spec function; each application uses stable scalar
+arguments and the final numeric result must fit in `u64`.
+See [named budget formulas](../../examples/resource/memory/spec_budgets.rs) and
+[returned formulas](../../examples/resource/memory/function_budgets.rs).
 
 ## What counts
 

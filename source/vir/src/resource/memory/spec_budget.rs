@@ -16,6 +16,52 @@ pub(super) fn validate(
     allowed: &HashSet<VarIdent>,
     functions: &HashMap<Fun, Function>,
 ) -> Result<Expr, VirErr> {
+    validate_result(expr, allowed, functions, false)
+}
+
+fn validate_result(
+    expr: &Expr,
+    allowed: &HashSet<VarIdent>,
+    functions: &HashMap<Fun, Function>,
+    function_result: bool,
+) -> Result<Expr, VirErr> {
+    if function_result {
+        if let ExprX::ReadPlace(place, _) = &expr.x {
+            if let PlaceX::Temporary(value) = &place.x {
+                return validate_result(value, allowed, functions, true);
+            }
+        }
+    }
+    let valid_result = if function_result {
+        matches!(&*crate::ast_util::undecorate_typ(&expr.typ), TypX::SpecFn(_, _))
+    } else {
+        matches!(&*expr.typ, TypX::Int(IntRange::Nat | IntRange::U(64)))
+    };
+    if !valid_result {
+        return Err(error(
+            &expr.span,
+            "memory budget spec functions must return nat or u64 (or a spec_fn when applied)",
+        ));
+    }
+    if let ExprX::Call { target: CallTarget::FnSpec(factory), args, post_args: None, body: None } =
+        &expr.x
+    {
+        let factory = validate_result(factory, allowed, functions, true)?;
+        let args = args
+            .iter()
+            .map(|arg| argument(arg, allowed, functions))
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(SpannedTyped::new(
+            &expr.span,
+            &expr.typ,
+            ExprX::Call {
+                target: CallTarget::FnSpec(factory),
+                args: Arc::new(args),
+                post_args: None,
+                body: None,
+            },
+        ));
+    }
     let ExprX::Call {
         target: CallTarget::Fun(CallTargetKind::Static, name, types, impls, attrs),
         args,
@@ -46,9 +92,6 @@ pub(super) fn validate(
             &expr.span,
             "memory budgets require a local, nongeneric spec function with a verified body",
         ));
-    }
-    if !matches!(&*expr.typ, TypX::Int(IntRange::Nat | IntRange::U(64))) {
-        return Err(error(&expr.span, "memory budget spec functions must return nat or u64"));
     }
     let args =
         args.iter().map(|arg| argument(arg, allowed, functions)).collect::<Result<Vec<_>, _>>()?;

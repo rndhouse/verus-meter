@@ -9,10 +9,10 @@ verus! {
 
 // Describe the reservation for a collection of u32 values.
 //
-// Each element needs four bytes in the source memory model. The formula uses
+// Element sizes follow the source memory model. The formula uses
 // mathematical naturals; the memory contract separately checks the u64 limit.
 spec fn element_bytes(capacity: nat) -> nat {
-    4 * capacity
+    mem_size(u32) * capacity
 }
 
 // Collect values within a reservation chosen by the caller.

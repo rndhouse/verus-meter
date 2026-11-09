@@ -1048,6 +1048,8 @@ pub enum ResourceIntrinsic {
     OptionIsSome,
     OptionIsNone,
     OptionUnwrap,
+    /// Type-only memory query, resolved before ordinary function checking.
+    MemSize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToDebugSNode)]
