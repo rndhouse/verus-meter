@@ -1,8 +1,9 @@
-//! Locate fixed child owners in executable places and specification projections.
+//! Locate structural owners and operation-local indexed borrows.
 //!
 //! References preserve the owner's path; each implicit Box dereference adds a
-//! contents slot. Runtime indexing and local reference aliases are not paths in
-//! this model. Consumers must validate the place and find a live tracked root.
+//! contents slot. Indexed paths identify operation-local borrowed projections,
+//! materialized by `projections`; they are never persistent element identities.
+//! Consumers must validate the place and find a live tracked root.
 
 use super::heap::{OwnerPath, OwnerSlot};
 use crate::ast::*;
@@ -12,6 +13,27 @@ use crate::ast_util::types_equal;
 pub(super) type LocalPath = (VarIdent, OwnerPath);
 /// Formal parameter index and child path exported to a checked caller.
 pub(super) type InputPath = (usize, OwnerPath);
+
+pub(super) fn indexed(path: &[OwnerSlot]) -> bool {
+    path.iter().any(|slot| matches!(slot, OwnerSlot::Element(_)))
+}
+
+/// Compiler-recognized indexing adapters, shared by paths and operation handling.
+pub(super) fn vector_index(value: &Expr) -> Option<&Exprs> {
+    let ExprX::Call {
+        target: CallTarget::Fun(CallTargetKind::Static, fun, _, _, _),
+        args,
+        post_args: None,
+        body: None,
+    } = &value.x
+    else {
+        return None;
+    };
+    ((*fun == crate::fun!(CrateId::Vstd => "std_specs", "vec"; "vec_index")
+        || *fun == crate::fun!(CrateId::Vstd => "std_specs", "vec"; "vec_index_mut"))
+        && args.len() == 2)
+        .then_some(args)
+}
 
 pub(super) fn referent(mut typ: &Typ) -> &Typ {
     while let TypX::MutRef(inner) | TypX::Decorate(TypDecoration::Ref, None, inner) = &**typ {
@@ -50,12 +72,22 @@ pub(super) fn place(place: &Place, target: &Typ) -> Option<LocalPath> {
             location
         }
         PlaceX::Temporary(value) => expr(value, &place.typ)?,
+        PlaceX::Index(base, _, _, BoundsCheck::Error) => {
+            let mut location = self::place(base, &base.typ)?;
+            location.1.push(OwnerSlot::Element(place.span.id));
+            location
+        }
         _ => return None,
     };
     project(location, &place.typ, target)
 }
 
 pub(super) fn expr(value: &Expr, target: &Typ) -> Option<LocalPath> {
+    if let Some(args) = vector_index(value) {
+        let mut location = expr(&args[0], &args[0].typ)?;
+        location.1.push(OwnerSlot::Element(value.span.id));
+        return project(location, &value.typ, target);
+    }
     match &value.x {
         ExprX::Old(base) | ExprX::Unary(UnaryOp::MutRefCurrent, base) => expr(base, target),
         ExprX::ReadPlace(p, _) | ExprX::BorrowMut(p) | ExprX::TwoPhaseBorrowMut(p) => {

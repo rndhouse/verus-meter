@@ -15,6 +15,9 @@ pub(super) struct VectorSummary {
     /// Fresh vector capacities indexed by structural result path. Forwarded
     /// subtrees preserve the caller's existing proof state.
     pub(super) returned_capacities: std::collections::BTreeMap<super::heap::OwnerPath, Expr>,
+    /// Inputs whose length may decrease; callers must invalidate append-only
+    /// bounds even when removal retains no newly allocated bytes.
+    pub(super) removals: std::collections::HashSet<super::paths::InputPath>,
 }
 
 /// Translate vector state to a result reservation and a generic replacement
@@ -85,6 +88,14 @@ impl Analysis<'_> {
                     self.vector_argument(arg, typ, path)?;
                 }
             }
+        }
+        for (index, child) in &summary.vectors.removals.clone() {
+            let (name, mut path) =
+                super::paths::expr(&args[*index], &callee.x.params[*index].x.typ).ok_or_else(
+                    || unsupported(&expr.span, "removal through an aliased collection"),
+                )?;
+            path.extend(child.iter().cloned());
+            self.forget_collection_length(&name, &path);
         }
         Ok(())
     }

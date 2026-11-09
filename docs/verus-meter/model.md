@@ -199,7 +199,7 @@ borrowed calls conservatively retain the caller's old allocations throughout the
 call, then install the final child ownership and capacity facts. See
 [child transfers](../../examples/resource/memory/child_transfers.rs).
 
-Moves and replacements of enclosing owners or their children across branches,
+Moves and replacements of enclosing owners or their fixed children across branches,
 loops, or memory sections remain unsupported, as do extraction from temporary
 containers and moves out of borrowed owners. Recursive layouts, owning `Option`
 payloads, and owning array elements are also excluded. Shared ownership needs
@@ -229,10 +229,25 @@ immutable scalar inputs, the checked function budget supplies a conservative
 bound. Byte-only helper effects can make loop proofs less precise than direct
 insertion. See [owning collections](../../examples/resource/memory/owning_collections.rs).
 
-Individual owning elements remain opaque to allocation accounting: vector
-indexing, slice views, popping, extraction, and replacement need per-element
-ownership transitions and are not supported yet. An enclosing collection cannot
-gain child allocations inside a separately budgeted memory section.
+Indexed elements support reads, scalar mutation, growth, and replacement, both
+directly and through checked helpers. The same ownership shapes apply through
+arbitrary supported combinations of fixed and runtime children. Pass indexed
+borrows directly to an operation or helper; allocation effects through a stored
+reference alias are not tracked. Bind allocation-changing replacement expressions
+to a local first. See [indexed owners](../../examples/resource/memory/indexed_owners.rs).
+
+This is conservative accounting: each indexed borrow leaves the collection's
+existing child sum charged and adds allocations retained by that operation.
+It does not recover an individual element's existing spare capacity, and replacing
+an element gives no credit for its old storage until the collection is dropped.
+Discarding `v.pop()` is supported with the same retained-charge rule; keeping its
+owning `Option<T>` result and transferring extracted elements remain unsupported.
+Removal disables length-based append invariants, including across helper calls.
+Loops that grow existing elements may fail verification because the model does
+not yet track how many distinct elements have been updated. Slice views of owning
+vectors remain unsupported; owning boxed slices support direct indexing. An
+enclosing collection cannot gain child allocations inside a separately budgeted
+memory section.
 
 ## Runtime-sized boxed slices
 
@@ -250,8 +265,8 @@ For an incoming owning collection, its opaque input provenance is retained with
 the children, conservatively keeping the caller's old backing charge too.
 The length is captured before the vector is consumed, so later accounting cannot
 read a moved value. Moves, helper calls, explicit drop, and scope exit reuse the
-ordinary ownership rules. Borrowing and indexing individual elements require
-non-owning element types. See [boxed slices](../../examples/resource/memory/boxed_slices.rs).
+ordinary ownership rules. Indexed owning elements use the conservative borrowed
+child rules above. See [boxed slices](../../examples/resource/memory/boxed_slices.rs).
 
 A returned local runtime extent that cannot be expressed using immutable scalar
 inputs is conservatively bounded by the producing function's checked `mem_peak`.

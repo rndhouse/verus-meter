@@ -17,6 +17,7 @@ mod lifetimes;
 mod nested_growth;
 mod nested_ownership;
 mod ownership;
+mod projections;
 mod reachability;
 mod return_sharing;
 mod returns;

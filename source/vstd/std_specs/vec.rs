@@ -80,6 +80,12 @@ pub fn vec_index_mut<T, A: Allocator>(vec: &mut Vec<T, A>, i: usize) -> (element
 ////// Len (with autospec)
 pub uninterp spec fn spec_vec_len<T, A: Allocator>(v: &Vec<T, A>) -> usize;
 
+/// Pure indexed value used when resource proofs inspect a borrowed element
+/// before the executable indexing operation creates its reference.
+pub open spec fn spec_vec_index<T, A: Allocator>(v: &Vec<T, A>, i: usize) -> T {
+    v@.index(i as int)
+}
+
 // This axiom is slightly better than defining spec_vec_len to just be `v@.len() as usize`
 // (the axiom also shows that v@.len() is in-bounds for usize)
 pub broadcast proof fn axiom_spec_len<T, A: Allocator>(v: &Vec<T, A>)

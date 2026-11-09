@@ -26,9 +26,12 @@ pub(super) struct VectorState {
     pub(super) element: u64,
     /// An inferred entry reservation whose no-growth uses are checked by Verus.
     pub(super) reserved: bool,
-    /// Owning-element sequences currently support only append operations, so
-    /// their logical length bounds every direct replacement made so far.
+    /// While a sequence only appends, its logical length bounds every direct
+    /// replacement made so far. Removal invalidates this optional bound.
     pub(super) sequence_length: Option<Expr>,
+    /// Removal permanently disables append-only length bounds, including after
+    /// later pushes and across branches analyzed in either order.
+    pub(super) append_only: bool,
     /// Container-independent byte state and allocation identity.
     pub(super) backing: super::allocations::RetainedAllocation,
 }
@@ -83,6 +86,43 @@ pub(super) fn grown_capacity(span: &Span, length: Expr, element: u64) -> Expr {
 }
 
 impl Growth {
+    /// Express a committed allocation charge in pre-operation variables. Follow
+    /// snapshot assignments in execution order; reading the current counter
+    /// would omit allocations retained by the operation being summarized.
+    pub(super) fn after_value(&self, span: &Span, value: &Expr) -> Expr {
+        let mut values = HashMap::new();
+        for statement in self
+            .updates
+            .get(&span.id)
+            .into_iter()
+            .flatten()
+            .chain(self.after.get(&span.id).into_iter().flatten())
+        {
+            if let StmtX::Expr(expr) = &statement.x
+                && let ExprX::Assign { place, rhs, .. } = &expr.x
+                && let PlaceX::Local(name) = &place.x
+            {
+                let rhs = crate::ast_visitor::map_expr_visitor(rhs, &|expr| {
+                    Ok(match &expr.x {
+                        ExprX::Var(name) => {
+                            values.get(name).cloned().unwrap_or_else(|| expr.clone())
+                        }
+                        _ => expr.clone(),
+                    })
+                })
+                .expect("substitute allocation snapshots");
+                values.insert(name.clone(), rhs);
+            }
+        }
+        crate::ast_visitor::map_expr_visitor(value, &|expr| {
+            Ok(match &expr.x {
+                ExprX::Var(name) => values.get(name).cloned().unwrap_or_else(|| expr.clone()),
+                _ => expr.clone(),
+            })
+        })
+        .expect("substitute committed allocation values")
+    }
+
     pub(super) fn revision(&self) -> usize {
         self.before.values().map(Vec::len).sum::<usize>()
             + self.updates.values().map(Vec::len).sum::<usize>()
@@ -123,6 +163,7 @@ impl Growth {
             element,
             reserved: false,
             sequence_length: None,
+            append_only: true,
             backing: super::allocations::RetainedAllocation {
                 id: allocation,
                 kind: size.kind,

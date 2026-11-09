@@ -35,6 +35,28 @@ pub(super) fn length(span: &crate::messages::Span, types: Typs, vector: Expr) ->
 }
 
 impl Analysis<'_> {
+    /// Retained sums include discarded children, so neither insertion counts
+    /// nor historical buffer sizes can subsequently be bounded by current length.
+    pub(super) fn forget_collection_length(
+        &mut self,
+        name: &VarIdent,
+        path: &[super::heap::OwnerSlot],
+    ) {
+        let owner = self
+            .heap
+            .root(name)
+            .and_then(|owner| owner.at(path))
+            .expect("validated vector argument");
+        let state = &mut self.growth.vectors[owner.vector.expect("vector state")];
+        state.append_only = false;
+        state.sequence_length = None;
+        if let Some(elements) = &owner.elements {
+            for id in elements.states.values() {
+                self.growth.elements[*id].forget_length();
+            }
+        }
+    }
+
     pub(super) fn allocate_vector(
         &mut self,
         expr: &Expr,
@@ -114,6 +136,15 @@ impl Analysis<'_> {
 
     /// Resolve a vector leaf through the same paths used by ownership summaries.
     pub(super) fn vector_receiver(&mut self, arg: &Expr) -> Result<(usize, Typ, Expr), VirErr> {
+        if super::paths::vector_index(arg).is_some() {
+            let mut typ = super::paths::referent(&arg.typ);
+            while let TypX::Decorate(TypDecoration::Box, _, inner) = &**typ {
+                typ = inner;
+            }
+            let id = self.vector_argument(arg, typ, &[])?;
+            self.discard(arg)?;
+            return Ok((id, typ.clone(), super::projections::spec_value(arg)?));
+        }
         let place = match &arg.x {
             ExprX::BorrowMut(p) | ExprX::TwoPhaseBorrowMut(p) | ExprX::ReadPlace(p, _) => p,
             _ => {
@@ -132,7 +163,13 @@ impl Analysis<'_> {
         }
         let id = self.vector_argument(arg, typ, &[])?;
         self.access(place, if matches!(&*place.typ, TypX::MutRef(_)) { &place.typ } else { typ })?;
-        Ok((id, typ.clone(), place_to_spec_expr(place)))
+        let value =
+            if super::paths::expr(arg, typ).is_some_and(|(_, path)| super::paths::indexed(&path)) {
+                super::projections::spec_value(arg)?
+            } else {
+                place_to_spec_expr(place)
+            };
+        Ok((id, typ.clone(), value))
     }
 
     /// Resolve a formal child path relative to an actual argument's owner.
@@ -187,24 +224,30 @@ impl Analysis<'_> {
         let Some(receiver) = args.first() else {
             return Err(unsupported(&expr.span, "this vector operation"));
         };
+        let focused = self.focus_arguments(args, &expr.span)?;
+        let bytes = self.vector_operation(expr, args, receiver, index, attrs.resource_intrinsic)?;
+        self.finish_projections(&expr.span, focused)?;
+        Ok(Some(bytes))
+    }
+
+    fn vector_operation(
+        &mut self,
+        expr: &Expr,
+        args: &Exprs,
+        receiver: &Expr,
+        index: bool,
+        intrinsic: Option<ResourceIntrinsic>,
+    ) -> Result<u64, VirErr> {
         let (state_id, typ, vector) = self.vector_receiver(receiver)?;
         if self.layouts.owning_elements(&typ)
-            && (index
-                || matches!(
-                    attrs.resource_intrinsic,
-                    Some(
-                        ResourceIntrinsic::VecPop
-                            | ResourceIntrinsic::VecAsSlice
-                            | ResourceIntrinsic::VecAsMutSlice
-                    )
-                ))
+            && matches!(
+                intrinsic,
+                Some(ResourceIntrinsic::VecAsSlice | ResourceIntrinsic::VecAsMutSlice)
+            )
         {
-            return Err(unsupported(
-                &expr.span,
-                "accessing or removing individual owning collection elements",
-            ));
+            return Err(unsupported(&expr.span, "borrowing slice views of owning vectors"));
         }
-        if attrs.resource_intrinsic == Some(ResourceIntrinsic::VecPush) {
+        if intrinsic == Some(ResourceIntrinsic::VecPush) {
             if args.len() != 2 {
                 return Err(unsupported(&expr.span, "this vector push"));
             }
@@ -215,7 +258,7 @@ impl Analysis<'_> {
             // preconditions and loop invariants can establish available room.
             let len = length(&expr.span, types.clone(), vector);
             let element_length = len.clone();
-            if self.layouts.owning_elements(&typ) {
+            if self.layouts.owning_elements(&typ) && state.append_only {
                 self.growth.vectors[state_id].sequence_length = Some(len.clone());
             }
             let revision = self.growth.revision();
@@ -314,6 +357,14 @@ impl Analysis<'_> {
                 self.heap.root_mut(&name).unwrap().at_mut(&path).unwrap().elements = Some(elements);
                 self.record_element_updates(&expr.span)?;
             }
+        } else if intrinsic == Some(ResourceIntrinsic::VecPop) && self.layouts.owning_elements(&typ)
+        {
+            // A discarded result cannot outlive its collection. Retain the old
+            // child sum conservatively, but stop using logical length to bound
+            // historic insertions or buffer growth. Owning Option destinations
+            // remain rejected by layout validation.
+            let (name, path) = super::paths::expr(receiver, &typ).unwrap();
+            self.forget_collection_length(&name, &path);
         } else if index {
             if args.len() != 2 {
                 return Err(unsupported(&expr.span, "this vector index"));
@@ -324,6 +375,6 @@ impl Analysis<'_> {
         }
         // Push accounts for replacement storage above. A discarded pop result creates
         // no declared slot; a bound Option result uses its caller-provided destination.
-        Ok(Some(0))
+        Ok(0)
     }
 }

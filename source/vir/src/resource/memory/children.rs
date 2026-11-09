@@ -17,6 +17,9 @@ impl Analysis<'_> {
     pub(super) fn move_owner_to(&mut self, place: &Place, typ: &Typ) -> Result<Owner, VirErr> {
         let (name, path) = super::paths::place(place, typ)
             .ok_or_else(|| unsupported(&place.span, "heap ownership outside a fixed child path"))?;
+        if super::paths::indexed(&path) {
+            return Err(unsupported(&place.span, "moving ownership out of an indexed borrow"));
+        }
         if !self.layouts.owner(typ) {
             return Err(unsupported(&place.span, "this heap move"));
         }
@@ -43,14 +46,30 @@ impl Analysis<'_> {
         typ: &Typ,
         rhs: &Expr,
     ) -> Result<(), VirErr> {
+        let mut focused = Vec::new();
+        self.focus_place(place, &rhs.span, &mut focused)?;
+        self.assign_owner_inner(place, typ, rhs)?;
+        self.finish_projections(&rhs.span, focused)
+    }
+
+    fn assign_owner_inner(&mut self, place: &Place, typ: &Typ, rhs: &Expr) -> Result<(), VirErr> {
         let (name, path) = super::paths::place(place, typ)
             .ok_or_else(|| unsupported(&place.span, "assignment outside a fixed child path"))?;
         if path.is_empty() {
             return Err(unsupported(&place.span, "reassignment of heap owners"));
         }
-        self.heap.check_transfer(&name, &place.span)?;
+        if !super::paths::indexed(&path) {
+            self.heap.check_transfer(&name, &place.span)?;
+        }
         self.access(place, typ)?;
+        let revision = self.growth.revision();
         self.initialize_expr(rhs)?;
+        if super::paths::indexed(&path) && revision != self.growth.revision() {
+            return Err(unsupported(
+                &rhs.span,
+                "allocation changes inside an indexed replacement; bind the replacement first",
+            ));
+        }
         let child = self
             .result_owner
             .take()

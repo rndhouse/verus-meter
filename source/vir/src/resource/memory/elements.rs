@@ -3,7 +3,7 @@
 //! A collection keeps one byte sum per memory kind, not an enumerated owner for
 //! every element. Insertion transfers a complete child footprint into these sums.
 //! Original input allocations remain caller-charged and retain their provenance.
-//! This append-only abstraction deliberately does not expose individual children.
+//! Indexed borrows retain the old sum and add newly retained child allocations.
 
 use super::analysis::Analysis;
 use super::contracts;
@@ -55,10 +55,16 @@ pub(super) struct ElementState {
     /// Byte-only helper effects do not expose a precise insertion count.
     counted: bool,
     /// Whether local operations have added child allocations.
-    changed: bool,
+    pub(super) changed: bool,
 }
 
 impl ElementState {
+    /// Removal invalidates the relationship between insertion count and length.
+    pub(super) fn forget_length(&mut self) {
+        self.counted = false;
+        self.length = None;
+    }
+
     fn upper(&self, _span: &Span, fallback: &Expr) -> Expr {
         self.extent.clone().unwrap_or_else(|| fallback.clone())
     }
@@ -300,6 +306,70 @@ impl Analysis<'_> {
         elements.inputs.extend(child.inputs());
         self.release_owner_storage(child, span, false);
         self.add_element_bytes(span, elements, charges, &upper, Some(length))
+    }
+
+    /// Original allocations remain in the enclosing sum. Only allocations
+    /// acquired during this borrow are transferred back into that sum.
+    pub(super) fn merge_projected_child(
+        &mut self,
+        span: &Span,
+        elements: &mut Elements,
+        child: Owner,
+    ) -> Result<(), VirErr> {
+        let charges = self.owner_charges(span, &child);
+        let upper = self.owner_upper(span, &child);
+        elements.inputs.extend(child.inputs());
+        // These states move into the parent's sum. Pending peak checks must
+        // not reintroduce their retired allocation identities as extra charges.
+        child.visit(&mut |node| {
+            if let Some(elements) = &node.elements {
+                for id in elements.states.values() {
+                    if let Some(updates) = self.growth.element_updates.get_mut(&span.id) {
+                        updates.remove(id);
+                    }
+                }
+            }
+        });
+        self.release_owner_storage(child, span, false);
+        for (kind, amount) in charges {
+            if contracts::constant(&amount) == Some(0) {
+                continue;
+            }
+            let id = *elements.states.get(&kind).ok_or_else(|| {
+                unsupported(span, "an element allocation kind absent from the collection layout")
+            })?;
+            if self.growth.protected_elements.contains(&id) {
+                return Err(unsupported(
+                    span,
+                    "changing owning children of an enclosing collection inside a memory section",
+                ));
+            }
+            let amount_after = self.growth.after_value(span, &amount);
+            self.checks.push((
+                span.clone(),
+                mk_ineq(span, &amount_after, &upper[&kind], InequalityOp::Le),
+            ));
+            let state = &mut self.growth.elements[id];
+            // Commit after the child's own snapshots. Keeping the RHS in
+            // current variables lets nested projections compose in order,
+            // without substituting a child's addition more than once.
+            self.growth.after.entry(span.id).or_default().push(super::symbolic::assign(
+                span,
+                &state.bytes,
+                contracts::add(span, state.bytes.clone(), amount),
+            ));
+            state.extent = state
+                .extent
+                .take()
+                .map(|extent| contracts::add(span, extent, upper[&kind].clone()));
+            state.counted = false;
+            state.length = None;
+            state.changed = true;
+            let bytes = state.bytes.clone();
+            let next = self.growth.after_value(span, &bytes);
+            self.growth.element_updates.entry(span.id).or_default().insert(id, next);
+        }
+        Ok(())
     }
 
     /// Check the complete post-operation charge using pre-operation expressions,

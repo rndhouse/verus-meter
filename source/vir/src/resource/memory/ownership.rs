@@ -260,7 +260,9 @@ impl Analysis<'_> {
             let (name, mut path) = super::paths::expr(&args[index], &callee.x.params[index].x.typ)
                 .ok_or_else(|| unsupported(&expr.span, "an aliased child replacement argument"))?;
             path.extend(child_path.iter().cloned());
-            self.heap.check_transfer(&name, &expr.span)?;
+            if !super::paths::indexed(&path) {
+                self.heap.check_transfer(&name, &expr.span)?;
+            }
             let old = self
                 .heap
                 .root_mut(&name)

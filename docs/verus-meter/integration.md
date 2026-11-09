@@ -83,9 +83,21 @@ operation used for replacement buffers. Loop sums and append-only buffer bounds
 are ordinary proof-checked invariants, not assumptions. Post-operation checks
 must include all pending child sums before their erased states commit.
 
-Runtime element extraction and replacement still need per-element ownership
-transitions; shared ownership needs separate last-owner release rules. Extend the
-common ownership model rather than adding rules for individual nesting combinations.
+[Indexed projections](../../source/vir/src/resource/memory/projections.rs) borrow
+an element's shape for one operation while retaining its original aggregate charge.
+They reuse the ordinary owner operations and add newly retained allocations back
+to the parent sum. Finish nested projections from the inside out; temporary element
+paths must never escape into summaries. Commit transfers after the child's own
+state updates, and check their combined post-operation charge using pre-operation
+expressions. Pure projection expressions and `spec_vec_index` avoid re-executing
+indexing or its bounds check in a memory formula. The executable operation still
+checks bounds normally. Removal effects invalidate append-only invariants at callers
+even when they retain no new allocations.
+
+Precise element release, spare-capacity recovery, and extracted owning results
+still need individual element metadata. Shared ownership needs separate last-owner
+release rules. Extend the common ownership model rather than adding rules for
+individual nesting combinations.
 
 Compiler upgrades need a review of borrow/coercion lowering, move/copy provenance,
 and the identities used for supported standard operations.

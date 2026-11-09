@@ -12,6 +12,7 @@
 //! `children` transfers and replaces fixed child ownership without copying allocations.
 //! `paths` resolves fixed child owners for operations, reservations, and call effects.
 //! `elements` maintains runtime child-footprint sums and ownership capture across calls.
+//! `projections` borrows indexed child shapes and returns their allocation effects to those sums.
 //! `contracts`
 //! specializes declared formulas with stable scalar arguments. `symbolic`
 //! turns conditional contracts into ordinary Verus proof obligations.
@@ -48,6 +49,7 @@ mod model;
 mod ownership;
 mod paths;
 mod places;
+mod projections;
 mod sections;
 mod spec_budget;
 mod summary;

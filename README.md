@@ -79,6 +79,7 @@ Bounds describe a source-level model, not the compiled program’s actual memory
   - [Child transfers](examples/resource/memory/child_transfers.rs): move and replace owning fields while preserving allocation lifetimes.
   - [Nested growth](examples/resource/memory/nested_growth.rs): grow individual vector fields and preserve their allocation effects through helpers.
   - [Owning collections](examples/resource/memory/owning_collections.rs): account for runtime collections of children that own further allocations.
+  - [Indexed owners](examples/resource/memory/indexed_owners.rs): borrow, change, and replace individual owning elements with conservative retained charges.
   - [Boxed slices](examples/resource/memory/boxed_slices.rs): convert vectors into fixed-length owning slices and transfer their storage.
   - [Ownership](examples/resource/memory/ownership.rs): track an allocation's cost as it passes between helpers.
   - [Vectors](examples/resource/memory/vectors.rs): collect values while proving that every addition fits the reserved capacity.

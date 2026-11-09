@@ -512,6 +512,7 @@ pub(super) fn check(
         &analysis.bound,
         &modes.var_modes,
     )?;
+    let mut input_vectors = HashMap::new();
     for (index, param) in f.params.iter().enumerate() {
         analysis.var_modes.insert(param.x.name.clone(), param.x.mode);
         if param.x.mode == Mode::Exec {
@@ -532,6 +533,11 @@ pub(super) fn check(
                     &mut vec![],
                     &capacities,
                 )?;
+                owner.visit_paths(&mut vec![], &mut |path, node| {
+                    if let Some(id) = node.vector {
+                        input_vectors.insert((index, path.clone()), id);
+                    }
+                });
                 if borrowed.is_some() {
                     analysis.heap.borrowed.insert(param.x.name.clone(), owner);
                 } else {
@@ -593,6 +599,12 @@ pub(super) fn check(
         report,
         summary: super::summary::FunctionSummary {
             vectors: super::vector_calls::VectorSummary {
+                removals: input_vectors
+                    .into_iter()
+                    .filter_map(|(path, id)| {
+                        (!analysis.growth.vectors[id].append_only).then_some(path)
+                    })
+                    .collect(),
                 returned_capacities,
                 reservations: capacities
                     .into_iter()

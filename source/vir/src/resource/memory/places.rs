@@ -78,14 +78,6 @@ impl Analysis<'_> {
                 {
                     return Err(unsupported(&base.span, "indexing this type"));
                 }
-                if matches!(&**base_typ, TypX::Primitive(Primitive::Slice, args)
-                    if args.first().is_some_and(|typ| self.layouts.owner(typ)))
-                {
-                    return Err(unsupported(
-                        &place.span,
-                        "accessing individual owning collection elements",
-                    ));
-                }
                 if !matches!(&*index.typ, TypX::Int(IntRange::USize)) {
                     return Err(unsupported(&index.span, "non-usize indexes"));
                 }

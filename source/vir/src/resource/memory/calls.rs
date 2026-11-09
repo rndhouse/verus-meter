@@ -180,6 +180,17 @@ impl Analysis<'_> {
     }
 
     pub(super) fn call_expr(&mut self, expr: &Expr, destination: bool) -> Result<u64, VirErr> {
+        let focused = if let ExprX::Call { args, .. } = &expr.x {
+            self.focus_arguments(args, &expr.span)?
+        } else {
+            Vec::new()
+        };
+        let bytes = self.call_expr_inner(expr, destination)?;
+        self.finish_projections(&expr.span, focused)?;
+        Ok(bytes)
+    }
+
+    fn call_expr_inner(&mut self, expr: &Expr, destination: bool) -> Result<u64, VirErr> {
         let operands;
         match &expr.x {
             ExprX::Call {

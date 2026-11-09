@@ -225,17 +225,11 @@ fn section_cannot_hide_new_children_of_enclosing_collection() {
 }
 
 #[test]
-fn individual_child_operations_remain_explicitly_unsupported() {
-    rejects(
-        "element_index",
-        "fn f(v: &Vec<Box<u32>>) requires v.len() > 0,
-        mem_peak <= 100 { let b = &v[0]; }",
-        "individual owning collection elements",
-    );
+fn owning_pop_still_requires_conditional_ownership() {
     rejects(
         "element_pop",
-        "fn f(mut v: Vec<Box<u32>>) mem_peak <= 100 { v.pop(); }",
-        "individual owning collection elements",
+        "fn f(mut v: Vec<Box<u32>>) mem_peak <= 100 { let removed = v.pop(); }",
+        "owning or reference-valued Option payloads",
     );
 }
 

@@ -22,12 +22,14 @@ pub(super) struct Heap {
     pub(super) replaced: HashSet<super::paths::LocalPath>,
 }
 
-/// Structural position of a fixed child owner. Runtime collections use separate
-/// footprint sums rather than adding a path for each element.
+/// Structural position of a child owner. Runtime collections use footprint sums;
+/// indexed slots exist only while borrowing a child for one operation.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) enum OwnerSlot {
     Contents,
     Field(Ident),
+    /// Operation-local borrowed projection; never exported in an ownership summary.
+    Element(u64),
 }
 
 pub(super) type OwnerPath = Vec<OwnerSlot>;
@@ -205,6 +207,10 @@ impl Heap {
     }
 
     pub(super) fn mark_replaced(&mut self, name: &VarIdent, path: &OwnerPath) {
+        // Indexed borrows return their effects to the containing runtime sum.
+        if super::paths::indexed(path) {
+            return;
+        }
         if self.borrowed.contains_key(name) && !self.is_replaced(name, path) {
             self.replaced.retain(|(root, child)| root != name || !child.starts_with(path));
             self.replaced.insert((name.clone(), path.clone()));
