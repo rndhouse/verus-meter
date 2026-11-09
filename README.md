@@ -1,8 +1,19 @@
 # Verus Meter
 
 Verus Meter is an experimental fork of [Verus](https://github.com/verus-lang/verus)
-that adds resource contracts for Rust. You can prove that your code produces
-the right results and stays within its memory budget.
+that adds resource contracts for Rust. It currently supports proofs of upper bounds
+on algorithmic memory use for a subset of Rust.
+
+## Why
+
+- Prove peak memory bounds across all permitted inputs.
+- Verify that memory guarantees remain valid as code changes.
+- Verify memory bounds across function calls and nested operations.
+- Support input-dependent and execution-path-specific memory budgets.
+
+## Examples
+
+A simple example:
 
 ```rust
 // Reverse a small buffer using a temporary copy.
@@ -34,26 +45,12 @@ fn main()
 }
 ```
 
-The caller's budget covers one buffer plus the helper's declared memory needs.
-Each scope releases its buffer before the next begins. Removing the inner scopes
-keeps both buffers live during the second call, exceeding the same budget.
-The verifier accounts for storage automatically; contracts add no runtime tracking.
+Memory budgets are checked code properties. Here, two reversals share
+one memory allowance because their buffers do not overlap. A change that keeps
+both buffers alive would exceed that allowance and fail verification.
 
-Functions can refer to helper functions' budgets, divide work into independently
-checked sections, and check the peak reached at a particular point. Conditional
-contracts can give different inputs different allowances and preserve them through
-helper calls. Boxes and vectors without growth can also carry checked
-heap allowances; vector budgets can scale with a runtime capacity. Helpers can
-return values, including `Option`, with result storage counted once across the call.
-Heap ownership can pass between helpers; moving a value into the result transfers
-its charge, and allocations remain charged until their new owner releases them.
+Bounds describe a source-level model, not the compiled program’s actual memory use.
 
-Bounds describe declared storage and supported heap objects under a fixed memory
-model. Physical stack size and allocator overhead are outside the guarantee.
-Support is limited to a subset of Rust; unsupported operations are rejected in
-checked functions.
-
-- [Memory contracts](docs/verus-meter/model.md): how to write and understand the guarantees.
 - [Examples](examples/resource/memory): complete programs with explanatory comments.
   - [Reusing workspace](examples/resource/memory/storage.rs): share a memory allowance across scopes, branches, and loops.
   - [Calling helpers](examples/resource/memory/calls.rs): combine a caller's data with a helper's memory needs.
@@ -73,11 +70,6 @@ checked functions.
   - [Structs](examples/resource/memory/structs.rs): sort data inside a struct while budgeting for both the data and the sorting work.
   - [Deliberate violations](examples/resource/memory/expected-failures): see verification reject extra copies, overlapping allocations, and vector growth.
 
-The [memory verifier tests](source/rust_verify_test/tests/resource/memory)
-run together from `source/`:
+## Docs
 
-```sh
-cargo test --release -p rust_verify_test --test resource memory:: -- --test-threads=2
-```
-
-Replace `memory::` with a topic such as `memory::ownership::` to select one suite.
+- [Memory contracts](docs/verus-meter/model.md): how to write and understand the guarantees.
