@@ -86,15 +86,16 @@ impl Analysis<'_> {
         let mut external_inputs = std::collections::HashSet::new();
         for (index, owner) in transferred.iter().enumerate() {
             if let Some(owner) = owner {
-                let mut cost = super::contracts::literal(c, owner.bytes);
-                if let Some(id) = owner.dynamic {
-                    cost = super::contracts::add(c, cost, self.storage.dynamic_cost(c, id));
-                }
-                base = base.remove(c, owner.kind.clone(), cost.clone());
-                input_costs[index] = Footprint::charge(owner.kind.clone(), cost);
-                if let Some(input) = owner.input {
-                    external_inputs.insert(input);
-                }
+                owner.visit(&mut |node| {
+                    let mut cost = super::contracts::literal(c, node.bytes);
+                    if let Some(id) = node.dynamic {
+                        cost = super::contracts::add(c, cost, self.storage.dynamic_cost(c, id));
+                    }
+                    base = base.remove(c, node.kind.clone(), cost.clone());
+                    input_costs[index] =
+                        input_costs[index].add(c, Footprint::charge(node.kind.clone(), cost));
+                });
+                external_inputs.extend(owner.inputs());
             }
         }
         let summary = self
@@ -143,8 +144,10 @@ impl Analysis<'_> {
             let mut excluded = external_inputs.clone();
             for index in &point.inputs {
                 cost = cost.add(c, input_costs[*index].clone());
-                if let Some(input) = transferred[*index].as_ref().and_then(|o| o.input) {
-                    excluded.remove(&input);
+                if let Some(owner) = &transferred[*index] {
+                    for input in owner.inputs() {
+                        excluded.remove(&input);
+                    }
                 }
             }
             if point.result {

@@ -12,8 +12,9 @@ use crate::ast::*;
 pub(super) struct VectorSummary {
     /// Entry minima in elements, proved from allocation state at calls.
     pub(super) reservations: std::collections::HashMap<usize, Expr>,
-    /// Guaranteed capacity of a fresh result; forwarding preserves caller state.
-    pub(super) returned_capacity: Option<Expr>,
+    /// Fresh vector capacities indexed by structural result path. Forwarded
+    /// subtrees preserve the caller's existing proof state.
+    pub(super) returned_capacities: std::collections::BTreeMap<super::heap::OwnerPath, Expr>,
 }
 
 /// Translate vector state to a result reservation and a generic replacement
@@ -119,52 +120,37 @@ impl Analysis<'_> {
     /// Forwarded owners already have a state identity and keep their capacity.
     pub(super) fn attach_vector_result(
         &mut self,
-        expr: &Expr,
+        span: &crate::messages::Span,
+        typ: &Typ,
         owner: &mut Owner,
-        callee: &Function,
-        args: &Exprs,
+        capacity: Option<Expr>,
         replacement: Option<Charge<Expr>>,
     ) -> Result<(), VirErr> {
-        if !self.layouts.vector(&expr.typ) {
+        if !self.layouts.vector(typ) {
             if replacement.is_some() {
-                return Err(unsupported(
-                    &expr.span,
-                    "a replacement effect without a container adapter",
-                ));
+                return Err(unsupported(span, "a replacement effect without a container adapter"));
             }
             return Ok(());
         }
         if owner.vector.is_none() {
-            let capacity = self.summaries[&callee.x.name]
-                .vectors
-                .returned_capacity
-                .as_ref()
-                .map(|capacity| contracts::substitute(capacity, callee, args, &self.stable_scalars))
-                .transpose()?;
-            let capacity = capacity.ok_or_else(|| {
-                unsupported(&expr.span, "a returned vector without a capacity summary")
-            })?;
+            let capacity = capacity
+                .ok_or_else(|| unsupported(span, "a returned vector without a capacity summary"))?;
             let amount = owner.extent.clone().ok_or_else(|| {
-                unsupported(&expr.span, "a returned allocation without a byte-size summary")
+                unsupported(span, "a returned allocation without a byte-size summary")
             })?;
             let allocation = super::accounting::Accounting::fresh_allocation();
             let id = self.growth.new_vector(
-                &expr.span,
+                span,
                 capacity.clone(),
                 Charge { kind: owner.kind.clone(), amount },
-                self.layouts.vector_element(&expr.typ, &expr.span)?,
+                self.layouts.vector_element(typ, span)?,
                 None,
                 allocation,
             );
             if let Some(old) = owner.dynamic {
                 self.storage.release_dynamic(old);
             }
-            self.storage.release(
-                &expr.span,
-                owner.kind.clone(),
-                owner.bytes,
-                "track returned vector",
-            );
+            self.storage.release(span, owner.kind.clone(), owner.bytes, "track returned vector");
             owner.bytes = 0;
             owner.dynamic = Some(allocation);
             owner.vector = Some(id);
@@ -176,7 +162,7 @@ impl Analysis<'_> {
             );
         }
         if let Some(replacement) = replacement {
-            self.retain_vector_growth(&expr.span, owner.vector.unwrap(), replacement)?;
+            self.retain_vector_growth(span, owner.vector.unwrap(), replacement)?;
         }
         Ok(())
     }

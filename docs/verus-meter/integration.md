@@ -43,13 +43,19 @@ operation rules, and any additional proof facts. The [boxed-slice adapter](../..
 uses shared byte snapshots and replacement overlap for runtime-length allocations.
 
 Keep three concepts distinct: inline value layout, separately owned allocations,
-and operation effects. A vector buffer already contains its elements' inline
-storage; future nested ownership must add only their separately owned allocations.
-Moves transfer ownership, growth overlaps backing buffers without duplicating
-child allocations, and drop releases the owned structure. Fixed aggregates can
-compose child ownership first; runtime collections will need aggregate bounds
-for varying element footprints. Shared ownership needs separate last-owner
-release rules. Do not add type-combination-specific accounting for nested owners.
+and operation effects. [Ownership trees](../../source/vir/src/resource/memory/heap.rs)
+compose fixed children by field or box contents. A node carries only its own
+allocation charge; child handles are already included in the enclosing inline
+layout. Call summaries can wrap whole input subtrees under fresh nodes, and
+lifetime composition must account for every input provenance beneath a root.
+Sibling returned allocations need distinct identities even at one call span.
+Vector result facts are indexed by the same structural paths as allocation facts.
+
+Child extraction, replacement, and nested growth need path-specific transitions
+before they can be supported. Runtime collections will need aggregate bounds for
+varying element footprints; shared ownership needs separate last-owner release
+rules. Extend the common ownership model rather than adding rules for individual
+combinations of nested types.
 
 Compiler upgrades need a review of borrow/coercion lowering, move/copy provenance,
 and the identities used for supported standard operations.

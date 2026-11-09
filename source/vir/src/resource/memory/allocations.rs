@@ -11,14 +11,19 @@ use crate::ast::*;
 use crate::messages::Span;
 use std::collections::{HashMap, HashSet};
 
-/// The allocation surviving in an owning result. Input indices identify
+/// The ownership tree surviving in a result. Input indices identify
 /// provenance, so forwarding retains the caller's allocation identity.
 #[derive(Clone)]
-pub(super) enum ReturnedAllocation {
-    /// Transfer an unchanged input allocation.
+pub(super) enum ReturnedOwner {
+    /// Transfer an unchanged input subtree.
     Input(usize),
-    /// Return a new allocation with a known byte-size expression.
-    Fresh(Charge<Expr>),
+    /// Compose newly owned storage and child owners. Struct nodes have no allocation.
+    Node {
+        /// Only this node's allocation; excludes allocations owned by children.
+        allocation: Option<Charge<Expr>>,
+        /// Fixed child owners, each accounting for its own allocations.
+        children: std::collections::BTreeMap<super::heap::OwnerSlot, ReturnedOwner>,
+    },
     /// An allocation may have been replaced. The byte expression bounds the
     /// replacement, while an unchanged input may still retain its original size.
     Replaced { input: Option<usize>, allocation: Charge<Expr> },
@@ -29,7 +34,7 @@ pub(super) enum ReturnedAllocation {
 #[derive(Clone)]
 pub(super) struct AllocationSummary {
     /// Ownership and byte-size effects of the returned value.
-    pub(super) returned: Option<ReturnedAllocation>,
+    pub(super) returned: Option<ReturnedOwner>,
     /// Replacement bounds retained through borrowed inputs, keyed by parameter.
     pub(super) retained: HashMap<usize, Charge<Expr>>,
 }

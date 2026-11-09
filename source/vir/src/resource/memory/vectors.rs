@@ -173,6 +173,37 @@ impl Analysis<'_> {
         self.vector_state(name).map(|id| self.growth.vectors[id].capacity.clone())
     }
 
+    /// Operations that preserve a nested vector's backing allocation need only
+    /// validate its place. Growth requires path-indexed state/effect transitions.
+    fn nested_vector_place(&mut self, arg: &Expr) -> Result<bool, VirErr> {
+        let place = match &arg.x {
+            ExprX::ReadPlace(place, _)
+            | ExprX::BorrowMut(place)
+            | ExprX::TwoPhaseBorrowMut(place) => place,
+            _ => return Ok(false),
+        };
+        fn nested(place: &Place) -> bool {
+            match &place.x {
+                PlaceX::Field(..) => true,
+                PlaceX::Local(_) => super::heap::boxed(&place.typ),
+                PlaceX::DerefMut(base) => nested(base),
+                _ => false,
+            }
+        }
+        if !nested(place) {
+            return Ok(false);
+        }
+        let mut typ = &place.typ;
+        while let TypX::Decorate(TypDecoration::Box, _, inner) = &**typ {
+            typ = inner;
+        }
+        if !self.layouts.vector(typ) {
+            return Ok(false);
+        }
+        self.access(place, typ)?;
+        Ok(true)
+    }
+
     pub(super) fn vector_expr(&mut self, expr: &Expr) -> Result<Option<u64>, VirErr> {
         let ExprX::Call {
             target: CallTarget::Fun(CallTargetKind::Static, fun, _, _, attrs),
@@ -202,6 +233,17 @@ impl Analysis<'_> {
         let Some(receiver) = args.first() else {
             return Err(unsupported(&expr.span, "this vector operation"));
         };
+        if self.nested_vector_place(receiver)? {
+            if attrs.resource_intrinsic == Some(ResourceIntrinsic::VecPush) {
+                return Err(unsupported(&expr.span, "growth through a nested owner"));
+            }
+            if index && args.len() == 2 {
+                self.discard(&args[1])?;
+            } else if args.len() != 1 {
+                return Err(unsupported(&expr.span, "this nested vector operation"));
+            }
+            return Ok(Some(0));
+        }
         let (name, typ, vector) = self.vector_receiver(receiver)?;
         if attrs.resource_intrinsic == Some(ResourceIntrinsic::VecPush) {
             if args.len() != 2 {

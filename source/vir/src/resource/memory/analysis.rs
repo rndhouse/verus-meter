@@ -577,14 +577,12 @@ pub(super) fn check(
         })
         .collect();
     let result_owner = analysis.result_owner.take();
-    let (returned_capacity, replacement) = super::vector_calls::summarize_result(
+    let (returned, returned_capacities) = super::ownership::summarize(
         function,
         result_owner.as_ref(),
         &analysis.growth,
         &analysis.bound,
     )?;
-    let returned =
-        super::ownership::summarize(function, result_owner.as_ref(), replacement, &analysis.bound)?;
     analysis.check_checkpoints()?;
     let report = if symbolic_bound.is_some() {
         analysis.storage.finish_conditional()
@@ -603,7 +601,7 @@ pub(super) fn check(
         report,
         summary: super::summary::FunctionSummary {
             vectors: super::vector_calls::VectorSummary {
-                returned_capacity,
+                returned_capacities,
                 reservations: f
                     .params
                     .iter()

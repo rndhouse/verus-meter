@@ -156,10 +156,36 @@ both the handle and the heap object.
 See [heap buffer reuse](../../examples/resource/memory/heap.rs) and
 [two allocations that exceed their allowance](../../examples/resource/memory/expected-failures/heap_overlap.rs).
 
-Box reassignment, nested boxes, owning struct fields, and custom destructors are
+Owner reassignment, extracting owning subvalues, and custom destructors are
 unsupported. Branches, loops, and budgeted sections may create and consume their
 own boxes, but cannot move or drop owners from outside that region. Custom
 allocator types remain unsupported.
+
+## Fixed-structure nested ownership
+
+Concrete structs may contain boxes, vectors, boxed slices, and other supported
+owning structs. Boxes may contain these values too, including `Box<Vec<T>>` and
+nested boxes. Layouts count inline storage: a struct includes its fields' handles,
+and a boxed vector's heap object includes the vector handle. Separately owned
+allocations are additional charges, each retaining its memory kind and identity.
+For example, `Box<Vec<u32>>` with capacity 4 counts an 8-byte outer handle,
+a 24-byte heap-resident vector handle, and 16 bytes of vector backing storage.
+
+Whole-value moves transfer the ownership tree. Constructors may combine fresh
+allocations and input owners; helper results preserve both kinds of provenance.
+Dropping a value or leaving its scope releases its entire owned tree. Borrowing
+contents and updating non-owning fields/elements preserve those allocations.
+Nested vectors support length, indexing, slices, and popping; create or grow the
+vector before placing it in an aggregate. Pass nested vector contents to helpers
+as slices; direct vector-reference helper arguments still require a named vector
+owner. See [nested ownership](../../examples/resource/memory/nested_ownership.rs).
+
+Moving or replacing an owning field, moving an owner out of a box, and pushing
+through a nested vector owner remain unsupported. These need checked transitions
+for a particular child path. Recursive layouts, owning `Option` payloads, and
+owning elements in arrays, vectors, or boxed slices are also excluded. Runtime
+collections of owners need aggregate allocation bounds; shared ownership needs
+last-owner release rules. These are separate extensions to the ownership model.
 
 ## Runtime-sized boxed slices
 
@@ -274,8 +300,8 @@ See [vector helpers](../../examples/resource/memory/vector_helpers.rs).
 
 ## Passing heap ownership between helpers
 
-Helpers can consume or return a `Box<T>` or `Vec<T>`. The helper's budget covers
-its handles and additional storage. Checked lifetime summaries tell callers
+Helpers can consume or return boxes, vectors, or supported owning structs. The
+helper's budget covers its handles and additional storage. Checked lifetime summaries tell callers
 when an incoming allocation stops counting: dropping it before later scratch
 work avoids charging the two together. This also works through nested calls.
 
@@ -294,7 +320,7 @@ immutable scalar inputs. Callers can use them to prove subsequent pushes fit.
 See [a vector factory](../../examples/resource/memory/vector_returns.rs).
 For now, fresh returned capacities must depend only on literals or immutable inputs,
 and owning results must follow a single tail-expression path. Conditional ownership
-returns and owners inside structs or `Option` remain unsupported.
+returns and owners inside `Option` remain unsupported.
 
 ## Dividing work into sections
 

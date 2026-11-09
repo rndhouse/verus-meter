@@ -161,8 +161,23 @@ impl Analysis<'_> {
                 "aggregate expression result",
             )?;
         }
-        for field in fields {
+        let mut owner = super::heap::Owner::default();
+        for (index, field) in fields.into_iter().enumerate() {
             self.initialize_expr(field)?;
+            if self.layouts.owner(&field.typ) {
+                let ExprX::Ctor(_, _, initializers, _) = &expr.x else {
+                    return Err(unsupported(&field.span, "owning elements in runtime collections"));
+                };
+                let name = initializers[index].name.clone();
+                let child = self
+                    .result_owner
+                    .take()
+                    .ok_or_else(|| unsupported(&field.span, "an owning field without ownership"))?;
+                owner.children.insert(super::heap::OwnerSlot::Field(name), child);
+            }
+        }
+        if self.layouts.owner(&expr.typ) {
+            self.result_owner = Some(owner);
         }
         Ok(Some(if destination { 0 } else { bytes }))
     }

@@ -238,18 +238,18 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] nested_boxes_rejected verus_code! {
+    #[test] nested_boxes_supported verus_code! {
         use vstd::prelude::*;
         fn f() mem_peak <= 100 { let data = Box::new(Box::new(1u8)); }
-    } => Err(err) => assert_vir_error_msg(err, "nested boxes")
+    } => Ok(())
 }
 
 test_verify_one_file! {
-    #[test] owning_struct_fields_rejected verus_code! {
+    #[test] owning_struct_handles_have_layout verus_code! {
         use vstd::prelude::*;
         struct Owner { data: Box<[u8; 16]> }
         fn f() mem_peak <= mem_size(Owner) {}
-    } => Err(err) => assert_vir_error_msg(err, "reference or decorated struct fields")
+    } => Ok(())
 }
 
 test_verify_one_file! {

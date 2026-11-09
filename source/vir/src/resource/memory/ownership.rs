@@ -1,9 +1,9 @@
 //! Apply checked allocation summaries across owning calls.
 //!
 //! Constructors supply byte expressions and memory kinds. Returned allocations
-//! are transferred or adopted here without consulting container layouts.
+//! are transferred or adopted without reconstructing byte extents from layouts.
 
-use super::allocations::{self, ReturnedAllocation};
+use super::allocations::{self, ReturnedOwner};
 use super::analysis::Analysis;
 use super::contracts;
 use super::footprint::Charge;
@@ -11,37 +11,91 @@ use super::heap::Owner;
 use super::model::unsupported;
 use crate::ast::*;
 
-/// Export an owning result using its constructor extent or verified replacement
-/// effect. Only expressions in the function's input scope can cross the call.
+/// Call inputs remain available until recursive result adoption has selected
+/// every subtree that survives. All nodes share the same scalar substitution.
+struct OwnerCall<'a> {
+    expr: &'a Expr,
+    callee: &'a Function,
+    args: &'a Exprs,
+    transferred: &'a mut [Option<Owner>],
+}
+
+/// Summarize each fixed child independently. Whole incoming subtrees retain
+/// provenance; fresh nodes carry only their own allocation, excluding children.
 pub(super) fn summarize(
     function: &Function,
     owner: Option<&Owner>,
-    replacement: Option<Charge<Expr>>,
+    growth: &super::growth::Growth,
     bound: &Expr,
-) -> Result<Option<ReturnedAllocation>, VirErr> {
-    let Some(owner) = owner else { return Ok(None) };
-    if let Some(allocation) = replacement {
-        return Ok(Some(ReturnedAllocation::Replaced { input: owner.input, allocation }));
-    }
-    if let Some(input) = owner.input {
-        return Ok(Some(ReturnedAllocation::Input(input)));
-    }
-    let amount = owner.extent.clone().ok_or_else(|| {
-        unsupported(&function.span, "a fresh returned allocation without a byte-size summary")
-    })?;
-    let inputs = contracts::inputs(function);
-    let mut in_scope = true;
-    crate::ast_visitor::expr_visitor_check(&amount, &mut |_, expr| {
-        if let ExprX::Var(name) = &expr.x {
-            in_scope &= inputs.contains(name);
+) -> Result<(Option<ReturnedOwner>, std::collections::BTreeMap<super::heap::OwnerPath, Expr>), VirErr>
+{
+    fn node(
+        function: &Function,
+        owner: &Owner,
+        growth: &super::growth::Growth,
+        bound: &Expr,
+        path: &mut super::heap::OwnerPath,
+        capacities: &mut std::collections::BTreeMap<super::heap::OwnerPath, Expr>,
+    ) -> Result<ReturnedOwner, VirErr> {
+        let (capacity, replacement) =
+            super::vector_calls::summarize_result(function, Some(owner), growth, bound)?;
+        if let Some(capacity) = capacity {
+            capacities.insert(path.clone(), capacity);
         }
-        Ok::<(), VirErr>(())
-    })?;
-    // A locally charged result is part of the checked peak. If its runtime
-    // extent cannot escape the body, the declared bound is a sound (possibly
-    // loose) exported extent. Incoming storage took the provenance path above.
-    let amount = if in_scope { amount } else { bound.clone() };
-    Ok(Some(ReturnedAllocation::Fresh(Charge { kind: owner.kind.clone(), amount })))
+        if let Some(allocation) = replacement {
+            return Ok(ReturnedOwner::Replaced { input: owner.input, allocation });
+        }
+        if let Some(input) = owner.input {
+            return Ok(ReturnedOwner::Input(input));
+        }
+        let allocation = if let Some(amount) = &owner.extent {
+            let inputs = contracts::inputs(function);
+            let mut in_scope = true;
+            crate::ast_visitor::expr_visitor_check(amount, &mut |_, expr| {
+                if let ExprX::Var(name) = &expr.x {
+                    in_scope &= inputs.contains(name);
+                }
+                Ok::<(), VirErr>(())
+            })?;
+            // A locally charged node is bounded by the checked peak. Children
+            // are summarized separately, so a fallback may conservatively overcount.
+            Some(Charge {
+                kind: owner.kind.clone(),
+                amount: if in_scope { amount.clone() } else { bound.clone() },
+            })
+        } else {
+            None
+        };
+        let mut children = std::collections::BTreeMap::new();
+        for (slot, child) in &owner.children {
+            path.push(slot.clone());
+            children.insert(slot.clone(), node(function, child, growth, bound, path, capacities)?);
+            path.pop();
+        }
+        Ok(ReturnedOwner::Node { allocation, children })
+    }
+    let mut capacities = std::collections::BTreeMap::new();
+    let returned = owner
+        .map(|owner| node(function, owner, growth, bound, &mut vec![], &mut capacities))
+        .transpose()?;
+    Ok((returned, capacities))
+}
+
+impl ReturnedOwner {
+    /// Inputs can survive anywhere in the result, including under newly allocated boxes.
+    fn inputs(&self, inputs: &mut std::collections::HashSet<usize>) {
+        match self {
+            Self::Input(index) | Self::Replaced { input: Some(index), .. } => {
+                inputs.insert(*index);
+            }
+            Self::Node { children, .. } => {
+                for child in children.values() {
+                    child.inputs(inputs);
+                }
+            }
+            Self::Replaced { input: None, .. } => {}
+        }
+    }
 }
 
 impl Analysis<'_> {
@@ -72,12 +126,11 @@ impl Analysis<'_> {
             )?;
             owner.bytes = bytes;
         } else {
-            self.storage.reserve_dynamic(
-                &expr.span,
-                allocation.kind.clone(),
-                allocation.amount.clone(),
-            );
-            owner.dynamic = Some(expr.span.id);
+            // Sibling result allocations share a call span, but never an identity.
+            let id = super::accounting::Accounting::fresh_allocation();
+            self.storage.set_allocation(id, allocation.kind.clone(), allocation.amount.clone());
+            self.storage.record_live(&expr.span)?;
+            owner.dynamic = Some(id);
         }
         Ok(owner)
     }
@@ -102,47 +155,89 @@ impl Analysis<'_> {
         } else {
             None
         };
-        let input = match &summary {
-            Some(ReturnedAllocation::Input(index)) => Some(*index),
-            Some(ReturnedAllocation::Replaced { input, .. }) => *input,
-            _ => None,
-        };
-        let forwarded = input
-            .map(|index| {
-                transferred[index].take().ok_or_else(|| {
-                    unsupported(&expr.span, "a returned input without transferred ownership")
-                })
+        let mut retained = std::collections::HashSet::new();
+        if let Some(summary) = &summary {
+            summary.inputs(&mut retained);
+        }
+        // Release consumed inputs before adopting fresh result allocations.
+        for (index, input) in transferred.iter_mut().enumerate() {
+            if !retained.contains(&index) {
+                if let Some(owner) = input.take() {
+                    self.release_owner(owner, &expr.span);
+                }
+            }
+        }
+        let result = summary
+            .map(|summary| {
+                self.adopt_owner_tree(
+                    &mut OwnerCall { expr, callee, args, transferred },
+                    &expr.typ,
+                    &summary,
+                    &mut vec![],
+                )
             })
             .transpose()?;
-        // Lifetime profiles already checked the inputs during the call. Only the
-        // allocation selected as the result survives in the caller's ownership.
-        for owner in transferred.iter_mut().filter_map(Option::take) {
-            self.release_owner(owner, &expr.span);
+        if transferred.iter().any(Option::is_some) {
+            return Err(unsupported(&expr.span, "unconsumed ownership summary inputs"));
         }
+        Ok(result)
+    }
+
+    fn adopt_owner_tree(
+        &mut self,
+        call: &mut OwnerCall<'_>,
+        typ: &Typ,
+        summary: &ReturnedOwner,
+        path: &mut super::heap::OwnerPath,
+    ) -> Result<Owner, VirErr> {
+        let OwnerCall { expr, callee, args, .. } = *call;
         let mut replacement = None;
-        let mut result = match summary {
-            Some(ReturnedAllocation::Input(_)) => forwarded,
-            Some(ReturnedAllocation::Fresh(allocation)) => {
-                let allocation =
-                    allocations::instantiate(&allocation, callee, args, &self.stable_scalars)?;
-                Some(self.returned_owner(expr, &allocation, false)?)
-            }
-            Some(ReturnedAllocation::Replaced { allocation, .. }) => {
-                let allocation =
-                    allocations::instantiate(&allocation, callee, args, &self.stable_scalars)?;
-                let owner = if let Some(owner) = forwarded {
+        let mut owner = match summary {
+            ReturnedOwner::Input(index) => call.transferred[*index].take().ok_or_else(|| {
+                unsupported(&expr.span, "a returned input without transferred ownership")
+            })?,
+            ReturnedOwner::Node { allocation, children } => {
+                let mut owner = if let Some(allocation) = allocation {
+                    let allocation =
+                        allocations::instantiate(allocation, callee, args, &self.stable_scalars)?;
+                    self.returned_owner(expr, &allocation, false)?
+                } else {
+                    Owner::default()
+                };
+                let types = self.layouts.owned_children(typ, &expr.span)?;
+                for (slot, child) in children {
+                    let typ = types.get(slot).ok_or_else(|| {
+                        unsupported(&expr.span, "an ownership summary with an unknown child")
+                    })?;
+                    path.push(slot.clone());
                     owner
+                        .children
+                        .insert(slot.clone(), self.adopt_owner_tree(call, typ, child, path)?);
+                    path.pop();
+                }
+                owner
+            }
+            ReturnedOwner::Replaced { input, allocation } => {
+                let allocation =
+                    allocations::instantiate(allocation, callee, args, &self.stable_scalars)?;
+                let owner = if let Some(index) = input {
+                    call.transferred[*index].take().ok_or_else(|| {
+                        unsupported(&expr.span, "a returned input without transferred ownership")
+                    })?
                 } else {
                     self.returned_owner(expr, &allocation, true)?
                 };
                 replacement = Some(allocation);
-                Some(owner)
+                owner
             }
-            None => None,
         };
-        if let Some(owner) = &mut result {
-            self.attach_vector_result(expr, owner, callee, args, replacement)?;
-        }
-        Ok(result)
+        let capacity = self.summaries[&callee.x.name]
+            .vectors
+            .returned_capacities
+            .get(path)
+            .map(|capacity| contracts::substitute(capacity, callee, args, &self.stable_scalars))
+            .transpose()?;
+        self.attach_vector_result(&expr.span, typ, &mut owner, capacity, replacement)?;
+        Ok(owner)
     }
 }

@@ -40,11 +40,12 @@ impl Analysis<'_> {
                 self.read(base, &base.typ)
             }
             PlaceX::Field(op, base) => {
-                let base_typ = match &*base.typ {
-                    TypX::Decorate(TypDecoration::Ref, None, inner)
-                    | TypX::Decorate(TypDecoration::Box, _, inner) => inner,
-                    _ => &base.typ,
-                };
+                let mut base_typ = &base.typ;
+                while let TypX::Decorate(TypDecoration::Ref, None, inner)
+                | TypX::Decorate(TypDecoration::Box, _, inner) = &**base_typ
+                {
+                    base_typ = inner;
+                }
                 self.layouts.size(base_typ, &base.span)?;
                 let variant = self.layouts.struct_variant(base_typ, &base.span)?;
                 let TypX::Datatype(name, _, _) = &**base_typ else { unreachable!() };
@@ -67,11 +68,12 @@ impl Analysis<'_> {
                 self.access_mode(base, base_typ, reading)
             }
             PlaceX::Index(base, index, _, BoundsCheck::Error) => {
-                let base_typ = match &*base.typ {
-                    TypX::Decorate(TypDecoration::Ref, None, inner)
-                    | TypX::Decorate(TypDecoration::Box, _, inner) => inner,
-                    _ => &base.typ,
-                };
+                let mut base_typ = &base.typ;
+                while let TypX::Decorate(TypDecoration::Ref, None, inner)
+                | TypX::Decorate(TypDecoration::Box, _, inner) = &**base_typ
+                {
+                    base_typ = inner;
+                }
                 if !slice(base_typ) && !matches!(&**base_typ, TypX::Primitive(Primitive::Array, _))
                 {
                     return Err(unsupported(&base.span, "indexing this type"));
@@ -119,13 +121,15 @@ impl Analysis<'_> {
         if crate::ast_util::types_equal(&place.typ, target) {
             return Ok(scratch);
         }
-        if let TypX::Decorate(TypDecoration::Ref, None, inner)
-        | TypX::Decorate(TypDecoration::Box, _, inner) = &*place.typ
+        let mut typ = &place.typ;
+        while let TypX::Decorate(TypDecoration::Ref, None, inner)
+        | TypX::Decorate(TypDecoration::Box, _, inner) = &**typ
         {
             if crate::ast_util::types_equal(inner, target) {
                 self.layouts.size(&place.typ, &place.span)?;
                 return Ok(scratch);
             }
+            typ = inner;
         }
         Err(unsupported(&place.span, "this implicit dereference or coercion"))
     }

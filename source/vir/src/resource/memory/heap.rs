@@ -1,6 +1,6 @@
 //! Local heap ownership, separate from lexical variable slots.
 //!
-//! Each allocation has exactly one named owner. A move transfers that charge;
+//! Each ownership tree has one named root. A move transfers the whole tree;
 //! explicit drop and scope exit release it. Control-flow regions protect owners
 //! from outside the region until path-sensitive ownership joins are supported.
 
@@ -9,7 +9,7 @@ use super::footprint::MemoryKind;
 use super::model::unsupported;
 use crate::ast::*;
 use crate::messages::Span;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone, Default)]
 pub(super) struct Heap {
@@ -20,9 +20,23 @@ pub(super) struct Heap {
     protected: HashSet<VarIdent>,
 }
 
-/// The allocation follows its owner; lexical handle slots are accounted separately.
+/// Structural position of a child owner. Runtime collections need a separate
+/// aggregate representation; this tree describes only statically named children.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum OwnerSlot {
+    Contents,
+    Field(Ident),
+}
+
+pub(super) type OwnerPath = Vec<OwnerSlot>;
+
+/// Separately owned storage. A node may own an allocation and fixed child owners;
+/// its inline storage belongs to the enclosing value or allocation layout.
 #[derive(Clone)]
 pub(super) struct Owner {
+    /// Separately owned allocations beneath fields or a box payload. Their inline
+    /// handles are already included in the containing value/allocation layout.
+    pub(super) children: BTreeMap<OwnerSlot, Owner>,
     /// Memory kind charged for the owned allocation, independently of its handle.
     pub(super) kind: MemoryKind,
     /// Fixed portion of the live charge, released when this owner is consumed.
@@ -36,13 +50,14 @@ pub(super) struct Owner {
     pub(super) capacity: Option<Expr>,
     /// Vector proof-state identity, preserved when its handle moves.
     pub(super) vector: Option<usize>,
-    /// Input provenance used to compose the allocation's lifetime at calls.
+    /// Input provenance for an entire subtree supplied by the caller.
     pub(super) input: Option<usize>,
 }
 
 impl Default for Owner {
     fn default() -> Self {
         Self {
+            children: BTreeMap::new(),
             kind: MemoryKind::host_heap(),
             bytes: 0,
             dynamic: None,
@@ -51,6 +66,26 @@ impl Default for Owner {
             vector: None,
             input: None,
         }
+    }
+}
+
+impl Owner {
+    pub(super) fn visit(&self, f: &mut impl FnMut(&Self)) {
+        f(self);
+        for child in self.children.values() {
+            child.visit(f);
+        }
+    }
+
+    /// Every incoming allocation subtree whose lifetime follows this owner.
+    pub(super) fn inputs(&self) -> HashSet<usize> {
+        let mut inputs = HashSet::new();
+        self.visit(&mut |node| {
+            if let Some(input) = node.input {
+                inputs.insert(input);
+            }
+        });
+        inputs
     }
 }
 
@@ -95,7 +130,7 @@ fn intrinsic(expr: &Expr, kind: ResourceIntrinsic) -> Option<&Exprs> {
 }
 
 impl Analysis<'_> {
-    fn allocate_box(&mut self, expr: &Expr) -> Result<Option<u64>, VirErr> {
+    fn allocate_box(&mut self, expr: &Expr) -> Result<Option<Owner>, VirErr> {
         let Some(args) = intrinsic(expr, ResourceIntrinsic::BoxNew) else {
             return Ok(None);
         };
@@ -114,18 +149,26 @@ impl Analysis<'_> {
         // Box::new is a model intrinsic: its argument initializes the heap object,
         // using the same destination rule as local and aggregate initializers.
         self.initialize_expr(&args[0])?;
-        Ok(Some(bytes))
+        let mut owner = Owner {
+            bytes,
+            extent: Some(super::contracts::literal(&expr.span, bytes)),
+            ..Owner::default()
+        };
+        if self.layouts.owner(inner) {
+            let child = self
+                .result_owner
+                .take()
+                .ok_or_else(|| unsupported(&expr.span, "a box payload without ownership"))?;
+            owner.children.insert(OwnerSlot::Contents, child);
+        }
+        Ok(Some(owner))
     }
 
     /// Evaluate into an existing handle destination and retain its allocation.
     pub(super) fn owner_expr(&mut self, expr: &Expr) -> Result<Owner, VirErr> {
         self.layouts.size(&expr.typ, &expr.span)?;
-        if let Some(bytes) = self.allocate_box(expr)? {
-            return Ok(Owner {
-                bytes,
-                extent: Some(super::contracts::literal(&expr.span, bytes)),
-                ..Owner::default()
-            });
+        if let Some(owner) = self.allocate_box(expr)? {
+            return Ok(owner);
         }
         if let Some(owner) = self.allocate_vector(expr)? {
             return Ok(owner);
@@ -134,9 +177,21 @@ impl Analysis<'_> {
             return Ok(owner);
         }
         match &expr.x {
+            ExprX::Ctor(..) => {
+                self.construction(expr, true)?;
+                self.result_owner
+                    .take()
+                    .ok_or_else(|| unsupported(&expr.span, "a constructor without ownership"))
+            }
             ExprX::ReadPlace(place, kind)
                 if !matches!(kind.preliminary_kind, ReadKind::ImmutBor) =>
             {
+                if !crate::ast_util::types_equal(&place.typ, &expr.typ) {
+                    return Err(unsupported(
+                        &expr.span,
+                        "moving an owning subvalue out of a container",
+                    ));
+                }
                 if let PlaceX::Temporary(value) = &place.x {
                     self.owner_expr(value)
                 } else {
@@ -177,6 +232,9 @@ impl Analysis<'_> {
     }
 
     pub(super) fn release_owner(&mut self, owner: Owner, span: &Span) {
+        for child in owner.children.into_values() {
+            self.release_owner(child, span);
+        }
         if let Some(input) = owner.input {
             self.storage.release_input(input);
         }
