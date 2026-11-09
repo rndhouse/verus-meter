@@ -3,7 +3,6 @@
 // A helper's verified guarantees let its caller reason about the complete
 // operation without repeating the helper's proof. The memory bound includes
 // data kept by the caller while the helper works, as well as the helper's needs.
-// Correctness and abstract storage costs are checked together.
 
 use vstd::prelude::*;
 
@@ -18,7 +17,6 @@ verus! {
 // The array remains owned here while sorting borrows it, so its storage
 // overlaps the helper's workspace. Referencing the helper's declared budget
 // lets this caller follow changes to that contract automatically.
-// The checker also verifies that construction and argument handoff fit.
 pub fn sort_local_array()
     mem_peak <= mem_size([u32; 8]) + mem_peak(sorting::insertion_sort),
 {

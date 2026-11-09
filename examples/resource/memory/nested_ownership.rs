@@ -1,14 +1,18 @@
-// Inline handles and separately allocated storage compose through fixed owners.
-// Dropping the outer box releases the struct and both of its owned allocations.
+// Keep related heap data within one budget as ownership passes between helpers.
+//
+// Releasing the outer owner also releases the data it owns.
+
 use vstd::prelude::*;
 
 verus! {
 
+// Group a collection and its marker under one owner.
 struct Buffer {
     values: Vec<u32>,
     marker: Box<u32>,
 }
 
+// Create the related data within an allowance that follows the requested capacity.
 fn make(n: usize) -> (b: Box<Buffer>)
     requires n <= 4,
     ensures b.values.len() == 0, *b.marker == 42,
@@ -17,6 +21,7 @@ fn make(n: usize) -> (b: Box<Buffer>)
     Box::new(Buffer { values: Vec::with_capacity(n), marker: Box::new(42) })
 }
 
+// Transfer ownership while preserving the data and its memory cost.
 fn forward(b: Box<Buffer>) -> (r: Box<Buffer>)
     ensures r == b,
     mem_peak <= 8,
@@ -24,6 +29,7 @@ fn forward(b: Box<Buffer>) -> (r: Box<Buffer>)
     b
 }
 
+// Use the data after a handoff, then free it before the next task.
 fn main()
     mem_peak <= 96,
 {

@@ -4,6 +4,7 @@ use vstd::prelude::*;
 
 verus! {
 
+// Build the requested number of values within a growing memory allowance.
 fn build(n: usize)
     requires n <= 8,
     mem_peak <= 64 + 16 * n,
@@ -18,8 +19,9 @@ fn build(n: usize)
     assert(values.len() == n);
 }
 
-// The caller keeps paying for its input buffer during this call. The helper's
-// budget includes its reference and a possible four-element replacement buffer.
+// Let a helper grow a borrowed vector within a checked allowance.
+//
+// The caller accounts for existing storage; the helper allows for growth.
 fn append_to_empty(values: &mut Vec<u32>)
     requires old(values).len() == 0,
     ensures final(values).len() == 1 && final(values)[0] == 7,
@@ -28,6 +30,7 @@ fn append_to_empty(values: &mut Vec<u32>)
     values.push(7);
 }
 
+// Continue adding values after a helper has grown the vector.
 fn use_helper()
     mem_peak <= 64,
 {
@@ -37,6 +40,7 @@ fn use_helper()
     assert(values.len() == 2 && values[0] == 7 && values[1] == 8);
 }
 
+// Run both growth examples.
 fn main() {
     build(8);
     use_helper();

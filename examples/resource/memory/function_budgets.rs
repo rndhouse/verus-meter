@@ -1,7 +1,6 @@
 // Build a reusable memory formula for collections of different element sizes.
 //
-// The returned mathematical function captures the element size. Applying it to
-// a capacity supplies a checked budget; the formula adds no runtime closure.
+// Fix the element size once, then reuse the formula for different capacities.
 
 use vstd::prelude::*;
 

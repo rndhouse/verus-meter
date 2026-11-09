@@ -1,9 +1,12 @@
+// Bound a collection's memory use, including the buffers owned by its elements.
+
 use vstd::prelude::*;
 
 verus! {
 
-// Each element owns a heap buffer. The outer buffer contains only 24-byte
-// handles; the child-footprint sum accounts for each 12-byte inner allocation.
+// Build a collection of buffers within a budget that grows with their number.
+//
+// The allowance covers both the collection and the storage each buffer owns.
 fn build(n: usize) -> (buffers: Vec<Vec<u32>>)
     requires n <= 4,
     ensures buffers.len() == n,
@@ -22,11 +25,12 @@ fn build(n: usize) -> (buffers: Vec<Vec<u32>>)
     buffers
 }
 
+// Release the whole collection before reusing its memory allowance.
 fn main()
     mem_peak <= 512,
 {
     let buffers = build(3);
-    // Conversion replaces the outer buffer and keeps its children's allocations.
+    // Making the collection fixed-length preserves the buffers it owns.
     let fixed = buffers.into_boxed_slice();
     drop(fixed);
     let scratch = [0u8;512];

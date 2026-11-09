@@ -5,7 +5,6 @@
 // proof-only data can be excluded from the runtime budget.
 // Budgets use abstract model bytes; they do not predict physical stack sizes.
 // mem_size names a type or parameter's storage; mem_peak names a function's bound.
-// Run with --trace to inspect the accounting behind each bound.
 
 use vstd::prelude::*;
 
@@ -15,7 +14,6 @@ verus! {
 //
 // A stage's workspace stops contributing once its scope ends, so the budget
 // only needs to cover one array at a time.
-// The initializer uses the declared array's storage.
 fn separate_scopes()
     mem_peak <= mem_size([u32; 64]),
 {
@@ -53,7 +51,6 @@ fn branches(condition: bool)
 // Shows why repeating work need not increase peak memory use.
 //
 // Workspace whose lifetime ends with an iteration can be reused by the next.
-// This minimal example runs at most once, but exercises that accounting rule.
 // Termination is a separate obligation, established by the decreasing expression.
 // The condition remains live while each iteration uses its workspace.
 fn reusable_loop(mut condition: bool)

@@ -1,8 +1,8 @@
 // An operation can promise different memory bounds for different inputs.
 //
 // Verus proves that each branch fits the allowance selected by the input.
-// The storage charges still come from the memory model; the proof connects
-// those charges to the condition in the contract.
+// Small tasks keep their smaller allowance even though the function also
+// supports larger tasks.
 
 use vstd::prelude::*;
 

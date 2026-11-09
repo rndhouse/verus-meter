@@ -1,10 +1,12 @@
-// Helpers borrow a vector while its owner keeps paying for the allocation.
-// The verifier infers the reservation needed by append from its length bound
-// and checks that the caller supplies it. No capacity annotation is needed.
+// Share a reserved buffer between helpers while keeping its memory use bounded.
+//
+// The caller supplies room for the additions; the helpers use the same allocation.
+
 use vstd::prelude::*;
 
 verus! {
 
+// Add a value when the caller has reserved enough room for it.
 fn append(values: &mut Vec<u32>, capacity: usize, value: u32)
     requires
         old(values).len() < capacity,
@@ -15,6 +17,7 @@ fn append(values: &mut Vec<u32>, capacity: usize, value: u32)
     values.push(value);
 }
 
+// Report the result without copying or taking ownership of the collection.
 fn count(values: &Vec<u32>) -> (n: usize)
     ensures
         n == values.len(),
@@ -23,6 +26,7 @@ fn count(values: &Vec<u32>) -> (n: usize)
     values.len()
 }
 
+// Combine helper guarantees to fill and inspect a bounded collection.
 fn build()
     mem_peak <= mem_size(Vec<u32>) + 2 * mem_size(u32) + mem_peak(append),
 {
@@ -33,6 +37,7 @@ fn build()
     assert(n == 2 && values[0] == 10 && values[1] == 20);
 }
 
+// Run the complete operation.
 fn main() { build(); }
 
 }

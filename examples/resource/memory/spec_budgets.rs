@@ -1,7 +1,6 @@
 // Give a reusable name to a memory bound that grows with the input.
 //
-// Verus reasons about the formula symbolically and checks it for every capacity
-// allowed by the precondition. Specification functions add no runtime work.
+// The same formula supplies a checked allowance for every permitted capacity.
 
 use vstd::prelude::*;
 
@@ -9,8 +8,7 @@ verus! {
 
 // Describe the reservation for a collection of u32 values.
 //
-// Element sizes follow the source memory model. The formula uses
-// mathematical naturals; the memory contract separately checks the u64 limit.
+// Keeping this formula separate lets other operations reuse the same allowance.
 spec fn element_bytes(capacity: nat) -> nat {
     mem_size(u32) * capacity
 }

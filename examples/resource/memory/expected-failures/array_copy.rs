@@ -2,7 +2,7 @@
 // Shows that keeping an independent copy requires room for both arrays.
 //
 // The budget allows one array, but the original and its copy coexist.
-// Verus must reject this file; the test checks that exact memory-budget error.
+// Verification rejects the extra copy because both arrays need room at once.
 
 use vstd::prelude::*;
 

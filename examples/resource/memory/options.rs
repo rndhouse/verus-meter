@@ -23,8 +23,8 @@ fn last_number() -> (result: Option<u32>)
 
 // Use the returned number without retaining the collection's heap storage.
 //
-// The match gives the number its own named slot. The helper's larger allowance
-// already covers this later step; its functional promise rules out an empty result.
+// The helper's guarantee proves that this call supplies a number. Its memory
+// allowance also covers using the result after the collection is gone.
 fn main()
     mem_peak <= mem_peak(last_number),
 {

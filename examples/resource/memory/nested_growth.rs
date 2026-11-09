@@ -1,14 +1,18 @@
+// Grow one buffer while keeping the memory reserved for another available.
+
 use vstd::prelude::*;
 
 verus! {
 
+// Keep two buffers together while allowing them to grow independently.
 struct Buffers {
     values: Vec<u32>,
     spare: Vec<u32>,
 }
 
-// The caller retains the incoming allocations. This helper's 8-byte reference
-// and a possible 16-byte replacement for values fit within 24 model bytes.
+// Add a value while preserving the other buffer's contents and reservation.
+//
+// The caller accounts for the existing buffers; the helper allows for growth.
 fn append(buffers: &mut Buffers)
     requires old(buffers).values.len() == 0,
     ensures
@@ -19,6 +23,7 @@ fn append(buffers: &mut Buffers)
     buffers.values.push(7);
 }
 
+// Use both buffers, then release them to make room for another task.
 fn main()
     mem_peak <= 160,
 {
@@ -27,7 +32,7 @@ fn main()
         spare: Vec::with_capacity(4),
     });
     append(&mut *buffers);
-    // The sibling retains its own capacity; growing values cannot consume it.
+    // Growing one buffer leaves the other's reservation available.
     buffers.spare.push(9);
     assert(buffers.values[0] == 7);
     assert(buffers.spare[0] == 9);

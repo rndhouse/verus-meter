@@ -14,8 +14,7 @@ verus! {
 
 // Keeps the data and its completion status together.
 //
-// Its model size follows the field types automatically, excluding ABI padding.
-// Initializing nested fields uses their storage within the owning struct.
+// The memory budget follows the fields, so it keeps up with changes to the buffer.
 pub struct SortBuffer {
     pub values: [u32; 8],
     pub ready: bool,
@@ -48,7 +47,6 @@ pub fn sort_buffer(buffer: &mut SortBuffer)
 // The owned buffer remains live while the helper works, so the budget covers
 // both together. The type-based query follows changes to the buffer's fields
 // and can be used before its local variable is in scope.
-// The checker also verifies that constructing the buffer fits this bound.
 pub fn sort_local_struct()
     mem_peak <= mem_size(SortBuffer) + mem_peak(sort_buffer),
 {

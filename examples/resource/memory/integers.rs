@@ -33,7 +33,6 @@ fn adjust(counter: &mut Counter, change: i64)
 // Keep the counter live while successive adjustments reuse the helper's workspace.
 //
 // The budget follows the struct's field types and the helper's declared bound.
-// A negative argument is a signed value, with the same storage cost as a positive one.
 fn main()
     mem_peak <= mem_size(Counter) + mem_peak(adjust),
 {
