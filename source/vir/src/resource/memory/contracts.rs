@@ -386,12 +386,12 @@ pub(super) fn capacities(function: &Function) -> Result<HashMap<VarIdent, Expr>,
             _ => {
                 return Err(error(
                     &capacity.span,
-                    "memory_capacity expects a literal or immutable unsigned input parameter",
+                    "mem_capacity expects a literal or immutable unsigned input parameter",
                 ));
             }
         };
         if result.insert(parameter.clone(), value).is_some() {
-            return Err(error(&capacity.span, "duplicate memory_capacity for a parameter"));
+            return Err(error(&capacity.span, "duplicate mem_capacity for a parameter"));
         }
     }
     Ok(result)

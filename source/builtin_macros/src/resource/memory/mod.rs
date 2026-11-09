@@ -102,40 +102,6 @@ impl Visitor {
         true
     }
 
-    /// Minimum model reservation for a vector parameter, erased with contracts.
-    pub(in crate::syntax) fn take_capacity_contracts(
-        &mut self,
-        attrs: &mut Vec<verus_syn::Attribute>,
-        sig: &verus_syn::Signature,
-    ) -> Vec<Stmt> {
-        let mut stmts = Vec::new();
-        attrs.retain(|attr| {
-            let path = attr.path();
-            if path.segments.len() != 2 || path.segments[0].ident != "verifier"
-                || path.segments[1].ident != "memory_capacity" { return true; }
-            let span = attr.span();
-            let parsed = attr.parse_args_with(|input: verus_syn::parse::ParseStream| {
-                let parameter: Ident = input.parse()?;
-                input.parse::<verus_syn::Token![,]>()?;
-                let capacity: verus_syn::ResourceExpr = input.parse()?;
-                Ok((parameter, capacity))
-            });
-            if !self.erase_ghost.erase() {
-                let tokens = match parsed {
-                    Ok((parameter, capacity)) if sig.spec.resources.is_some() => {
-                        let capacity = lower_budget(self, &capacity, &[]);
-                        quote_spanned_builtin!(builtin, span => #builtin::memory_capacity(&#parameter, #capacity))
-                    }
-                    Ok(_) => quote_spanned!(span => ::core::compile_error!("memory_capacity requires a mem_peak contract")),
-                    Err(err) => err.to_compile_error(),
-                };
-                stmts.push(Stmt::Expr(Expr::Verbatim(tokens), Some(Semi { spans: [span] })));
-            }
-            false
-        });
-        stmts
-    }
-
     /// Keep the executable block intact while attaching erased section metadata.
     pub(in crate::syntax) fn handle_resource_block(&mut self, expr: &mut Expr) -> bool {
         if !matches!(expr, Expr::ResourceBlock(_)) {

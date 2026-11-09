@@ -977,6 +977,9 @@ pub trait VisitMut {
     fn visit_signature_mut(&mut self, i: &mut crate::Signature) {
         visit_signature_mut(self, i);
     }
+    fn visit_signature_capacity_mut(&mut self, i: &mut crate::SignatureCapacity) {
+        visit_signature_capacity_mut(self, i);
+    }
     fn visit_signature_decreases_mut(&mut self, i: &mut crate::SignatureDecreases) {
         visit_signature_decreases_mut(self, i);
     }
@@ -4516,6 +4519,17 @@ where
     v.visit_return_type_mut(&mut node.output);
     v.visit_signature_spec_mut(&mut node.spec);
 }
+pub fn visit_signature_capacity_mut<V>(v: &mut V, node: &mut crate::SignatureCapacity)
+where
+    V: VisitMut + ?Sized,
+{
+    skip!(node.token);
+    skip!(node.paren_token);
+    v.visit_ident_mut(&mut node.parameter);
+    skip!(node.ge_token);
+    v.visit_resource_expr_mut(&mut node.capacity);
+    skip!(node.comma);
+}
 pub fn visit_signature_decreases_mut<V>(v: &mut V, node: &mut crate::SignatureDecreases)
 where
     V: VisitMut + ?Sized,
@@ -4586,6 +4600,9 @@ where
     }
     if let Some(it) = &mut node.resources {
         v.visit_signature_resources_mut(it);
+    }
+    for it in &mut node.capacities {
+        v.visit_signature_capacity_mut(it);
     }
     if let Some(it) = &mut node.with {
         v.visit_with_spec_on_fn_mut(it);

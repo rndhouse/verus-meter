@@ -4,12 +4,12 @@ use vstd::prelude::*;
 
 verus! {
 
-#[verifier::memory_capacity(values, capacity)]
 fn append(values: &mut Vec<u32>, capacity: usize, value: u32)
     requires
         old(values).len() < capacity,
     ensures
         final(values)@ == old(values)@.push(value),
+    mem_capacity(values) >= capacity,
     mem_peak <= mem_size(values) + mem_size(capacity) + mem_size(value),
 {
     values.push(value);

@@ -2671,6 +2671,19 @@ impl Clone for crate::Signature {
     }
 }
 #[cfg_attr(docsrs, doc(cfg(feature = "clone-impls")))]
+impl Clone for crate::SignatureCapacity {
+    fn clone(&self) -> Self {
+        crate::SignatureCapacity {
+            token: self.token.clone(),
+            paren_token: self.paren_token.clone(),
+            parameter: self.parameter.clone(),
+            ge_token: self.ge_token.clone(),
+            capacity: self.capacity.clone(),
+            comma: self.comma.clone(),
+        }
+    }
+}
+#[cfg_attr(docsrs, doc(cfg(feature = "clone-impls")))]
 impl Clone for crate::SignatureDecreases {
     fn clone(&self) -> Self {
         crate::SignatureDecreases {
@@ -2716,6 +2729,7 @@ impl Clone for crate::SignatureSpec {
             invariants: self.invariants.clone(),
             unwind: self.unwind.clone(),
             resources: self.resources.clone(),
+            capacities: self.capacities.clone(),
             with: self.with.clone(),
         }
     }

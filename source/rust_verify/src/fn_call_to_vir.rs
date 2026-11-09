@@ -913,7 +913,7 @@ fn verus_item_to_vir<'tcx, 'a>(
                     record_spec_fn_pure_args_only(bctx, expr);
                     internal_err_unless!(args_len == 2, expr.span, "expected vector and capacity");
                     let rustc_hir::ExprKind::AddrOf(_, _, value) = args[0].kind else {
-                        return err_span(expr.span, "memory_capacity expects a parameter name");
+                        return err_span(expr.span, "mem_capacity expects a parameter name");
                     };
                     let ghost = BodyCtxt { in_ghost: true, ..bctx.clone() };
                     let value =
@@ -925,12 +925,12 @@ fn verus_item_to_vir<'tcx, 'a>(
                             _ => {
                                 return err_span(
                                     expr.span,
-                                    "memory_capacity expects a parameter name",
+                                    "mem_capacity expects a parameter name",
                                 );
                             }
                         },
                         _ => {
-                            return err_span(expr.span, "memory_capacity expects a parameter name");
+                            return err_span(expr.span, "mem_capacity expects a parameter name");
                         }
                     };
                     let capacity = crate::resource::memory::budget::lower(bctx, args[1])?;

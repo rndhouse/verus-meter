@@ -5,6 +5,7 @@ use crate::mac;
 use crate::path::PathKind;
 use crate::INDENT;
 use proc_macro2::TokenStream;
+use quote::ToTokens;
 use verus_syn::{
     BroadcastUse, Fields, FnArg, ForeignItem, ForeignItemFn, ForeignItemMacro, ForeignItemStatic,
     ForeignItemType, Global, GlobalInner, GlobalLayout, GlobalSizeOf, ImplItem, ImplItemConst,
@@ -107,7 +108,7 @@ impl Printer {
             #[cfg(feature = "verbatim")]
             &verbatim::Safety::Disallowed,
         );
-        self.where_clause_for_body(&item.sig.generics.where_clause);
+        self.signature_contracts(&item.sig, false);
         self.word("{");
         self.hardbreak_if_nonempty();
         self.inner_attrs(&item.attrs);
@@ -906,7 +907,7 @@ impl Printer {
             #[cfg(feature = "verbatim")]
             &verbatim::Safety::Disallowed,
         );
-        self.where_clause_semi(&foreign_item.sig.generics.where_clause);
+        self.signature_contracts(&foreign_item.sig, true);
         self.end();
         self.hardbreak();
     }
@@ -1080,7 +1081,7 @@ impl Printer {
             &verbatim::Safety::Disallowed,
         );
         if let Some(block) = &trait_item.default {
-            self.where_clause_for_body(&trait_item.sig.generics.where_clause);
+            self.signature_contracts(&trait_item.sig, false);
             self.word("{");
             self.hardbreak_if_nonempty();
             self.inner_attrs(&trait_item.attrs);
@@ -1091,7 +1092,7 @@ impl Printer {
             self.end();
             self.word("}");
         } else {
-            self.where_clause_semi(&trait_item.sig.generics.where_clause);
+            self.signature_contracts(&trait_item.sig, true);
             self.end();
         }
         self.hardbreak();
@@ -1285,7 +1286,7 @@ impl Printer {
             #[cfg(feature = "verbatim")]
             &verbatim::Safety::Disallowed,
         );
-        self.where_clause_for_body(&impl_item.sig.generics.where_clause);
+        self.signature_contracts(&impl_item.sig, false);
         self.word("{");
         self.hardbreak_if_nonempty();
         self.inner_attrs(&impl_item.attrs);
@@ -1408,6 +1409,27 @@ impl Printer {
             }
             ImplItemVerbatim::TypeFlexible(impl_item) => {
                 self.flexible_item_type(&impl_item);
+            }
+        }
+    }
+
+    /// Contract syntax belongs after the where clause and before the body or
+    /// semicolon. Keep surrounding Verus clauses when printing memory contracts.
+    fn signature_contracts(&mut self, signature: &Signature, semi: bool) {
+        let spec = signature.spec.to_token_stream();
+        if spec.is_empty() {
+            if semi {
+                self.where_clause_semi(&signature.generics.where_clause);
+            } else {
+                self.where_clause_for_body(&signature.generics.where_clause);
+            }
+        } else {
+            self.where_clause_for_body(&signature.generics.where_clause);
+            self.word(spec.to_string());
+            if semi {
+                self.word(";");
+            } else {
+                self.nbsp();
             }
         }
     }
@@ -1837,7 +1859,7 @@ mod verbatim {
             }
             self.signature(&item.sig, &item.safety);
             if let Some(body) = &item.body {
-                self.where_clause_for_body(&item.sig.generics.where_clause);
+                self.signature_contracts(&item.sig, false);
                 self.word("{");
                 self.hardbreak_if_nonempty();
                 self.inner_attrs(&item.attrs);
@@ -1848,7 +1870,7 @@ mod verbatim {
                 self.end();
                 self.word("}");
             } else {
-                self.where_clause_semi(&item.sig.generics.where_clause);
+                self.signature_contracts(&item.sig, true);
                 self.end();
             }
             self.hardbreak();
@@ -1917,6 +1939,48 @@ mod verbatim {
                 Safety::Default => {}
                 Safety::Disallowed => unreachable!(),
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod resource_contract_tests {
+    use quote::ToTokens;
+    use verus_syn::visit::Visit;
+
+    #[derive(Default)]
+    struct Contracts(Vec<(String, String)>);
+
+    impl<'ast> Visit<'ast> for Contracts {
+        fn visit_signature(&mut self, signature: &'ast verus_syn::Signature) {
+            self.0.push((
+                signature.spec.to_token_stream().to_string(),
+                signature
+                    .generics
+                    .where_clause
+                    .to_token_stream()
+                    .to_string(),
+            ));
+        }
+    }
+
+    #[test]
+    fn capacity_contracts_preserve_surrounding_specs_and_where_clauses() {
+        for source in [
+            "fn f(v: &Vec<u32>, n: usize) requires n > 0, ensures n > 0, mem_capacity(v) >= n, mem_peak <= 16, {}",
+            "fn f<T>(v: &Vec<T>) where T: Copy, mem_capacity(v) >= 1, mem_peak <= 8 {}",
+            "trait Helpers { fn f(v: &Vec<u32>) mem_capacity(v) >= 1, mem_peak <= 8; }",
+            "impl Helpers { fn f(v: &Vec<u32>) mem_capacity(v) >= 1, mem_peak <= 8 {} }",
+        ] {
+            let file = verus_syn::parse_file(source).unwrap();
+            let pretty = crate::unparse(&file);
+            let reparsed = verus_syn::parse_file(&pretty).unwrap();
+            let mut before = Contracts::default();
+            let mut after = Contracts::default();
+            before.visit_file(&file);
+            after.visit_file(&reparsed);
+            assert_eq!(before.0, after.0);
+            assert_eq!(pretty, crate::unparse(&reparsed));
         }
     }
 }

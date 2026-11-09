@@ -961,6 +961,9 @@ pub trait Visit<'ast> {
     fn visit_signature(&mut self, i: &'ast crate::Signature) {
         visit_signature(self, i);
     }
+    fn visit_signature_capacity(&mut self, i: &'ast crate::SignatureCapacity) {
+        visit_signature_capacity(self, i);
+    }
     fn visit_signature_decreases(&mut self, i: &'ast crate::SignatureDecreases) {
         visit_signature_decreases(self, i);
     }
@@ -4713,6 +4716,17 @@ where
     v.visit_return_type(&node.output);
     v.visit_signature_spec(&node.spec);
 }
+pub fn visit_signature_capacity<'ast, V>(v: &mut V, node: &'ast crate::SignatureCapacity)
+where
+    V: Visit<'ast> + ?Sized,
+{
+    skip!(node.token);
+    skip!(node.paren_token);
+    v.visit_ident(&node.parameter);
+    skip!(node.ge_token);
+    v.visit_resource_expr(&node.capacity);
+    skip!(node.comma);
+}
 pub fn visit_signature_decreases<'ast, V>(
     v: &mut V,
     node: &'ast crate::SignatureDecreases,
@@ -4789,6 +4803,9 @@ where
     }
     if let Some(it) = &node.resources {
         v.visit_signature_resources(it);
+    }
+    for it in &node.capacities {
+        v.visit_signature_capacity(it);
     }
     if let Some(it) = &node.with {
         v.visit_with_spec_on_fn(it);

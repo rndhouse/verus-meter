@@ -196,22 +196,24 @@ indexing, slice access, and popping do not require a capacity contract.
 A helper that pushes declares a minimum reserved element count:
 
 ```rust
-#[verifier::memory_capacity(values, capacity)]
 fn append(values: &mut Vec<u32>, capacity: usize, value: u32)
     requires old(values).len() < capacity,
     ensures final(values)@ == old(values)@.push(value),
+    mem_capacity(values) >= capacity,
     mem_peak <= mem_size(values) + mem_size(capacity) + mem_size(value),
 {
     values.push(value);
 }
 ```
 
-The attribute is a resource precondition: `values` must have at least `capacity`
+The `mem_capacity` clause is a resource precondition: `values` must have at least `capacity`
 reserved model elements. Its amount can be a nonnegative `u64` literal or an
 immutable unsigned input parameter of at most 64 bits. It counts elements, not
 bytes, and describes the model's reservation rather than Rust's physical
 allocator capacity. It requires a `mem_peak` contract and is erased with the
-other verification annotations.
+other verification annotations. Capacity clauses may appear before or after
+`mem_peak`; use one clause per vector parameter when a helper needs multiple
+reservations.
 
 At each call in checked code, the verifier proves the actual reservation meets
 the requested minimum. Within the helper, each push must prove its current length
@@ -223,7 +225,7 @@ resource preconditions to rely on the memory bound.
 Direct reborrows through nested helpers preserve the reservation. A helper asking
 for a smaller minimum does not reduce the caller's reservation. Ordinary `ensures`
 clauses describe updated length and contents so subsequent callers can use them.
-The attribute also supports incoming owned vectors; returning an input preserves
+The clause also supports incoming owned vectors; returning an input preserves
 its original reservation at the caller.
 
 For now, borrowed vector bindings must be immutable (the vector itself may be

@@ -6723,6 +6723,34 @@
       }
     },
     {
+      "ident": "SignatureCapacity",
+      "features": {
+        "any": []
+      },
+      "fields": {
+        "token": {
+          "token": "MemCapacity"
+        },
+        "paren_token": {
+          "group": "Paren"
+        },
+        "parameter": {
+          "proc_macro2": "Ident"
+        },
+        "ge_token": {
+          "token": "Ge"
+        },
+        "capacity": {
+          "syn": "ResourceExpr"
+        },
+        "comma": {
+          "option": {
+            "token": "Comma"
+          }
+        }
+      }
+    },
+    {
       "ident": "SignatureDecreases",
       "features": {
         "any": []
@@ -6857,6 +6885,11 @@
         "resources": {
           "option": {
             "syn": "SignatureResources"
+          }
+        },
+        "capacities": {
+          "vec": {
+            "syn": "SignatureCapacity"
           }
         },
         "with": {
@@ -8333,6 +8366,7 @@
     "Macro": "macro",
     "Match": "match",
     "Matches": "matches",
+    "MemCapacity": "mem_capacity",
     "MemPeak": "mem_peak",
     "Minus": "-",
     "MinusEq": "-=",

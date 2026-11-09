@@ -234,6 +234,24 @@ ast_struct! {
 }
 
 ast_struct! {
+    /// A minimum model reservation, in elements, for a vector parameter.
+    pub struct SignatureCapacity {
+        /// The clause keyword.
+        pub token: Token![mem_capacity],
+        /// Parentheses surrounding the parameter name.
+        pub paren_token: token::Paren,
+        /// The vector parameter whose reservation is constrained.
+        pub parameter: Ident,
+        /// The lower-bound comparison.
+        pub ge_token: Token![>=],
+        /// The required minimum reserved element count.
+        pub capacity: ResourceExpr,
+        /// Optional trailing clause separator.
+        pub comma: Option<Token![,]>,
+    }
+}
+
+ast_struct! {
     /// A lexical section with an independently checked workspace contract.
     pub struct ExprResourceBlock {
         pub attrs: Vec<Attribute>,
@@ -342,6 +360,8 @@ ast_struct! {
         pub invariants: Option<SignatureInvariants>,
         pub unwind: Option<SignatureUnwind>,
         pub resources: Option<SignatureResources>,
+        /// Minimum vector reservations required by this function.
+        pub capacities: Vec<SignatureCapacity>,
         pub with: Option<WithSpecOnFn>,
     }
 }
@@ -359,6 +379,7 @@ impl SignatureSpec {
         self.invariants = None;
         self.unwind = None;
         self.resources = None;
+        self.capacities.clear();
     }
 }
 
@@ -963,6 +984,7 @@ pub mod parsing {
                 || input.peek(Token![via])
                 || input.peek(Token![when])
                 || (input.peek(Token![mem_peak]) && input.peek2(Token![<=]))
+                || (input.peek(Token![mem_capacity]) && input.peek2(token::Paren))
                 || input.peek(Token![no_unwind])
                 || input.peek(Token![opens_invariants])
                 || input.peek(Token![outer_mask])
@@ -980,6 +1002,7 @@ pub mod parsing {
                 || input.peek2(Token![via])
                 || input.peek2(Token![when])
                 || (input.peek2(Token![mem_peak]) && input.peek3(Token![<=]))
+                || (input.peek2(Token![mem_capacity]) && input.peek3(token::Paren))
                 || input.peek2(Token![no_unwind])
                 || input.peek2(Token![opens_invariants])
                 || input.peek2(Token![outer_mask])
@@ -1611,6 +1634,27 @@ pub mod parsing {
     }
 
     #[cfg_attr(doc_cfg, doc(cfg(feature = "parsing")))]
+    impl Parse for SignatureCapacity {
+        fn parse(input: ParseStream) -> Result<Self> {
+            let token = input.parse()?;
+            let content;
+            let paren_token = parenthesized!(content in input);
+            let parameter = content.parse()?;
+            if !content.is_empty() {
+                return Err(content.error("mem_capacity expects one vector parameter name"));
+            }
+            Ok(SignatureCapacity {
+                token,
+                paren_token,
+                parameter,
+                ge_token: input.parse()?,
+                capacity: input.parse()?,
+                comma: input.parse()?,
+            })
+        }
+    }
+
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "parsing")))]
     impl Parse for SignatureSpec {
         fn parse(input: ParseStream) -> Result<Self> {
             let prover: Option<Prover> = input.parse()?;
@@ -1624,7 +1668,18 @@ pub mod parsing {
             let decreases: Option<SignatureDecreases> = input.parse()?;
             let invariants: Option<SignatureInvariants> = input.parse()?;
             let unwind: Option<SignatureUnwind> = input.parse()?;
-            let resources: Option<SignatureResources> = input.parse()?;
+            let mut resources = None;
+            let mut capacities = Vec::new();
+            while input.peek(Token![mem_peak]) || input.peek(Token![mem_capacity]) {
+                if input.peek(Token![mem_capacity]) {
+                    capacities.push(input.parse()?);
+                } else {
+                    if resources.is_some() {
+                        return Err(input.error("only one mem_peak clause allowed"));
+                    }
+                    resources = input.parse()?;
+                }
+            }
 
             Ok(SignatureSpec {
                 prover,
@@ -1638,6 +1693,7 @@ pub mod parsing {
                 invariants,
                 unwind,
                 resources,
+                capacities,
                 with,
             })
         }
@@ -2689,6 +2745,18 @@ mod printing {
     }
 
     #[cfg_attr(doc_cfg, doc(cfg(feature = "printing")))]
+    impl ToTokens for SignatureCapacity {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            self.token.to_tokens(tokens);
+            self.paren_token
+                .surround(tokens, |tokens| self.parameter.to_tokens(tokens));
+            self.ge_token.to_tokens(tokens);
+            self.capacity.to_tokens(tokens);
+            self.comma.to_tokens(tokens);
+        }
+    }
+
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "printing")))]
     impl ToTokens for SignatureSpec {
         fn to_tokens(&self, tokens: &mut TokenStream) {
             self.prover.to_tokens(tokens);
@@ -2701,6 +2769,9 @@ mod printing {
             self.decreases.to_tokens(tokens);
             self.invariants.to_tokens(tokens);
             self.unwind.to_tokens(tokens);
+            for capacity in &self.capacities {
+                capacity.to_tokens(tokens);
+            }
             self.resources.to_tokens(tokens);
         }
     }
@@ -3503,6 +3574,7 @@ impl parse::Parse for WithSpecOnFn {
                 || input.peek(Token![via])
                 || input.peek(Token![when])
                 || (input.peek(Token![mem_peak]) && input.peek2(Token![<=]))
+                || (input.peek(Token![mem_capacity]) && input.peek2(token::Paren))
                 || input.peek(Token![no_unwind])
                 || input.peek(Token![opens_invariants])
         };

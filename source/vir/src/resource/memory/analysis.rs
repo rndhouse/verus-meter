@@ -477,7 +477,7 @@ pub(super) fn check(
         let Some(param) = f.params.iter().find(|p| p.x.name == *name) else {
             return Err(unsupported(
                 &function.span,
-                "memory_capacity on anything other than a parameter",
+                "mem_capacity on anything other than a parameter",
             ));
         };
         if param.x.mode != Mode::Exec
@@ -485,7 +485,7 @@ pub(super) fn check(
         {
             return Err(unsupported(
                 &param.span,
-                "memory_capacity on anything other than an executable vector parameter",
+                "mem_capacity on anything other than an executable vector parameter",
             ));
         }
     }
