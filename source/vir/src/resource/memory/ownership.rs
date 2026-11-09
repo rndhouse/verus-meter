@@ -67,6 +67,7 @@ pub(super) fn summarize(
             return Ok(ReturnedOwner::Input {
                 index,
                 replacements: replacements(owner, growth, function, bound),
+                additions: super::elements::additions(owner, growth, bound, function),
             });
         }
         let (capacity, replacement) =
@@ -74,8 +75,12 @@ pub(super) fn summarize(
         if let Some(capacity) = capacity {
             capacities.insert(path.clone(), capacity);
         }
+        let elements = owner
+            .elements
+            .as_ref()
+            .map(|elements| super::elements::summarize(elements, growth, bound, function));
         if let Some(allocation) = replacement {
-            return Ok(ReturnedOwner::Replaced { allocation });
+            return Ok(ReturnedOwner::Replaced { allocation, elements });
         }
         let allocation = if let Some(amount) = &owner.extent {
             let inputs = contracts::inputs(function);
@@ -101,7 +106,7 @@ pub(super) fn summarize(
             children.insert(slot.clone(), node(function, child, growth, bound, path, capacities)?);
             path.pop();
         }
-        Ok(ReturnedOwner::Node { allocation, children })
+        Ok(ReturnedOwner::Node { allocation, children, elements })
     }
     let mut capacities = std::collections::BTreeMap::new();
     let returned = owner
@@ -114,15 +119,25 @@ impl ReturnedOwner {
     /// Inputs can survive anywhere in the result, including under newly allocated boxes.
     fn inputs(&self, inputs: &mut std::collections::HashSet<usize>) {
         match self {
-            Self::Input { index, .. } => {
+            Self::Input { index, additions, .. } => {
                 inputs.insert(*index);
+                for effect in additions.values() {
+                    inputs.extend(&effect.inputs);
+                }
             }
-            Self::Node { children, .. } => {
+            Self::Node { children, elements, .. } => {
+                if let Some(elements) = elements {
+                    inputs.extend(&elements.inputs);
+                }
                 for child in children.values() {
                     child.inputs(inputs);
                 }
             }
-            Self::Replaced { .. } => {}
+            Self::Replaced { elements, .. } => {
+                if let Some(elements) = elements {
+                    inputs.extend(&elements.inputs);
+                }
+            }
         }
     }
 }
@@ -222,8 +237,8 @@ impl Analysis<'_> {
         let OwnerCall { expr, callee, args, .. } = *call;
         let mut replacement = None;
         let mut owner = match summary {
-            ReturnedOwner::Input { index, replacements } => {
-                let owner = call.transferred[*index].take().ok_or_else(|| {
+            ReturnedOwner::Input { index, replacements, additions } => {
+                let mut owner = call.transferred[*index].take().ok_or_else(|| {
                     unsupported(&expr.span, "a returned input without transferred ownership")
                 })?;
                 for (path, charge) in replacements {
@@ -237,9 +252,23 @@ impl Analysis<'_> {
                         allocations::instantiate(charge, callee, args, &self.stable_scalars)?;
                     self.retain_vector_growth(&expr.span, id, charge)?;
                 }
+                for (path, effect) in additions {
+                    let elements =
+                        owner.at_mut(path).and_then(|owner| owner.elements.as_mut()).ok_or_else(
+                            || unsupported(&expr.span, "an input collection without child state"),
+                        )?;
+                    self.apply_element_summary(
+                        &expr.span,
+                        elements,
+                        effect,
+                        callee,
+                        args,
+                        call.transferred,
+                    )?;
+                }
                 owner
             }
-            ReturnedOwner::Node { allocation, children } => {
+            ReturnedOwner::Node { allocation, children, .. } => {
                 let mut owner = if let Some(allocation) = allocation {
                     let allocation =
                         allocations::instantiate(allocation, callee, args, &self.stable_scalars)?;
@@ -260,7 +289,7 @@ impl Analysis<'_> {
                 }
                 owner
             }
-            ReturnedOwner::Replaced { allocation } => {
+            ReturnedOwner::Replaced { allocation, .. } => {
                 let allocation =
                     allocations::instantiate(allocation, callee, args, &self.stable_scalars)?;
                 let owner = self.returned_owner(expr, &allocation, true)?;
@@ -268,6 +297,12 @@ impl Analysis<'_> {
                 owner
             }
         };
+        if let ReturnedOwner::Node { elements: Some(summary), .. }
+        | ReturnedOwner::Replaced { elements: Some(summary), .. } = summary
+        {
+            owner.elements =
+                Some(self.adopt_elements(&expr.span, summary, callee, args, call.transferred)?);
+        }
         let capacity = self.summaries[&callee.x.name]
             .vectors
             .returned_capacities

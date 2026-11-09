@@ -95,15 +95,6 @@ fn non_integer_elements_use_inline_layout() {
 }
 
 #[test]
-fn nested_owners_remain_explicitly_unsupported() {
-    rejects(
-        "nested_boxed_slice",
-        "fn f(b: Box<[Box<u32>]>) mem_peak <= 100 {}",
-        "owning or reference-valued slice elements",
-    );
-}
-
-#[test]
 fn unbounded_conversion_is_rejected() {
     rejects(
         "boxed_slice_unbounded",

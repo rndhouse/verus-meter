@@ -25,6 +25,8 @@ impl Analysis<'_> {
         let parent_checkpoints = std::mem::take(&mut self.checkpoints);
         let protection = self.heap.protect();
         let protected = self.growth.section_protected.clone();
+        let protected_elements = self.growth.protected_elements.clone();
+        self.growth.protected_elements.extend(self.heap.element_states());
         self.growth.section_protected.extend(self.heap.vectors());
         let outer_bound =
             std::mem::replace(&mut self.bound, super::contracts::literal(contract_span, budget));
@@ -32,6 +34,7 @@ impl Analysis<'_> {
         self.heap.unprotect(protection);
         self.bound = outer_bound;
         self.growth.section_protected = protected;
+        self.growth.protected_elements = protected_elements;
         self.check_checkpoints()?;
         let section = std::mem::replace(&mut self.storage, parent);
         self.checkpoints = parent_checkpoints;

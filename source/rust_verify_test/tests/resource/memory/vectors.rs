@@ -301,11 +301,6 @@ fn reject_unsupported_vector_operations() {
     verifies("vector_owner_param", "fn f(v: Vec<u32>) mem_peak <= 24 {}");
     verifies("vector_ref_param", "fn f(v: &mut Vec<u32>) mem_peak <= 8 {}");
     rejects(
-        "vector_nested_owner",
-        "fn f() mem_peak <= 100 { let v = Vec::<Box<u32>>::with_capacity(1); }",
-        "owning or reference-valued vector elements",
-    );
-    rejects(
         "vector_conditional_drop",
         "fn f(flag: bool) mem_peak <= 100 { let v = Vec::<u32>::with_capacity(1); if flag { drop(v); } }",
         "moving or dropping an enclosing heap owner",

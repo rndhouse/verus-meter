@@ -20,8 +20,8 @@ pub(super) struct Heap {
     protected: HashSet<VarIdent>,
 }
 
-/// Structural position of a child owner. Runtime collections need a separate
-/// aggregate representation; this tree describes only statically named children.
+/// Structural position of a fixed child owner. Runtime collections use separate
+/// footprint sums rather than adding a path for each element.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) enum OwnerSlot {
     Contents,
@@ -37,6 +37,8 @@ pub(super) struct Owner {
     /// Separately owned allocations beneath fields or a box payload. Their inline
     /// handles are already included in the containing value/allocation layout.
     pub(super) children: BTreeMap<OwnerSlot, Owner>,
+    /// Runtime child allocations, aggregated independently of element storage.
+    pub(super) elements: Option<super::elements::Elements>,
     /// Memory kind charged for the owned allocation, independently of its handle.
     pub(super) kind: MemoryKind,
     /// Fixed portion of the live charge, released when this owner is consumed.
@@ -58,6 +60,7 @@ impl Default for Owner {
     fn default() -> Self {
         Self {
             children: BTreeMap::new(),
+            elements: None,
             kind: MemoryKind::host_heap(),
             bytes: 0,
             dynamic: None,
@@ -74,6 +77,14 @@ impl Owner {
         let mut node = self;
         for slot in path {
             node = node.children.get(slot)?;
+        }
+        Some(node)
+    }
+
+    pub(super) fn at_mut(&mut self, path: &[OwnerSlot]) -> Option<&mut Owner> {
+        let mut node = self;
+        for slot in path {
+            node = node.children.get_mut(slot)?;
         }
         Some(node)
     }
@@ -101,6 +112,9 @@ impl Owner {
             if let Some(input) = node.input {
                 inputs.insert(input);
             }
+            if let Some(elements) = &node.elements {
+                inputs.extend(elements.inputs.iter().copied());
+            }
         });
         inputs
     }
@@ -109,6 +123,26 @@ impl Owner {
 impl Heap {
     pub(super) fn root(&self, name: &VarIdent) -> Option<&Owner> {
         self.owners.get(name).or_else(|| self.borrowed.get(name))
+    }
+
+    pub(super) fn root_mut(&mut self, name: &VarIdent) -> Option<&mut Owner> {
+        if self.owners.contains_key(name) {
+            self.owners.get_mut(name)
+        } else {
+            self.borrowed.get_mut(name)
+        }
+    }
+
+    pub(super) fn element_states(&self) -> Vec<usize> {
+        let mut ids = Vec::new();
+        for owner in self.owners.values().chain(self.borrowed.values()) {
+            owner.visit(&mut |node| {
+                if let Some(elements) = &node.elements {
+                    ids.extend(elements.states.values().copied());
+                }
+            });
+        }
+        ids
     }
 
     pub(super) fn vectors(&self) -> Vec<usize> {
@@ -176,6 +210,9 @@ impl Analysis<'_> {
         capacities: &HashMap<super::paths::LocalPath, Expr>,
     ) -> Result<Owner, VirErr> {
         let mut owner = Owner::default();
+        if self.layouts.owning_elements(typ) {
+            owner.elements = Some(self.new_elements(span));
+        }
         if self.layouts.vector(typ) {
             let capacity = capacities.get(&(name.clone(), path.clone()));
             let allocation = super::accounting::Accounting::fresh_allocation();
@@ -305,17 +342,31 @@ impl Analysis<'_> {
         }
         self.access(place, &place.typ)?;
         let owner = self.heap.take(name, &place.span)?;
+        self.growth.forget_element_places(&owner);
         self.storage
             .event(&place.span, "transfer heap ownership without copying the object".into());
         Ok(owner)
     }
 
     pub(super) fn release_owner(&mut self, owner: Owner, span: &Span) {
-        for child in owner.children.into_values() {
-            self.release_owner(child, span);
+        self.release_owner_storage(owner, span, true);
+    }
+
+    /// Transfers into an aggregate release the old charge identities while
+    /// keeping incoming allocation lifetimes attached to their new owner.
+    pub(super) fn release_owner_storage(&mut self, owner: Owner, span: &Span, inputs: bool) {
+        if inputs {
+            for input in owner.inputs() {
+                self.storage.release_input(input);
+            }
         }
-        if let Some(input) = owner.input {
-            self.storage.release_input(input);
+        for child in owner.children.into_values() {
+            self.release_owner_storage(child, span, false);
+        }
+        if let Some(elements) = owner.elements {
+            for state in elements.states.into_values() {
+                self.storage.release_dynamic(self.growth.elements[state].id);
+            }
         }
         if let Some(id) = owner.dynamic {
             self.storage.release_dynamic(id);

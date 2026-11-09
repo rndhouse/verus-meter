@@ -1,0 +1,501 @@
+//! Runtime collections of owning children, independent of container layout.
+//!
+//! A collection keeps one byte sum per memory kind, not an enumerated owner for
+//! every element. Insertion transfers a complete child footprint into these sums.
+//! Original input allocations remain caller-charged and retain their provenance.
+//! This append-only abstraction deliberately does not expose individual children.
+
+use super::analysis::Analysis;
+use super::contracts;
+use super::footprint::MemoryKind;
+use super::heap::{Owner, OwnerPath};
+use super::model::unsupported;
+use crate::ast::*;
+use crate::ast_util::{int_typ, mk_ineq};
+use crate::messages::Span;
+use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
+
+#[derive(Clone)]
+pub(super) struct Elements {
+    /// Stable counter identities; the containing owner controls their lifetime.
+    pub(super) states: BTreeMap<MemoryKind, usize>,
+    /// Whole input subtrees captured by element insertion.
+    pub(super) inputs: HashSet<usize>,
+}
+
+#[derive(Clone)]
+pub(super) struct ElementSummary {
+    /// Newly retained child bytes, excluding original input allocations.
+    pub(super) bytes: BTreeMap<MemoryKind, Expr>,
+    /// Inputs transferred into this collection, consumed exactly once at calls.
+    pub(super) inputs: HashSet<usize>,
+}
+
+pub(super) struct ElementState {
+    /// Accounting identity of this sum.
+    pub(super) id: u64,
+    /// Memory kind preserved when a child is transferred.
+    kind: MemoryKind,
+    /// Bytes inherited when this state was introduced.
+    initial: Expr,
+    /// A compositional bound for straight-line additions; repeated updates are
+    /// summarized by the checked function budget instead.
+    extent: Option<Expr>,
+    /// Erased current and next byte totals.
+    pub(super) bytes: Expr,
+    next_bytes: Expr,
+    /// Number of locally modeled insertions, separate from incoming elements.
+    count: Expr,
+    next_count: Expr,
+    /// Upper bound on each insertion's child footprint, proved at its operation.
+    maximum: Expr,
+    /// A direct insertion's logical collection length, used by loop proofs.
+    length: Option<Expr>,
+    /// Byte-only helper effects do not expose a precise insertion count.
+    counted: bool,
+    /// Whether local operations have added child allocations.
+    changed: bool,
+}
+
+impl ElementState {
+    fn upper(&self, _span: &Span, fallback: &Expr) -> Expr {
+        self.extent.clone().unwrap_or_else(|| fallback.clone())
+    }
+}
+
+/// Summaries describe additions for incoming collections and all child bytes for
+/// fresh collections. A checked function budget bounds each locally charged sum.
+pub(super) fn summarize(
+    elements: &Elements,
+    growth: &super::growth::Growth,
+    bound: &Expr,
+    function: &Function,
+) -> ElementSummary {
+    ElementSummary {
+        bytes: elements
+            .states
+            .iter()
+            .map(|(kind, id)| {
+                let mut amount = growth.elements[*id].upper(&bound.span, bound);
+                let allowed = contracts::inputs(function);
+                let mut in_scope = true;
+                let _: Result<(), VirErr> =
+                    crate::ast_visitor::expr_visitor_check(&amount, &mut |_, expr| {
+                        if let ExprX::Var(name) = &expr.x {
+                            in_scope &= allowed.contains(name);
+                        }
+                        Ok(())
+                    });
+                if !in_scope {
+                    amount = bound.clone();
+                }
+                (kind.clone(), amount)
+            })
+            .collect(),
+        inputs: elements.inputs.clone(),
+    }
+}
+
+pub(super) fn additions(
+    owner: &Owner,
+    growth: &super::growth::Growth,
+    bound: &Expr,
+    function: &Function,
+) -> BTreeMap<OwnerPath, ElementSummary> {
+    let mut effects = BTreeMap::new();
+    owner.visit_paths(&mut vec![], &mut |path, node| {
+        if let Some(elements) = &node.elements {
+            if !elements.inputs.is_empty()
+                || elements.states.values().any(|id| growth.elements[*id].changed)
+            {
+                effects.insert(path.clone(), summarize(elements, growth, bound, function));
+            }
+        }
+    });
+    effects
+}
+
+impl Analysis<'_> {
+    pub(super) fn new_elements(&mut self, span: &Span) -> Elements {
+        // The currently supported allocation adapters all allocate host heap
+        // storage. Adoption uses the summary's kinds; the sum machinery is generic.
+        self.elements_from_bytes(
+            span,
+            [(MemoryKind::host_heap(), contracts::literal(span, 0))].into(),
+        )
+    }
+
+    pub(super) fn elements_from_bytes(
+        &mut self,
+        span: &Span,
+        charges: BTreeMap<MemoryKind, Expr>,
+    ) -> Elements {
+        let mut states = BTreeMap::new();
+        for (kind, initial) in charges {
+            let allocation = super::accounting::Accounting::fresh_allocation();
+            let mut variable = |suffix: &str| {
+                let name = VarIdent(
+                    Arc::new(format!("$memory_elements_{suffix}")),
+                    VarIdentDisambiguate::VirTemp(allocation),
+                );
+                let (value, declaration) = super::symbolic::integer_local(span, name);
+                self.growth.declarations.push(declaration);
+                value
+            };
+            let bytes = variable("bytes");
+            let next_bytes = variable("next_bytes");
+            let count = variable("count");
+            let next_count = variable("next_count");
+            let zero = contracts::literal(span, 0);
+            self.growth.before.entry(span.id).or_default().extend([
+                super::symbolic::assign(span, &bytes, initial.clone()),
+                super::symbolic::assign(span, &count, zero.clone()),
+            ]);
+            self.storage.set_allocation(allocation, kind.clone(), bytes.clone());
+            let id = self.growth.elements.len();
+            self.growth.elements.push(ElementState {
+                id: allocation,
+                kind: kind.clone(),
+                extent: Some(initial.clone()),
+                initial,
+                bytes,
+                next_bytes,
+                count,
+                next_count,
+                maximum: zero,
+                length: None,
+                counted: true,
+                changed: false,
+            });
+            states.insert(kind, id);
+        }
+        Elements { states, inputs: HashSet::new() }
+    }
+
+    /// All owned allocation charges, including nested runtime sums. Inline
+    /// handles are excluded because their destination already accounts for them.
+    pub(super) fn owner_charges(&self, span: &Span, owner: &Owner) -> BTreeMap<MemoryKind, Expr> {
+        let mut charges = BTreeMap::new();
+        owner.visit(&mut |node| {
+            let mut amount = contracts::literal(span, node.bytes);
+            if let Some(id) = node.dynamic {
+                amount = contracts::add(span, amount, self.storage.dynamic_cost(span, id));
+            }
+            add(span, &mut charges, node.kind.clone(), amount);
+            if let Some(elements) = &node.elements {
+                for (kind, id) in &elements.states {
+                    add(span, &mut charges, kind.clone(), self.growth.elements[*id].bytes.clone());
+                }
+            }
+        });
+        charges
+    }
+
+    fn owner_upper(&self, span: &Span, owner: &Owner) -> BTreeMap<MemoryKind, Expr> {
+        let mut charges = BTreeMap::new();
+        owner.visit(&mut |node| {
+            let amount = if let Some(id) = node.vector {
+                let state = &self.growth.vectors[id];
+                if state.pushes == 0 {
+                    contracts::maximum(
+                        span,
+                        state.backing.initial_bytes.clone(),
+                        state.backing.floor.clone(),
+                    )
+                } else {
+                    self.bound.clone()
+                }
+            } else {
+                node.extent.clone().unwrap_or_else(|| contracts::literal(span, node.bytes))
+            };
+            add(span, &mut charges, node.kind.clone(), amount);
+            if let Some(elements) = &node.elements {
+                for (kind, id) in &elements.states {
+                    add(
+                        span,
+                        &mut charges,
+                        kind.clone(),
+                        self.growth.elements[*id].upper(span, &self.bound),
+                    );
+                }
+            }
+        });
+        charges
+    }
+
+    /// Add bytes rather than taking a maximum: all inserted children remain live.
+    fn add_element_bytes(
+        &mut self,
+        span: &Span,
+        elements: &Elements,
+        amounts: BTreeMap<MemoryKind, Expr>,
+        upper: &BTreeMap<MemoryKind, Expr>,
+        length: Option<Expr>,
+    ) -> Result<(), VirErr> {
+        for (kind, amount) in amounts {
+            if contracts::constant(&amount) == Some(0) {
+                continue;
+            }
+            let id = *elements.states.get(&kind).ok_or_else(|| {
+                unsupported(span, "an element allocation kind absent from the collection layout")
+            })?;
+            if self.growth.protected_elements.contains(&id) {
+                return Err(unsupported(
+                    span,
+                    "adding owning children to an enclosing collection inside a memory section",
+                ));
+            }
+            let state = &mut self.growth.elements[id];
+            let limit = &upper[&kind];
+            self.checks.push((span.clone(), mk_ineq(span, &amount, limit, InequalityOp::Le)));
+            self.growth
+                .element_updates
+                .entry(span.id)
+                .or_default()
+                .insert(id, contracts::add(span, state.bytes.clone(), amount.clone()));
+            self.growth.updates.entry(span.id).or_default().extend([
+                super::symbolic::assign(
+                    span,
+                    &state.next_bytes,
+                    contracts::add(span, state.bytes.clone(), amount),
+                ),
+                super::symbolic::assign(
+                    span,
+                    &state.next_count,
+                    contracts::add(span, state.count.clone(), contracts::literal(span, 1)),
+                ),
+            ]);
+            self.growth.after.entry(span.id).or_default().extend([
+                super::symbolic::assign(span, &state.bytes, state.next_bytes.clone()),
+                super::symbolic::assign(span, &state.count, state.next_count.clone()),
+            ]);
+            state.extent =
+                state.extent.take().map(|extent| contracts::add(span, extent, limit.clone()));
+            state.maximum = contracts::maximum(span, state.maximum.clone(), limit.clone());
+            state.counted &= length.is_some();
+            state.length = if state.counted { length.clone() } else { None };
+            state.changed = true;
+        }
+        Ok(())
+    }
+
+    pub(super) fn insert_child(
+        &mut self,
+        span: &Span,
+        elements: &mut Elements,
+        child: Owner,
+        length: Expr,
+    ) -> Result<(), VirErr> {
+        let charges = self.owner_charges(span, &child);
+        let upper = self.owner_upper(span, &child);
+        elements.inputs.extend(child.inputs());
+        self.release_owner_storage(child, span, false);
+        self.add_element_bytes(span, elements, charges, &upper, Some(length))
+    }
+
+    /// Check the complete post-operation charge using pre-operation expressions,
+    /// then resume accounting with the ghost sums committed after execution.
+    pub(super) fn record_element_updates(&mut self, span: &Span) -> Result<(), VirErr> {
+        let updates = self.growth.element_updates.get(&span.id).cloned().unwrap_or_default();
+        for (id, amount) in &updates {
+            let state = &self.growth.elements[*id];
+            self.storage.set_allocation(state.id, state.kind.clone(), amount.clone());
+        }
+        let result = self.storage.record_live(span);
+        for id in updates.keys() {
+            let state = &self.growth.elements[*id];
+            self.storage.set_allocation(state.id, state.kind.clone(), state.bytes.clone());
+        }
+        result
+    }
+
+    pub(super) fn apply_collection_call_effects(
+        &mut self,
+        expr: &Expr,
+        callee: &Function,
+        args: &Exprs,
+        transferred: &mut [Option<Owner>],
+    ) -> Result<(), VirErr> {
+        let effects = self.summaries[&callee.x.name].allocations.collections.clone();
+        for ((index, child), summary) in effects {
+            let (name, mut path) = super::paths::expr(&args[index], &callee.x.params[index].x.typ)
+                .ok_or_else(|| unsupported(&expr.span, "an aliased collection argument"))?;
+            path.extend(child);
+            let mut elements = self
+                .heap
+                .root_mut(&name)
+                .and_then(|owner| owner.at_mut(&path))
+                .and_then(|owner| owner.elements.take())
+                .ok_or_else(|| unsupported(&expr.span, "an untracked collection argument"))?;
+            self.apply_element_summary(
+                &expr.span,
+                &mut elements,
+                &summary,
+                callee,
+                args,
+                transferred,
+            )?;
+            self.heap.root_mut(&name).unwrap().at_mut(&path).unwrap().elements = Some(elements);
+        }
+        Ok(())
+    }
+
+    pub(super) fn adopt_elements(
+        &mut self,
+        span: &Span,
+        summary: &ElementSummary,
+        callee: &Function,
+        args: &Exprs,
+        transferred: &mut [Option<Owner>],
+    ) -> Result<Elements, VirErr> {
+        let (charges, inputs) =
+            self.element_summary_bytes(span, summary, callee, args, transferred)?;
+        let mut elements = self.elements_from_bytes(span, charges);
+        elements.inputs = inputs;
+        Ok(elements)
+    }
+
+    fn element_summary_bytes(
+        &mut self,
+        span: &Span,
+        summary: &ElementSummary,
+        callee: &Function,
+        args: &Exprs,
+        transferred: &mut [Option<Owner>],
+    ) -> Result<(BTreeMap<MemoryKind, Expr>, HashSet<usize>), VirErr> {
+        let mut charges = BTreeMap::new();
+        let mut inputs = HashSet::new();
+        for (kind, amount) in &summary.bytes {
+            charges.insert(
+                kind.clone(),
+                contracts::substitute(amount, callee, args, &self.stable_scalars)?,
+            );
+        }
+        for index in &summary.inputs {
+            let child = transferred[*index].take().ok_or_else(|| {
+                unsupported(span, "a collected input without transferred ownership")
+            })?;
+            for (kind, amount) in self.owner_charges(span, &child) {
+                add(span, &mut charges, kind, amount);
+            }
+            inputs.extend(child.inputs());
+            self.release_owner_storage(child, span, false);
+        }
+        Ok((charges, inputs))
+    }
+
+    /// Instantiate one checked addition and absorb all transferred input owners
+    /// in one update, so multiple children cannot overwrite each other's sum.
+    pub(super) fn apply_element_summary(
+        &mut self,
+        span: &Span,
+        elements: &mut Elements,
+        summary: &ElementSummary,
+        callee: &Function,
+        args: &Exprs,
+        transferred: &mut [Option<Owner>],
+    ) -> Result<(), VirErr> {
+        let (charges, inputs) =
+            self.element_summary_bytes(span, summary, callee, args, transferred)?;
+        elements.inputs.extend(inputs);
+        if charges.values().all(|amount| contracts::constant(amount) == Some(0)) {
+            return Ok(());
+        }
+        let upper = charges.clone();
+        self.add_element_bytes(span, elements, charges, &upper, None)
+    }
+}
+
+fn add(span: &Span, charges: &mut BTreeMap<MemoryKind, Expr>, kind: MemoryKind, amount: Expr) {
+    let total = charges
+        .remove(&kind)
+        .map_or_else(|| amount.clone(), |old| contracts::add(span, old, amount.clone()));
+    charges.insert(kind, total);
+}
+
+impl super::growth::Growth {
+    pub(super) fn repeat_elements(&mut self, ids: &[usize]) {
+        for id in ids {
+            self.elements[*id].extent = None;
+        }
+    }
+
+    pub(super) fn forget_element_places(&mut self, owner: &Owner) {
+        owner.visit(&mut |node| {
+            if let Some(id) = node.vector {
+                self.vectors[id].sequence_length = None;
+            }
+            if let Some(elements) = &node.elements {
+                for id in elements.states.values() {
+                    self.elements[*id].length = None;
+                }
+            }
+        });
+    }
+
+    /// Inductive sums use an insertion count tied to logical length for direct
+    /// appends. Calls with only byte summaries retain a conservative budget bound.
+    pub(super) fn element_invariants(
+        &self,
+        span: &Span,
+        ids: &[usize],
+        allowed: &HashSet<VarIdent>,
+        fallback: &Expr,
+    ) -> Vec<Expr> {
+        let mut result = Vec::new();
+        for id in ids {
+            let state = &self.elements[*id];
+            let zero = contracts::literal(span, 0);
+            result.push(mk_ineq(span, &zero, &state.bytes, InequalityOp::Le));
+            result.push(mk_ineq(span, &zero, &state.count, InequalityOp::Le));
+            let mut in_scope = true;
+            let _: Result<(), VirErr> =
+                crate::ast_visitor::expr_visitor_check(&state.maximum, &mut |_, expr| {
+                    if let ExprX::Var(name) = &expr.x {
+                        in_scope &= allowed.contains(name);
+                    }
+                    Ok(())
+                });
+            let maximum = if in_scope { state.maximum.clone() } else { fallback.clone() };
+            let upper = if let Some(length) = &state.length {
+                let length = SpannedTyped::new(&length.span, &int_typ(), length.x.clone());
+                result.push(mk_ineq(span, &state.count, &length, InequalityOp::Le));
+                contracts::add(
+                    span,
+                    state.initial.clone(),
+                    contracts::multiply(span, state.count.clone(), maximum),
+                )
+            } else {
+                fallback.clone()
+            };
+            result.push(mk_ineq(span, &state.bytes, &upper, InequalityOp::Le));
+        }
+        result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn child_footprints_add_within_each_memory_kind() {
+        let span = Span {
+            raw_span: Arc::new(()),
+            id: 1,
+            data: Arc::new([]),
+            as_string: "elements".into(),
+        };
+        let ram = MemoryKind::host_heap();
+        let vram = MemoryKind::new("device.0.vram");
+        let mut sums = BTreeMap::new();
+        add(&span, &mut sums, ram.clone(), contracts::literal(&span, 16));
+        add(&span, &mut sums, vram.clone(), contracts::literal(&span, 64));
+        add(&span, &mut sums, ram.clone(), contracts::literal(&span, 32));
+        add(&span, &mut sums, vram.clone(), contracts::literal(&span, 128));
+        assert_eq!(contracts::constant(&sums[&ram]), Some(48));
+        assert_eq!(contracts::constant(&sums[&vram]), Some(192));
+        assert_eq!(sums.len(), 2);
+    }
+}

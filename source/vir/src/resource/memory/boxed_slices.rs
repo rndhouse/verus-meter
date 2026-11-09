@@ -50,18 +50,27 @@ impl Analysis<'_> {
             self.allocation_snapshot(&expr.span, amount)
         };
         let source_value = self.take_value(place)?;
-        let source = self.move_owner(place)?;
+        let mut source = self.move_owner(place)?;
         let allocation = Charge { kind: source.kind.clone(), amount: amount.clone() };
         // The model permits a length-sized replacement even if an allocator
         // could shrink in place. Old and new backing storage overlap only here.
         self.storage.replacement_peak(&expr.span, &allocation)?;
         self.release_value(source_value, &expr.span);
+        let mut elements = source.elements.take();
+        if let Some(elements) = &mut elements {
+            // Incoming provenance covers the whole old tree. Retaining it with
+            // the children conservatively keeps its old buffer charged too.
+            if let Some(input) = source.input.take() {
+                elements.inputs.insert(input);
+            }
+        }
         self.release_owner(source, &expr.span);
         let id = super::accounting::Accounting::fresh_allocation();
         self.storage.set_allocation(id, allocation.kind.clone(), amount.clone());
         self.storage.record_live(&expr.span)?;
         Ok(Some(Owner {
             kind: allocation.kind,
+            elements,
             dynamic: Some(id),
             extent: Some(amount),
             ..Default::default()

@@ -153,16 +153,6 @@ fn owning_field_moves_and_replacement_are_rejected() {
 }
 
 #[test]
-fn owning_collection_elements_still_need_an_aggregate_model() {
-    rejects(
-        "nested_collection",
-        "struct P { b: Box<u32> }
-        fn f() mem_peak <= 100 { let v = Vec::<P>::new(); }",
-        "owning or reference-valued vector elements",
-    );
-}
-
-#[test]
 fn recursive_layout_is_rejected_without_recursing_forever() {
     rejects(
         "recursive_ownership",

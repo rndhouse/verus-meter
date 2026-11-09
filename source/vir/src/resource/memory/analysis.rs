@@ -367,6 +367,7 @@ impl Analysis<'_> {
                 let loop_scalars = self.stable_scalars.clone();
                 let entry = self.storage.live();
                 let ids = self.heap.vectors();
+                let elements = self.heap.element_states();
                 let live = self.storage.live_expression(&expr.span).total();
                 let protection = self.heap.protect();
                 let first_checkpoint = self.checkpoints.len();
@@ -384,6 +385,12 @@ impl Analysis<'_> {
                 self.heap.unprotect(protection);
                 let mut invariants =
                     self.growth.invariants(&expr.span, &ids, &loop_scalars, &self.bound);
+                invariants.extend(self.growth.element_invariants(
+                    &expr.span,
+                    &elements,
+                    &loop_scalars,
+                    &self.bound,
+                ));
                 invariants.push(crate::ast_util::mk_ineq(
                     &expr.span,
                     &live,
@@ -391,6 +398,7 @@ impl Analysis<'_> {
                     InequalityOp::Le,
                 ));
                 self.growth.loops.insert(expr.span.id, invariants);
+                self.growth.repeat_elements(&elements);
                 return Ok(0);
             }
             _ => {
@@ -585,6 +593,22 @@ pub(super) fn check(
             profiles,
             allocations: super::allocations::AllocationSummary {
                 returned,
+                collections: {
+                    let mut effects = HashMap::new();
+                    for (index, param) in f.params.iter().enumerate() {
+                        if let Some(owner) = analysis.heap.borrowed.get(&param.x.name) {
+                            for (path, effect) in super::elements::additions(
+                                owner,
+                                &analysis.growth,
+                                &analysis.bound,
+                                function,
+                            ) {
+                                effects.insert((index, path), effect);
+                            }
+                        }
+                    }
+                    effects
+                },
                 retained: {
                     let mut effects = HashMap::new();
                     for (index, param) in f.params.iter().enumerate() {

@@ -77,6 +77,7 @@ Bounds describe a source-level model, not the compiled program’s actual memory
   - [Heap buffers](examples/resource/memory/heap.rs): reuse a heap allowance by releasing each buffer before creating the next.
   - [Nested ownership](examples/resource/memory/nested_ownership.rs): compose boxes, vectors, and structs while counting each allocation once.
   - [Nested growth](examples/resource/memory/nested_growth.rs): grow individual vector fields and preserve their allocation effects through helpers.
+  - [Owning collections](examples/resource/memory/owning_collections.rs): account for runtime collections of children that own further allocations.
   - [Boxed slices](examples/resource/memory/boxed_slices.rs): convert vectors into fixed-length owning slices and transfer their storage.
   - [Ownership](examples/resource/memory/ownership.rs): track an allocation's cost as it passes between helpers.
   - [Vectors](examples/resource/memory/vectors.rs): collect values while proving that every addition fits the reserved capacity.

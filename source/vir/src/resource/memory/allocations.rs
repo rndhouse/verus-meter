@@ -21,6 +21,9 @@ pub(super) enum ReturnedOwner {
         index: usize,
         /// Possible replacement sizes; original allocations may remain larger.
         replacements: std::collections::BTreeMap<super::heap::OwnerPath, Charge<Expr>>,
+        /// Runtime child collections extended beneath the forwarded root.
+        additions:
+            std::collections::BTreeMap<super::heap::OwnerPath, super::elements::ElementSummary>,
     },
     /// Compose newly owned storage and child owners. Struct nodes have no allocation.
     Node {
@@ -28,9 +31,11 @@ pub(super) enum ReturnedOwner {
         allocation: Option<Charge<Expr>>,
         /// Fixed child owners, each accounting for its own allocations.
         children: std::collections::BTreeMap<super::heap::OwnerSlot, ReturnedOwner>,
+        /// Combined allocations owned by runtime elements, excluding their handles.
+        elements: Option<super::elements::ElementSummary>,
     },
     /// A fresh allocation whose growth requires a conservative byte bound.
-    Replaced { allocation: Charge<Expr> },
+    Replaced { allocation: Charge<Expr>, elements: Option<super::elements::ElementSummary> },
 }
 
 /// Allocation effects established by a checked function body. Temporary peaks
@@ -41,6 +46,8 @@ pub(super) struct AllocationSummary {
     pub(super) returned: Option<ReturnedOwner>,
     /// Replacement bounds retained through borrowed inputs, keyed by parameter and child path.
     pub(super) retained: HashMap<super::paths::InputPath, Charge<Expr>>,
+    /// Additive child-footprint effects retained in borrowed collections.
+    pub(super) collections: HashMap<super::paths::InputPath, super::elements::ElementSummary>,
 }
 
 /// Erased byte state for an allocation whose size may change. Container-specific

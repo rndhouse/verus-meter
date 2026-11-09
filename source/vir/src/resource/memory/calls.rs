@@ -86,15 +86,10 @@ impl Analysis<'_> {
         let mut external_inputs = std::collections::HashSet::new();
         for (index, owner) in transferred.iter().enumerate() {
             if let Some(owner) = owner {
-                owner.visit(&mut |node| {
-                    let mut cost = super::contracts::literal(c, node.bytes);
-                    if let Some(id) = node.dynamic {
-                        cost = super::contracts::add(c, cost, self.storage.dynamic_cost(c, id));
-                    }
-                    base = base.remove(c, node.kind.clone(), cost.clone());
-                    input_costs[index] =
-                        input_costs[index].add(c, Footprint::charge(node.kind.clone(), cost));
-                });
+                for (kind, cost) in self.owner_charges(c, owner) {
+                    base = base.remove(c, kind.clone(), cost.clone());
+                    input_costs[index] = input_costs[index].add(c, Footprint::charge(kind, cost));
+                }
                 external_inputs.extend(owner.inputs());
             }
         }
@@ -156,8 +151,9 @@ impl Analysis<'_> {
             self.storage.call_cost(c, base.add(c, cost), &excluded, &result_ids, point.result);
         }
         self.apply_vector_call_effects(expr, callee, args)?;
+        self.apply_collection_call_effects(expr, callee, args, &mut transferred)?;
         self.result_owner = self.complete_ownership_call(expr, callee, args, &mut transferred)?;
-        self.storage.record_live(c)?;
+        self.record_element_updates(c)?;
         self.produced = result;
         let retained = if destination { 0 } else { result_size };
         self.calls.push((target.clone(), expr.span.clone()));

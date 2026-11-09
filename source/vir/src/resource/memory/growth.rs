@@ -22,10 +22,13 @@ pub(super) struct VectorState {
     pub(super) pushes: usize,
     /// Scratch snapshot prevents a transition from reading its own updated state.
     pub(super) next_capacity: Expr,
-    /// Model size of one non-owning element.
+    /// Inline model size of one element, excluding its owned allocations.
     pub(super) element: u64,
     /// An inferred entry reservation whose no-growth uses are checked by Verus.
     pub(super) reserved: bool,
+    /// Owning-element sequences currently support only append operations, so
+    /// their logical length bounds every direct replacement made so far.
+    pub(super) sequence_length: Option<Expr>,
     /// Container-independent byte state and allocation identity.
     pub(super) backing: super::allocations::RetainedAllocation,
 }
@@ -34,6 +37,12 @@ pub(super) struct VectorState {
 pub(super) struct Growth {
     /// All states have function-wide proof scope; executable ownership controls charges.
     pub(super) vectors: Vec<VectorState>,
+    /// Independent sums of runtime child allocations, grouped by memory kind.
+    pub(super) elements: Vec<super::elements::ElementState>,
+    /// Complete next sums used for post-operation peak checks before execution.
+    pub(super) element_updates: HashMap<u64, std::collections::BTreeMap<usize, Expr>>,
+    /// Enclosing runtime child sums excluded from a section's accounting.
+    pub(super) protected_elements: std::collections::HashSet<usize>,
     /// Function-entry declarations for erased proof state.
     pub(super) declarations: Vec<Stmt>,
     /// Capture allocation facts before checks and before consuming their sources.
@@ -113,6 +122,7 @@ impl Growth {
             next_capacity,
             element,
             reserved: false,
+            sequence_length: None,
             backing: super::allocations::RetainedAllocation {
                 id: allocation,
                 kind: size.kind,
@@ -163,7 +173,23 @@ impl Growth {
                     grown_capacity(span, state.capacity.clone(), state.element),
                 ),
             );
-            let upper = if state.pushes == 0 {
+            let upper = if let Some(length) = &state.sequence_length {
+                let replacement = select(
+                    span,
+                    mk_ineq(span, length, &state.minimum, InequalityOp::Le),
+                    contracts::literal(span, 0),
+                    contracts::multiply(
+                        span,
+                        contracts::literal(span, state.element),
+                        grown_capacity(span, length.clone(), state.element),
+                    ),
+                );
+                contracts::maximum(
+                    span,
+                    state.backing.initial_bytes.clone(),
+                    contracts::maximum(span, floor, replacement),
+                )
+            } else if state.pushes == 0 {
                 contracts::maximum(span, state.backing.initial_bytes.clone(), floor)
             } else {
                 upper

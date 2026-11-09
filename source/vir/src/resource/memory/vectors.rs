@@ -80,6 +80,9 @@ impl Analysis<'_> {
             self.storage.reserve_dynamic(&expr.span, MemoryKind::host_heap(), cost.clone());
             owner.dynamic = Some(expr.span.id);
         }
+        if self.layouts.owning_elements(&expr.typ) {
+            owner.elements = Some(self.new_elements(&expr.span));
+        }
         let allocation = super::accounting::Accounting::fresh_allocation();
         let state = self.growth.new_vector(
             &expr.span,
@@ -185,6 +188,22 @@ impl Analysis<'_> {
             return Err(unsupported(&expr.span, "this vector operation"));
         };
         let (state_id, typ, vector) = self.vector_receiver(receiver)?;
+        if self.layouts.owning_elements(&typ)
+            && (index
+                || matches!(
+                    attrs.resource_intrinsic,
+                    Some(
+                        ResourceIntrinsic::VecPop
+                            | ResourceIntrinsic::VecAsSlice
+                            | ResourceIntrinsic::VecAsMutSlice
+                    )
+                ))
+        {
+            return Err(unsupported(
+                &expr.span,
+                "accessing or removing individual owning collection elements",
+            ));
+        }
         if attrs.resource_intrinsic == Some(ResourceIntrinsic::VecPush) {
             if args.len() != 2 {
                 return Err(unsupported(&expr.span, "this vector push"));
@@ -195,6 +214,10 @@ impl Analysis<'_> {
             // Read the current logical length at the push, so ordinary branches,
             // preconditions and loop invariants can establish available room.
             let len = length(&expr.span, types.clone(), vector);
+            let element_length = len.clone();
+            if self.layouts.owning_elements(&typ) {
+                self.growth.vectors[state_id].sequence_length = Some(len.clone());
+            }
             let revision = self.growth.revision();
             self.initialize_expr(&args[1])?;
             if revision != self.growth.revision() {
@@ -203,66 +226,94 @@ impl Analysis<'_> {
                     "vector allocation changes inside a push argument; bind the argument first",
                 ));
             }
+            let child = if self.layouts.owner(&args[1].typ) {
+                Some(self.result_owner.take().ok_or_else(|| {
+                    unsupported(&expr.span, "an inserted element without ownership")
+                })?)
+            } else {
+                None
+            };
             let room = mk_ineq(&expr.span, &len, &capacity, InequalityOp::Lt);
             if state.reserved || self.growth.section_protected.contains(&state_id) {
                 self.checks.push((expr.span.clone(), room));
-                return Ok(Some(0));
-            }
-            let new_capacity =
-                super::growth::grown_capacity(&expr.span, len.clone(), state.element);
-            let new_bytes = contracts::multiply(
-                &expr.span,
-                contracts::literal(&expr.span, state.element),
-                new_capacity.clone(),
-            );
-            let extra = super::growth::select(
-                &expr.span,
-                room.clone(),
-                contracts::literal(&expr.span, 0),
-                new_bytes,
-            );
-            // Reserve the replacement before releasing the old buffer. A lower
-            // bound may underestimate real capacity, so this can overcount growth.
-            self.storage.replacement_peak(
-                &expr.span,
-                &Charge { kind: state.backing.kind.clone(), amount: extra.clone() },
-            )?;
-            let retained =
-                super::allocations::retained_bytes(&expr.span, state.backing.bytes.clone(), extra);
-            let mut lower = contracts::maximum(
-                &expr.span,
-                capacity.clone(),
-                contracts::add(&expr.span, len, contracts::literal(&expr.span, 1)),
-            );
-            if state.backing.input_bytes.is_none() && state.element != 0 {
-                // Equality of a sound lower and upper bound establishes exact
-                // capacity, so local vectors can retain all their new spare room.
-                let exact = mk_eq(
+                self.storage.record_live(&expr.span)?;
+            } else {
+                let new_capacity =
+                    super::growth::grown_capacity(&expr.span, len.clone(), state.element);
+                let new_bytes = contracts::multiply(
                     &expr.span,
-                    &state.backing.bytes,
-                    &contracts::multiply(
-                        &expr.span,
-                        capacity.clone(),
-                        contracts::literal(&expr.span, state.element),
-                    ),
+                    contracts::literal(&expr.span, state.element),
+                    new_capacity.clone(),
                 );
-                let exact_lower = super::growth::select(&expr.span, room, capacity, new_capacity);
-                lower = super::growth::select(&expr.span, exact, exact_lower, lower);
-            }
-            self.growth.updates.entry(expr.span.id).or_default().extend([
-                super::symbolic::assign(&expr.span, &state.next_capacity, lower),
-                super::symbolic::assign(&expr.span, &state.backing.next_bytes, retained),
-            ]);
-            self.growth.after.entry(expr.span.id).or_default().extend([
-                super::symbolic::assign(
+                let extra = super::growth::select(
                     &expr.span,
-                    &state.backing.bytes,
-                    state.backing.next_bytes.clone(),
-                ),
-                super::symbolic::assign(&expr.span, &state.capacity, state.next_capacity.clone()),
-            ]);
-            self.growth.vectors[state_id].backing.changed = true;
-            self.growth.vectors[state_id].pushes += 1;
+                    room.clone(),
+                    contracts::literal(&expr.span, 0),
+                    new_bytes,
+                );
+                // Reserve the replacement before releasing the old buffer. A lower
+                // bound may underestimate real capacity, so this can overcount growth.
+                self.storage.replacement_peak(
+                    &expr.span,
+                    &Charge { kind: state.backing.kind.clone(), amount: extra.clone() },
+                )?;
+                let retained = super::allocations::retained_bytes(
+                    &expr.span,
+                    state.backing.bytes.clone(),
+                    extra,
+                );
+                let mut lower = contracts::maximum(
+                    &expr.span,
+                    capacity.clone(),
+                    contracts::add(&expr.span, len, contracts::literal(&expr.span, 1)),
+                );
+                if state.backing.input_bytes.is_none() && state.element != 0 {
+                    // Equality of a sound lower and upper bound establishes exact
+                    // capacity, so local vectors can retain all their new spare room.
+                    let exact = mk_eq(
+                        &expr.span,
+                        &state.backing.bytes,
+                        &contracts::multiply(
+                            &expr.span,
+                            capacity.clone(),
+                            contracts::literal(&expr.span, state.element),
+                        ),
+                    );
+                    let exact_lower =
+                        super::growth::select(&expr.span, room, capacity, new_capacity);
+                    lower = super::growth::select(&expr.span, exact, exact_lower, lower);
+                }
+                self.growth.updates.entry(expr.span.id).or_default().extend([
+                    super::symbolic::assign(&expr.span, &state.next_capacity, lower),
+                    super::symbolic::assign(&expr.span, &state.backing.next_bytes, retained),
+                ]);
+                self.growth.after.entry(expr.span.id).or_default().extend([
+                    super::symbolic::assign(
+                        &expr.span,
+                        &state.backing.bytes,
+                        state.backing.next_bytes.clone(),
+                    ),
+                    super::symbolic::assign(
+                        &expr.span,
+                        &state.capacity,
+                        state.next_capacity.clone(),
+                    ),
+                ]);
+                self.growth.vectors[state_id].backing.changed = true;
+                self.growth.vectors[state_id].pushes += 1;
+            }
+            if let Some(child) = child {
+                let (name, path) = super::paths::expr(receiver, &typ).unwrap();
+                let mut elements = self
+                    .heap
+                    .root_mut(&name)
+                    .and_then(|owner| owner.at_mut(&path))
+                    .and_then(|owner| owner.elements.take())
+                    .ok_or_else(|| unsupported(&expr.span, "a collection without child state"))?;
+                self.insert_child(&expr.span, &mut elements, child, element_length)?;
+                self.heap.root_mut(&name).unwrap().at_mut(&path).unwrap().elements = Some(elements);
+                self.record_element_updates(&expr.span)?;
+            }
         } else if index {
             if args.len() != 2 {
                 return Err(unsupported(&expr.span, "this vector index"));

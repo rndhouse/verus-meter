@@ -58,11 +58,19 @@ charge only replacements created in the callee. Returned input trees apply those
 effects at relative paths while preserving the caller's original allocations.
 Loop invariants and section protections must visit every descendant vector state.
 
-Child extraction and replacement need ownership transfer transitions
-before they can be supported. Runtime collections will need aggregate bounds for
-varying element footprints; shared ownership needs separate last-owner release
-rules. Extend the common ownership model rather than adding rules for individual
-combinations of nested types.
+[elements.rs](../../source/vir/src/resource/memory/elements.rs) represents runtime
+children with byte sums by memory kind, independent of container layout. Element
+insertion captures the complete child footprint, retires its old charge identities,
+and preserves input provenance. Owning call summaries and borrowed effects carry
+both newly retained bytes and captured inputs; each captured input is consumed
+exactly once at the caller. Additive child effects must never use the maximum
+operation used for replacement buffers. Loop sums and append-only buffer bounds
+are ordinary proof-checked invariants, not assumptions. Post-operation checks
+must include all pending child sums before their erased states commit.
+
+Child extraction and replacement still need per-element ownership transitions;
+shared ownership needs separate last-owner release rules. Extend the common
+ownership model rather than adding rules for individual nesting combinations.
 
 Compiler upgrades need a review of borrow/coercion lowering, move/copy provenance,
 and the identities used for supported standard operations.

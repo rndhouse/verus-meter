@@ -185,25 +185,56 @@ and [nested growth](../../examples/resource/memory/nested_growth.rs).
 
 Moving or replacing an owning field and moving an owner out of a box remain
 unsupported. These need ownership transfer transitions for a particular child
-path. Recursive layouts, owning `Option` payloads, and
-owning elements in arrays, vectors, or boxed slices are also excluded. Runtime
-collections of owners need aggregate allocation bounds; shared ownership needs
-last-owner release rules. These are separate extensions to the ownership model.
+path. Recursive layouts, owning `Option` payloads, and owning array elements are
+also excluded. Shared ownership needs last-owner release rules.
+
+## Runtime collections of owners
+
+A supported type's ownership consists of its own allocations, fixed children,
+and runtime child collections. Each runtime collection maintains a sum of child
+allocation bytes for each memory kind. Its backing buffer accounts separately
+for the elements' inline storage. This composition applies recursively to any
+supported concrete element type, including boxes, vectors, boxed slices, and
+owning structs; there are no rules for particular nesting combinations.
+
+Vectors of owners support construction, length, insertion, whole-value moves,
+helper calls, and drop. Insertion transfers the child's complete allocation
+footprint into the collection. Growing the outer buffer overlaps old and new
+element storage without duplicating the children's allocations. Dropping the
+collection releases both its buffer and all accumulated child storage. Conversion
+to a boxed slice transfers the same child sums.
+
+Ordinary loop invariants provide the logical length bound. Generated, checked
+invariants relate direct insertions to that length and bound the accumulated
+child bytes. Helper summaries preserve captured input ownership and add newly
+retained bytes to the caller's collection. Where a sum cannot be exported using
+immutable scalar inputs, the checked function budget supplies a conservative
+bound. Byte-only helper effects can make loop proofs less precise than direct
+insertion. See [owning collections](../../examples/resource/memory/owning_collections.rs).
+
+Individual owning elements remain opaque to allocation accounting: vector
+indexing, slice views, popping, extraction, and replacement need per-element
+ownership transitions and are not supported yet. An enclosing collection cannot
+gain child allocations inside a separately budgeted memory section.
 
 ## Runtime-sized boxed slices
 
 `Box<[T]>` has a 16-byte owning handle and a backing extent of
-`length * mem_size(T)` bytes. Elements must have supported fixed, non-owning
-layouts. `mem_size(Box<[T]>)` measures the handle; it does not include backing
-storage. Zero-sized elements require no backing bytes.
+`length * mem_size(T)` bytes. Elements must have supported fixed inline layouts;
+their owned allocations are separate child-footprint sums. `mem_size(Box<[T]>)`
+measures the handle; it does not include backing storage or child allocations.
+Zero-sized elements require no backing bytes.
 
 Convert a named vector with `v.into_boxed_slice()`. The model conservatively
 allows a length-sized replacement to overlap the old vector buffer, even when
-an allocator could reuse or shrink that buffer in place. After conversion, only
-the boxed slice's backing allocation remains. The length is captured before the
-vector is consumed, so later accounting cannot read a moved value. Moves,
-borrowing contents, indexing, helper calls, explicit drop, and scope exit reuse
-the ordinary ownership rules. See [boxed slices](../../examples/resource/memory/boxed_slices.rs).
+an allocator could reuse or shrink that buffer in place. After local conversion,
+the boxed slice retains its new backing allocation and the original child sums.
+For an incoming owning collection, its opaque input provenance is retained with
+the children, conservatively keeping the caller's old backing charge too.
+The length is captured before the vector is consumed, so later accounting cannot
+read a moved value. Moves, helper calls, explicit drop, and scope exit reuse the
+ordinary ownership rules. Borrowing and indexing individual elements require
+non-owning element types. See [boxed slices](../../examples/resource/memory/boxed_slices.rs).
 
 A returned local runtime extent that cannot be expressed using immutable scalar
 inputs is conservatively bounded by the producing function's checked `mem_peak`.
@@ -212,8 +243,8 @@ preserves its existing allocation charge. Local accounting uses the captured
 extent. This can make callers require more allowance than the exact payload size.
 
 Other construction/conversion APIs, including boxed-array unsizing and conversion
-back into a vector, are not yet modeled. Nested owning elements and shared owners
-also remain unsupported. Bind the vector before converting it, and bind the
+back into a vector, are not yet modeled. Shared owners remain unsupported.
+Bind the vector before converting it, and bind the
 result before passing it to a helper.
 
 ## Vector allocations and growth
@@ -238,8 +269,8 @@ states, and loops receive compiler-generated, proof-checked memory invariants;
 ordinary loop invariants still need to bound lengths relevant to growth.
 
 `pop` retains backing storage. Moves transfer its charge and dropping releases
-it. Supported elements are fixed-size, non-owning values. Length, indexing,
-popping, and borrowing elements through slices remain supported. Explicit
+it. For non-owning elements, length, indexing, popping, and borrowing elements
+through slices remain supported. Owning elements use the collection rules above. Explicit
 `reserve`, shrinking, vector replacement, and local reference aliases remain
 unsupported. Bind arguments before calls if evaluating them changes vector
 allocations. A memory section can grow its own vectors; an enclosing vector

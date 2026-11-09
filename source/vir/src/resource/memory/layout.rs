@@ -100,10 +100,33 @@ impl Layouts {
         if !self.vector(typ) || args.len() != 2 || !self.standard_allocator(&args[1]) {
             return Err(unsupported(span, "vectors with custom allocator types"));
         }
-        if self.owner(&args[0]) || matches!(&*args[0], TypX::Decorate(..) | TypX::MutRef(_)) {
-            return Err(unsupported(span, "owning or reference-valued vector elements"));
+        self.element_size(&args[0], span, &mut HashSet::new())
+    }
+
+    /// Runtime sequences expose element shape separately from fixed child paths.
+    pub(super) fn owning_elements(&self, typ: &Typ) -> bool {
+        if self.vector(typ) {
+            let TypX::Datatype(_, args, _) = &**typ else { unreachable!() };
+            args.first().is_some_and(|typ| self.owner(typ))
+        } else if let TypX::Decorate(TypDecoration::Box, _, inner) = &**typ {
+            matches!(&**inner, TypX::Primitive(Primitive::Slice, args) if args.first().is_some_and(|typ| self.owner(typ)))
+        } else {
+            false
         }
-        self.size(&args[0], span)
+    }
+
+    fn element_size(
+        &self,
+        typ: &Typ,
+        span: &Span,
+        visiting: &mut HashSet<Dt>,
+    ) -> Result<u64, VirErr> {
+        if matches!(&**typ, TypX::MutRef(_))
+            || matches!(&**typ, TypX::Decorate(d, _, _) if *d != TypDecoration::Box)
+        {
+            return Err(unsupported(span, "reference-valued collection elements"));
+        }
+        self.size_inner(typ, span, visiting)
     }
 
     /// Child owners occupy inline storage already counted by the containing value.
@@ -172,7 +195,7 @@ impl Layouts {
         self.size_inner(typ, span, &mut HashSet::new())
     }
 
-    /// A box owns a fixed value or a runtime-length sequence of non-owning values.
+    /// A box owns a fixed value or a runtime-length sequence of supported values.
     /// Its handle and heap object are sized separately so moves do not duplicate
     /// the allocation and borrows keep backing storage charged to its owner.
     pub(super) fn box_layout(
@@ -207,23 +230,29 @@ impl Layouts {
             return Err(unsupported(span, "reference-valued heap objects"));
         }
         Ok(Some(if slice(inner) {
-            AllocationLayout::Sequence { element: self.slice_element(inner, span)? }
+            AllocationLayout::Sequence { element: self.slice_element_inner(inner, span, visiting)? }
         } else {
             AllocationLayout::Fixed(self.size_inner(inner, span, visiting)?)
         }))
     }
 
     pub(super) fn slice_element(&self, typ: &Typ, span: &Span) -> Result<u64, VirErr> {
+        self.slice_element_inner(typ, span, &mut HashSet::new())
+    }
+
+    fn slice_element_inner(
+        &self,
+        typ: &Typ,
+        span: &Span,
+        visiting: &mut HashSet<Dt>,
+    ) -> Result<u64, VirErr> {
         let TypX::Primitive(Primitive::Slice, args) = &**typ else {
             return Err(unsupported(span, "this slice type"));
         };
-        if args.len() != 1
-            || self.owner(&args[0])
-            || matches!(&*args[0], TypX::Decorate(..) | TypX::MutRef(_))
-        {
-            return Err(unsupported(span, "owning or reference-valued slice elements"));
+        if args.len() != 1 {
+            return Err(unsupported(span, "this slice type"));
         }
-        self.size(&args[0], span)
+        self.element_size(&args[0], span, visiting)
     }
 
     fn size_inner(
@@ -240,7 +269,11 @@ impl Layouts {
                     .ok_or_else(|| unsupported(span, "Option sizes exceeding u64"))
             }
             _ if self.vector(typ) => {
-                self.vector_element(typ, span)?;
+                let TypX::Datatype(_, args, _) = &**typ else { unreachable!() };
+                if args.len() != 2 || !self.standard_allocator(&args[1]) {
+                    return Err(unsupported(span, "vectors with custom allocator types"));
+                }
+                self.element_size(&args[0], span, visiting)?;
                 Ok(3 * WORD_BYTES)
             }
             TypX::Decorate(TypDecoration::Box, _, _) => {
