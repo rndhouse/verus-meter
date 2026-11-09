@@ -1,5 +1,5 @@
-// Growth is checked against the heap allowance, including overlapping buffers.
-// Capacity tracking is erased; ordinary length invariants support the proof.
+// Grow a vector while proving that its memory use stays within budget.
+
 use vstd::prelude::*;
 
 verus! {
