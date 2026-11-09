@@ -16,18 +16,28 @@ on algorithmic memory use for a subset of Rust.
 A simple example:
 
 ```rust
-// Reverse a small buffer using a temporary copy.
+// Reverse a small buffer using either a copy or a sequence of swaps.
 //
-// Borrowing keeps the original array charged to the caller; mem_size(values)
-// counts only the reference. The temporary copy needs a separate array.
-fn reverse(values: &mut [u32; 4])
-    mem_peak <= mem_size(values) + mem_size([u32; 4]),
+// The caller keeps paying for the borrowed array; mem_size(values) counts
+// only the reference. Copying needs another array; swapping needs one value.
+fn reverse(values: &mut [u32; 4], use_scratch: bool)
+    mem_peak <= mem_size(values) + mem_size(use_scratch)
+        + if use_scratch { mem_size([u32; 4]) } else { mem_size(u32) },
 {
-    let copy = *values;
-    values[0] = copy[3];
-    values[1] = copy[2];
-    values[2] = copy[1];
-    values[3] = copy[0];
+    if use_scratch {
+        let copy = *values;
+        values[0] = copy[3];
+        values[1] = copy[2];
+        values[2] = copy[1];
+        values[3] = copy[0];
+    } else {
+        let mut saved = values[0];
+        values[0] = values[3];
+        values[3] = saved;
+        saved = values[1];
+        values[1] = values[2];
+        values[2] = saved;
+    }
 }
 
 // Reverse two buffers using the memory needed for just one reversal.
@@ -36,18 +46,19 @@ fn main()
 {
     {
         let mut first = [1u32, 2, 3, 4];
-        reverse(&mut first);
+        reverse(&mut first, false);
     }
     {
         let mut second = [5u32, 6, 7, 8];
-        reverse(&mut second);
+        reverse(&mut second, true);
     }
 }
 ```
 
-Memory budgets are checked code properties. Here, two reversals share
-one memory allowance because their buffers do not overlap. A change that keeps
-both buffers alive would exceed that allowance and fail verification.
+Each strategy must fit its own allowance in the conditional budget. The caller
+uses `mem_peak(reverse)` to allow for either strategy. Separate scopes let both
+reversals share one overall budget; keeping both buffers alive would exceed it
+and fail verification.
 
 Bounds describe a source-level model, not the compiled program’s actual memory use.
 
