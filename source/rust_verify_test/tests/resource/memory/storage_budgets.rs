@@ -151,9 +151,10 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] budget_builtin_outside_header_rejected verus_code! {
+    #[test] peak_query_outside_header_rejected verus_code! {
+        fn helper() mem_peak <= 0 {}
         proof fn f() {
-            let n = verus_builtin::resource_mem_size_type::<u32>();
+            let n = verus_builtin::resource_mem_peak(&helper);
         }
     } => Err(err) => assert_vir_error_msg(err, "mem_size and mem_peak are only allowed inside a mem_peak clause or checkpoint")
 }
@@ -236,5 +237,14 @@ test_verify_one_file! {
             ensures mem_peak(x),
             mem_peak <= mem_size(x),
         {}
+    } => Ok(())
+}
+
+test_verify_one_file! {
+    #[test] model_size_in_proof verus_code! {
+        proof fn f() {
+            let n = mem_size(u32);
+            assert(n == 4);
+        }
     } => Ok(())
 }
