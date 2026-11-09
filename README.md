@@ -77,13 +77,14 @@ Bounds describe a source-level model, not the compiled program’s actual memory
   - [Heap buffers](examples/resource/memory/heap.rs): reuse a heap allowance by releasing each buffer before creating the next.
   - [Ownership](examples/resource/memory/ownership.rs): track an allocation's cost as it passes between helpers.
   - [Vectors](examples/resource/memory/vectors.rs): collect values while proving that every addition fits the reserved capacity.
+  - [Growing vectors](examples/resource/memory/vector_growth.rs): budget for replacement buffers and retained allocations across helper calls.
   - [Borrowing vectors](examples/resource/memory/vector_helpers.rs): let helpers use a vector within its existing reservation.
   - [Returning vectors](examples/resource/memory/vector_returns.rs): create a reserved buffer in a helper and use it in the caller.
   - [Optional results](examples/resource/memory/options.rs): keep a result after releasing the collection that held it.
   - [Integer types](examples/resource/memory/integers.rs): adjust a counter while checking arithmetic safety and memory use.
   - [Insertion sort](examples/resource/memory/insertion_sort.rs): prove sorting correctness with workspace that stays fixed as inputs grow.
   - [Structs](examples/resource/memory/structs.rs): sort data inside a struct while budgeting for both the data and the sorting work.
-  - [Deliberate violations](examples/resource/memory/expected-failures): see verification reject extra copies, overlapping allocations, and vector growth.
+  - [Deliberate violations](examples/resource/memory/expected-failures): see verification reject unbudgeted copies, overlapping allocations, and vector growth.
 
 ## Docs
 

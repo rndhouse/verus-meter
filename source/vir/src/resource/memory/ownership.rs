@@ -14,16 +14,34 @@ use crate::ast::*;
 #[derive(Clone)]
 pub(super) enum Returned {
     Input(usize),
-    Fresh { kind: MemoryKind, capacity: Option<Expr> },
+    /// An original allocation or a replacement bounded by the verified body.
+    Grown {
+        input: Option<usize>,
+        bytes: Expr,
+    },
+    Fresh {
+        kind: MemoryKind,
+        capacity: Option<Expr>,
+    },
 }
 
 pub(super) fn summarize(
     function: &Function,
     owner: Option<Owner>,
+    growth: &super::growth::Growth,
+    bound: &Expr,
 ) -> Result<Option<Returned>, VirErr> {
     let Some(owner) = owner else {
         return Ok(None);
     };
+    if let Some(id) = owner.vector {
+        if growth.vectors[id].changed {
+            return Ok(Some(Returned::Grown {
+                input: owner.input,
+                bytes: super::growth::retained_bound(&growth.vectors[id], function, bound),
+            }));
+        }
+    }
     if let Some(input) = owner.input {
         return Ok(Some(Returned::Input(input)));
     }
@@ -64,6 +82,36 @@ impl Analysis<'_> {
         } else {
             None
         };
+        if let Some(Returned::Grown { input, bytes }) = summary {
+            let bytes = contracts::substitute(bytes, callee, args, &self.stable_scalars)?;
+            let owner = if let Some(index) = input {
+                transferred[*index]
+                    .take()
+                    .ok_or_else(|| unsupported(&expr.span, "missing grown input"))?
+            } else {
+                let element = self.layouts.vector_element(&expr.typ, &expr.span)?;
+                let allocation = super::accounting::Accounting::fresh_allocation();
+                let id = self.growth.new_vector(
+                    &expr.span,
+                    contracts::literal(&expr.span, 0),
+                    bytes.clone(),
+                    element,
+                    None,
+                    allocation,
+                );
+                self.storage.set_allocation(
+                    allocation,
+                    MemoryKind::host_heap(),
+                    self.growth.vectors[id].bytes.clone(),
+                );
+                Owner { vector: Some(id), dynamic: Some(allocation), ..Owner::default() }
+            };
+            self.retain_vector_growth(&expr.span, owner.vector.unwrap(), bytes);
+            for other in transferred.iter_mut().filter_map(Option::take) {
+                self.release_owner(other, &expr.span);
+            }
+            return Ok(Some(owner));
+        }
         let forwarded = if let Some(Returned::Input(index)) = summary {
             Some(transferred[*index].take().ok_or_else(|| {
                 unsupported(&expr.span, "a returned input without transferred ownership")
@@ -108,8 +156,36 @@ impl Analysis<'_> {
             )?;
             owner.bytes = bytes;
         } else {
-            self.storage.reserve_dynamic(&expr.span, owner.kind.clone(), cost);
+            self.storage.reserve_dynamic(&expr.span, owner.kind.clone(), cost.clone());
             owner.dynamic = Some(expr.span.id);
+        }
+        if let Some(capacity) = owner.capacity.clone() {
+            let allocation = super::accounting::Accounting::fresh_allocation();
+            let id = self.growth.new_vector(
+                &expr.span,
+                capacity,
+                cost,
+                self.layouts.vector_element(&expr.typ, &expr.span)?,
+                None,
+                allocation,
+            );
+            if let Some(old) = owner.dynamic {
+                self.storage.release_dynamic(old);
+            }
+            self.storage.release(
+                &expr.span,
+                owner.kind.clone(),
+                owner.bytes,
+                "track returned vector",
+            );
+            owner.bytes = 0;
+            owner.dynamic = Some(allocation);
+            owner.vector = Some(id);
+            self.storage.set_allocation(
+                allocation,
+                owner.kind.clone(),
+                self.growth.vectors[id].bytes.clone(),
+            );
         }
         Ok(Some(owner))
     }

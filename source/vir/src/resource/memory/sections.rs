@@ -24,8 +24,15 @@ impl Analysis<'_> {
         let parent_slots = self.slots.clone();
         let parent_checkpoints = std::mem::take(&mut self.checkpoints);
         let protection = self.heap.protect();
+        let protected = self.growth.section_protected.clone();
+        self.growth.section_protected.extend(self.heap.owners.values().filter_map(|o| o.vector));
+        self.growth.section_protected.extend(self.heap.borrowed.values().copied());
+        let outer_bound =
+            std::mem::replace(&mut self.bound, super::contracts::literal(contract_span, budget));
         self.block_contents(expr, stmts, tail)?;
         self.heap.unprotect(protection);
+        self.bound = outer_bound;
+        self.growth.section_protected = protected;
         self.check_checkpoints()?;
         let section = std::mem::replace(&mut self.storage, parent);
         self.checkpoints = parent_checkpoints;

@@ -1,8 +1,6 @@
 // rust_verify/tests/example.rs expect-errors --- Intentionally requires unbudgeted growth.
-// A vector cannot outgrow the capacity covered by its memory allowance.
-//
-// An ordinary Rust vector could grow here. The memory contract requires each
-// push to stay within the original reservation, so verification rejects it.
+// Growth is supported, but the budget must cover the old and replacement buffers
+// simultaneously. This budget only covers the original buffer.
 
 use vstd::prelude::*;
 
@@ -18,7 +16,7 @@ fn main()
     let mut values = Vec::<u32>::with_capacity(1);
     values.push(10);
 
-    // Verus reports the capacity violation at this push: the reservation is full.
+    // The replacement allocation exceeds the memory budget at this push.
     values.push(20);
 }
 

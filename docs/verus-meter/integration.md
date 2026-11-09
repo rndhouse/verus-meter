@@ -22,14 +22,20 @@ assertions for normal Verus verification.
 
 Macro lowering must preserve execution and ghost erasure. Resolve section budget
 names before visiting its declarations, and retain binding scopes for checkpoints.
+Vector growth introduces compiler-owned spec locals after mode checking.
+Register their modes for resolution inference, use fresh AST identities, and
+commit state updates after the executable operation. Generated loop invariants
+must be proved at entry and on back edges. Keep peak checks separate from retained
+allocation effects; caller-owned buffers must stay charged during helper calls.
+
 Compiler upgrades need a review of borrow/coercion lowering, move/copy provenance,
 and the identities used for supported standard operations.
 
 When resolving syntax conflicts, edit the AST definitions first, then run
 `cargo run` in `dependencies/syn/codegen/` to regenerate the schema and derived files.
-Keep historical model variants and their ordering in
-[model.rs](../../source/vir/src/resource/memory/model.rs); a semantic change needs
-a distinct model identity rather than reinterpreting an old contract.
+The unreleased contract format has no compatibility variants. Update the model
+identity in [model.rs](../../source/vir/src/resource/memory/model.rs) when its
+semantics change and rebuild dependent verification artifacts.
 
 After an upgrade, rebuild with `cargo make build` from `source/`, then run:
 

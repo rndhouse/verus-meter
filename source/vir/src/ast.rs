@@ -1349,8 +1349,8 @@ pub enum ExprX {
     /// We don't know for sure if something is a "real" move or copy until mode-checking.
     ReadPlace(Place, UnfinalizedReadKind),
     /// Evaluate both in sequence and return the left value.
-    /// The right side should only contain `assume(has_resolved(...))` statements
-    /// emitted by the resolution analysis.
+    /// The right side contains resolution facts or erased memory-model state
+    /// transitions. It must preserve the executable value computed on the left.
     EvalAndResolve(Expr, Expr),
     /// The `old` node.
     /// Note: to explicitly refer to the pre-state of a variable, the ExprX::VarAt(e, Pre)

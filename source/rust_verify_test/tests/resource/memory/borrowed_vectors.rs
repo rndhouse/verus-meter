@@ -72,14 +72,14 @@ test_verify_one_file! {
     #[test] borrowed_push_requires_room verus_code! {
         use vstd::prelude::*;
         fn append(v: &mut Vec<u32>, cap: usize) mem_capacity(v) >= cap, mem_peak <= 16 { v.push(1); }
-    } => Err(err) => assert_vir_error_msg(err, "vector capacity exceeded")
+    } => Err(err) => assert_vir_error_msg(err, "memory budget exceeded")
 }
 
 test_verify_one_file! {
-    #[test] borrowed_push_requires_capacity_contract verus_code! {
+    #[test] borrowed_push_requires_growth_budget verus_code! {
         use vstd::prelude::*;
         fn append(v: &mut Vec<u32>) mem_peak <= 8 { v.push(1); }
-    } => Err(err) => assert_vir_error_msg(err, "without a capacity contract")
+    } => Err(err) => assert_vir_error_msg(err, "memory budget exceeded")
 }
 
 test_verify_one_file! {
@@ -163,10 +163,10 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] zero_size_elements_still_need_reserved_room verus_code! {
+    #[test] zero_size_elements_can_grow verus_code! {
         use vstd::prelude::*;
         fn push(v: &mut Vec<()>) mem_capacity(v) >= 0, mem_peak <= 8 { v.push(()); }
-    } => Err(err) => assert_vir_error_msg(err, "vector capacity exceeded")
+    } => Ok(())
 }
 
 test_verify_one_file! {
@@ -239,7 +239,7 @@ test_verify_one_file! {
             let v = Vec::<u32>::with_capacity(2);
             inspect(&v);
         }
-    } => Err(err) => assert_vir_error_msg(err, "peak 40 bytes exceeds budget 39 bytes")
+    } => Err(err) => assert_vir_error_msg(err, "memory budget exceeded")
 }
 
 test_verify_one_file! {
@@ -247,7 +247,7 @@ test_verify_one_file! {
         use vstd::prelude::*;
         fn inspect(v: &Vec<u32>) mem_capacity(v) >= 1, mem_peak <= 8 {}
         fn forward(v: &Vec<u32>) mem_peak <= 16 { inspect(v); }
-    } => Err(err) => assert_vir_error_msg(err, "without a capacity contract")
+    } => Err(err) => assert_vir_error_msg(err, "vector capacity exceeded")
 }
 
 test_verify_one_file! {

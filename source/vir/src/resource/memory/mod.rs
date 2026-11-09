@@ -5,7 +5,8 @@
 //! `accounting` owns live/peak totals and traces; `sections` checks nested
 //! workspace contracts and composes their bounds with the parent.
 //! `heap` tracks allocation lifetimes; `ownership` derives transfer summaries
-//! for checked helpers; `vectors` checks reserved capacity. `contracts`
+//! for checked helpers; `vectors` handles operations and `growth` maintains erased
+//! capacity/retained-byte state. `contracts`
 //! specializes declared formulas with stable scalar arguments. `symbolic`
 //! turns conditional contracts into ordinary Verus proof obligations.
 //! `call_graph` discovers executable edges, orders callees, and rejects cycles;
@@ -28,6 +29,7 @@ mod construction;
 mod contracts;
 mod execution;
 mod footprint;
+mod growth;
 mod heap;
 mod layout;
 mod lifetime;
@@ -44,6 +46,7 @@ mod vectors;
 pub use accounting::{MemoryEvent, MemoryReport};
 pub use budget::{BudgetExpr, BudgetExprX};
 pub use footprint::{Footprint, MemoryBudget, MemoryKind, MemorySelection};
+pub(crate) use growth::resolution_modes;
 pub use model::ResourceContract;
 
 use crate::ast::*;
@@ -97,6 +100,7 @@ pub fn check_crate(
                 checked.symbolic_bound.as_ref(),
                 &checked.obligations,
                 &checked.checks,
+                &checked.growth,
                 fresh_span,
             )?;
             let target = functions.iter_mut().find(|f| f.x.name == function.x.name).unwrap();

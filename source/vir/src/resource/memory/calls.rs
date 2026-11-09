@@ -57,6 +57,7 @@ impl Analysis<'_> {
             false,
         )
         .unwrap_or_else(|_| super::contracts::literal(&expr.span, envelope));
+        let argument_revision = self.growth.revision();
         let mut parameters = 0u64;
         let mut values = vec![None; args.len()];
         let mut transferred = vec![None; args.len()];
@@ -84,6 +85,12 @@ impl Analysis<'_> {
                         .ok_or_else(|| unsupported(&arg.span, "missing argument ownership"))?,
                 );
             }
+        }
+        if argument_revision != self.growth.revision() {
+            return Err(unsupported(
+                &expr.span,
+                "vector allocation changes inside call arguments; bind the arguments first",
+            ));
         }
         let c = &expr.span;
         let mut base = self.storage.live_expression(c).remove(
@@ -160,6 +167,22 @@ impl Analysis<'_> {
                 cost = cost.remove(c, MemoryKind::host_local(), credit.clone());
             }
             self.storage.call_cost(c, base.add(c, cost), &excluded, &result_ids, point.result);
+        }
+        for (index, bound) in &self.summaries[target].growth.clone() {
+            let (name, _, _) = self.vector_receiver(&args[*index])?;
+            let id = self
+                .vector_state(&name)
+                .ok_or_else(|| unsupported(c, "untracked mutable vector argument"))?;
+            let bound = super::contracts::substitute(bound, callee, args, &self.stable_scalars)?;
+            if self.growth.section_protected.contains(&id)
+                && super::contracts::constant(&bound) != Some(0)
+            {
+                return Err(unsupported(
+                    c,
+                    "growing an enclosing vector through a helper inside a memory section",
+                ));
+            }
+            self.retain_vector_growth(c, id, bound);
         }
         self.result_owner = self.complete_ownership_call(expr, callee, args, &mut transferred)?;
         self.storage.record_live(c)?;

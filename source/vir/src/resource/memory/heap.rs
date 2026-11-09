@@ -14,8 +14,9 @@ use std::collections::{HashMap, HashSet};
 #[derive(Clone, Default)]
 pub(super) struct Heap {
     pub(super) owners: HashMap<VarIdent, Owner>,
-    // Borrowed parameters retain no allocation charge, only a minimum reservation.
-    pub(super) borrowed: HashMap<VarIdent, Option<Expr>>,
+    // Borrowed inputs refer to vector proof state. Their original allocation
+    // remains charged to the caller; replacement buffers are charged locally.
+    pub(super) borrowed: HashMap<VarIdent, usize>,
     protected: HashSet<VarIdent>,
 }
 
@@ -26,13 +27,22 @@ pub(super) struct Owner {
     pub(super) bytes: u64,
     pub(super) dynamic: Option<u64>,
     pub(super) capacity: Option<Expr>,
+    /// Vector proof-state identity, preserved when its handle moves.
+    pub(super) vector: Option<usize>,
     // The lifetime summary tells callers when this input allocation is released.
     pub(super) input: Option<usize>,
 }
 
 impl Default for Owner {
     fn default() -> Self {
-        Self { kind: MemoryKind::host_heap(), bytes: 0, dynamic: None, capacity: None, input: None }
+        Self {
+            kind: MemoryKind::host_heap(),
+            bytes: 0,
+            dynamic: None,
+            capacity: None,
+            vector: None,
+            input: None,
+        }
     }
 }
 

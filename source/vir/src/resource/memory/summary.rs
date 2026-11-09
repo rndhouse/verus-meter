@@ -9,4 +9,6 @@ pub(super) struct FunctionSummary {
     pub(super) return_parameter: Option<usize>,
     /// Simultaneous costs and input/result lifetimes needed to compose a call.
     pub(super) profiles: Vec<super::lifetime::Profile>,
+    /// Bounds for replacement buffers retained through mutable vector parameters.
+    pub(super) growth: std::collections::HashMap<usize, crate::ast::Expr>,
 }

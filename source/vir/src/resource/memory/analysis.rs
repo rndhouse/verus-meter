@@ -23,6 +23,8 @@ pub(super) struct FunctionAnalysis {
     pub(super) obligations: Vec<Obligation>,
     /// Additional safety conditions, such as reserved vector capacity.
     pub(super) checks: Vec<(Span, Expr)>,
+    /// Erased vector state and the proof instrumentation that maintains it.
+    pub(super) growth: super::growth::Growth,
 }
 
 /// A cumulative bound and the history visible where it is asserted.
@@ -67,6 +69,10 @@ pub(super) struct Analysis<'a> {
     pub(super) obligations: Vec<Obligation>,
     /// Additional safety conditions, such as reserved vector capacity.
     pub(super) checks: Vec<(Span, Expr)>,
+    /// Erased vector state and the proof instrumentation that maintains it.
+    pub(super) growth: super::growth::Growth,
+    /// Active function or section allowance used for inductive loop bounds.
+    pub(super) bound: Expr,
 }
 
 impl Analysis<'_> {
@@ -358,7 +364,17 @@ impl Analysis<'_> {
                 atomic_call: false,
                 ..
             } if unit(&expr.typ) => {
+                let fill_invariants = self.fill_loop_invariants(cond, body);
+                let loop_scalars = self.stable_scalars.clone();
                 let entry = self.storage.live();
+                let ids: Vec<_> = self
+                    .heap
+                    .owners
+                    .values()
+                    .filter_map(|o| o.vector)
+                    .chain(self.heap.borrowed.values().copied())
+                    .collect();
+                let live = self.storage.live_expression(&expr.span).total();
                 let protection = self.heap.protect();
                 let first_checkpoint = self.checkpoints.len();
                 self.storage.event(&expr.span, "analyze reusable while iteration".into());
@@ -373,6 +389,16 @@ impl Analysis<'_> {
                     checkpoint.peak.merge(&iteration_peak);
                 }
                 self.heap.unprotect(protection);
+                let mut invariants =
+                    self.growth.invariants(&expr.span, &ids, &loop_scalars, &self.bound);
+                invariants.extend(fill_invariants);
+                invariants.push(crate::ast_util::mk_ineq(
+                    &expr.span,
+                    &live,
+                    &self.bound,
+                    InequalityOp::Le,
+                ));
+                self.growth.loops.insert(expr.span.id, invariants);
                 return Ok(0);
             }
             _ => {
@@ -467,6 +493,8 @@ pub(super) fn check(
         heap: super::heap::Heap::default(),
         obligations: Vec::new(),
         checks: Vec::new(),
+        growth: super::growth::Growth::default(),
+        bound: super::contracts::function_bound(function, budgets, functions, layouts)?,
     };
     if f.outer_ret.x.mode != Mode::Exec {
         return Err(unsupported(&function.span, "ghost or tracked return values"));
@@ -499,10 +527,6 @@ pub(super) fn check(
                         "mutable bindings for borrowed vector parameters",
                     ));
                 }
-                analysis
-                    .heap
-                    .borrowed
-                    .insert(param.x.name.clone(), capacities.get(&param.x.name).cloned());
             }
             if layouts.owner(&param.x.typ) {
                 analysis.storage.add_input(index);
@@ -514,6 +538,32 @@ pub(super) fn check(
                         ..Default::default()
                     },
                 );
+            }
+            if layouts.vector(&param.x.typ) || layouts.borrowed_vector(&param.x.typ).is_some() {
+                let typ = layouts.borrowed_vector(&param.x.typ).unwrap_or(&param.x.typ);
+                let allocation = super::accounting::Accounting::fresh_allocation();
+                let state = analysis.growth.new_vector(
+                    &param.span,
+                    capacities
+                        .get(&param.x.name)
+                        .cloned()
+                        .unwrap_or_else(|| super::contracts::literal(&param.span, 0)),
+                    super::contracts::literal(&param.span, 0),
+                    layouts.vector_element(typ, &param.span)?,
+                    Some(index),
+                    allocation,
+                );
+                analysis.storage.set_allocation(
+                    allocation,
+                    MemoryKind::host_heap(),
+                    analysis.growth.vectors[state].bytes.clone(),
+                );
+                if let Some(owner) = analysis.heap.owners.get_mut(&param.x.name) {
+                    owner.vector = Some(state);
+                    owner.dynamic = Some(allocation);
+                } else {
+                    analysis.heap.borrowed.insert(param.x.name.clone(), state);
+                }
             }
             let mut value = analysis.fresh_value(&param.span, &param.x.typ)?;
             value.parameter = Some(index);
@@ -533,7 +583,12 @@ pub(super) fn check(
             inputs: p.inputs.clone(),
         })
         .collect();
-    let returned = super::ownership::summarize(function, analysis.result_owner.take())?;
+    let returned = super::ownership::summarize(
+        function,
+        analysis.result_owner.take(),
+        &analysis.growth,
+        &analysis.bound,
+    )?;
     analysis.check_checkpoints()?;
     let report = if symbolic_bound.is_some() {
         analysis.storage.finish_conditional()
@@ -550,10 +605,29 @@ pub(super) fn check(
     }));
     Ok(Some(FunctionAnalysis {
         report,
-        summary: super::summary::FunctionSummary { returned, return_parameter, profiles },
+        summary: super::summary::FunctionSummary {
+            returned,
+            return_parameter,
+            profiles,
+            growth: analysis
+                .heap
+                .borrowed
+                .values()
+                .filter_map(|id| {
+                    let state = &analysis.growth.vectors[*id];
+                    state.changed.then(|| {
+                        (
+                            state.input.unwrap(),
+                            super::growth::retained_bound(state, function, &analysis.bound),
+                        )
+                    })
+                })
+                .collect(),
+        },
         calls: analysis.calls,
         symbolic_bound,
         obligations: analysis.obligations,
         checks: analysis.checks,
+        growth: analysis.growth,
     }))
 }

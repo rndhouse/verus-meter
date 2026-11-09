@@ -199,9 +199,7 @@ pub(super) fn function_bound(
     functions: &HashMap<Fun, Function>,
     layouts: &Layouts,
 ) -> Result<Expr, VirErr> {
-    let Some(ResourceContract::SourceValuesV8Expr { budget, .. }) =
-        &function.x.attrs.resource_contract
-    else {
+    let Some(ResourceContract { budget, .. }) = &function.x.attrs.resource_contract else {
         return Err(error(&function.span, "mem_peak requires a declared resource contract"));
     };
     lower(budget, &inputs(function), budgets, functions, layouts)
@@ -373,9 +371,7 @@ pub(super) fn minimum(span: &Span, a: Expr, b: Expr) -> Expr {
 /// Validate minimum element reservations independently of workspace budgets.
 pub(super) fn capacities(function: &Function) -> Result<HashMap<VarIdent, Expr>, VirErr> {
     let mut result = HashMap::new();
-    let Some(ResourceContract::SourceValuesV8Expr { capacities, .. }) =
-        &function.x.attrs.resource_contract
-    else {
+    let Some(ResourceContract { capacities, .. }) = &function.x.attrs.resource_contract else {
         return Ok(result);
     };
     let allowed = inputs(function);

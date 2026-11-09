@@ -1,7 +1,7 @@
 //! Compile-time budget arithmetic and acyclic references to declared contracts.
 
 use super::layout::Layouts;
-use super::model::{MODEL_NAME, ResourceContract, eligible, unsupported};
+use super::model::{ResourceContract, eligible, unsupported};
 use crate::ast::*;
 use crate::def::Spanned;
 use crate::messages::{Span, error};
@@ -50,15 +50,7 @@ impl Resolver<'_> {
         if !self.visiting.insert(name.clone()) {
             return Err(error(span, "circular mem_peak reference").secondary_span(&function.span));
         }
-        let budget = match contract {
-            ResourceContract::SourceValuesV8Expr { budget, .. } => self.expr(budget)?,
-            _ => {
-                return Err(error(
-                    span,
-                    format!("legacy resource model; rebuild with {MODEL_NAME}"),
-                ));
-            }
-        };
+        let budget = self.expr(&contract.budget)?;
         self.visiting.remove(name);
         self.resolved.insert(name.clone(), budget);
         Ok(budget)
@@ -212,9 +204,7 @@ pub(super) fn runtime(expr: &BudgetExpr, functions: &HashMap<Fun, Function>) -> 
         BudgetExprX::If(_, a, b) => runtime(a, functions) || runtime(b, functions),
         BudgetExprX::FunctionCall(f, _) => {
             match functions.get(f).and_then(|f| f.x.attrs.resource_contract.as_ref()) {
-                Some(ResourceContract::SourceValuesV8Expr { budget, .. }) => {
-                    runtime(budget, functions)
-                }
+                Some(ResourceContract { budget, .. }) => runtime(budget, functions),
                 _ => false,
             }
         }

@@ -2575,10 +2575,7 @@ pub(crate) fn finish_function<'tcx>(
         return err_span(sig.span, "mem_capacity requires a mem_peak contract");
     }
     attrs.resource_contract = header.resource_budget.map(|budget| {
-        vir::resource::memory::ResourceContract::SourceValuesV8Expr {
-            budget,
-            capacities: header.resource_capacities,
-        }
+        vir::resource::memory::ResourceContract { budget, capacities: header.resource_capacities }
     });
     let attrs = Arc::new(attrs);
     let mut functionx = FunctionX {

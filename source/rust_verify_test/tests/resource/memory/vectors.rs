@@ -20,7 +20,7 @@ test_verify_one_file! {
             let mut values = Vec::<u32>::with_capacity(1);
             values.push(1); values.push(2);
         }
-    } => Err(err) => assert_vir_error_msg(err, "vector capacity exceeded")
+    } => Err(err) => assert_vir_error_msg(err, "memory budget exceeded")
 }
 
 test_verify_one_file! {
@@ -155,10 +155,9 @@ test_verify_one_file! {
 #[test]
 fn empty_vector_has_no_backing_charge() {
     verifies("empty_vector", "fn f() mem_peak <= 24 { let v = Vec::<u32>::new(); }");
-    rejects(
-        "new_cannot_grow",
+    verifies(
+        "new_can_grow",
         "fn f() mem_peak <= 100 { let mut v = Vec::<u32>::new(); v.push(1); }",
-        "vector capacity exceeded",
     );
 }
 
@@ -168,10 +167,9 @@ fn moves_preserve_capacity() {
         "moves_preserve_capacity",
         "fn f() mem_peak <= 52 { let v = Vec::<u32>::with_capacity(1); let mut moved = v; moved.push(1); }",
     );
-    rejects(
+    verifies(
         "moved_full",
         "fn f() mem_peak <= 52 { let mut v = Vec::<u32>::with_capacity(1); v.push(1); let mut moved = v; moved.push(2); }",
-        "vector capacity exceeded",
     );
 }
 
@@ -180,7 +178,7 @@ fn pop_does_not_release_backing() {
     rejects(
         "pop_keeps_backing",
         "fn f() mem_peak <= 55 { let mut v = Vec::<u32>::with_capacity(1); v.push(1); v.pop(); let second = Vec::<u32>::with_capacity(1); }",
-        "peak 56 bytes exceeds budget 55 bytes",
+        "memory budget exceeded",
     );
 }
 
@@ -248,7 +246,7 @@ fn loop_needs_evidence_for_capacity() {
     rejects(
         "loop_no_length_invariant",
         "fn f() mem_peak <= 48 { let mut v = Vec::<u32>::with_capacity(4); let mut i: usize = 0; while i < 4 invariant i <= 4, decreases 4 - i, { v.push(1); i = i + 1; } }",
-        "vector capacity exceeded",
+        "memory budget exceeded",
     );
 }
 
@@ -261,15 +259,14 @@ fn conditional_pushes_follow_proofs() {
 }
 
 #[test]
-fn zero_size_elements_still_have_a_capacity_limit() {
+fn zero_size_elements_can_grow_without_backing_storage() {
     verifies(
         "zero_size_push",
         "fn f() mem_peak <= 24 { let mut v = Vec::<()>::with_capacity(1); v.push(()); }",
     );
-    rejects(
+    verifies(
         "zero_size_grows",
         "fn f() mem_peak <= 24 { let mut v = Vec::<()>::with_capacity(1); v.push(()); v.push(()); }",
-        "vector capacity exceeded",
     );
 }
 
@@ -363,7 +360,7 @@ fn vector_examples() {
         &[],
     )
     .unwrap_err();
-    assert_vir_error_msg(err.clone(), "vector capacity exceeded");
+    assert_vir_error_msg(err.clone(), "memory budget exceeded");
     assert!(
         err.errors.iter().flat_map(|e| &e.spans).any(
             |s| s.is_primary && s.text.iter().any(|line| line.text.contains("values.push(20)"))

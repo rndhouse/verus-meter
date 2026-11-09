@@ -88,15 +88,15 @@ fn vector_factory_lifetime() {
     rejects(
         "vector_factory_lifetime_short",
         &code.replace("BOUND", "87"),
-        "peak 88 bytes exceeds budget 87 bytes",
+        "memory budget exceeded",
     );
 }
 #[test]
-fn incoming_vector_push_requires_capacity_contract() {
+fn incoming_vector_push_requires_bounded_growth() {
     rejects(
         "input_vec_push",
         "fn f(mut v: Vec<u32>) mem_peak <= 100 { v.push(7); }",
-        "incoming vector without a capacity contract",
+        "memory budget exceeded",
     );
 }
 #[test]
@@ -178,7 +178,7 @@ fn forwarded_vector_keeps_original_capacity() {
     let code = "fn forward(v: Vec<u32>) -> (r: Vec<u32>) ensures r == v, mem_peak <= 24 { v }
         fn f() mem_peak <= 100 { let a = Vec::<u32>::with_capacity(1);
             let mut b = forward(a); b.push(1); b.push(2); }";
-    rejects("forwarded_capacity_enforced", code, "vector capacity exceeded");
+    verifies("forwarded_vector_can_grow", code);
 }
 #[test]
 fn runtime_factory_charge_survives_call() {

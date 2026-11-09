@@ -1,4 +1,4 @@
-//! Fixed-capacity vectors: one reservation, with proof-checked non-growing pushes.
+//! Vector reservations and conservative replacement-buffer accounting.
 
 use super::analysis::Analysis;
 use super::contracts;
@@ -50,9 +50,35 @@ impl Analysis<'_> {
             )?;
             owner.bytes = n;
         } else {
-            self.storage.reserve_dynamic(&expr.span, MemoryKind::host_heap(), cost);
+            self.storage.reserve_dynamic(&expr.span, MemoryKind::host_heap(), cost.clone());
             owner.dynamic = Some(expr.span.id);
         }
+        let allocation = super::accounting::Accounting::fresh_allocation();
+        let state = self.growth.new_vector(
+            &expr.span,
+            owner.capacity.clone().unwrap(),
+            cost,
+            self.layouts.vector_element(&expr.typ, &expr.span)?,
+            None,
+            allocation,
+        );
+        if let Some(id) = owner.dynamic {
+            self.storage.release_dynamic(id);
+        }
+        self.storage.release(
+            &expr.span,
+            owner.kind.clone(),
+            owner.bytes,
+            "track vector allocation",
+        );
+        owner.bytes = 0;
+        owner.dynamic = Some(allocation);
+        owner.vector = Some(state);
+        self.storage.set_allocation(
+            self.growth.vectors[state].allocation,
+            owner.kind.clone(),
+            self.growth.vectors[state].bytes.clone(),
+        );
         Ok(Some(owner))
     }
 
@@ -108,12 +134,16 @@ impl Analysis<'_> {
         Ok((name.clone(), typ.clone(), vector))
     }
 
-    pub(super) fn vector_capacity(&self, name: &VarIdent) -> Option<Expr> {
+    pub(super) fn vector_state(&self, name: &VarIdent) -> Option<usize> {
         self.heap
             .owners
             .get(name)
-            .and_then(|o| o.capacity.clone())
-            .or_else(|| self.heap.borrowed.get(name).cloned().flatten())
+            .and_then(|o| o.vector)
+            .or_else(|| self.heap.borrowed.get(name).copied())
+    }
+
+    pub(super) fn vector_capacity(&self, name: &VarIdent) -> Option<Expr> {
+        self.vector_state(name).map(|id| self.growth.vectors[id].capacity.clone())
     }
 
     pub(super) fn vector_expr(&mut self, expr: &Expr) -> Result<Option<u64>, VirErr> {
@@ -150,9 +180,11 @@ impl Analysis<'_> {
             if args.len() != 2 {
                 return Err(unsupported(&expr.span, "this vector push"));
             }
-            let capacity = self.vector_capacity(&name).ok_or_else(|| {
-                unsupported(&expr.span, "push into an incoming vector without a capacity contract")
-            })?;
+            let state_id = self
+                .vector_state(&name)
+                .ok_or_else(|| unsupported(&expr.span, "untracked vector allocation"))?;
+            let state = self.growth.vectors[state_id].clone();
+            let capacity = state.capacity.clone();
             let TypX::Datatype(_, types, _) = &*typ else { unreachable!() };
             // Read the current logical length at the push, so ordinary branches,
             // preconditions and loop invariants can establish available room.
@@ -177,9 +209,69 @@ impl Analysis<'_> {
                     body: None,
                 },
             );
-            self.checks
-                .push((expr.span.clone(), mk_ineq(&expr.span, &len, &capacity, InequalityOp::Lt)));
+            let revision = self.growth.revision();
             self.initialize_expr(&args[1])?;
+            if revision != self.growth.revision() {
+                return Err(unsupported(
+                    &args[1].span,
+                    "vector allocation changes inside a push argument; bind the argument first",
+                ));
+            }
+            let room = mk_ineq(&expr.span, &len, &capacity, InequalityOp::Lt);
+            if self.growth.section_protected.contains(&state_id) {
+                self.checks.push((expr.span.clone(), room));
+                return Ok(Some(0));
+            }
+            let new_capacity =
+                super::growth::grown_capacity(&expr.span, len.clone(), state.element);
+            let new_bytes = contracts::multiply(
+                &expr.span,
+                contracts::literal(&expr.span, state.element),
+                new_capacity.clone(),
+            );
+            let extra = super::growth::select(
+                &expr.span,
+                room.clone(),
+                contracts::literal(&expr.span, 0),
+                new_bytes,
+            );
+            // Reserve the replacement before releasing the old buffer. A lower
+            // bound may underestimate real capacity, so this can overcount growth.
+            let temporary = super::accounting::Accounting::fresh_allocation();
+            self.storage.set_allocation(temporary, MemoryKind::host_heap(), extra.clone());
+            self.storage.record_live(&expr.span)?;
+            self.storage.release_dynamic(temporary);
+            let retained = contracts::maximum(&expr.span, state.bytes.clone(), extra);
+            let mut lower = contracts::maximum(
+                &expr.span,
+                capacity.clone(),
+                contracts::add(&expr.span, len, contracts::literal(&expr.span, 1)),
+            );
+            if state.input.is_none() && state.element != 0 {
+                // Equality of a sound lower and upper bound establishes exact
+                // capacity, so local vectors can retain all their new spare room.
+                let exact = mk_eq(
+                    &expr.span,
+                    &state.bytes,
+                    &contracts::multiply(
+                        &expr.span,
+                        capacity.clone(),
+                        contracts::literal(&expr.span, state.element),
+                    ),
+                );
+                let exact_lower = super::growth::select(&expr.span, room, capacity, new_capacity);
+                lower = super::growth::select(&expr.span, exact, exact_lower, lower);
+            }
+            self.growth.updates.entry(expr.span.id).or_default().extend([
+                super::growth::assign(&expr.span, &state.next_capacity, lower),
+                super::growth::assign(&expr.span, &state.next_bytes, retained),
+            ]);
+            self.growth.after.entry(expr.span.id).or_default().extend([
+                super::growth::assign(&expr.span, &state.bytes, state.next_bytes.clone()),
+                super::growth::assign(&expr.span, &state.capacity, state.next_capacity.clone()),
+            ]);
+            self.growth.vectors[state_id].changed = true;
+            self.growth.vectors[state_id].pushes += 1;
         } else if index {
             if args.len() != 2 {
                 return Err(unsupported(&expr.span, "this vector index"));
@@ -188,7 +280,7 @@ impl Analysis<'_> {
         } else if args.len() != 1 {
             return Err(unsupported(&expr.span, "this vector operation"));
         }
-        // These operations use existing storage. A discarded pop result creates
+        // Push accounts for replacement storage above. A discarded pop result creates
         // no declared slot; a bound Option result uses its caller-provided destination.
         Ok(Some(0))
     }

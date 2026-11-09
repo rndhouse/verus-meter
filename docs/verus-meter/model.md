@@ -161,31 +161,41 @@ unsupported. Branches, loops, and budgeted sections may create and consume their
 own boxes, but cannot move or drop owners from outside that region. Custom
 allocator types remain unsupported.
 
-## Vectors without growth
+## Vector allocations and growth
 
-A `Vec<T>` reserves storage once with `Vec::with_capacity(capacity)`.
-Its handle costs `mem_size(Vec<T>)` (24 model bytes), and its backing storage
-costs `capacity * mem_size(T)`, even when empty. The requested capacity is the
-model's limit; allocator over-allocation is outside the guarantee.
+A `Vec<T>` handle costs 24 model bytes. `Vec::new()` begins without backing
+storage; `Vec::with_capacity(n)` initially charges `n * mem_size(T)` bytes,
+even when empty. Capacity information is tracked by the verifier.
 
-Each `push` must be proved to fit that reservation. Branch conditions and loop
-invariants can establish this. `pop` makes room for another element but retains
-the backing storage. Moves transfer the reservation; dropping releases it.
-The same ownership restrictions as boxes apply across branches, loops and sections.
+A push that fits uses the existing buffer. Otherwise the model allows growth
+when the budget covers both the old buffer and its replacement at once. After
+replacement only the retained buffer counts. The source model chooses a new
+capacity of `max(minimum, 2 * old_capacity, length + 1)`: the minimum is 8 elements
+for one-byte elements, 4 for elements up to 1024 model bytes, and 1 for larger
+elements. Zero-sized elements require no backing bytes. This is an explicit
+abstract allocation policy; allocator rounding, metadata, physical type padding,
+and correspondence with other library growth policies are outside the guarantee.
 
-Capacity can be a literal or an immutable unsigned variable. Function budgets
-can use an input directly, for example `mem_size(capacity) + mem_size(Vec<u32>)
-+ capacity * mem_size(u32)`. Callers use `mem_peak(helper(arguments))` to compose
-runtime formulas; an argument-free query requires a fixed envelope.
+When only a capacity minimum is known, the checker conservatively considers
+possible growth using the current length. It tracks the reservation minimum
+separately from the retained-byte upper bound. Branches preserve their allocation
+states, and loops receive compiler-generated, proof-checked memory invariants;
+ordinary loop invariants still need to bound lengths relevant to growth.
 
-The subset supports fixed-size non-owning elements, pushes, pops returning `Option<T>`,
-length, indexing, and borrowing elements through `as_slice` or `as_mut_slice`.
-Helpers can take ownership, borrow the vector, or borrow slices of its elements.
-Pushes into an incoming vector require a capacity contract (see below). Growth
-and reassignment remain unsupported.
+`pop` retains backing storage. Moves transfer its charge and dropping releases
+it. Supported elements are fixed-size, non-owning values. Length, indexing,
+popping, and borrowing elements through slices remain supported. Explicit
+`reserve`, shrinking, vector replacement, and local reference aliases remain
+unsupported. Bind arguments before calls if evaluating them changes vector
+allocations. A memory section can grow its own vectors; an enclosing vector
+must still fit its existing reservation inside that section.
 
-See [collecting selected numbers](../../examples/resource/memory/vectors.rs) and
-[a push that requires growth](../../examples/resource/memory/expected-failures/vector_growth.rs).
+Constructor capacities can be literals or immutable unsigned variables.
+Budgets can use inputs directly, for example `32 + 32 + 16 * n` for a loop
+building a `Vec<u32>` with at most `n` pushes. See
+[growing vectors](../../examples/resource/memory/vector_growth.rs),
+[preallocated vectors](../../examples/resource/memory/vectors.rs), and
+[unbudgeted growth](../../examples/resource/memory/expected-failures/vector_growth.rs).
 
 ## Borrowed vector helpers and capacity contracts
 
@@ -193,7 +203,7 @@ Helpers can accept `&Vec<T>` or `&mut Vec<T>`. The reference costs 8 model bytes
 the caller retains the vector handle and backing allocation charges. Reading,
 indexing, slice access, and popping do not require a capacity contract.
 
-A helper that pushes declares a minimum reserved element count:
+A helper can optionally require a minimum reserved element count to prove tighter bounds:
 
 ```rust
 fn append(values: &mut Vec<u32>, capacity: usize, value: u32)
@@ -216,8 +226,8 @@ other verification annotations. Capacity clauses may appear before or after
 reservations.
 
 At each call in checked code, the verifier proves the actual reservation meets
-the requested minimum. Within the helper, each push must prove its current length
-is below that minimum, using ordinary preconditions, branches, or loop invariants.
+the requested minimum. Within the helper, preconditions, branches, and loop invariants can prove that
+pushes fit the reservation; otherwise their possible growth must fit the budget.
 Resource preconditions do not introduce logical assumptions about vector contents.
 As with other resource guarantees, callers outside checked code must satisfy these
 resource preconditions to rely on the memory bound.
@@ -225,13 +235,16 @@ resource preconditions to rely on the memory bound.
 Direct reborrows through nested helpers preserve the reservation. A helper asking
 for a smaller minimum does not reduce the caller's reservation. Ordinary `ensures`
 clauses describe updated length and contents so subsequent callers can use them.
-The clause also supports incoming owned vectors; returning an input preserves
-its original reservation at the caller.
+The clause also supports incoming owned vectors. A helper may grow either an
+owned input or a mutable borrowed vector without a capacity clause. Its budget
+covers replacement allocations; the caller retains the original buffer charge
+during the call. Checked summaries update the caller's retained-byte bound after
+return, conservatively using the helper's declared allowance when necessary.
+This may require more budget than an exact implementation-specific summary.
 
 For now, borrowed vector bindings must be immutable (the vector itself may be
 mutably borrowed), and arguments must resolve to named owners or borrowed
-parameters. Local reference aliases, replacement through `&mut Vec<T>`, and
-reallocation remain unsupported. See [vector helpers](../../examples/resource/memory/vector_helpers.rs).
+parameters. Local reference aliases and replacement through `&mut Vec<T>` remain unsupported. See [vector helpers](../../examples/resource/memory/vector_helpers.rs).
 
 ## Passing heap ownership between helpers
 

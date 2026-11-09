@@ -359,6 +359,9 @@ fn infer_resolution(
     module: &Path,
     rtypes: &ResolutionTypes,
 ) -> Result<Expr, VirErr> {
+    let mut var_modes = info.var_modes.clone();
+    let mut temporary_modes = info.temporary_modes.clone();
+    crate::resource::memory::resolution_modes(body, &mut var_modes, &mut temporary_modes);
     let (cfg, assigns_to_resolve, typ_inv_obligations, asserts, loops_with_no_back_edges) =
         new_cfg(
             params,
@@ -366,8 +369,8 @@ fn infer_resolution(
             &info.read_kind_finals,
             datatypes,
             functions,
-            &info.var_modes,
-            &info.temporary_modes,
+            &var_modes,
+            &temporary_modes,
         )?;
     //println!("{:}", pretty_cfg(&cfg));
     let resolutions = if info.dual_mode { vec![] } else { get_resolutions(&cfg, rtypes, asserts) };
@@ -1351,8 +1354,11 @@ impl<'a> Builder<'a> {
                 }
                 Maybe::Some(bb)
             }
-            ExprX::EvalAndResolve(..) => {
-                panic!("EvalAndResolve shouldn't be created yet");
+            ExprX::EvalAndResolve(value, effects) => {
+                // Memory instrumentation may attach erased state transitions
+                // before resolution inference; preserve their execution order.
+                let bb = unwrap!(self.build(value, bb));
+                self.build(effects, bb)
             }
             ExprX::MatchGuardFreeze(..) => {
                 panic!("MatchGuardFreeze shouldn't be created yet");

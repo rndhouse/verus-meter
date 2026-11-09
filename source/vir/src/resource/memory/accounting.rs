@@ -318,6 +318,16 @@ impl Accounting {
             .reduce(|a, b| a.maximum(span, b))
             .unwrap_or_else(|| Footprint::zero(span))
     }
+    /// Allocation identities use a separate range from source AST span IDs.
+    pub(super) fn fresh_allocation() -> u64 {
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) | (1u64 << 63)
+    }
+    /// Install a symbolic live charge without creating a new peak observation.
+    pub(super) fn set_allocation(&mut self, id: u64, kind: MemoryKind, cost: Expr) {
+        for path in &mut self.paths {
+            path.dynamic.insert(id, Charge { kind: kind.clone(), amount: cost.clone() });
+        }
+    }
     pub(super) fn reserve_dynamic(&mut self, span: &Span, kind: MemoryKind, cost: Expr) {
         for path in &mut self.paths {
             path.dynamic.insert(span.id, Charge { kind: kind.clone(), amount: cost.clone() });

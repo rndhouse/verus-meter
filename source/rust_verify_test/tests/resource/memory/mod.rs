@@ -6,6 +6,7 @@ mod call_budgets;
 mod call_graph;
 mod checkpoints;
 mod conditional;
+mod growth;
 mod heap;
 mod integers;
 mod lifetimes;

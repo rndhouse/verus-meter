@@ -20,7 +20,7 @@ pub(super) fn function_bound(
 ) -> Result<Option<Expr>, VirErr> {
     let bound = super::contracts::function_bound(function, budgets, functions, layouts)?;
     let declared_conditional = match &function.x.attrs.resource_contract {
-        Some(super::model::ResourceContract::SourceValuesV8Expr { budget, .. }) => {
+        Some(super::model::ResourceContract { budget, .. }) => {
             super::budget::is_conditional(budget)
         }
         _ => false,
@@ -112,14 +112,20 @@ pub(super) fn instrument(
     bound: Option<&Expr>,
     obligations: &[Obligation],
     checks: &[(Span, Expr)],
+    growth: &super::growth::Growth,
     fresh_span: &dyn Fn(&Span) -> Span,
 ) -> Result<Function, VirErr> {
     // Inserted proofs must have fresh AST identities. Reusing an executable
     // allocation's identity confuses resolution inference for owned values.
     let mut sites: HashMap<u64, (Span, Vec<Stmt>)> = HashMap::new();
-    let mut entry_checks = Vec::new();
+    let mut entry_checks = growth.declarations.clone();
     let mut parameter_spans: HashSet<_> = function.x.params.iter().map(|p| p.span.id).collect();
     parameter_spans.insert(function.span.id);
+    for parameter in &parameter_spans {
+        if let Some(init) = growth.before.get(parameter) {
+            entry_checks.extend(init.clone());
+        }
+    }
     for check in obligations {
         let Some(statement) = obligation(check) else {
             continue;
@@ -166,7 +172,25 @@ pub(super) fn instrument(
             if matches!(expr.x, ExprX::TwoPhaseBorrowMut(_)) {
                 return Ok(expr.clone());
             }
-            let mut checks = Vec::new();
+            let mut checks = growth.before.get(&expr.span.id).cloned().unwrap_or_default();
+            let mut rewritten = expr.clone();
+            if let ExprX::Loop { invs, .. } = &mut Arc::make_mut(&mut rewritten).x {
+                if let Some(additional) = growth.loops.get(&expr.span.id) {
+                    Arc::make_mut(invs).extend(additional.iter().map(|inv| LoopInvariant {
+                        kind: LoopInvariantKind::InvariantAndEnsures,
+                        inv: {
+                            let statement =
+                                Spanned::new(inv.span.clone(), StmtX::Expr(inv.clone()));
+                            let statement =
+                                crate::ast_visitor::map_stmt_spans(&statement, &mut |span| {
+                                    fresh_span(span)
+                                });
+                            let StmtX::Expr(inv) = &statement.x else { unreachable!() };
+                            inv.clone()
+                        },
+                    }));
+                }
+            }
             if let ExprX::Call { args, .. } = &expr.x {
                 for arg in args.iter().filter(|arg| matches!(arg.x, ExprX::TwoPhaseBorrowMut(_))) {
                     if let Some((_, statements)) = sites.get(&arg.span.id) {
@@ -179,14 +203,29 @@ pub(super) fn instrument(
                 seen.insert(expr.span.id);
                 checks.extend(statements.iter().cloned());
             }
+            if let Some(updates) = growth.updates.get(&expr.span.id) {
+                checks.extend(updates.clone());
+            }
+            if let Some(after) = growth.after.get(&expr.span.id) {
+                let statements = after
+                    .iter()
+                    .map(|s| crate::ast_visitor::map_stmt_spans(s, &mut |span| fresh_span(span)))
+                    .collect();
+                let effects = mk_block(&fresh_span(&expr.span), statements, None);
+                rewritten = SpannedTyped::new(
+                    &fresh_span(&expr.span),
+                    &expr.typ,
+                    ExprX::EvalAndResolve(rewritten, effects),
+                );
+            }
             if !checks.is_empty() {
                 let checks = checks
                     .iter()
                     .map(|s| crate::ast_visitor::map_stmt_spans(s, &mut |span| fresh_span(span)))
                     .collect();
-                Ok(mk_block(&fresh_span(&expr.span), checks, Some(expr.clone())))
+                Ok(mk_block(&fresh_span(&expr.span), checks, Some(rewritten)))
             } else {
-                Ok(expr.clone())
+                Ok(rewritten)
             }
         },
         &|seen, _, stmt| {

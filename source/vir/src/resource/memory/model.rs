@@ -5,46 +5,16 @@ use crate::messages::{Span, error};
 use serde::{Deserialize, Serialize};
 use vir_macros::ToDebugSNode;
 
-pub(super) const MODEL_NAME: &str = "source-values-v8-64";
+pub(super) const MODEL_NAME: &str = "source-values-v9-64";
 pub(super) const WORD_BYTES: u64 = 8;
 
+/// Current source-storage contract. This unreleased format has no legacy variants.
 #[derive(Clone, Debug, Serialize, Deserialize, ToDebugSNode)]
-pub enum ResourceContract {
-    // Keep the original discriminant: a new model must never deserialize as
-    // the old model merely because the Rust variant was renamed.
-    LexicalSlotsV0 {
-        budget: u64,
-    },
-    LexicalSlotsV1_64 {
-        budget: u64,
-    },
-    LexicalSlotsV2_64 {
-        budget: u64,
-    },
-    LexicalSlotsV3_64 {
-        budget: u64,
-    },
-    /// Historical v3 model with compile-time budget expressions.
-    LexicalSlotsV3Expr {
-        budget: super::BudgetExpr,
-    },
-    /// Aggregate initialization uses its destination's existing storage charge.
-    LexicalSlotsV4Expr {
-        budget: super::BudgetExpr,
-    },
-    /// Source storage objects only; no inferred expression/address temporaries.
-    LexicalSlotsV5Expr {
-        budget: super::BudgetExpr,
-    },
-    /// Value lifetimes, move transfers, and checked call lifetime profiles.
-    SourceValuesV7Expr {
-        budget: super::BudgetExpr,
-    },
-    /// Borrowed vector helpers with explicit minimum model reservations.
-    SourceValuesV8Expr {
-        budget: super::BudgetExpr,
-        capacities: Vec<(VarIdent, super::BudgetExpr)>,
-    },
+pub struct ResourceContract {
+    /// Simultaneous workspace allowed by this function.
+    pub budget: super::BudgetExpr,
+    /// Optional minimum reservations supplied by callers.
+    pub capacities: Vec<(VarIdent, super::BudgetExpr)>,
 }
 
 pub(super) fn unsupported(span: &Span, what: &str) -> VirErr {
