@@ -7,6 +7,14 @@ use vstd::prelude::*;
 
 verus! {
 
+// Describe the memory needed to filter numbers at the chosen capacity.
+//
+// The budget covers the input, reserved result, and values tracking progress.
+spec fn collection_budget(capacity: nat) -> nat {
+    mem_size(usize) + mem_size(Vec<u32>) + capacity * mem_size(u32)
+        + mem_size([u32; 4]) + mem_size(usize)
+}
+
 // Keep the positive numbers from a small input without growing the result buffer.
 //
 // Reserving enough room for the whole input also covers any selection from it.
@@ -14,8 +22,7 @@ verus! {
 // the evidence it needs to check every push.
 fn collect_positive(capacity: usize)
     requires 4 <= capacity <= 16,
-    mem_peak <= mem_size(capacity) + mem_size(Vec<u32>)
-        + capacity * mem_size(u32) + mem_size([u32; 4]) + mem_size(usize),
+    mem_peak <= collection_budget(capacity as nat),
 {
     let input = [0u32, 4, 0, 7];
     let mut selected = Vec::<u32>::with_capacity(capacity);

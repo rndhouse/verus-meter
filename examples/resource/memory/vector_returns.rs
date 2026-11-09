@@ -7,14 +7,20 @@ use vstd::prelude::*;
 
 verus! {
 
+// Describe the storage that follows a vector from its producer to its caller.
+//
+// Both functions use the same formula for the handle and reserved elements.
+spec fn vector_storage(capacity: nat) -> nat {
+    mem_size(Vec<u32>) + capacity * mem_size(u32)
+}
+
 // Supply an empty buffer with room for the requested number of values.
 //
 // The memory budget scales with the capacity supplied by the caller.
 fn make_buffer(capacity: usize) -> (buffer: Vec<u32>)
     requires capacity <= 16,
     ensures buffer.len() == 0,
-    mem_peak <= mem_size(capacity) + mem_size(Vec<u32>)
-        + capacity * mem_size(u32),
+    mem_peak <= mem_size(capacity) + vector_storage(capacity as nat),
 {
     Vec::with_capacity(capacity)
 }
@@ -33,12 +39,11 @@ fn count(buffer: Vec<u32>) -> (length: usize)
 
 // Use a returned reservation and then hand it over for final processing.
 //
-// The caller budgets its local handle alongside the consuming helper's work.
+// The shared formula keeps the producer and caller using the same allowance.
 // The allocation remains live through both calls and the intervening pushes.
 fn use_buffer(capacity: usize)
     requires 2 <= capacity <= 16,
-    mem_peak <= mem_size(capacity) + mem_size(Vec<u32>)
-        + capacity * mem_size(u32) + mem_peak(count),
+    mem_peak <= mem_size(capacity) + vector_storage(capacity as nat) + mem_peak(count),
 {
     let mut buffer = make_buffer(capacity);
     buffer.push(3);
