@@ -156,10 +156,10 @@ both the handle and the heap object.
 See [heap buffer reuse](../../examples/resource/memory/heap.rs) and
 [two allocations that exceed their allowance](../../examples/resource/memory/expected-failures/heap_overlap.rs).
 
-Owner reassignment, extracting owning subvalues, and custom destructors are
-unsupported. Branches, loops, and budgeted sections may create and consume their
-own boxes, but cannot move or drop owners from outside that region. Custom
-allocator types remain unsupported.
+Whole-owner reassignment and custom destructors are unsupported. Fixed owning
+children can be extracted and replaced as described below. Branches, loops, and
+budgeted sections may create and consume their own boxes, but cannot move or drop
+owners from outside that region. Custom allocator types remain unsupported.
 
 ## Fixed-structure nested ownership
 
@@ -183,10 +183,27 @@ inferred reservations and retained allocation effects follow the affected child
 paths across calls, including returned owners. See [nested ownership](../../examples/resource/memory/nested_ownership.rs)
 and [nested growth](../../examples/resource/memory/nested_growth.rs).
 
-Moving or replacing an owning field and moving an owner out of a box remain
-unsupported. These need ownership transfer transitions for a particular child
-path. Recursive layouts, owning `Option` payloads, and owning array elements are
-also excluded. Shared ownership needs last-owner release rules.
+Fixed owning children support partial moves, explicit drop, reinitialization,
+and replacement through struct fields and boxed contents. Detaching a child
+transfers its complete allocation tree without copying or releasing it. Replacing
+a child evaluates the new value while the old child is still live, then drops
+the old tree. Siblings retain their allocations and independent capacity state.
+A partially moved parent's inline storage, including any enclosing box storage,
+remains charged until the parent's lifetime ends; an extracted local receives its
+own inline slot. Scope exit releases only children still attached to the parent.
+
+Input allocation provenance is tracked separately for each fixed node. Helpers
+can return selected children or rearrange them without retaining discarded
+siblings. Helpers may also replace children through borrowed parents. These
+borrowed calls conservatively retain the caller's old allocations throughout the
+call, then install the final child ownership and capacity facts. See
+[child transfers](../../examples/resource/memory/child_transfers.rs).
+
+Moves and replacements of enclosing owners or their children across branches,
+loops, or memory sections remain unsupported, as do extraction from temporary
+containers and moves out of borrowed owners. Recursive layouts, owning `Option`
+payloads, and owning array elements are also excluded. Shared ownership needs
+last-owner release rules.
 
 ## Runtime collections of owners
 

@@ -6,6 +6,7 @@ mod boxed_slices;
 mod call_budgets;
 mod call_graph;
 mod checkpoints;
+mod children;
 mod conditional;
 mod elements;
 mod growth;

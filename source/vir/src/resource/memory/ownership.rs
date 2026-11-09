@@ -18,6 +18,7 @@ struct OwnerCall<'a> {
     callee: &'a Function,
     args: &'a Exprs,
     transferred: &'a mut [Option<Owner>],
+    capacities: &'a std::collections::BTreeMap<super::heap::OwnerPath, Expr>,
 }
 
 /// Effects within one forwarded or borrowed subtree. Paths are relative to its
@@ -30,24 +31,28 @@ pub(super) fn replacements(
 ) -> std::collections::BTreeMap<super::heap::OwnerPath, Charge<Expr>> {
     let mut effects = std::collections::BTreeMap::new();
     owner.visit_paths(&mut vec![], &mut |path, node| {
-        if let Some(id) = node.vector {
-            let state = &growth.vectors[id];
-            if state.backing.changed {
-                effects.insert(
-                    path.clone(),
-                    Charge {
-                        kind: state.backing.kind.clone(),
-                        amount: super::growth::retained_bound(state, function, bound),
-                    },
-                );
-            }
+        if let Some(charge) = replacement(node, growth, function, bound) {
+            effects.insert(path.clone(), charge);
         }
     });
     effects
 }
 
-/// Summarize each fixed child independently. Whole incoming subtrees retain
-/// provenance; fresh nodes carry only their own allocation, excluding children.
+fn replacement(
+    owner: &Owner,
+    growth: &super::growth::Growth,
+    function: &Function,
+    bound: &Expr,
+) -> Option<Charge<Expr>> {
+    let state = &growth.vectors[owner.vector?];
+    state.backing.changed.then(|| Charge {
+        kind: state.backing.kind.clone(),
+        amount: super::growth::retained_bound(state, function, bound),
+    })
+}
+
+/// Summarize fixed children independently. Each incoming node retains its own
+/// provenance, so partial moves and replacements cannot transfer sibling charges.
 pub(super) fn summarize(
     function: &Function,
     owner: Option<&Owner>,
@@ -63,11 +68,18 @@ pub(super) fn summarize(
         path: &mut super::heap::OwnerPath,
         capacities: &mut std::collections::BTreeMap<super::heap::OwnerPath, Expr>,
     ) -> Result<ReturnedOwner, VirErr> {
+        let mut children = std::collections::BTreeMap::new();
+        for (slot, child) in &owner.children {
+            path.push(slot.clone());
+            children.insert(slot.clone(), node(function, child, growth, bound, path, capacities)?);
+            path.pop();
+        }
         if let Some(index) = owner.input {
             return Ok(ReturnedOwner::Input {
                 index,
-                replacements: replacements(owner, growth, function, bound),
-                additions: super::elements::additions(owner, growth, bound, function),
+                children,
+                replacement: replacement(owner, growth, function, bound),
+                addition: super::elements::addition(owner, growth, bound, function),
             });
         }
         let (capacity, replacement) =
@@ -100,12 +112,6 @@ pub(super) fn summarize(
         } else {
             None
         };
-        let mut children = std::collections::BTreeMap::new();
-        for (slot, child) in &owner.children {
-            path.push(slot.clone());
-            children.insert(slot.clone(), node(function, child, growth, bound, path, capacities)?);
-            path.pop();
-        }
         Ok(ReturnedOwner::Node { allocation, children, elements })
     }
     let mut capacities = std::collections::BTreeMap::new();
@@ -119,9 +125,12 @@ impl ReturnedOwner {
     /// Inputs can survive anywhere in the result, including under newly allocated boxes.
     fn inputs(&self, inputs: &mut std::collections::HashSet<usize>) {
         match self {
-            Self::Input { index, additions, .. } => {
+            Self::Input { index, addition, children, .. } => {
+                for child in children.values() {
+                    child.inputs(inputs);
+                }
                 inputs.insert(*index);
-                for effect in additions.values() {
+                if let Some(effect) = addition {
                     inputs.extend(&effect.inputs);
                 }
             }
@@ -214,7 +223,16 @@ impl Analysis<'_> {
         let result = summary
             .map(|summary| {
                 self.adopt_owner_tree(
-                    &mut OwnerCall { expr, callee, args, transferred },
+                    &mut OwnerCall {
+                        expr,
+                        callee,
+                        args,
+                        transferred,
+                        capacities: &self.summaries[&callee.x.name]
+                            .vectors
+                            .returned_capacities
+                            .clone(),
+                    },
                     &expr.typ,
                     &summary,
                     &mut vec![],
@@ -227,6 +245,47 @@ impl Analysis<'_> {
         Ok(result)
     }
 
+    /// Apply whole-child effects after charging the call's peak. Borrowed old
+    /// storage remains caller-charged throughout the call, conservatively.
+    pub(super) fn apply_child_call_effects(
+        &mut self,
+        expr: &Expr,
+        callee: &Function,
+        args: &Exprs,
+        transferred: &mut [Option<Owner>],
+    ) -> Result<(), VirErr> {
+        for ((index, child_path), effect) in
+            self.summaries[&callee.x.name].allocations.children.clone()
+        {
+            let (name, mut path) = super::paths::expr(&args[index], &callee.x.params[index].x.typ)
+                .ok_or_else(|| unsupported(&expr.span, "an aliased child replacement argument"))?;
+            path.extend(child_path.iter().cloned());
+            self.heap.check_transfer(&name, &expr.span)?;
+            let old = self
+                .heap
+                .root_mut(&name)
+                .and_then(|root| root.take_child(&path))
+                .ok_or_else(|| unsupported(&expr.span, "a replacement without a live child"))?;
+            self.release_owner(old, &expr.span);
+            let mut typ = super::paths::referent(&callee.x.params[index].x.typ).clone();
+            for slot in &child_path {
+                typ =
+                    self.layouts.owned_children(&typ, &expr.span)?.remove(slot).ok_or_else(
+                        || unsupported(&expr.span, "an unknown replacement child type"),
+                    )?;
+            }
+            let child = self.adopt_owner_tree(
+                &mut OwnerCall { expr, callee, args, transferred, capacities: &effect.capacities },
+                &typ,
+                &effect.owner,
+                &mut vec![],
+            )?;
+            self.heap.root_mut(&name).unwrap().replace_child(&path, child);
+            self.heap.mark_replaced(&name, &path);
+        }
+        Ok(())
+    }
+
     fn adopt_owner_tree(
         &mut self,
         call: &mut OwnerCall<'_>,
@@ -237,12 +296,12 @@ impl Analysis<'_> {
         let OwnerCall { expr, callee, args, .. } = *call;
         let mut replacement = None;
         let mut owner = match summary {
-            ReturnedOwner::Input { index, replacements, additions } => {
+            ReturnedOwner::Input { index, replacement, addition, .. } => {
                 let mut owner = call.transferred[*index].take().ok_or_else(|| {
                     unsupported(&expr.span, "a returned input without transferred ownership")
                 })?;
-                for (path, charge) in replacements {
-                    let id = owner.at(path).and_then(|node| node.vector).ok_or_else(|| {
+                if let Some(charge) = replacement {
+                    let id = owner.vector.ok_or_else(|| {
                         unsupported(
                             &expr.span,
                             "an input replacement without tracked allocation state",
@@ -252,11 +311,10 @@ impl Analysis<'_> {
                         allocations::instantiate(charge, callee, args, &self.stable_scalars)?;
                     self.retain_vector_growth(&expr.span, id, charge)?;
                 }
-                for (path, effect) in additions {
-                    let elements =
-                        owner.at_mut(path).and_then(|owner| owner.elements.as_mut()).ok_or_else(
-                            || unsupported(&expr.span, "an input collection without child state"),
-                        )?;
+                if let Some(effect) = addition {
+                    let elements = owner.elements.as_mut().ok_or_else(|| {
+                        unsupported(&expr.span, "an input collection without child state")
+                    })?;
                     self.apply_element_summary(
                         &expr.span,
                         elements,
@@ -268,25 +326,14 @@ impl Analysis<'_> {
                 }
                 owner
             }
-            ReturnedOwner::Node { allocation, children, .. } => {
-                let mut owner = if let Some(allocation) = allocation {
+            ReturnedOwner::Node { allocation, .. } => {
+                let owner = if let Some(allocation) = allocation {
                     let allocation =
                         allocations::instantiate(allocation, callee, args, &self.stable_scalars)?;
                     self.returned_owner(expr, &allocation, false)?
                 } else {
                     Owner::default()
                 };
-                let types = self.layouts.owned_children(typ, &expr.span)?;
-                for (slot, child) in children {
-                    let typ = types.get(slot).ok_or_else(|| {
-                        unsupported(&expr.span, "an ownership summary with an unknown child")
-                    })?;
-                    path.push(slot.clone());
-                    owner
-                        .children
-                        .insert(slot.clone(), self.adopt_owner_tree(call, typ, child, path)?);
-                    path.pop();
-                }
                 owner
             }
             ReturnedOwner::Replaced { allocation, .. } => {
@@ -297,15 +344,27 @@ impl Analysis<'_> {
                 owner
             }
         };
+        if let ReturnedOwner::Input { children, .. } | ReturnedOwner::Node { children, .. } =
+            summary
+        {
+            let types = self.layouts.owned_children(typ, &expr.span)?;
+            for (slot, child) in children {
+                let typ = types.get(slot).ok_or_else(|| {
+                    unsupported(&expr.span, "an ownership summary with an unknown child")
+                })?;
+                path.push(slot.clone());
+                owner.children.insert(slot.clone(), self.adopt_owner_tree(call, typ, child, path)?);
+                path.pop();
+            }
+        }
         if let ReturnedOwner::Node { elements: Some(summary), .. }
         | ReturnedOwner::Replaced { elements: Some(summary), .. } = summary
         {
             owner.elements =
                 Some(self.adopt_elements(&expr.span, summary, callee, args, call.transferred)?);
         }
-        let capacity = self.summaries[&callee.x.name]
-            .vectors
-            .returned_capacities
+        let capacity = call
+            .capacities
             .get(path)
             .map(|capacity| contracts::substitute(capacity, callee, args, &self.stable_scalars))
             .transpose()?;

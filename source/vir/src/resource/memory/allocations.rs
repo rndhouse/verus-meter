@@ -11,19 +11,20 @@ use crate::ast::*;
 use crate::messages::Span;
 use std::collections::{HashMap, HashSet};
 
-/// The ownership tree surviving in a result. Input indices identify
-/// provenance, so forwarding retains the caller's allocation identity.
+/// The ownership tree surviving in a result. Input IDs identify disjoint nodes
+/// through the summary's path table, retaining caller allocation identities.
 #[derive(Clone)]
 pub(super) enum ReturnedOwner {
-    /// Transfer an input subtree, applying replacements at relative child paths.
+    /// Transfer one input node, composing its children independently.
     Input {
-        /// Parameter whose entire subtree survives in the result.
+        /// Provenance ID identifying the node in the callee input-path table.
         index: usize,
-        /// Possible replacement sizes; original allocations may remain larger.
-        replacements: std::collections::BTreeMap<super::heap::OwnerPath, Charge<Expr>>,
-        /// Runtime child collections extended beneath the forwarded root.
-        additions:
-            std::collections::BTreeMap<super::heap::OwnerPath, super::elements::ElementSummary>,
+        /// Children surviving in this node, possibly moved from other inputs.
+        children: std::collections::BTreeMap<super::heap::OwnerSlot, ReturnedOwner>,
+        /// This node's replacement size; the original allocation may be larger.
+        replacement: Option<Charge<Expr>>,
+        /// New runtime child allocations captured by this node.
+        addition: Option<super::elements::ElementSummary>,
     },
     /// Compose newly owned storage and child owners. Struct nodes have no allocation.
     Node {
@@ -46,8 +47,19 @@ pub(super) struct AllocationSummary {
     pub(super) returned: Option<ReturnedOwner>,
     /// Replacement bounds retained through borrowed inputs, keyed by parameter and child path.
     pub(super) retained: HashMap<super::paths::InputPath, Charge<Expr>>,
+    /// Whole-child replacements retained in borrowed parents.
+    pub(super) children: HashMap<super::paths::InputPath, ChildReplacement>,
     /// Additive child-footprint effects retained in borrowed collections.
     pub(super) collections: HashMap<super::paths::InputPath, super::elements::ElementSummary>,
+}
+
+/// Final ownership of a replaced child, with container facts relative to it.
+#[derive(Clone)]
+pub(super) struct ChildReplacement {
+    /// Final allocation tree installed at the replaced path.
+    pub(super) owner: ReturnedOwner,
+    /// Vector reservations relative to that final tree.
+    pub(super) capacities: std::collections::BTreeMap<super::heap::OwnerPath, Expr>,
 }
 
 /// Erased byte state for an allocation whose size may change. Container-specific

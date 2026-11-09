@@ -20,7 +20,7 @@ use std::sync::Arc;
 pub(super) struct Elements {
     /// Stable counter identities; the containing owner controls their lifetime.
     pub(super) states: BTreeMap<MemoryKind, usize>,
-    /// Whole input subtrees captured by element insertion.
+    /// Disjoint input nodes captured by element insertion.
     pub(super) inputs: HashSet<usize>,
 }
 
@@ -105,15 +105,23 @@ pub(super) fn additions(
 ) -> BTreeMap<OwnerPath, ElementSummary> {
     let mut effects = BTreeMap::new();
     owner.visit_paths(&mut vec![], &mut |path, node| {
-        if let Some(elements) = &node.elements {
-            if !elements.inputs.is_empty()
-                || elements.states.values().any(|id| growth.elements[*id].changed)
-            {
-                effects.insert(path.clone(), summarize(elements, growth, bound, function));
-            }
+        if let Some(effect) = addition(node, growth, bound, function) {
+            effects.insert(path.clone(), effect);
         }
     });
     effects
+}
+
+/// Additions belonging to one node, excluding its fixed children.
+pub(super) fn addition(
+    owner: &Owner,
+    growth: &super::growth::Growth,
+    bound: &Expr,
+    function: &Function,
+) -> Option<ElementSummary> {
+    let elements = owner.elements.as_ref()?;
+    (!elements.inputs.is_empty() || elements.states.values().any(|id| growth.elements[*id].changed))
+        .then(|| summarize(elements, growth, bound, function))
 }
 
 impl Analysis<'_> {

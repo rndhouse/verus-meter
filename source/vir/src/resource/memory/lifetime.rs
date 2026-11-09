@@ -71,6 +71,10 @@ impl Analysis<'_> {
             if crate::ast_util::types_equal(&expr.typ, typ) {
                 return self.produce(expr);
             }
+        } else if !copy && self.layouts.owner(typ) {
+            let value = self.owner_value(place, typ, span)?;
+            self.result_owner = Some(self.move_owner_to(place, typ)?);
+            return Ok(value);
         } else if !copy && crate::ast_util::types_equal(&place.typ, typ) {
             let value = self.take_value(place)?;
             self.result_owner =
@@ -80,6 +84,17 @@ impl Analysis<'_> {
         let value = self.fresh_value(span, typ)?;
         self.initialize(place, typ)?;
         Ok(value)
+    }
+
+    /// Partial moves keep the parent's inline storage until its lifetime ends.
+    /// The extracted value receives a new slot, while its allocations transfer.
+    fn owner_value(&mut self, place: &Place, typ: &Typ, span: &Span) -> Result<Value, VirErr> {
+        if matches!(place.x, PlaceX::Local(_)) && crate::ast_util::types_equal(&place.typ, typ) {
+            self.take_value(place)
+        } else {
+            self.access(place, typ)?;
+            self.fresh_value(span, typ)
+        }
     }
 
     pub(super) fn produce(&mut self, expr: &Expr) -> Result<Value, VirErr> {
@@ -111,6 +126,19 @@ impl Analysis<'_> {
                     .produced
                     .take()
                     .ok_or_else(|| unsupported(&expr.span, "a block without a produced result"));
+            }
+            ExprX::ReadPlace(place, kind)
+                if self.layouts.owner(&expr.typ)
+                    && matches!(kind.preliminary_kind, ReadKind::Move(_) | ReadKind::Unused) =>
+            {
+                if let PlaceX::Temporary(value) = &place.x {
+                    if crate::ast_util::types_equal(&value.typ, &expr.typ) {
+                        return self.produce(value);
+                    }
+                }
+                let value = self.owner_value(place, &expr.typ, &expr.span)?;
+                self.result_owner = Some(self.move_owner_to(place, &expr.typ)?);
+                return Ok(value);
             }
             ExprX::ReadPlace(place, kind)
                 if matches!(kind.preliminary_kind, ReadKind::Move(_) | ReadKind::Unused)

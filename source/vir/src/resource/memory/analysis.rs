@@ -69,6 +69,8 @@ pub(super) struct Analysis<'a> {
     pub(super) obligations: Vec<Obligation>,
     /// Additional safety conditions, such as reserved vector capacity.
     pub(super) checks: Vec<(Span, Expr)>,
+    /// Disjoint owned input nodes, indexed by lifetime provenance ID.
+    pub(super) input_paths: Vec<super::paths::InputPath>,
     /// Erased vector state and the proof instrumentation that maintains it.
     pub(super) growth: super::growth::Growth,
     /// Active function or section allowance used for inductive loop bounds.
@@ -334,7 +336,8 @@ impl Analysis<'_> {
             }
             ExprX::Assign { place, rhs, op, typ, .. } => {
                 if self.layouts.owner(typ) {
-                    return Err(unsupported(&expr.span, "reassignment of heap owners"));
+                    self.assign_owner(place, typ, rhs)?;
+                    return Ok(0);
                 }
                 if op.as_ref().is_some_and(|op| !arithmetic(op)) {
                     return Err(unsupported(&expr.span, "this compound assignment"));
@@ -494,6 +497,7 @@ pub(super) fn check(
         obligations: Vec::new(),
         checks: Vec::new(),
         growth: super::growth::Growth::default(),
+        input_paths: Vec::new(),
         bound: super::contracts::function_bound(function, budgets, functions, layouts)?,
     };
     if f.outer_ret.x.mode != Mode::Exec {
@@ -531,8 +535,7 @@ pub(super) fn check(
                 if borrowed.is_some() {
                     analysis.heap.borrowed.insert(param.x.name.clone(), owner);
                 } else {
-                    analysis.storage.add_input(index);
-                    owner.input = Some(index);
+                    analysis.mark_input(&mut owner, index, &mut vec![]);
                     analysis.heap.owners.insert(param.x.name.clone(), owner);
                 }
             }
@@ -561,6 +564,17 @@ pub(super) fn check(
         &analysis.growth,
         &analysis.bound,
     )?;
+    let mut child_replacements = HashMap::new();
+    for (name, path) in &analysis.heap.replaced {
+        let index = f.params.iter().position(|p| p.x.name == *name).unwrap();
+        let child = analysis.heap.borrowed[name].at(path).unwrap();
+        let (owner, capacities) =
+            super::ownership::summarize(function, Some(child), &analysis.growth, &analysis.bound)?;
+        child_replacements.insert(
+            (index, path.clone()),
+            super::allocations::ChildReplacement { owner: owner.unwrap(), capacities },
+        );
+    }
     analysis.check_checkpoints()?;
     let report = if symbolic_bound.is_some() {
         analysis.storage.finish_conditional()
@@ -590,9 +604,11 @@ pub(super) fn check(
             },
 
             return_parameter,
+            input_paths: analysis.input_paths.clone(),
             profiles,
             allocations: super::allocations::AllocationSummary {
                 returned,
+                children: child_replacements,
                 collections: {
                     let mut effects = HashMap::new();
                     for (index, param) in f.params.iter().enumerate() {
@@ -603,7 +619,9 @@ pub(super) fn check(
                                 &analysis.bound,
                                 function,
                             ) {
-                                effects.insert((index, path), effect);
+                                if !analysis.heap.is_replaced(&param.x.name, &path) {
+                                    effects.insert((index, path), effect);
+                                }
                             }
                         }
                     }
@@ -619,7 +637,9 @@ pub(super) fn check(
                                 function,
                                 &analysis.bound,
                             ) {
-                                effects.insert((index, path), charge);
+                                if !analysis.heap.is_replaced(&param.x.name, &path) {
+                                    effects.insert((index, path), charge);
+                                }
                             }
                         }
                     }

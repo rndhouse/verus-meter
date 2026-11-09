@@ -5,7 +5,7 @@ use crate::messages::{Span, error};
 use serde::{Deserialize, Serialize};
 use vir_macros::ToDebugSNode;
 
-pub(super) const MODEL_NAME: &str = "source-values-v14-64";
+pub(super) const MODEL_NAME: &str = "source-values-v15-64";
 pub(super) const WORD_BYTES: u64 = 8;
 
 /// Current source-storage contract. This unreleased format has no legacy variants.

@@ -137,22 +137,6 @@ fn boxes_and_structs_compose_at_more_than_one_level() {
 }
 
 #[test]
-fn owning_field_moves_and_replacement_are_rejected() {
-    rejects(
-        "nested_partial_move",
-        "struct P { a: Box<u32> }
-        fn f() mem_peak <= 100 { let p = P { a: Box::new(1) }; let a = p.a; }",
-        "moving part of a stored value",
-    );
-    rejects(
-        "nested_replace",
-        "struct P { a: Box<u32> }
-        fn f() mem_peak <= 100 { let mut p = P { a: Box::new(1) }; p.a = Box::new(2); }",
-        "reassignment of heap owners",
-    );
-}
-
-#[test]
 fn recursive_layout_is_rejected_without_recursing_forever() {
     rejects(
         "recursive_ownership",
@@ -236,17 +220,6 @@ fn borrowed_structs_and_multiple_box_dereferences_preserve_owners() {
             let b = Box::new(Box::new(p)); let n = b.v.len(); let x = *b.b;
             assert(x == 1);
         }",
-    );
-}
-
-#[test]
-fn moving_an_owner_out_of_a_box_requires_a_transition_rule() {
-    rejects(
-        "nested_unbox",
-        "fn f() mem_peak <= 100 {
-        let b = Box::new(Vec::<u8>::with_capacity(4)); let v = *b;
-    }",
-        "owning values outside a local move, borrow, or explicit drop",
     );
 }
 

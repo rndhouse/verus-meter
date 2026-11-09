@@ -587,7 +587,17 @@ pub(crate) fn expr_to_vir_consume<'tcx>(
     bctx: &BodyCtxt<'tcx>,
     expr: &Expr<'tcx>,
 ) -> Result<vir::ast::Expr, VirErr> {
-    Ok(expr_to_vir(bctx, expr)?.consume(bctx, bctx.types.expr_ty_adjusted(expr)))
+    let ty = bctx.types.expr_ty_adjusted(expr);
+    let value = expr_to_vir(bctx, expr)?.consume(bctx, ty);
+    if matches!(value.x, ExprX::ReadPlace(..)) {
+        // Places retain implicit dereferences, but the value being read has
+        // Rust's actual result type. Ownership accounting needs both to locate
+        // the selected child in returns, arguments, and initializers.
+        let typ = bctx.mid_ty_to_vir(expr.span, &ty)?;
+        Ok(SpannedTyped::new(&value.span, &typ, value.x.clone()))
+    } else {
+        Ok(value)
+    }
 }
 
 pub(crate) fn expr_to_vir_place<'tcx>(

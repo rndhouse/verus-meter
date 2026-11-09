@@ -76,13 +76,31 @@ impl Analysis<'_> {
                 "vector allocation changes inside call arguments; bind the arguments first",
             ));
         }
+        // Match the callee's provenance IDs to disjoint caller allocation nodes.
+        let mut nodes = std::collections::HashMap::new();
+        for (parameter, owner) in transferred.into_iter().enumerate() {
+            if let Some(owner) = owner {
+                let mut tree = std::collections::BTreeMap::new();
+                owner.flatten(&mut vec![], &mut tree);
+                nodes.extend(tree.into_iter().map(|(path, node)| ((parameter, path), node)));
+            }
+        }
+        let mut transferred = Vec::new();
+        for path in &self.summaries[target].input_paths {
+            transferred.push(Some(nodes.remove(path).ok_or_else(|| {
+                unsupported(&expr.span, "a call with an incomplete owning input")
+            })?));
+        }
+        if !nodes.is_empty() {
+            return Err(unsupported(&expr.span, "unmatched input allocation nodes"));
+        }
         let c = &expr.span;
         let mut base = self.storage.live_expression(c).remove(
             c,
             MemoryKind::host_local(),
             super::contracts::literal(c, parameters),
         );
-        let mut input_costs = vec![Footprint::zero(c); args.len()];
+        let mut input_costs = vec![Footprint::zero(c); transferred.len()];
         let mut external_inputs = std::collections::HashSet::new();
         for (index, owner) in transferred.iter().enumerate() {
             if let Some(owner) = owner {
@@ -152,6 +170,7 @@ impl Analysis<'_> {
         }
         self.apply_vector_call_effects(expr, callee, args)?;
         self.apply_collection_call_effects(expr, callee, args, &mut transferred)?;
+        self.apply_child_call_effects(expr, callee, args, &mut transferred)?;
         self.result_owner = self.complete_ownership_call(expr, callee, args, &mut transferred)?;
         self.record_element_updates(c)?;
         self.produced = result;

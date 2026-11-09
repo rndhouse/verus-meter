@@ -13,6 +13,9 @@ A clean Git merge still needs verification of these boundaries.
 
 Type-only `mem_size` queries in specifications are resolved before each
 function's well-formedness and mode checks, using the shared model layouts.
+Consumed reads retain Rust's actual result type even when their places contain
+implicit dereferences. Child ownership paths require both the source place type
+and the selected value type; using the outer box type would transfer the wrong tree.
 
 Keep the memory pass **after all local bodies are mode-checked and before export,
 resolution inference, or simplification**. Later transformations can obscure the
@@ -53,9 +56,21 @@ Vector result facts are indexed by the same structural paths as allocation facts
 The shared place resolver in [paths.rs](../../source/vir/src/resource/memory/paths.rs)
 accounts for implicit box dereferences and explicit field projections. Use it for
 both inferred reservations and call effects so sibling allocations stay distinct.
-Input trees carry original allocation provenance at the root; descendant states
-charge only replacements created in the callee. Returned input trees apply those
-effects at relative paths while preserving the caller's original allocations.
+Input trees carry disjoint provenance IDs at every fixed node. A summary maps
+these IDs to parameter paths; call composition splits actual input trees into
+nodes and consumes each node once when reconstructing results or capturing
+collection children. Lifetime profiles must count each node independently.
+Returned input nodes retain original allocation identities and apply only their
+own growth effects; their children are composed separately.
+
+[Child transfers](../../source/vir/src/resource/memory/children.rs) detach and
+replace owners through the same paths. Replacement evaluates its RHS before
+releasing the displaced tree. Partial moves retain the parent's inline charge.
+Borrowed replacements export final ownership trees and capacity facts at disjoint
+paths; replacing an ancestor supersedes descendant effects. Do not also export
+ordinary growth or collection additions beneath a replaced path. Caller-owned
+old storage stays charged throughout borrowed calls, conservatively, and is
+released when applying the final replacement.
 Loop invariants and section protections must visit every descendant vector state.
 
 [elements.rs](../../source/vir/src/resource/memory/elements.rs) represents runtime
@@ -68,9 +83,9 @@ operation used for replacement buffers. Loop sums and append-only buffer bounds
 are ordinary proof-checked invariants, not assumptions. Post-operation checks
 must include all pending child sums before their erased states commit.
 
-Child extraction and replacement still need per-element ownership transitions;
-shared ownership needs separate last-owner release rules. Extend the common
-ownership model rather than adding rules for individual nesting combinations.
+Runtime element extraction and replacement still need per-element ownership
+transitions; shared ownership needs separate last-owner release rules. Extend the
+common ownership model rather than adding rules for individual nesting combinations.
 
 Compiler upgrades need a review of borrow/coercion lowering, move/copy provenance,
 and the identities used for supported standard operations.

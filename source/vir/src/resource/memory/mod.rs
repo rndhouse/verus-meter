@@ -9,6 +9,7 @@
 //! retained-storage effects across containers. `vector_calls` adapts vector facts
 //! at call boundaries; `vectors` handles operations and `growth` maintains erased
 //! capacity/retained-byte state; `inference` derives checked entry reservations.
+//! `children` transfers and replaces fixed child ownership without copying allocations.
 //! `paths` resolves fixed child owners for operations, reservations, and call effects.
 //! `elements` maintains runtime child-footprint sums and ownership capture across calls.
 //! `contracts`
@@ -32,6 +33,7 @@ mod boxed_slices;
 mod budget;
 mod call_graph;
 mod calls;
+mod children;
 mod construction;
 mod contracts;
 mod elements;

@@ -1,8 +1,8 @@
 //! Local heap ownership, separate from lexical variable slots.
 //!
-//! Each ownership tree has one named root. A move transfers the whole tree;
-//! explicit drop and scope exit release it. Control-flow regions protect owners
-//! from outside the region until path-sensitive ownership joins are supported.
+//! Each ownership tree has one named root. Fixed children can move independently;
+//! explicit drop and scope exit release only the remaining tree. Control-flow
+//! regions protect enclosing owners until path-sensitive joins are supported.
 
 use super::analysis::Analysis;
 use super::footprint::MemoryKind;
@@ -18,6 +18,8 @@ pub(super) struct Heap {
     /// allocations remain charged to the caller; replacements are charged here.
     pub(super) borrowed: HashMap<VarIdent, Owner>,
     protected: HashSet<VarIdent>,
+    /// Disjoint replaced child paths of borrowed inputs, exported at calls.
+    pub(super) replaced: HashSet<super::paths::LocalPath>,
 }
 
 /// Structural position of a fixed child owner. Runtime collections use separate
@@ -52,7 +54,7 @@ pub(super) struct Owner {
     pub(super) capacity: Option<Expr>,
     /// Vector proof-state identity, preserved when its handle moves.
     pub(super) vector: Option<usize>,
-    /// Input provenance for an entire subtree supplied by the caller.
+    /// Input provenance for this node; fixed children have independent IDs.
     pub(super) input: Option<usize>,
 }
 
@@ -73,6 +75,29 @@ impl Default for Owner {
 }
 
 impl Owner {
+    /// Detach a fixed child without touching any allocation charge.
+    pub(super) fn take_child(&mut self, path: &[OwnerSlot]) -> Option<Owner> {
+        let (last, parent) = path.split_last()?;
+        self.at_mut(parent)?.children.remove(last)
+    }
+
+    /// Install a child and return the displaced owner for explicit release.
+    pub(super) fn replace_child(&mut self, path: &[OwnerSlot], child: Owner) -> Option<Owner> {
+        let (last, parent) = path.split_last().expect("child path");
+        self.at_mut(parent).expect("validated child parent").children.insert(last.clone(), child)
+    }
+
+    /// Split a tree into disjoint nodes for call provenance. Every allocation
+    /// identity occurs once; reconstructing results consumes these nodes.
+    pub(super) fn flatten(mut self, path: &mut OwnerPath, nodes: &mut BTreeMap<OwnerPath, Owner>) {
+        for (slot, child) in std::mem::take(&mut self.children) {
+            path.push(slot);
+            child.flatten(path, nodes);
+            path.pop();
+        }
+        nodes.insert(path.clone(), self);
+    }
+
     pub(super) fn at(&self, path: &[OwnerSlot]) -> Option<&Owner> {
         let mut node = self;
         for slot in path {
@@ -105,7 +130,7 @@ impl Owner {
         }
     }
 
-    /// Every incoming allocation subtree whose lifetime follows this owner.
+    /// Every incoming allocation node whose lifetime follows this owner.
     pub(super) fn inputs(&self) -> HashSet<usize> {
         let mut inputs = HashSet::new();
         self.visit(&mut |node| {
@@ -160,6 +185,7 @@ impl Heap {
     pub(super) fn protect(&mut self) -> HashSet<VarIdent> {
         let old = self.protected.clone();
         self.protected.extend(self.owners.keys().cloned());
+        self.protected.extend(self.borrowed.keys().cloned());
         old
     }
 
@@ -168,15 +194,31 @@ impl Heap {
     }
 
     pub(super) fn take(&mut self, name: &VarIdent, span: &Span) -> Result<Owner, VirErr> {
+        self.check_transfer(name, span)?;
+        self.owners
+            .remove(name)
+            .ok_or_else(|| unsupported(span, "a heap object without a live local owner"))
+    }
+
+    pub(super) fn is_replaced(&self, name: &VarIdent, path: &[OwnerSlot]) -> bool {
+        self.replaced.iter().any(|(root, parent)| root == name && path.starts_with(parent))
+    }
+
+    pub(super) fn mark_replaced(&mut self, name: &VarIdent, path: &OwnerPath) {
+        if self.borrowed.contains_key(name) && !self.is_replaced(name, path) {
+            self.replaced.retain(|(root, child)| root != name || !child.starts_with(path));
+            self.replaced.insert((name.clone(), path.clone()));
+        }
+    }
+
+    pub(super) fn check_transfer(&self, name: &VarIdent, span: &Span) -> Result<(), VirErr> {
         if self.protected.contains(name) {
             return Err(unsupported(
                 span,
                 "moving or dropping an enclosing heap owner across a branch, loop, or memory section",
             ));
         }
-        self.owners
-            .remove(name)
-            .ok_or_else(|| unsupported(span, "a heap object without a live local owner"))
+        Ok(())
     }
 }
 
@@ -197,8 +239,20 @@ fn intrinsic(expr: &Expr, kind: ResourceIntrinsic) -> Option<&Exprs> {
 }
 
 impl Analysis<'_> {
+    pub(super) fn mark_input(&mut self, owner: &mut Owner, parameter: usize, path: &mut OwnerPath) {
+        let id = self.input_paths.len();
+        self.input_paths.push((parameter, path.clone()));
+        self.storage.add_input(id);
+        owner.input = Some(id);
+        for (slot, child) in &mut owner.children {
+            path.push(slot.clone());
+            self.mark_input(child, parameter, path);
+            path.pop();
+        }
+    }
+
     /// Mirror the input's structure without charging its original allocations.
-    /// The root alone carries lifetime provenance; descendant vector states count
+    /// Each node receives independent lifetime provenance; vector states count
     /// only replacements made here. The caller retains every original charge.
     pub(super) fn input_owner(
         &mut self,
@@ -302,16 +356,16 @@ impl Analysis<'_> {
             ExprX::ReadPlace(place, kind)
                 if !matches!(kind.preliminary_kind, ReadKind::ImmutBor) =>
             {
-                if !crate::ast_util::types_equal(&place.typ, &expr.typ) {
-                    return Err(unsupported(
-                        &expr.span,
-                        "moving an owning subvalue out of a container",
-                    ));
-                }
                 if let PlaceX::Temporary(value) = &place.x {
+                    if !crate::ast_util::types_equal(&value.typ, &expr.typ) {
+                        return Err(unsupported(
+                            &expr.span,
+                            "extracting an owner from a temporary container",
+                        ));
+                    }
                     self.owner_expr(value)
                 } else {
-                    self.move_owner(place)
+                    self.move_owner_to(place, &expr.typ)
                 }
             }
             ExprX::Block(stmts, tail) => {
@@ -331,21 +385,6 @@ impl Analysis<'_> {
                 "owning results other than constructors, local moves, blocks, or direct calls",
             )),
         }
-    }
-
-    pub(super) fn move_owner(&mut self, place: &Place) -> Result<Owner, VirErr> {
-        let PlaceX::Local(name) = &place.x else {
-            return Err(unsupported(&place.span, "heap ownership outside a named local"));
-        };
-        if !self.layouts.owner(&place.typ) {
-            return Err(unsupported(&place.span, "this heap move"));
-        }
-        self.access(place, &place.typ)?;
-        let owner = self.heap.take(name, &place.span)?;
-        self.growth.forget_element_places(&owner);
-        self.storage
-            .event(&place.span, "transfer heap ownership without copying the object".into());
-        Ok(owner)
     }
 
     pub(super) fn release_owner(&mut self, owner: Owner, span: &Span) {
@@ -402,12 +441,16 @@ impl Analysis<'_> {
                     "drop of anything other than a named local heap owner",
                 ));
             };
-            if !crate::ast_util::types_equal(&types[0], &place.typ) {
-                return Err(unsupported(&expr.span, "this heap drop coercion"));
+            self.access(place, &types[0])?;
+            // A child handle remains part of its parent's inline storage. Drop
+            // consumes its ownership without creating another handle slot.
+            if matches!(place.x, PlaceX::Local(_))
+                && crate::ast_util::types_equal(&types[0], &place.typ)
+            {
+                let value = self.take_value(place)?;
+                self.release_value(value, &expr.span);
             }
-            let value = self.take_value(place)?;
-            let owner = self.move_owner(place)?;
-            self.release_value(value, &expr.span);
+            let owner = self.move_owner_to(place, &types[0])?;
             self.release_owner(owner, &expr.span);
             return Ok(Some(0));
         }
