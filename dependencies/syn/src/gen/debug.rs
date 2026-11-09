@@ -3564,6 +3564,11 @@ impl Debug for crate::ResourceExpr {
                 formatter.field(v0);
                 formatter.finish()
             }
+            crate::ResourceExpr::SpecCall(v0) => {
+                let mut formatter = formatter.debug_tuple("SpecCall");
+                formatter.field(v0);
+                formatter.finish()
+            }
             crate::ResourceExpr::Paren(v0, v1) => {
                 let mut formatter = formatter.debug_tuple("Paren");
                 formatter.field(v0);

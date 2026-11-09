@@ -82,9 +82,11 @@ fn range_checks(expr: &Expr, guard: &Expr, checks: &mut Vec<Stmt>) {
             );
             range_checks(no, &and(not), checks);
         }
-        ExprX::Binary(BinaryOp::Arith(_), a, b) => {
-            range_checks(a, guard, checks);
-            range_checks(b, guard, checks);
+        ExprX::Binary(BinaryOp::Arith(_), ..) | ExprX::Call { .. } => {
+            if let ExprX::Binary(_, a, b) = &expr.x {
+                range_checks(a, guard, checks);
+                range_checks(b, guard, checks);
+            }
             let fits =
                 mk_ineq(span, expr, &super::contracts::literal(span, u64::MAX), InequalityOp::Le);
             let assertion = SpannedTyped::new(

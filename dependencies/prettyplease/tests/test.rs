@@ -49,3 +49,12 @@ fn test_parenthesize_match_guard() {
         "},
     );
 }
+
+#[test]
+fn spec_budget_calls_round_trip() {
+    let parsed: syn::Expr =
+        syn::parse_str("mem_peak <= mem_size(n) + budgets::bytes(n as nat) {}").unwrap();
+    let printed = prettyplease::unparse_expr(&parsed);
+    let reparsed: syn::Expr = syn::parse_str(&printed).unwrap();
+    assert_eq!(quote!(#parsed).to_string(), quote!(#reparsed).to_string());
+}

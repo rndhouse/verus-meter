@@ -3177,40 +3177,44 @@ impl Hash for crate::ResourceExpr {
                 v0.hash(state);
             }
             crate::ResourceExpr::Quantity(v0) => {
-                state.write_u8(9u8);
+                state.write_u8(1u8);
+                v0.hash(state);
+            }
+            crate::ResourceExpr::SpecCall(v0) => {
+                state.write_u8(2u8);
                 v0.hash(state);
             }
             crate::ResourceExpr::Paren(_, v1) => {
-                state.write_u8(1u8);
+                state.write_u8(3u8);
                 v1.hash(state);
             }
             crate::ResourceExpr::Add(v0, _, v2) => {
-                state.write_u8(2u8);
-                v0.hash(state);
-                v2.hash(state);
-            }
-            crate::ResourceExpr::Mul(v0, _, v2) => {
-                state.write_u8(3u8);
-                v0.hash(state);
-                v2.hash(state);
-            }
-            crate::ResourceExpr::MemSize(v0, _, v2) => {
                 state.write_u8(4u8);
                 v0.hash(state);
                 v2.hash(state);
             }
-            crate::ResourceExpr::MemPeak(v0, _, v2) => {
+            crate::ResourceExpr::Mul(v0, _, v2) => {
                 state.write_u8(5u8);
                 v0.hash(state);
                 v2.hash(state);
             }
-            crate::ResourceExpr::MemPeakCall(v0, _, v2) => {
+            crate::ResourceExpr::MemSize(v0, _, v2) => {
                 state.write_u8(6u8);
                 v0.hash(state);
                 v2.hash(state);
             }
-            crate::ResourceExpr::If(_, v1, _, v3, _, _, v6) => {
+            crate::ResourceExpr::MemPeak(v0, _, v2) => {
                 state.write_u8(7u8);
+                v0.hash(state);
+                v2.hash(state);
+            }
+            crate::ResourceExpr::MemPeakCall(v0, _, v2) => {
+                state.write_u8(8u8);
+                v0.hash(state);
+                v2.hash(state);
+            }
+            crate::ResourceExpr::If(_, v1, _, v3, _, _, v6) => {
+                state.write_u8(9u8);
                 v1.hash(state);
                 v3.hash(state);
                 v6.hash(state);

@@ -1281,7 +1281,7 @@ impl Visitor {
                 .into_iter()
                 .filter_map(|token| if let TokenTree::Ident(id) = token { Some(id) } else { None })
                 .collect();
-            let budget = resource::memory::lower_budget(&budget, &parameters);
+            let budget = resource::memory::lower_budget(self, &budget, &parameters);
             spec_stmts.push(Stmt::Expr(
                 Expr::Verbatim(quote_spanned_builtin!(verus_builtin, token.span() =>
                     #verus_builtin::memory_budget(#budget)

@@ -2502,6 +2502,10 @@ impl PartialEq for crate::ResourceExpr {
                 crate::ResourceExpr::Quantity(other0),
             ) => self0 == other0,
             (
+                crate::ResourceExpr::SpecCall(self0),
+                crate::ResourceExpr::SpecCall(other0),
+            ) => self0 == other0,
+            (
                 crate::ResourceExpr::Paren(_, self1),
                 crate::ResourceExpr::Paren(_, other1),
             ) => self1 == other1,

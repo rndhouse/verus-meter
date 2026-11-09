@@ -23,8 +23,42 @@ multiplication, and parentheses. Function bounds can also contain conditionals.
 `mem_size` accepts types or names. Call queries accept scalar constants, immutable
 scalar inputs, comparisons, and Boolean operators.
 Formula arithmetic must fit in `u64`. Verus proves this for runtime quantities,
-using the function's preconditions. Arbitrary spec expressions and named numeric
+using the function's preconditions. Function bounds can also call numeric spec
+functions as described below. Other arbitrary spec expressions and named numeric
 constants are not yet supported as budget operands.
+
+## Naming budget formulas
+
+A function budget can call a local `spec fn` returning `nat` or `u64`:
+
+```rust
+spec fn element_bytes(capacity: nat) -> nat { 4 * capacity }
+
+fn collect(capacity: usize)
+    requires capacity <= 1024,
+    mem_peak <= mem_size(capacity) + mem_size(Vec<u32>)
+        + element_bytes(capacity as nat),
+{
+    let values = Vec::<u32>::with_capacity(capacity);
+}
+```
+
+Verus proves the memory inequalities using the specification's definition.
+Its body can use ordinary Verus expressions, including `match` and other spec
+functions. The formula adds no runtime work. Every selected result and budget
+sum or product must fit in `u64`, even though `nat` arithmetic is unbounded.
+
+The initial support requires a nongeneric spec function with a verified body.
+Arguments may use immutable scalar inputs, literals, comparisons, casts to
+mathematical integers, and nested numeric spec calls. Executable calls and mutable
+inputs are rejected. Enum values used only inside the specification do not add
+support for executable enums in memory-checked code.
+
+Use `mem_peak(helper(arguments))` when referring to a helper whose budget calls
+a spec function; no constant envelope is inferred from a spec function's body.
+Sections and checkpoints still require fixed bounds. `mem_size` inside spec
+function bodies and function-valued budgets are not yet supported.
+See [named budget formulas](../../examples/resource/memory/spec_budgets.rs).
 
 ## What counts
 

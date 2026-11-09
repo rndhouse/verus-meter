@@ -22,6 +22,8 @@ pub enum BudgetExprX {
     If(Expr, BudgetExpr, BudgetExpr),
     FunctionCall(Fun, Exprs),
     Quantity(Expr),
+    /// A numeric spec call retained for ordinary Verus proof obligations.
+    SpecCall(Expr),
 }
 
 struct Resolver<'a> {
@@ -69,7 +71,7 @@ impl Resolver<'_> {
             BudgetExprX::If(_, then_budget, else_budget) => {
                 Ok(self.expr(then_budget)?.max(self.expr(else_budget)?))
             }
-            BudgetExprX::Quantity(_) => Ok(u64::MAX),
+            BudgetExprX::Quantity(_) | BudgetExprX::SpecCall(_) => Ok(u64::MAX),
             BudgetExprX::Literal(n) => Ok(*n),
             BudgetExprX::MemSize(typ) => self.layouts.size(typ, &expr.span),
             BudgetExprX::Function(name) => {
@@ -203,7 +205,7 @@ pub(super) fn evaluate_envelope(
 /// Runtime quantities need proof-checked bounds rather than a finite envelope.
 pub(super) fn runtime(expr: &BudgetExpr, functions: &HashMap<Fun, Function>) -> bool {
     match &expr.x {
-        BudgetExprX::Quantity(_) => true,
+        BudgetExprX::Quantity(_) | BudgetExprX::SpecCall(_) => true,
         BudgetExprX::Add(a, b) | BudgetExprX::Mul(a, b) => {
             runtime(a, functions) || runtime(b, functions)
         }

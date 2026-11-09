@@ -26,8 +26,6 @@ fn resource_clause_is_erased_for_rust() {
 fn malformed_resource_clauses_are_rejected() {
     for text in [
         "fn f() peakmem <= 0 {}",
-        "fn f() mem_peak <= sizeof(u32) {}",
-        "fn f() mem_peak <= peakmem(helper) {}",
         "fn f() resources heap_bytes <= 8 {}",
         "fn f() resources mem_peak <= 8 {}",
         "fn f() mem_peak < 8 {}",
@@ -40,8 +38,6 @@ fn malformed_resource_clauses_are_rejected() {
         "fn f() mem_peak <= mem_peak(object.make()) {}",
         "fn f() mem_peak <= mem_peak() {}",
         "fn f() resources peak_memory_bytes <= 8 {}",
-        "fn f() mem_peak <= memory_budget(x) {}",
-        "fn f() mem_peak <= memory_budget::<u32>() {}",
         "fn f() mem_peak <= mem_size::<u32>() {}",
         "fn f() mem_peak <= mem_size() {}",
         "fn f() mem_peak <= mem_size(x.field) {}",
@@ -69,6 +65,9 @@ fn resource_clause_ends_where_clause() {
 fn expressive_budgets_round_trip() {
     for budget in [
         "BUDGET",
+        "budgets::workspace(flag, n as nat)",
+        "mem_size(n) + workspace(n) * 2",
+        "workspace::<u32>()",
         "mem_size(n) + n * mem_size(u32)",
         "4 + 4",
         "mem_size(x) + mem_peak(module::f)",

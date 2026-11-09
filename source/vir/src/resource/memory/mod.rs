@@ -35,6 +35,7 @@ mod model;
 mod ownership;
 mod places;
 mod sections;
+mod spec_budget;
 mod summary;
 mod symbolic;
 mod values;

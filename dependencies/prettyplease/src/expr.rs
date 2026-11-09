@@ -121,6 +121,9 @@ impl Printer {
             }
             ResourceExpr::Literal(n) => self.word(n.to_string()),
             ResourceExpr::Quantity(n) => self.word(n.to_string()),
+            ResourceExpr::SpecCall(call) => {
+                self.expr(&Expr::Call(call.clone()), FixupContext::NONE)
+            }
             ResourceExpr::Paren(_, expr) => {
                 self.word("(");
                 self.resource_budget(expr);

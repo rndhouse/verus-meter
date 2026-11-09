@@ -14,6 +14,7 @@ mod reachability;
 mod return_sharing;
 mod returns;
 mod sections;
+mod spec_functions;
 mod storage;
 mod storage_budgets;
 mod storage_calls;

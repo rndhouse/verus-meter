@@ -2551,7 +2551,12 @@ impl Clone for crate::ResourceExpr {
     fn clone(&self) -> Self {
         match self {
             crate::ResourceExpr::Literal(v0) => crate::ResourceExpr::Literal(v0.clone()),
-            crate::ResourceExpr::Quantity(v0) => crate::ResourceExpr::Quantity(v0.clone()),
+            crate::ResourceExpr::Quantity(v0) => {
+                crate::ResourceExpr::Quantity(v0.clone())
+            }
+            crate::ResourceExpr::SpecCall(v0) => {
+                crate::ResourceExpr::SpecCall(v0.clone())
+            }
             crate::ResourceExpr::Paren(v0, v1) => {
                 crate::ResourceExpr::Paren(v0.clone(), v1.clone())
             }

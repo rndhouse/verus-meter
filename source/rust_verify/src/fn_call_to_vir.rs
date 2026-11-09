@@ -636,6 +636,7 @@ fn verus_item_to_vir<'tcx, 'a>(
                     SpecItem::Admit
                     | SpecItem::Assume
                     | SpecItem::NoMethodBody
+                    | SpecItem::ResourceSpecBudget
                     | SpecItem::ResourceQuantity
                     | SpecItem::ResourceMemSizeValue
                     | SpecItem::ResourceMemSizeType
@@ -972,7 +973,8 @@ fn verus_item_to_vir<'tcx, 'a>(
                     let budget = crate::resource::memory::budget::lower(bctx, args[0])?;
                     mk_expr(ExprX::ResourceAssert(budget))
                 }
-                SpecItem::ResourceQuantity
+                SpecItem::ResourceSpecBudget
+                | SpecItem::ResourceQuantity
                 | SpecItem::ResourceMemSizeValue
                 | SpecItem::ResourceMemSizeType
                 | SpecItem::ResourceMemPeak

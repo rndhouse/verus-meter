@@ -6370,6 +6370,16 @@
             "syn": "LitInt"
           }
         ],
+        "Quantity": [
+          {
+            "proc_macro2": "Ident"
+          }
+        ],
+        "SpecCall": [
+          {
+            "syn": "ExprCall"
+          }
+        ],
         "Paren": [
           {
             "group": "Paren"

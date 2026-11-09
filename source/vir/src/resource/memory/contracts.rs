@@ -173,7 +173,7 @@ pub(super) fn envelope(expr: &Expr) -> Result<u64, VirErr> {
         return Ok(n);
     }
     match &expr.x {
-        ExprX::Var(_) => Ok(u64::MAX),
+        ExprX::Var(_) | ExprX::Call { .. } => Ok(u64::MAX),
         ExprX::If(_, a, Some(b)) => Ok(envelope(a)?.max(envelope(b)?)),
         ExprX::Binary(BinaryOp::Arith(op), a, b) => {
             let a = envelope(a)?;
@@ -271,6 +271,9 @@ pub(super) fn lower(
 ) -> Result<Expr, VirErr> {
     let x = match &expr.x {
         BudgetExprX::Quantity(value) => return quantity(value, allowed),
+        BudgetExprX::SpecCall(value) => {
+            return super::spec_budget::validate(value, allowed, functions);
+        }
         BudgetExprX::Literal(n) => return Ok(literal(&expr.span, *n)),
         BudgetExprX::MemSize(typ) => {
             return Ok(literal(&expr.span, layouts.size(typ, &expr.span)?));
@@ -319,7 +322,7 @@ pub(super) fn quantity(expr: &Expr, allowed: &HashSet<VarIdent>) -> Result<Expr,
 
 pub(super) fn numeric_input(expr: &Expr) -> bool {
     match &expr.x {
-        ExprX::Var(_) => true,
+        ExprX::Var(_) | ExprX::Call { .. } => true,
         ExprX::If(_, a, Some(b)) | ExprX::Binary(_, a, b) => numeric_input(a) || numeric_input(b),
         _ => false,
     }

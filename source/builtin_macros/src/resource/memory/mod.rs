@@ -11,32 +11,41 @@ use verus_syn::{Expr, ExprBlock, Ident, Stmt, Type};
 /// Lower the small, parser-validated resource language without rewriting its
 /// arithmetic into spec operators. Argument borrows exist only in erased headers.
 pub(in crate::syntax) fn lower_budget(
+    visitor: &mut Visitor,
     expr: &verus_syn::ResourceExpr,
     parameters: &[Ident],
 ) -> TokenStream {
     use verus_syn::ResourceExpr;
     match expr {
         ResourceExpr::If(_, condition, _, then_budget, _, _, else_budget) => {
-            let then_budget = lower_budget(then_budget, parameters);
-            let else_budget = lower_budget(else_budget, parameters);
+            let then_budget = lower_budget(visitor, then_budget, parameters);
+            let else_budget = lower_budget(visitor, else_budget, parameters);
             quote_spanned!(expr.span() => (if #condition { #then_budget } else { #else_budget }))
+        }
+        ResourceExpr::SpecCall(call) => {
+            let mut call = Expr::Call(call.clone());
+            let outer_ghost = visitor.inside_ghost;
+            visitor.inside_ghost += 1;
+            visitor.visit_expr_mut(&mut call);
+            visitor.inside_ghost = outer_ghost;
+            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_spec_budget(#call))
         }
         ResourceExpr::Literal(n) => n.to_token_stream(),
         ResourceExpr::Quantity(n) => {
             quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_quantity(&#n))
         }
         ResourceExpr::Paren(_, e) => {
-            let e = lower_budget(e, parameters);
+            let e = lower_budget(visitor, e, parameters);
             quote!((#e))
         }
         ResourceExpr::Add(left, op, right) => {
-            let left = lower_budget(left, parameters);
-            let right = lower_budget(right, parameters);
+            let left = lower_budget(visitor, left, parameters);
+            let right = lower_budget(visitor, right, parameters);
             quote_spanned!(expr.span() => (#left #op #right))
         }
         ResourceExpr::Mul(left, op, right) => {
-            let left = lower_budget(left, parameters);
-            let right = lower_budget(right, parameters);
+            let left = lower_budget(visitor, left, parameters);
+            let right = lower_budget(visitor, right, parameters);
             quote_spanned!(expr.span() => (#left #op #right))
         }
         ResourceExpr::MemSize(_, _, typ) => {
@@ -86,7 +95,7 @@ impl Visitor {
             if !self.erase_ghost.erase() {
                 let tokens = match parsed {
                     Ok((parameter, capacity)) if sig.spec.resources.is_some() => {
-                        let capacity = lower_budget(&capacity, &[]);
+                        let capacity = lower_budget(self, &capacity, &[]);
                         quote_spanned_builtin!(builtin, span => #builtin::memory_capacity(&#parameter, #capacity))
                     }
                     Ok(_) => quote_spanned!(span => ::core::compile_error!("memory_capacity requires a mem_peak contract")),
@@ -112,7 +121,8 @@ impl Visitor {
             return true;
         }
         // Resolve mem_size names before visiting declarations in the section.
-        let budget = lower_budget(&section.contract.budget, &self.resource_bindings);
+        let bindings = self.resource_bindings.clone();
+        let budget = lower_budget(self, &section.contract.budget, &bindings);
         self.visit_block_mut(&mut section.block);
         if !self.erase_ghost.erase() {
             section.block.stmts.insert(0, Stmt::Expr(
@@ -138,7 +148,8 @@ impl Visitor {
         } else if self.erase_ghost.erase() {
             quote_verbatim!(span, attrs => ())
         } else {
-            let budget = lower_budget(&resource.budget, &self.resource_bindings);
+            let bindings = self.resource_bindings.clone();
+            let budget = lower_budget(self, &resource.budget, &bindings);
             quote_verbatim!(builtin, span, attrs => #builtin::resource_assert_mem_peak(#budget))
         };
         true

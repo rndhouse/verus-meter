@@ -4539,6 +4539,9 @@ where
         crate::ResourceExpr::Quantity(_binding_0) => {
             crate::ResourceExpr::Quantity(f.fold_ident(_binding_0))
         }
+        crate::ResourceExpr::SpecCall(_binding_0) => {
+            crate::ResourceExpr::SpecCall(f.fold_expr_call(_binding_0))
+        }
         crate::ResourceExpr::Paren(_binding_0, _binding_1) => {
             crate::ResourceExpr::Paren(
                 _binding_0,

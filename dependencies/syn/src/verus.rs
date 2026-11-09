@@ -248,6 +248,7 @@ ast_enum! {
     pub enum ResourceExpr {
         Literal(LitInt),
         Quantity(Ident),
+        SpecCall(ExprCall),
         Paren(token::Paren, Box<ResourceExpr>),
         Add(Box<ResourceExpr>, Token![+], Box<ResourceExpr>),
         Mul(Box<ResourceExpr>, Token![*], Box<ResourceExpr>),
@@ -1519,6 +1520,27 @@ pub mod parsing {
             }
             return Ok(ResourceExpr::Literal(n));
         }
+        // Parse named calls without consuming the surrounding budget arithmetic.
+        // Verus, rather than the parser, checks that the target is a spec function.
+        let ahead = input.fork();
+        let path = ahead.parse::<ExprPath>()?;
+        let query = path.path.segments.len() == 1
+            && matches!(
+                path.path.segments[0].ident.to_string().as_str(),
+                "mem_size" | "mem_peak"
+            );
+        if !query && ahead.peek(token::Paren) {
+            let function: ExprPath = input.parse()?;
+            let content;
+            let paren_token = parenthesized!(content in input);
+            return Ok(ResourceExpr::SpecCall(crate::ExprCall {
+                attrs: Vec::new(),
+                func: Box::new(Expr::Path(function)),
+                atomically: None,
+                paren_token,
+                args: content.parse_terminated(Expr::parse, Token![,])?,
+            }));
+        }
         let name: Ident = input.parse()?;
         if name != "mem_size" && name != "mem_peak" {
             if input.peek(token::Paren) {
@@ -2611,6 +2633,7 @@ mod printing {
                 }
                 ResourceExpr::Literal(n) => n.to_tokens(tokens),
                 ResourceExpr::Quantity(n) => n.to_tokens(tokens),
+                ResourceExpr::SpecCall(call) => call.to_tokens(tokens),
                 ResourceExpr::Paren(paren, expr) => {
                     paren.surround(tokens, |tokens| expr.to_tokens(tokens));
                 }

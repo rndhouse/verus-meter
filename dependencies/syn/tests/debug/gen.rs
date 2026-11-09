@@ -6010,6 +6010,20 @@ impl Debug for Lite<syn::ResourceExpr> {
                 formatter.write_str(")")?;
                 Ok(())
             }
+            syn::ResourceExpr::Quantity(_val) => {
+                formatter.write_str("ResourceExpr::Quantity")?;
+                formatter.write_str("(")?;
+                Debug::fmt(Lite(_val), formatter)?;
+                formatter.write_str(")")?;
+                Ok(())
+            }
+            syn::ResourceExpr::SpecCall(_val) => {
+                formatter.write_str("ResourceExpr::SpecCall")?;
+                formatter.write_str("(")?;
+                Debug::fmt(Lite(_val), formatter)?;
+                formatter.write_str(")")?;
+                Ok(())
+            }
             syn::ResourceExpr::Paren(_v0, _v1) => {
                 let mut formatter = formatter.debug_tuple("ResourceExpr::Paren");
                 formatter.field(Lite(_v1));

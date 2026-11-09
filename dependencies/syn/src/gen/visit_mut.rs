@@ -4366,6 +4366,9 @@ where
         crate::ResourceExpr::Quantity(_binding_0) => {
             v.visit_ident_mut(_binding_0);
         }
+        crate::ResourceExpr::SpecCall(_binding_0) => {
+            v.visit_expr_call_mut(_binding_0);
+        }
         crate::ResourceExpr::Paren(_binding_0, _binding_1) => {
             skip!(_binding_0);
             v.visit_resource_expr_mut(&mut **_binding_1);
