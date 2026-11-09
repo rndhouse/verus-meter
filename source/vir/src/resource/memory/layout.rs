@@ -5,6 +5,15 @@ use crate::ast::*;
 use crate::messages::Span;
 use std::collections::{HashMap, HashSet};
 
+/// Storage within one allocation. Element storage includes inline fields/handles;
+/// allocations owned by those elements require separate ownership accounting.
+pub(super) enum AllocationLayout {
+    /// One statically sized payload, in model bytes.
+    Fixed(u64),
+    /// Contiguous inline elements; the operation supplies length or capacity.
+    Sequence { element: u64 },
+}
+
 pub(super) struct Layouts {
     datatypes: HashMap<Dt, Datatype>,
     global_allocator: Option<Dt>,
@@ -127,10 +136,14 @@ impl Layouts {
         self.size_inner(typ, span, &mut HashSet::new())
     }
 
-    /// A box owns a fixed, non-owning value under the standard global allocator.
+    /// A box owns a fixed value or a runtime-length sequence of non-owning values.
     /// Its handle and heap object are sized separately so moves do not duplicate
     /// the allocation and borrows keep backing storage charged to its owner.
-    pub(super) fn box_contents(&self, typ: &Typ, span: &Span) -> Result<Option<u64>, VirErr> {
+    pub(super) fn box_layout(
+        &self,
+        typ: &Typ,
+        span: &Span,
+    ) -> Result<Option<AllocationLayout>, VirErr> {
         let TypX::Decorate(TypDecoration::Box, allocator, inner) = &**typ else {
             return Ok(None);
         };
@@ -146,7 +159,24 @@ impl Layouts {
         if self.vector(inner) || matches!(&**inner, TypX::Decorate(..) | TypX::MutRef(_)) {
             return Err(unsupported(span, "nested boxes or reference-valued heap objects"));
         }
-        Ok(Some(self.size(inner, span)?))
+        Ok(Some(if slice(inner) {
+            AllocationLayout::Sequence { element: self.slice_element(inner, span)? }
+        } else {
+            AllocationLayout::Fixed(self.size(inner, span)?)
+        }))
+    }
+
+    pub(super) fn slice_element(&self, typ: &Typ, span: &Span) -> Result<u64, VirErr> {
+        let TypX::Primitive(Primitive::Slice, args) = &**typ else {
+            return Err(unsupported(span, "this slice type"));
+        };
+        if args.len() != 1
+            || self.owner(&args[0])
+            || matches!(&*args[0], TypX::Decorate(..) | TypX::MutRef(_))
+        {
+            return Err(unsupported(span, "owning or reference-valued slice elements"));
+        }
+        self.size(&args[0], span)
     }
 
     fn size_inner(
@@ -167,13 +197,16 @@ impl Layouts {
                 Ok(3 * WORD_BYTES)
             }
             TypX::Decorate(TypDecoration::Box, _, _) => {
-                self.box_contents(typ, span)?;
-                Ok(WORD_BYTES)
+                match self.box_layout(typ, span)?.unwrap() {
+                    AllocationLayout::Fixed(_) => Ok(WORD_BYTES),
+                    AllocationLayout::Sequence { .. } => Ok(2 * WORD_BYTES),
+                }
             }
             TypX::Bool => Ok(1),
             TypX::Int(range) if integer_size(range).is_some() => Ok(integer_size(range).unwrap()),
             TypX::MutRef(inner) | TypX::Decorate(TypDecoration::Ref, None, inner) => {
                 if slice(inner) {
+                    self.slice_element(inner, span)?;
                     Ok(2 * WORD_BYTES)
                 } else if matches!(&**inner, TypX::MutRef(_) | TypX::Decorate(..)) {
                     Err(unsupported(span, "nested references"))

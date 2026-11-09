@@ -17,6 +17,7 @@ pub(super) fn summarize(
     function: &Function,
     owner: Option<&Owner>,
     replacement: Option<Charge<Expr>>,
+    bound: &Expr,
 ) -> Result<Option<ReturnedAllocation>, VirErr> {
     let Some(owner) = owner else { return Ok(None) };
     if let Some(allocation) = replacement {
@@ -29,17 +30,17 @@ pub(super) fn summarize(
         unsupported(&function.span, "a fresh returned allocation without a byte-size summary")
     })?;
     let inputs = contracts::inputs(function);
+    let mut in_scope = true;
     crate::ast_visitor::expr_visitor_check(&amount, &mut |_, expr| {
         if let ExprX::Var(name) = &expr.x {
-            if !inputs.contains(name) {
-                return Err(unsupported(
-                    &expr.span,
-                    "returned allocation sizes depending on locals; use an immutable input or a literal",
-                ));
-            }
+            in_scope &= inputs.contains(name);
         }
-        Ok(())
+        Ok::<(), VirErr>(())
     })?;
+    // A locally charged result is part of the checked peak. If its runtime
+    // extent cannot escape the body, the declared bound is a sound (possibly
+    // loose) exported extent. Incoming storage took the provenance path above.
+    let amount = if in_scope { amount } else { bound.clone() };
     Ok(Some(ReturnedAllocation::Fresh(Charge { kind: owner.kind.clone(), amount })))
 }
 

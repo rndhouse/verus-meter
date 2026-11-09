@@ -45,6 +45,7 @@ fn vec_intrinsic(tcx: TyCtxt<'_>, id: DefId) -> Option<vir::ast::ResourceIntrins
         "len" => Some(VecLen),
         "as_slice" => Some(VecAsSlice),
         "as_mut_slice" => Some(VecAsMutSlice),
+        "into_boxed_slice" => Some(VecIntoBoxedSlice),
         _ => None,
     }
 }

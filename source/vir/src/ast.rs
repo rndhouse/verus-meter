@@ -1044,6 +1044,8 @@ pub enum ResourceIntrinsic {
     VecLen,
     VecAsSlice,
     VecAsMutSlice,
+    /// Consume a vector into a fixed-length owning slice.
+    VecIntoBoxedSlice,
     OptionIsSome,
     OptionIsNone,
     OptionUnwrap,

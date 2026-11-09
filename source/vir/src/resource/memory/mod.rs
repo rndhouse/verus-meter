@@ -26,6 +26,7 @@
 mod accounting;
 mod allocations;
 mod analysis;
+mod boxed_slices;
 mod budget;
 mod call_graph;
 mod calls;

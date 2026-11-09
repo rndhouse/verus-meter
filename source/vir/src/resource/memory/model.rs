@@ -5,7 +5,7 @@ use crate::messages::{Span, error};
 use serde::{Deserialize, Serialize};
 use vir_macros::ToDebugSNode;
 
-pub(super) const MODEL_NAME: &str = "source-values-v10-64";
+pub(super) const MODEL_NAME: &str = "source-values-v11-64";
 pub(super) const WORD_BYTES: u64 = 8;
 
 /// Current source-storage contract. This unreleased format has no legacy variants.
@@ -40,7 +40,7 @@ pub(super) fn integer_type_size(typ: &Typ) -> Option<u64> {
 
 pub(super) fn slice(typ: &Typ) -> bool {
     matches!(&**typ, TypX::Primitive(Primitive::Slice, args)
-        if args.len() == 1 && integer_type_size(&args[0]).is_some())
+        if args.len() == 1)
 }
 
 pub(super) fn arithmetic(op: &BinaryOp) -> bool {

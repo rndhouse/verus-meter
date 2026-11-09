@@ -9,6 +9,31 @@ use crate::ast::*;
 use crate::ast_util::*;
 use std::sync::Arc;
 
+/// Logical vector length used by operation adapters before consuming or mutating it.
+pub(super) fn length(span: &crate::messages::Span, types: Typs, vector: Expr) -> Expr {
+    SpannedTyped::new(
+        span,
+        &Arc::new(TypX::Int(IntRange::USize)),
+        ExprX::Call {
+            target: CallTarget::Fun(
+                CallTargetKind::Static,
+                crate::fun!(CrateId::Vstd => "std_specs", "vec"; "spec_vec_len"),
+                types,
+                Arc::new(vec![]),
+                CallTargetAttrs {
+                    resource_intrinsic: None,
+                    autospec: AutospecUsage::Final,
+                    const_var: false,
+                    assume_external_allowed: false,
+                },
+            ),
+            args: Arc::new(vec![vector]),
+            post_args: None,
+            body: None,
+        },
+    )
+}
+
 impl Analysis<'_> {
     pub(super) fn allocate_vector(
         &mut self,
@@ -190,27 +215,7 @@ impl Analysis<'_> {
             let TypX::Datatype(_, types, _) = &*typ else { unreachable!() };
             // Read the current logical length at the push, so ordinary branches,
             // preconditions and loop invariants can establish available room.
-            let len = SpannedTyped::new(
-                &expr.span,
-                &Arc::new(TypX::Int(IntRange::USize)),
-                ExprX::Call {
-                    target: CallTarget::Fun(
-                        CallTargetKind::Static,
-                        crate::fun!(CrateId::Vstd => "std_specs", "vec"; "spec_vec_len"),
-                        types.clone(),
-                        Arc::new(vec![]),
-                        CallTargetAttrs {
-                            resource_intrinsic: None,
-                            autospec: AutospecUsage::Final,
-                            const_var: false,
-                            assume_external_allowed: false,
-                        },
-                    ),
-                    args: Arc::new(vec![vector]),
-                    post_args: None,
-                    body: None,
-                },
-            );
+            let len = length(&expr.span, types.clone(), vector);
             let revision = self.growth.revision();
             self.initialize_expr(&args[1])?;
             if revision != self.growth.revision() {

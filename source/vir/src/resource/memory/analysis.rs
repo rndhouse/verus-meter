@@ -583,7 +583,8 @@ pub(super) fn check(
         &analysis.growth,
         &analysis.bound,
     )?;
-    let returned = super::ownership::summarize(function, result_owner.as_ref(), replacement)?;
+    let returned =
+        super::ownership::summarize(function, result_owner.as_ref(), replacement, &analysis.bound)?;
     analysis.check_checkpoints()?;
     let report = if symbolic_bound.is_some() {
         analysis.storage.finish_conditional()

@@ -8,6 +8,12 @@ use core::alloc::Allocator;
 
 verus! {
 
+/// Consuming a vector preserves its elements in the resulting owning slice.
+pub assume_specification<T, A: Allocator>[ Vec::<T, A>::into_boxed_slice ](v: Vec<T, A>) -> (b: Box<[T], A>)
+    ensures
+        b@ == v@,
+;
+
 // TODO
 pub assume_specification<T, A: Allocator>[ <[T]>::into_vec ](b: Box<[T], A>) -> (v: Vec<T, A>)
     ensures

@@ -114,6 +114,25 @@ impl Accounting {
     }
 }
 
+impl super::analysis::Analysis<'_> {
+    /// Freeze a runtime byte extent before its source value is consumed. Later
+    /// accounting refers to the snapshot, never to a moved or mutated receiver.
+    pub(super) fn allocation_snapshot(&mut self, span: &Span, amount: Expr) -> Expr {
+        let name = VarIdent(
+            std::sync::Arc::new("$memory_extent".into()),
+            VarIdentDisambiguate::VirTemp(Accounting::fresh_allocation()),
+        );
+        let (value, declaration) = super::symbolic::integer_local(span, name);
+        self.growth.declarations.push(declaration);
+        self.growth
+            .before
+            .entry(span.id)
+            .or_default()
+            .push(super::symbolic::assign(span, &value, amount));
+        value
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::footprint::MemorySelection;

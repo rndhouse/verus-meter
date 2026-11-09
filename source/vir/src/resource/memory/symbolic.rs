@@ -4,6 +4,7 @@
 //! inputs give the budget a stable entry-state meaning without a ghost counter.
 
 use super::accounting::{CheckKind, Obligation};
+use super::contracts;
 use super::layout::Layouts;
 use crate::ast::*;
 use crate::ast_util::*;
@@ -11,6 +12,37 @@ use crate::def::Spanned;
 use crate::messages::{Span, error};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+
+/// Declare one erased integer used by allocation snapshots and mutable proof state.
+pub(super) fn integer_local(span: &Span, name: VarIdent) -> (Expr, Stmt) {
+    let value = SpannedTyped::new(span, &int_typ(), ExprX::Var(name.clone()));
+    let declaration = Spanned::new(
+        span.clone(),
+        StmtX::Decl {
+            pattern: SpannedTyped::new(
+                span,
+                &int_typ(),
+                PatternX::Var(PatternBinding {
+                    name,
+                    by_ref: ByRef::No,
+                    typ: int_typ(),
+                    user_mut: Some(true),
+                    copy: true,
+                    move_exec_to_proof_okay: MoveExecToProofOkay::No,
+                }),
+            ),
+            mode: Some((Mode::Spec, DeclProph::Default)),
+            init: Some(SpannedTyped::new(
+                span,
+                &int_typ(),
+                PlaceX::Temporary(contracts::literal(span, 0)),
+            )),
+            els: None,
+            assert_irrefutable: false,
+        },
+    );
+    (value, declaration)
+}
 
 /// Write an erased model integer; instrumentation gives each use fresh AST IDs.
 pub(super) fn assign(span: &Span, variable: &Expr, value: Expr) -> Stmt {

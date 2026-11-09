@@ -39,8 +39,17 @@ Constructors supply byte extents, so owning call composition does not reconstruc
 sizes from return types. Keep container facts, such as vector capacity in elements,
 in adapters such as [vector_calls.rs](../../source/vir/src/resource/memory/vector_calls.rs).
 New owning containers should reuse these effects and supply only their layout,
-operation rules, and any additional proof facts. This separation does not itself
-add support for dynamically sized boxes.
+operation rules, and any additional proof facts. The [boxed-slice adapter](../../source/vir/src/resource/memory/boxed_slices.rs)
+uses shared byte snapshots and replacement overlap for runtime-length allocations.
+
+Keep three concepts distinct: inline value layout, separately owned allocations,
+and operation effects. A vector buffer already contains its elements' inline
+storage; future nested ownership must add only their separately owned allocations.
+Moves transfer ownership, growth overlaps backing buffers without duplicating
+child allocations, and drop releases the owned structure. Fixed aggregates can
+compose child ownership first; runtime collections will need aggregate bounds
+for varying element footprints. Shared ownership needs separate last-owner
+release rules. Do not add type-combination-specific accounting for nested owners.
 
 Compiler upgrades need a review of borrow/coercion lowering, move/copy provenance,
 and the identities used for supported standard operations.

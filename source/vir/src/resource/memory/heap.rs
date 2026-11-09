@@ -29,7 +29,7 @@ pub(super) struct Owner {
     pub(super) bytes: u64,
     /// Identity of any symbolic portion of the live charge.
     pub(super) dynamic: Option<u64>,
-    /// Byte-size expression supplied by a fresh allocation's constructor or summary.
+    /// Byte extent (or conservative bound) supplied by a constructor or summary.
     /// Incoming allocations use their caller's charge instead.
     pub(super) extent: Option<Expr>,
     /// Original vector reservation used when exporting an unchanged fresh result.
@@ -99,10 +99,13 @@ impl Analysis<'_> {
         let Some(args) = intrinsic(expr, ResourceIntrinsic::BoxNew) else {
             return Ok(None);
         };
-        let bytes = self
+        let layout = self
             .layouts
-            .box_contents(&expr.typ, &expr.span)?
+            .box_layout(&expr.typ, &expr.span)?
             .ok_or_else(|| unsupported(&expr.span, "this box constructor"))?;
+        let super::layout::AllocationLayout::Fixed(bytes) = layout else {
+            return Err(unsupported(&expr.span, "Box::new with an unsized payload"));
+        };
         let TypX::Decorate(TypDecoration::Box, _, inner) = &*expr.typ else { unreachable!() };
         if !crate::ast_util::types_equal(inner, &args[0].typ) {
             return Err(unsupported(&args[0].span, "this box initializer coercion"));
@@ -125,6 +128,9 @@ impl Analysis<'_> {
             });
         }
         if let Some(owner) = self.allocate_vector(expr)? {
+            return Ok(owner);
+        }
+        if let Some(owner) = self.boxed_slice_expr(expr)? {
             return Ok(owner);
         }
         match &expr.x {

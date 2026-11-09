@@ -1,4 +1,4 @@
-//! Erased, verifier-owned state for changing vector allocations.
+//! Erased, verifier-owned allocation state and operation scheduling.
 //!
 //! A reservation lower bound and a retained-byte upper bound are deliberately
 //! distinct. Borrowed inputs need not expose their allocation size: the caller
@@ -8,7 +8,6 @@ use super::contracts;
 use super::symbolic::assign;
 use crate::ast::*;
 use crate::ast_util::*;
-use crate::def::Spanned;
 use crate::messages::Span;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -37,7 +36,7 @@ pub(super) struct Growth {
     pub(super) vectors: Vec<VectorState>,
     /// Function-entry declarations for erased proof state.
     pub(super) declarations: Vec<Stmt>,
-    /// Initializers run before the reservation checks at their constructor.
+    /// Capture allocation facts before checks and before consuming their sources.
     pub(super) before: HashMap<u64, Vec<Stmt>>,
     /// Snapshot the next state after checks, before executing the operation.
     pub(super) updates: HashMap<u64, Vec<Stmt>>,
@@ -95,29 +94,8 @@ impl Growth {
                 Arc::new(format!("$memory_{suffix}")),
                 VarIdentDisambiguate::VirTemp(id as u64),
             );
-            let value = SpannedTyped::new(span, &int_typ(), ExprX::Var(name.clone()));
-            let zero = contracts::literal(span, 0);
-            self.declarations.push(Spanned::new(
-                span.clone(),
-                StmtX::Decl {
-                    pattern: SpannedTyped::new(
-                        span,
-                        &int_typ(),
-                        PatternX::Var(PatternBinding {
-                            name,
-                            by_ref: ByRef::No,
-                            typ: int_typ(),
-                            user_mut: Some(true),
-                            copy: true,
-                            move_exec_to_proof_okay: MoveExecToProofOkay::No,
-                        }),
-                    ),
-                    mode: Some((Mode::Spec, DeclProph::Default)),
-                    init: Some(SpannedTyped::new(span, &int_typ(), PlaceX::Temporary(zero))),
-                    els: None,
-                    assert_irrefutable: false,
-                },
-            ));
+            let (value, declaration) = super::symbolic::integer_local(span, name);
+            self.declarations.push(declaration);
             value
         };
         let lower = variable("capacity");

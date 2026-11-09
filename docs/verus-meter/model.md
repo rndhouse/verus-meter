@@ -161,6 +161,32 @@ unsupported. Branches, loops, and budgeted sections may create and consume their
 own boxes, but cannot move or drop owners from outside that region. Custom
 allocator types remain unsupported.
 
+## Runtime-sized boxed slices
+
+`Box<[T]>` has a 16-byte owning handle and a backing extent of
+`length * mem_size(T)` bytes. Elements must have supported fixed, non-owning
+layouts. `mem_size(Box<[T]>)` measures the handle; it does not include backing
+storage. Zero-sized elements require no backing bytes.
+
+Convert a named vector with `v.into_boxed_slice()`. The model conservatively
+allows a length-sized replacement to overlap the old vector buffer, even when
+an allocator could reuse or shrink that buffer in place. After conversion, only
+the boxed slice's backing allocation remains. The length is captured before the
+vector is consumed, so later accounting cannot read a moved value. Moves,
+borrowing contents, indexing, helper calls, explicit drop, and scope exit reuse
+the ordinary ownership rules. See [boxed slices](../../examples/resource/memory/boxed_slices.rs).
+
+A returned local runtime extent that cannot be expressed using immutable scalar
+inputs is conservatively bounded by the producing function's checked `mem_peak`.
+That bound follows the result through callers until drop; forwarding an input
+preserves its existing allocation charge. Local accounting uses the captured
+extent. This can make callers require more allowance than the exact payload size.
+
+Other construction/conversion APIs, including boxed-array unsizing and conversion
+back into a vector, are not yet modeled. Nested owning elements and shared owners
+also remain unsupported. Bind the vector before converting it, and bind the
+result before passing it to a helper.
+
 ## Vector allocations and growth
 
 A `Vec<T>` handle costs 24 model bytes. `Vec::new()` begins without backing
@@ -339,9 +365,8 @@ the proofs that select it; an unselected larger allowance does not inflate the p
 
 Checked functions must be safe, nongeneric, and have a verified body.
 The supported subset includes `bool`, all native integers, fixed integer arrays,
-concrete structs, non-owning `Option` values, fixed-size boxes and vectors
-without growth, supported
-references and integer slices,
+concrete structs, non-owning `Option` values, fixed-size boxes, boxed slices,
+vectors with supported growth, and references/slices of supported non-owning values,
 indexing, branches, while loops, and calls to checked functions in the same crate. Integer addition,
 subtraction, multiplication, and signed negation retain Verus's overflow checks.
 See the [integer example](../../examples/resource/memory/integers.rs).

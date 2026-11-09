@@ -75,6 +75,7 @@ Bounds describe a source-level model, not the compiled program’s actual memory
   - [Budgets across calls](examples/resource/memory/call_budgets.rs): preserve those input-specific allowances through a chain of helpers.
   - [Returning buffers](examples/resource/memory/returns.rs): hand a buffer to its caller without counting its storage twice.
   - [Heap buffers](examples/resource/memory/heap.rs): reuse a heap allowance by releasing each buffer before creating the next.
+  - [Boxed slices](examples/resource/memory/boxed_slices.rs): convert vectors into fixed-length owning slices and transfer their storage.
   - [Ownership](examples/resource/memory/ownership.rs): track an allocation's cost as it passes between helpers.
   - [Vectors](examples/resource/memory/vectors.rs): collect values while proving that every addition fits the reserved capacity.
   - [Growing vectors](examples/resource/memory/vector_growth.rs): budget for replacement buffers and retained allocations across helper calls.
