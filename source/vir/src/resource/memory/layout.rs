@@ -40,15 +40,11 @@ impl Layouts {
         matches!(&**typ, TypX::Datatype(name, _, _) if Some(name) == self.vector.as_ref())
     }
 
-    pub(super) fn borrowed_vector<'t>(&self, typ: &'t Typ) -> Option<&'t Typ> {
-        match &**typ {
-            TypX::MutRef(inner) | TypX::Decorate(TypDecoration::Ref, None, inner)
-                if self.vector(inner) =>
-            {
-                Some(inner)
-            }
-            _ => None,
-        }
+    pub(super) fn borrowed_owner<'t>(&self, typ: &'t Typ) -> Option<&'t Typ> {
+        let inner = super::paths::referent(typ);
+        (matches!(&**typ, TypX::MutRef(_) | TypX::Decorate(TypDecoration::Ref, None, _))
+            && self.owner(inner))
+        .then_some(inner)
     }
 
     pub(super) fn option(&self, typ: &Typ) -> bool {
@@ -259,7 +255,10 @@ impl Layouts {
                 if slice(inner) {
                     self.slice_element(inner, span)?;
                     Ok(2 * WORD_BYTES)
-                } else if matches!(&**inner, TypX::MutRef(_) | TypX::Decorate(..)) {
+                } else if matches!(
+                    &**inner,
+                    TypX::MutRef(_) | TypX::Decorate(TypDecoration::Ref, ..)
+                ) {
                     Err(unsupported(span, "nested references"))
                 } else {
                     self.size_inner(inner, span, visiting)?;

@@ -15,8 +15,13 @@ use std::collections::{HashMap, HashSet};
 /// provenance, so forwarding retains the caller's allocation identity.
 #[derive(Clone)]
 pub(super) enum ReturnedOwner {
-    /// Transfer an unchanged input subtree.
-    Input(usize),
+    /// Transfer an input subtree, applying replacements at relative child paths.
+    Input {
+        /// Parameter whose entire subtree survives in the result.
+        index: usize,
+        /// Possible replacement sizes; original allocations may remain larger.
+        replacements: std::collections::BTreeMap<super::heap::OwnerPath, Charge<Expr>>,
+    },
     /// Compose newly owned storage and child owners. Struct nodes have no allocation.
     Node {
         /// Only this node's allocation; excludes allocations owned by children.
@@ -24,9 +29,8 @@ pub(super) enum ReturnedOwner {
         /// Fixed child owners, each accounting for its own allocations.
         children: std::collections::BTreeMap<super::heap::OwnerSlot, ReturnedOwner>,
     },
-    /// An allocation may have been replaced. The byte expression bounds the
-    /// replacement, while an unchanged input may still retain its original size.
-    Replaced { input: Option<usize>, allocation: Charge<Expr> },
+    /// A fresh allocation whose growth requires a conservative byte bound.
+    Replaced { allocation: Charge<Expr> },
 }
 
 /// Allocation effects established by a checked function body. Temporary peaks
@@ -35,8 +39,8 @@ pub(super) enum ReturnedOwner {
 pub(super) struct AllocationSummary {
     /// Ownership and byte-size effects of the returned value.
     pub(super) returned: Option<ReturnedOwner>,
-    /// Replacement bounds retained through borrowed inputs, keyed by parameter.
-    pub(super) retained: HashMap<usize, Charge<Expr>>,
+    /// Replacement bounds retained through borrowed inputs, keyed by parameter and child path.
+    pub(super) retained: HashMap<super::paths::InputPath, Charge<Expr>>,
 }
 
 /// Erased byte state for an allocation whose size may change. Container-specific
@@ -53,8 +57,10 @@ pub(super) struct RetainedAllocation {
     pub(super) bytes: Expr,
     /// Snapshot committed only after the executable operation.
     pub(super) next_bytes: Expr,
-    /// Original parameter, if the allocation came from the caller.
-    pub(super) input: Option<usize>,
+    /// Inline parameter storage that stays live while this incoming allocation
+    /// can grow. None marks a locally created allocation. This is a layout size,
+    /// not the size of the original backing allocation retained by the caller.
+    pub(super) input_bytes: Option<u64>,
     /// Whether the body can replace this allocation.
     pub(super) changed: bool,
     /// Helper-provided byte bounds used in checked loop invariants.
@@ -216,7 +222,7 @@ mod tests {
             initial_bytes: zero.clone(),
             bytes: zero.clone(),
             next_bytes: zero.clone(),
-            input: Some(0),
+            input_bytes: Some(8),
             changed: false,
             floor: zero,
         };

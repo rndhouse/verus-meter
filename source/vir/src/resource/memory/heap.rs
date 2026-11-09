@@ -14,15 +14,15 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 #[derive(Clone, Default)]
 pub(super) struct Heap {
     pub(super) owners: HashMap<VarIdent, Owner>,
-    // Borrowed inputs refer to vector proof state. Their original allocation
-    // remains charged to the caller; replacement buffers are charged locally.
-    pub(super) borrowed: HashMap<VarIdent, usize>,
+    /// Borrowed inputs use the same structural paths as owned inputs. Original
+    /// allocations remain charged to the caller; replacements are charged here.
+    pub(super) borrowed: HashMap<VarIdent, Owner>,
     protected: HashSet<VarIdent>,
 }
 
 /// Structural position of a child owner. Runtime collections need a separate
 /// aggregate representation; this tree describes only statically named children.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) enum OwnerSlot {
     Contents,
     Field(Ident),
@@ -70,6 +70,23 @@ impl Default for Owner {
 }
 
 impl Owner {
+    pub(super) fn at(&self, path: &[OwnerSlot]) -> Option<&Owner> {
+        let mut node = self;
+        for slot in path {
+            node = node.children.get(slot)?;
+        }
+        Some(node)
+    }
+
+    pub(super) fn visit_paths(&self, path: &mut OwnerPath, f: &mut impl FnMut(&OwnerPath, &Self)) {
+        f(path, self);
+        for (slot, child) in &self.children {
+            path.push(slot.clone());
+            child.visit_paths(path, f);
+            path.pop();
+        }
+    }
+
     pub(super) fn visit(&self, f: &mut impl FnMut(&Self)) {
         f(self);
         for child in self.children.values() {
@@ -90,6 +107,22 @@ impl Owner {
 }
 
 impl Heap {
+    pub(super) fn root(&self, name: &VarIdent) -> Option<&Owner> {
+        self.owners.get(name).or_else(|| self.borrowed.get(name))
+    }
+
+    pub(super) fn vectors(&self) -> Vec<usize> {
+        let mut ids = Vec::new();
+        for owner in self.owners.values().chain(self.borrowed.values()) {
+            owner.visit(&mut |node| {
+                if let Some(id) = node.vector {
+                    ids.push(id);
+                }
+            });
+        }
+        ids
+    }
+
     pub(super) fn protect(&mut self) -> HashSet<VarIdent> {
         let old = self.protected.clone();
         self.protected.extend(self.owners.keys().cloned());
@@ -130,6 +163,52 @@ fn intrinsic(expr: &Expr, kind: ResourceIntrinsic) -> Option<&Exprs> {
 }
 
 impl Analysis<'_> {
+    /// Mirror the input's structure without charging its original allocations.
+    /// The root alone carries lifetime provenance; descendant vector states count
+    /// only replacements made here. The caller retains every original charge.
+    pub(super) fn input_owner(
+        &mut self,
+        typ: &Typ,
+        span: &Span,
+        input_bytes: u64,
+        name: &VarIdent,
+        path: &mut OwnerPath,
+        capacities: &HashMap<super::paths::LocalPath, Expr>,
+    ) -> Result<Owner, VirErr> {
+        let mut owner = Owner::default();
+        if self.layouts.vector(typ) {
+            let capacity = capacities.get(&(name.clone(), path.clone()));
+            let allocation = super::accounting::Accounting::fresh_allocation();
+            let state = self.growth.new_vector(
+                span,
+                capacity.cloned().unwrap_or_else(|| super::contracts::literal(span, 0)),
+                super::footprint::Charge {
+                    kind: owner.kind.clone(),
+                    amount: super::contracts::literal(span, 0),
+                },
+                self.layouts.vector_element(typ, span)?,
+                Some(input_bytes),
+                allocation,
+            );
+            self.growth.vectors[state].reserved = capacity.is_some();
+            self.storage.set_allocation(
+                allocation,
+                owner.kind.clone(),
+                self.growth.vectors[state].backing.bytes.clone(),
+            );
+            owner.vector = Some(state);
+            owner.dynamic = Some(allocation);
+        }
+        for (slot, child) in self.layouts.owned_children(typ, span)? {
+            path.push(slot.clone());
+            owner
+                .children
+                .insert(slot, self.input_owner(&child, span, input_bytes, name, path, capacities)?);
+            path.pop();
+        }
+        Ok(owner)
+    }
+
     fn allocate_box(&mut self, expr: &Expr) -> Result<Option<Owner>, VirErr> {
         let Some(args) = intrinsic(expr, ResourceIntrinsic::BoxNew) else {
             return Ok(None);

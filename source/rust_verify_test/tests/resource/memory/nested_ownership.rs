@@ -153,16 +153,6 @@ fn owning_field_moves_and_replacement_are_rejected() {
 }
 
 #[test]
-fn nested_growth_is_not_silently_ignored() {
-    rejects(
-        "nested_growth",
-        "struct P { v: Vec<u32> }
-        fn f() mem_peak <= 100 { let mut p = P { v: Vec::new() }; p.v.push(1); }",
-        "growth through a nested owner",
-    );
-}
-
-#[test]
 fn owning_collection_elements_still_need_an_aggregate_model() {
     rejects(
         "nested_collection",

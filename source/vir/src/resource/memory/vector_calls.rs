@@ -11,7 +11,7 @@ use crate::ast::*;
 #[derive(Clone)]
 pub(super) struct VectorSummary {
     /// Entry minima in elements, proved from allocation state at calls.
-    pub(super) reservations: std::collections::HashMap<usize, Expr>,
+    pub(super) reservations: std::collections::HashMap<super::paths::InputPath, Expr>,
     /// Fresh vector capacities indexed by structural result path. Forwarded
     /// subtrees preserve the caller's existing proof state.
     pub(super) returned_capacities: std::collections::BTreeMap<super::heap::OwnerPath, Expr>,
@@ -69,20 +69,21 @@ impl Analysis<'_> {
             .summaries
             .get(&callee.x.name)
             .ok_or_else(|| unsupported(&expr.span, "a call without a checked function summary"))?;
-        for (index, (arg, param)) in args.iter().zip(callee.x.params.iter()).enumerate() {
-            if let Some(required) = summary.vectors.reservations.get(&index) {
-                let (name, _, _) = self.vector_receiver(arg)?;
-                let available = self.vector_capacity(&name).ok_or_else(|| {
-                    unsupported(&arg.span, "passing an untracked vector to a checked helper")
-                })?;
-                let required =
-                    super::contracts::substitute(required, callee, args, &self.stable_scalars)?;
-                self.checks.push((
-                    expr.span.clone(),
-                    crate::ast_util::mk_ineq(&expr.span, &required, &available, InequalityOp::Le),
-                ));
-            } else if self.layouts.borrowed_vector(&param.x.typ).is_some() {
-                self.vector_receiver(arg)?;
+        for ((index, path), required) in &summary.vectors.reservations {
+            let arg = &args[*index];
+            let id = self.vector_argument(arg, &callee.x.params[*index].x.typ, path)?;
+            let available = self.growth.vectors[id].capacity.clone();
+            let required = contracts::substitute(required, callee, args, &self.stable_scalars)?;
+            self.checks.push((
+                expr.span.clone(),
+                crate::ast_util::mk_ineq(&expr.span, &required, &available, InequalityOp::Le),
+            ));
+        }
+        for (arg, param) in args.iter().zip(callee.x.params.iter()) {
+            if let Some(typ) = self.layouts.borrowed_owner(&param.x.typ) {
+                for path in super::paths::vectors(self.layouts, typ, &arg.span)?.keys() {
+                    self.vector_argument(arg, typ, path)?;
+                }
             }
         }
         Ok(())
@@ -97,11 +98,8 @@ impl Analysis<'_> {
         args: &Exprs,
     ) -> Result<(), VirErr> {
         let c = &expr.span;
-        for (index, bound) in &self.summaries[&callee.x.name].allocations.retained.clone() {
-            let (name, _, _) = self.vector_receiver(&args[*index])?;
-            let id = self
-                .vector_state(&name)
-                .ok_or_else(|| unsupported(c, "untracked mutable vector argument"))?;
+        for ((index, path), bound) in &self.summaries[&callee.x.name].allocations.retained.clone() {
+            let id = self.vector_argument(&args[*index], &callee.x.params[*index].x.typ, path)?;
             let bound = super::allocations::instantiate(bound, callee, args, &self.stable_scalars)?;
             if self.growth.section_protected.contains(&id)
                 && super::contracts::constant(&bound.amount) != Some(0)

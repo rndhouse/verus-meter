@@ -175,14 +175,17 @@ Whole-value moves transfer the ownership tree. Constructors may combine fresh
 allocations and input owners; helper results preserve both kinds of provenance.
 Dropping a value or leaving its scope releases its entire owned tree. Borrowing
 contents and updating non-owning fields/elements preserve those allocations.
-Nested vectors support length, indexing, slices, and popping; create or grow the
-vector before placing it in an aggregate. Pass nested vector contents to helpers
-as slices; direct vector-reference helper arguments still require a named vector
-owner. See [nested ownership](../../examples/resource/memory/nested_ownership.rs).
+Nested vectors support length, indexing, slices, popping, and pushing. Each child
+has independent capacity and retained-byte state. Growing a child counts the old
+and replacement buffers together at the peak, alongside its enclosing and sibling
+allocations. Helpers may borrow a vector field or its containing struct or box;
+inferred reservations and retained allocation effects follow the affected child
+paths across calls, including returned owners. See [nested ownership](../../examples/resource/memory/nested_ownership.rs)
+and [nested growth](../../examples/resource/memory/nested_growth.rs).
 
-Moving or replacing an owning field, moving an owner out of a box, and pushing
-through a nested vector owner remain unsupported. These need checked transitions
-for a particular child path. Recursive layouts, owning `Option` payloads, and
+Moving or replacing an owning field and moving an owner out of a box remain
+unsupported. These need ownership transfer transitions for a particular child
+path. Recursive layouts, owning `Option` payloads, and
 owning elements in arrays, vectors, or boxed slices are also excluded. Runtime
 collections of owners need aggregate allocation bounds; shared ownership needs
 last-owner release rules. These are separate extensions to the ownership model.
@@ -293,8 +296,9 @@ satisfied by its caller. Keep allocation and helper calls inside checked code to
 establish the complete guarantee; an unchecked caller does not establish those
 resource requirements merely by satisfying the ordinary `requires` clause.
 
-Borrowed vector bindings must be immutable (the vector itself may be mutably
-borrowed), and arguments must resolve to named owners or borrowed parameters.
+Borrowed owner bindings must be immutable (their contents may be mutably
+borrowed), and vector arguments must resolve to named owners or borrowed parameters,
+possibly through fixed field and box-content paths.
 Local reference aliases and replacement through `&mut Vec<T>` remain unsupported.
 See [vector helpers](../../examples/resource/memory/vector_helpers.rs).
 

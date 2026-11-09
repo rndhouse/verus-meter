@@ -366,13 +366,7 @@ impl Analysis<'_> {
             } if unit(&expr.typ) => {
                 let loop_scalars = self.stable_scalars.clone();
                 let entry = self.storage.live();
-                let ids: Vec<_> = self
-                    .heap
-                    .owners
-                    .values()
-                    .filter_map(|o| o.vector)
-                    .chain(self.heap.borrowed.values().copied())
-                    .collect();
+                let ids = self.heap.vectors();
                 let live = self.storage.live_expression(&expr.span).total();
                 let protection = self.heap.protect();
                 let first_checkpoint = self.checkpoints.len();
@@ -509,53 +503,29 @@ pub(super) fn check(
     for (index, param) in f.params.iter().enumerate() {
         analysis.var_modes.insert(param.x.name.clone(), param.x.mode);
         if param.x.mode == Mode::Exec {
-            if layouts.borrowed_vector(&param.x.typ).is_some() {
-                if param.x.user_mut {
-                    return Err(unsupported(
-                        &param.span,
-                        "mutable bindings for borrowed vector parameters",
-                    ));
-                }
-            }
-            if layouts.owner(&param.x.typ) {
-                analysis.storage.add_input(index);
-                analysis.heap.owners.insert(
-                    param.x.name.clone(),
-                    super::heap::Owner {
-                        input: Some(index),
-                        capacity: capacities.get(&param.x.name).cloned(),
-                        ..Default::default()
-                    },
-                );
-            }
-            if layouts.vector(&param.x.typ) || layouts.borrowed_vector(&param.x.typ).is_some() {
-                let typ = layouts.borrowed_vector(&param.x.typ).unwrap_or(&param.x.typ);
-                let allocation = super::accounting::Accounting::fresh_allocation();
-                let state = analysis.growth.new_vector(
+            let borrowed = layouts.borrowed_owner(&param.x.typ);
+            if borrowed.is_some() && param.x.user_mut {
+                return Err(unsupported(
                     &param.span,
-                    capacities
-                        .get(&param.x.name)
-                        .cloned()
-                        .unwrap_or_else(|| super::contracts::literal(&param.span, 0)),
-                    super::footprint::Charge {
-                        kind: MemoryKind::host_heap(),
-                        amount: super::contracts::literal(&param.span, 0),
-                    },
-                    layouts.vector_element(typ, &param.span)?,
-                    Some(index),
-                    allocation,
-                );
-                analysis.growth.vectors[state].reserved = capacities.contains_key(&param.x.name);
-                analysis.storage.set_allocation(
-                    allocation,
-                    MemoryKind::host_heap(),
-                    analysis.growth.vectors[state].backing.bytes.clone(),
-                );
-                if let Some(owner) = analysis.heap.owners.get_mut(&param.x.name) {
-                    owner.vector = Some(state);
-                    owner.dynamic = Some(allocation);
+                    "mutable bindings for borrowed owner parameters",
+                ));
+            }
+            if layouts.owner(&param.x.typ) || borrowed.is_some() {
+                let typ = borrowed.unwrap_or(&param.x.typ);
+                let mut owner = analysis.input_owner(
+                    typ,
+                    &param.span,
+                    layouts.size(&param.x.typ, &param.span)?,
+                    &param.x.name,
+                    &mut vec![],
+                    &capacities,
+                )?;
+                if borrowed.is_some() {
+                    analysis.heap.borrowed.insert(param.x.name.clone(), owner);
                 } else {
-                    analysis.heap.borrowed.insert(param.x.name.clone(), state);
+                    analysis.storage.add_input(index);
+                    owner.input = Some(index);
+                    analysis.heap.owners.insert(param.x.name.clone(), owner);
                 }
             }
             let mut value = analysis.fresh_value(&param.span, &param.x.typ)?;
@@ -602,11 +572,12 @@ pub(super) fn check(
         summary: super::summary::FunctionSummary {
             vectors: super::vector_calls::VectorSummary {
                 returned_capacities,
-                reservations: f
-                    .params
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, p)| capacities.get(&p.x.name).cloned().map(|c| (i, c)))
+                reservations: capacities
+                    .into_iter()
+                    .map(|((name, path), capacity)| {
+                        let index = f.params.iter().position(|p| p.x.name == name).unwrap();
+                        ((index, path), capacity)
+                    })
                     .collect(),
             },
 
@@ -614,27 +585,22 @@ pub(super) fn check(
             profiles,
             allocations: super::allocations::AllocationSummary {
                 returned,
-                retained: analysis
-                    .heap
-                    .borrowed
-                    .values()
-                    .filter_map(|id| {
-                        let state = &analysis.growth.vectors[*id];
-                        state.backing.changed.then(|| {
-                            (
-                                state.backing.input.unwrap(),
-                                super::footprint::Charge {
-                                    kind: state.backing.kind.clone(),
-                                    amount: super::growth::retained_bound(
-                                        state,
-                                        function,
-                                        &analysis.bound,
-                                    ),
-                                },
-                            )
-                        })
-                    })
-                    .collect(),
+                retained: {
+                    let mut effects = HashMap::new();
+                    for (index, param) in f.params.iter().enumerate() {
+                        if let Some(owner) = analysis.heap.borrowed.get(&param.x.name) {
+                            for (path, charge) in super::ownership::replacements(
+                                owner,
+                                &analysis.growth,
+                                function,
+                                &analysis.bound,
+                            ) {
+                                effects.insert((index, path), charge);
+                            }
+                        }
+                    }
+                    effects
+                },
             },
         },
         calls: analysis.calls,

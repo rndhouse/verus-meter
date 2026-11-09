@@ -85,7 +85,7 @@ impl Growth {
         capacity: Expr,
         size: super::footprint::Charge<Expr>,
         element: u64,
-        input: Option<usize>,
+        input_bytes: Option<u64>,
         allocation: u64,
     ) -> usize {
         let id = self.vectors.len();
@@ -119,7 +119,7 @@ impl Growth {
                 initial_bytes: size.amount,
                 bytes: upper,
                 next_bytes,
-                input,
+                input_bytes,
                 changed: false,
                 floor: contracts::literal(span, 0),
             },
@@ -223,16 +223,15 @@ pub(super) fn retained_bound(state: &VectorState, function: &Function, bound: &E
     if state.element == 0 {
         return contracts::literal(&function.span, 0);
     }
-    if let (Some(input), Some(budget)) = (state.backing.input, contracts::constant(bound)) {
+    if let (Some(handle), Some(budget)) = (state.backing.input_bytes, contracts::constant(bound)) {
         let minimum = contracts::constant(&grown_capacity(
             &function.span,
             contracts::literal(&function.span, 0),
             state.element,
         ))
         .unwrap();
-        let handle =
-            if matches!(&*function.x.params[input].x.typ, TypX::Datatype(..)) { 24 } else { 8 };
-        if u128::from(budget) < u128::from(minimum) * u128::from(state.element) + handle {
+        if u128::from(budget) < u128::from(minimum) * u128::from(state.element) + u128::from(handle)
+        {
             return contracts::literal(&function.span, 0);
         }
     }

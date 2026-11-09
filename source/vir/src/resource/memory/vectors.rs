@@ -109,9 +109,8 @@ impl Analysis<'_> {
         Ok(Some(owner))
     }
 
-    /// Resolve a direct owner or a reborrow of a named vector parameter. Local
-    /// reference aliases need their own transfer model and remain unsupported.
-    pub(super) fn vector_receiver(&mut self, arg: &Expr) -> Result<(VarIdent, Typ, Expr), VirErr> {
+    /// Resolve a vector leaf through the same paths used by ownership summaries.
+    pub(super) fn vector_receiver(&mut self, arg: &Expr) -> Result<(usize, Typ, Expr), VirErr> {
         let place = match &arg.x {
             ExprX::BorrowMut(p) | ExprX::TwoPhaseBorrowMut(p) | ExprX::ReadPlace(p, _) => p,
             _ => {
@@ -121,87 +120,39 @@ impl Analysis<'_> {
                 ));
             }
         };
-        if let PlaceX::Temporary(value) = &place.x {
-            if self.layouts.borrowed_vector(&place.typ).is_some() {
-                return self.vector_receiver(value);
-            }
-        }
-        let (name, typ) = match &place.x {
-            PlaceX::Local(name) if self.layouts.vector(&place.typ) => (name, &place.typ),
-            PlaceX::Local(name) if self.heap.borrowed.contains_key(name) => (
-                name,
-                self.layouts
-                    .borrowed_vector(&place.typ)
-                    .ok_or_else(|| unsupported(&arg.span, "this vector receiver"))?,
-            ),
-            PlaceX::DerefMut(base) => {
-                let PlaceX::Local(name) = &base.x else {
-                    return Err(unsupported(
-                        &arg.span,
-                        "vector reborrows outside a named parameter",
-                    ));
-                };
-                if !self.heap.borrowed.contains_key(name) || !self.layouts.vector(&place.typ) {
-                    return Err(unsupported(
-                        &arg.span,
-                        "vector reborrows outside a named parameter",
-                    ));
-                }
-                (name, &place.typ)
-            }
-            _ => {
-                return Err(unsupported(
-                    &arg.span,
-                    "vector operations outside a named owner or parameter",
-                ));
-            }
-        };
-        self.access(place, typ)?;
-        let vector = place_to_spec_expr(place);
-        Ok((name.clone(), typ.clone(), vector))
-    }
-
-    pub(super) fn vector_state(&self, name: &VarIdent) -> Option<usize> {
-        self.heap
-            .owners
-            .get(name)
-            .and_then(|o| o.vector)
-            .or_else(|| self.heap.borrowed.get(name).copied())
-    }
-
-    pub(super) fn vector_capacity(&self, name: &VarIdent) -> Option<Expr> {
-        self.vector_state(name).map(|id| self.growth.vectors[id].capacity.clone())
-    }
-
-    /// Operations that preserve a nested vector's backing allocation need only
-    /// validate its place. Growth requires path-indexed state/effect transitions.
-    fn nested_vector_place(&mut self, arg: &Expr) -> Result<bool, VirErr> {
-        let place = match &arg.x {
-            ExprX::ReadPlace(place, _)
-            | ExprX::BorrowMut(place)
-            | ExprX::TwoPhaseBorrowMut(place) => place,
-            _ => return Ok(false),
-        };
-        fn nested(place: &Place) -> bool {
-            match &place.x {
-                PlaceX::Field(..) => true,
-                PlaceX::Local(_) => super::heap::boxed(&place.typ),
-                PlaceX::DerefMut(base) => nested(base),
-                _ => false,
-            }
-        }
-        if !nested(place) {
-            return Ok(false);
-        }
-        let mut typ = &place.typ;
+        let mut typ = super::paths::referent(&place.typ);
         while let TypX::Decorate(TypDecoration::Box, _, inner) = &**typ {
             typ = inner;
         }
         if !self.layouts.vector(typ) {
-            return Ok(false);
+            return Err(unsupported(&arg.span, "this vector receiver"));
         }
-        self.access(place, typ)?;
-        Ok(true)
+        let id = self.vector_argument(arg, typ, &[])?;
+        self.access(place, if matches!(&*place.typ, TypX::MutRef(_)) { &place.typ } else { typ })?;
+        Ok((id, typ.clone(), place_to_spec_expr(place)))
+    }
+
+    /// Resolve a formal child path relative to an actual argument's owner.
+    pub(super) fn vector_argument(
+        &self,
+        arg: &Expr,
+        typ: &Typ,
+        child: &[super::heap::OwnerSlot],
+    ) -> Result<usize, VirErr> {
+        let (name, mut path) = super::paths::expr(arg, typ).ok_or_else(|| {
+            unsupported(&arg.span, "vector operations outside a named owner or parameter")
+        })?;
+        path.extend_from_slice(child);
+        self.heap
+            .root(&name)
+            .and_then(|owner| owner.at(&path))
+            .and_then(|owner| owner.vector)
+            .ok_or_else(|| {
+                unsupported(
+                    &arg.span,
+                    "vector operations through an aliased owner; borrow its slice instead",
+                )
+            })
     }
 
     pub(super) fn vector_expr(&mut self, expr: &Expr) -> Result<Option<u64>, VirErr> {
@@ -233,25 +184,11 @@ impl Analysis<'_> {
         let Some(receiver) = args.first() else {
             return Err(unsupported(&expr.span, "this vector operation"));
         };
-        if self.nested_vector_place(receiver)? {
-            if attrs.resource_intrinsic == Some(ResourceIntrinsic::VecPush) {
-                return Err(unsupported(&expr.span, "growth through a nested owner"));
-            }
-            if index && args.len() == 2 {
-                self.discard(&args[1])?;
-            } else if args.len() != 1 {
-                return Err(unsupported(&expr.span, "this nested vector operation"));
-            }
-            return Ok(Some(0));
-        }
-        let (name, typ, vector) = self.vector_receiver(receiver)?;
+        let (state_id, typ, vector) = self.vector_receiver(receiver)?;
         if attrs.resource_intrinsic == Some(ResourceIntrinsic::VecPush) {
             if args.len() != 2 {
                 return Err(unsupported(&expr.span, "this vector push"));
             }
-            let state_id = self
-                .vector_state(&name)
-                .ok_or_else(|| unsupported(&expr.span, "untracked vector allocation"))?;
             let state = self.growth.vectors[state_id].clone();
             let capacity = state.capacity.clone();
             let TypX::Datatype(_, types, _) = &*typ else { unreachable!() };
@@ -297,7 +234,7 @@ impl Analysis<'_> {
                 capacity.clone(),
                 contracts::add(&expr.span, len, contracts::literal(&expr.span, 1)),
             );
-            if state.backing.input.is_none() && state.element != 0 {
+            if state.backing.input_bytes.is_none() && state.element != 0 {
                 // Equality of a sound lower and upper bound establishes exact
                 // capacity, so local vectors can retain all their new spare room.
                 let exact = mk_eq(

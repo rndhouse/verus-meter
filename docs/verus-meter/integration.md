@@ -50,8 +50,15 @@ layout. Call summaries can wrap whole input subtrees under fresh nodes, and
 lifetime composition must account for every input provenance beneath a root.
 Sibling returned allocations need distinct identities even at one call span.
 Vector result facts are indexed by the same structural paths as allocation facts.
+The shared place resolver in [paths.rs](../../source/vir/src/resource/memory/paths.rs)
+accounts for implicit box dereferences and explicit field projections. Use it for
+both inferred reservations and call effects so sibling allocations stay distinct.
+Input trees carry original allocation provenance at the root; descendant states
+charge only replacements created in the callee. Returned input trees apply those
+effects at relative paths while preserving the caller's original allocations.
+Loop invariants and section protections must visit every descendant vector state.
 
-Child extraction, replacement, and nested growth need path-specific transitions
+Child extraction and replacement need ownership transfer transitions
 before they can be supported. Runtime collections will need aggregate bounds for
 varying element footprints; shared ownership needs separate last-owner release
 rules. Extend the common ownership model rather than adding rules for individual

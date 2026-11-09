@@ -12,6 +12,7 @@ mod heap;
 mod inference;
 mod integers;
 mod lifetimes;
+mod nested_growth;
 mod nested_ownership;
 mod ownership;
 mod reachability;

@@ -10,32 +10,14 @@ use crate::ast_util::int_typ;
 use crate::ast_visitor::{VisitorControlFlow, ast_visitor_dfs, expr_visitor_check};
 use std::collections::{HashMap, HashSet};
 
-fn parameter(expr: &Expr, inputs: &HashSet<VarIdent>) -> Option<VarIdent> {
-    let mut names = HashSet::new();
-    let _: Result<(), VirErr> = expr_visitor_check(expr, &mut |_, e| {
-        match &e.x {
-            ExprX::Var(name) | ExprX::VarAt(name, _) if inputs.contains(name) => {
-                names.insert(name.clone());
-            }
-            ExprX::ReadPlace(place, _) | ExprX::TwoPhaseBorrowMut(place) => {
-                if let Some(name) = place_parameter(place, inputs) {
-                    names.insert(name);
-                }
-            }
-            _ => {}
-        }
-        Ok(())
-    });
-    if names.len() == 1 { names.into_iter().next() } else { None }
-}
-
-fn place_parameter(place: &Place, inputs: &HashSet<VarIdent>) -> Option<VarIdent> {
-    match &place.x {
-        PlaceX::Local(name) if inputs.contains(name) => Some(name.clone()),
-        PlaceX::DerefMut(place) => place_parameter(place, inputs),
-        PlaceX::Temporary(expr) => parameter(expr, inputs),
-        _ => None,
-    }
+fn parameter(
+    expr: &Expr,
+    inputs: &HashMap<super::paths::LocalPath, Typ>,
+) -> Option<super::paths::LocalPath> {
+    inputs.iter().find_map(|(key, typ)| {
+        let found = super::paths::expr(expr, typ)?;
+        (found == *key).then_some(found)
+    })
 }
 
 fn quantity(expr: &Expr, inputs: &HashSet<VarIdent>) -> Option<Expr> {
@@ -48,7 +30,11 @@ fn quantity(expr: &Expr, inputs: &HashSet<VarIdent>) -> Option<Expr> {
     }
 }
 
-fn merge(requirements: &mut HashMap<VarIdent, Expr>, name: VarIdent, value: Expr) {
+fn merge(
+    requirements: &mut HashMap<super::paths::LocalPath, Expr>,
+    name: super::paths::LocalPath,
+    value: Expr,
+) {
     let value = if let Some(old) = requirements.get(&name) {
         contracts::maximum(&value.span, old.clone(), value.clone())
     } else {
@@ -62,9 +48,9 @@ fn merge(requirements: &mut HashMap<VarIdent, Expr>, name: VarIdent, value: Expr
 /// the original logical condition remains responsible for proving the length.
 fn bounds(
     expression: &Expr,
-    vectors: &HashSet<VarIdent>,
+    vectors: &HashMap<super::paths::LocalPath, Typ>,
     scalars: &HashSet<VarIdent>,
-) -> HashMap<VarIdent, Expr> {
+) -> HashMap<super::paths::LocalPath, Expr> {
     let mut result = HashMap::new();
     let _: Result<(), VirErr> = expr_visitor_check(expression, &mut |_, expr| {
         let ExprX::Binary(op, lhs, rhs) = &expr.x else { return Ok(()) };
@@ -108,14 +94,13 @@ pub(super) fn infer(
     functions: &HashMap<Fun, Function>,
     bound: &Expr,
     modes: &HashMap<VarIdent, Mode>,
-) -> Result<HashMap<VarIdent, Expr>, VirErr> {
-    let vectors: HashSet<_> = function
-        .x
-        .params
-        .iter()
-        .filter(|p| layouts.vector(&p.x.typ) || layouts.borrowed_vector(&p.x.typ).is_some())
-        .map(|p| p.x.name.clone())
-        .collect();
+) -> Result<HashMap<super::paths::LocalPath, Expr>, VirErr> {
+    let mut vectors = HashMap::new();
+    for param in function.x.params.iter().filter(|p| p.x.mode == Mode::Exec) {
+        for (path, typ) in super::paths::vectors(layouts, &param.x.typ, &param.span)? {
+            vectors.insert((param.x.name.clone(), path), typ);
+        }
+    }
     if vectors.is_empty() {
         return Ok(HashMap::new());
     }
@@ -135,7 +120,6 @@ pub(super) fn infer(
             layouts.size(&p.x.typ, &p.span).map(|n| total.saturating_add(n))
         })?;
     let mut inference = Inference {
-        function,
         layouts,
         summaries,
         functions,
@@ -153,8 +137,6 @@ pub(super) fn infer(
 }
 
 struct Inference<'a> {
-    /// Input identities and types of the function being summarized.
-    function: &'a Function,
     /// Model element and handle sizes used to select growth or reservation.
     layouts: &'a Layouts,
     /// Already analyzed callees, ordered before their callers.
@@ -164,19 +146,23 @@ struct Inference<'a> {
     /// The declared allowance; inference never increases it.
     bound: &'a Expr,
     /// Vector parameters whose entry allocations belong to callers.
-    vectors: HashSet<VarIdent>,
+    vectors: HashMap<super::paths::LocalPath, Typ>,
     /// Immutable executable inputs allowed in exported formulas.
     scalars: HashSet<VarIdent>,
     /// Entry parameter storage used to select an inference strategy.
     parameters: u64,
     /// Candidate entry minima, independently checked by body and caller proofs.
-    requirements: HashMap<VarIdent, Expr>,
+    requirements: HashMap<super::paths::LocalPath, Expr>,
     /// Resolved modes keep inferred requirements out of erased declarations.
     modes: &'a HashMap<VarIdent, Mode>,
 }
 
 impl Inference<'_> {
-    fn walk(&mut self, body: &Expr, lengths: &HashMap<VarIdent, Expr>) -> Result<(), VirErr> {
+    fn walk(
+        &mut self,
+        body: &Expr,
+        lengths: &HashMap<super::paths::LocalPath, Expr>,
+    ) -> Result<(), VirErr> {
         let mut lengths = lengths.clone();
         let modes = self.modes;
         let result = ast_visitor_dfs(
@@ -233,10 +219,7 @@ impl Inference<'_> {
                 {
                     if let Some(name) = parameter(&args[0], &self.vectors) {
                         if let Some(required) = lengths.get(&name) {
-                            let param =
-                                self.function.x.params.iter().find(|p| p.x.name == name).unwrap();
-                            let typ =
-                                self.layouts.borrowed_vector(&param.x.typ).unwrap_or(&param.x.typ);
+                            let typ = &self.vectors[&name];
                             let element = match self.layouts.vector_element(typ, &expr.span) {
                                 Ok(n) => n,
                                 Err(e) => return VisitorControlFlow::Stop(e),
@@ -279,8 +262,13 @@ impl Inference<'_> {
                     }
                 } else if let Some(summary) = self.summaries.get(target) {
                     let callee = &self.functions[target];
-                    for (index, required) in &summary.vectors.reservations {
-                        if let Some(name) = parameter(&args[*index], &self.vectors) {
+                    for ((index, path), required) in &summary.vectors.reservations {
+                        let typ = super::paths::referent(&callee.x.params[*index].x.typ);
+                        if let Some(mut name) = super::paths::expr(&args[*index], typ) {
+                            name.1.extend(path.iter().cloned());
+                            if !self.vectors.contains_key(&name) {
+                                continue;
+                            }
                             match contracts::substitute(required, callee, args, &self.scalars) {
                                 Ok(required) => merge(&mut self.requirements, name, required),
                                 Err(err) => return VisitorControlFlow::Stop(err),

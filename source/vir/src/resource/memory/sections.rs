@@ -25,14 +25,7 @@ impl Analysis<'_> {
         let parent_checkpoints = std::mem::take(&mut self.checkpoints);
         let protection = self.heap.protect();
         let protected = self.growth.section_protected.clone();
-        for owner in self.heap.owners.values() {
-            owner.visit(&mut |node| {
-                if let Some(id) = node.vector {
-                    self.growth.section_protected.insert(id);
-                }
-            });
-        }
-        self.growth.section_protected.extend(self.heap.borrowed.values().copied());
+        self.growth.section_protected.extend(self.heap.vectors());
         let outer_bound =
             std::mem::replace(&mut self.bound, super::contracts::literal(contract_span, budget));
         self.block_contents(expr, stmts, tail)?;

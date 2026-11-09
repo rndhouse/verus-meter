@@ -9,6 +9,7 @@
 //! retained-storage effects across containers. `vector_calls` adapts vector facts
 //! at call boundaries; `vectors` handles operations and `growth` maintains erased
 //! capacity/retained-byte state; `inference` derives checked entry reservations.
+//! `paths` resolves fixed child owners for operations, reservations, and call effects.
 //! `contracts`
 //! specializes declared formulas with stable scalar arguments. `symbolic`
 //! turns conditional contracts into ordinary Verus proof obligations.
@@ -41,6 +42,7 @@ mod layout;
 mod lifetime;
 mod model;
 mod ownership;
+mod paths;
 mod places;
 mod sections;
 mod spec_budget;

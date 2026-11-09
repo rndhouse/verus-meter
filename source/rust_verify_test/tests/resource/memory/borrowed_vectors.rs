@@ -198,7 +198,7 @@ test_verify_one_file! {
     #[test] mutable_borrow_binding_is_rejected verus_code! {
         use vstd::prelude::*;
         fn helper(mut v: &mut Vec<u32>) mem_peak <= 100 {}
-    } => Err(err) => assert_vir_error_msg(err, "mutable bindings for borrowed vector parameters")
+    } => Err(err) => assert_vir_error_msg(err, "mutable bindings for borrowed owner parameters")
 }
 
 #[test]
@@ -239,7 +239,7 @@ test_verify_one_file! {
             let alias = &v;
             inspect(alias);
         }
-    } => Err(err) => assert_vir_error_msg(err, "named owner or parameter")
+    } => Err(err) => assert_vir_error_msg(err, "aliased owner")
 }
 
 test_verify_one_file! {
