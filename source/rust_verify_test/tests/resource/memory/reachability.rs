@@ -5,7 +5,7 @@ use crate::verify_one_file;
 fn fixed_budget_uses_preconditions() {
     verifies(
         "fixed_precondition",
-        "fn f(n: u32) requires n < 4, mem_peak <= 4 {
+        "fn f(n: u32) requires n < 4, resources mem_peak <= 4 {
         if n >= 4 { let large = [0u8;64]; }
     }",
     );
@@ -14,7 +14,7 @@ fn fixed_budget_uses_preconditions() {
 fn fixed_budget_uses_loop_invariants() {
     verifies(
         "fixed_loop",
-        "fn f(mut i: u32) requires i <= 4, mem_peak <= 4 {
+        "fn f(mut i: u32) requires i <= 4, resources mem_peak <= 4 {
         while i < 4 invariant i <= 4, decreases 4 - i, {
             if i >= 4 { let large = [0u8;64]; }
             i = i + 1;
@@ -26,8 +26,8 @@ fn fixed_budget_uses_loop_invariants() {
 fn fixed_sections_and_checkpoints_use_reachability() {
     verifies(
         "fixed_section",
-        "fn f(n: u32) requires n < 4, mem_peak <= 4 {
-        mem_peak <= 0 { if n >= 4 { let large = [0u8;64]; } }
+        "fn f(n: u32) requires n < 4, resources mem_peak <= 4 {
+        resources mem_peak <= 0 { if n >= 4 { let large = [0u8;64]; } }
         assert(current(mem_peak) <= 4);
     }",
     );
@@ -37,7 +37,7 @@ fn reachable_cost_still_fails() {
     let err = verify_one_file(
         "reachable",
         "use vstd::prelude::*; verus! {
-        fn f(n: u32) requires n <= 4, mem_peak <= 4 { if n >= 4 { let large = [0u8;64]; } }
+        fn f(n: u32) requires n <= 4, resources mem_peak <= 4 { if n >= 4 { let large = [0u8;64]; } }
     }"
         .into(),
         &[],

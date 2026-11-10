@@ -4748,6 +4748,7 @@ pub fn visit_signature_resources<'ast, V>(
 where
     V: Visit<'ast> + ?Sized,
 {
+    skip!(node.resources_token);
     skip!(node.token);
     skip!(node.le_token);
     v.visit_resource_expr(&node.budget);

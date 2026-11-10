@@ -13,7 +13,7 @@ verus! {
 // The error belongs to the assertion: copying is permitted by the function's
 // contract, but the claimed peak at this point only allows one array.
 fn main()
-    mem_peak <= 2 * mem_size([u32; 4]),
+    resources mem_peak <= 2 * mem_size([u32; 4]),
 {
     let original = [1u32, 2, 3, 4];
     let copy = original;

@@ -18,14 +18,14 @@ fn append(buffers: &mut Buffers)
     ensures
         final(buffers).values@ == seq![7u32],
         final(buffers).spare@ == old(buffers).spare@,
-    mem_peak <= 24,
+    resources mem_peak <= 24,
 {
     buffers.values.push(7);
 }
 
 // Use both buffers, then release them to make room for another task.
 fn main()
-    mem_peak <= 160,
+    resources mem_peak <= 160,
 {
     let mut buffers = Box::new(Buffers {
         values: Vec::new(),

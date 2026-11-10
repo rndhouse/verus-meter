@@ -37,21 +37,21 @@ fn changed_struct_field_updates_budget() {
 test_verify_one_file! {
     #[test] struct_size_excludes_padding verus_code! {
         struct Pair { small: bool, large: usize }
-        fn f(p: Pair) mem_peak <= 9 {}
+        fn f(p: Pair) resources mem_peak <= 9 {}
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] struct_parameter_one_byte_short verus_code! {
         struct Pair { small: bool, large: usize }
-        fn f(p: Pair) mem_peak <= 8 {}
+        fn f(p: Pair) resources mem_peak <= 8 {}
     } => Err(err) => assert_vir_error_msg(err, "peak 9 bytes exceeds budget 8 bytes")
 }
 
 test_verify_one_file! {
     #[test] constructor_destination_is_charged verus_code! {
         struct Pair { small: bool, large: usize }
-        fn f() mem_peak <= 8 {
+        fn f() resources mem_peak <= 8 {
             let p = Pair { large: 4, small: true };
         }
     } => Err(err) => assert_vir_error_msg(err, "peak 9 bytes exceeds budget 8 bytes")
@@ -60,7 +60,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] constructor_exact_budget verus_code! {
         struct Pair { small: bool, large: usize }
-        fn f() mem_peak <= 9 {
+        fn f() resources mem_peak <= 9 {
             let p = Pair { large: 4, small: true };
             assert(p.large == 4);
         }
@@ -71,7 +71,7 @@ test_verify_one_file! {
     #[test] nested_struct_layout_and_construction verus_code! {
         struct Inner { x: u32 }
         struct Outer { inner: Inner, flag: bool }
-        fn f() mem_peak <= 5 {
+        fn f() resources mem_peak <= 5 {
             let p = Outer { inner: Inner { x: 42 }, flag: true };
             assert(p.inner.x == 42);
         }
@@ -82,7 +82,7 @@ test_verify_one_file! {
     #[test] nested_struct_constructor_one_byte_short verus_code! {
         struct Inner { x: u32 }
         struct Outer { inner: Inner, flag: bool }
-        fn f() mem_peak <= 4 {
+        fn f() resources mem_peak <= 4 {
             let p = Outer { inner: Inner { x: 42 }, flag: true };
         }
     } => Err(err) => assert_vir_error_msg(err, "peak 5 bytes exceeds budget 4 bytes")
@@ -93,35 +93,35 @@ test_verify_one_file! {
         use vstd::prelude::*;
         #[derive(Copy, Clone)]
         struct Pair { a: u32, b: u32 }
-        fn f(p: Pair) mem_peak <= 15 { let copy = p; }
+        fn f(p: Pair) resources mem_peak <= 15 { let copy = p; }
     } => Err(err) => assert_vir_error_msg(err, "peak 16 bytes exceeds budget 15 bytes")
 }
 
 test_verify_one_file! {
     #[test] moving_struct_transfers_its_charge verus_code! {
         struct Pair { a: u32, b: u32 }
-        fn f(p: Pair) mem_peak <= 8 { let moved = p; }
+        fn f(p: Pair) resources mem_peak <= 8 { let moved = p; }
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] field_read_does_not_copy_other_fields verus_code! {
         struct Big { values: [u32; 64], tag: u32 }
-        fn f(p: Big) mem_peak <= 264 { let tag = p.tag; }
+        fn f(p: Big) resources mem_peak <= 264 { let tag = p.tag; }
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] field_array_copy_is_charged verus_code! {
         struct Big { values: [u32; 64], tag: u32 }
-        fn f(p: Big) mem_peak <= 515 { let copy = p.values; }
+        fn f(p: Big) resources mem_peak <= 515 { let copy = p.values; }
     } => Err(err) => assert_vir_error_msg(err, "peak 516 bytes exceeds budget 515 bytes")
 }
 
 test_verify_one_file! {
     #[test] shared_field_read_charges_reference_and_local verus_code! {
         struct S { n: u32 }
-        fn f(p: &S) mem_peak <= 11 { let n = p.n; }
+        fn f(p: &S) resources mem_peak <= 11 { let n = p.n; }
     } => Err(err) => assert_vir_error_msg(err, "peak 12 bytes exceeds budget 11 bytes")
 }
 
@@ -131,7 +131,7 @@ test_verify_one_file! {
         fn f(p: &mut S)
             requires old(p).n < 10,
             ensures final(p).n == old(p).n + 1,
-            mem_peak <= 8,
+            resources mem_peak <= 8,
         { p.n += 1; }
     } => Ok(())
 }
@@ -141,7 +141,7 @@ test_verify_one_file! {
         struct S { n: u32 }
         fn f(p: &mut S)
             ensures final(p).n == 42,
-            mem_peak <= 16,
+            resources mem_peak <= 16,
         {
             let field = &mut p.n;
             *field = 42;
@@ -152,8 +152,8 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] by_value_call_transfers_struct verus_code! {
         struct S { n: u32 }
-        fn leaf(p: S) mem_peak <= 4 {}
-        fn f(p: S) mem_peak <= 4 { leaf(p); }
+        fn leaf(p: S) resources mem_peak <= 4 {}
+        fn f(p: S) resources mem_peak <= 4 { leaf(p); }
     } => Ok(())
 }
 
@@ -161,7 +161,7 @@ test_verify_one_file! {
     #[test] unit_and_tuple_structs verus_code! {
         struct Empty;
         struct Pair(u32, bool);
-        fn f() mem_peak <= 5 {
+        fn f() resources mem_peak <= 5 {
             let empty = Empty;
             let p = Pair(1, true);
             assert(p.0 == 1);
@@ -172,35 +172,35 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] single_variant_enum_is_not_a_struct verus_code! {
         enum E { Only { n: u32 } }
-        fn f(p: E) mem_peak <= 1000 {}
+        fn f(p: E) resources mem_peak <= 1000 {}
     } => Err(err) => assert_vir_error_msg(err, "enum or union layouts")
 }
 
 test_verify_one_file! {
     #[test] single_field_union_is_not_a_struct verus_code! {
         union U { n: u32 }
-        fn f(p: U) mem_peak <= 1000 {}
+        fn f(p: U) resources mem_peak <= 1000 {}
     } => Err(err) => assert_vir_error_msg(err, "enum or union layouts")
 }
 
 test_verify_one_file! {
     #[test] concrete_instantiation_of_generic_struct_rejected verus_code! {
         struct S<T> { value: T }
-        fn f(p: S<u32>) mem_peak <= 1000 {}
+        fn f(p: S<u32>) resources mem_peak <= 1000 {}
     } => Err(err) => assert_vir_error_msg(err, "generic struct layouts")
 }
 
 test_verify_one_file! {
     #[test] struct_reference_fields_rejected verus_code! {
         struct S<'a> { value: &'a u32 }
-        fn f(p: S) mem_peak <= 1000 {}
+        fn f(p: S) resources mem_peak <= 1000 {}
     } => Err(err) => assert_vir_error_msg(err, "reference or decorated struct fields")
 }
 
 test_verify_one_file! {
     #[test] unsupported_field_types_rejected verus_code! {
         struct S { value: char }
-        fn f(p: S) mem_peak <= 1000 {}
+        fn f(p: S) resources mem_peak <= 1000 {}
     } => Err(err) => assert_vir_error_msg(err, "does not support this type")
 }
 
@@ -208,7 +208,7 @@ test_verify_one_file! {
     #[test] opaque_struct_rejected verus_code! {
         #[verifier::external_body]
         struct S { value: u32 }
-        fn f(p: S) mem_peak <= 1000 {}
+        fn f(p: S) resources mem_peak <= 1000 {}
     } => Err(err) => assert_vir_error_msg(err, "opaque, proxy, ghost, or invariant-bearing structs")
 }
 
@@ -217,7 +217,7 @@ test_verify_one_file! {
         struct S { values: [u32; 4], flag: bool }
         fn f(p: &S, i: usize)
             requires i < 4,
-            mem_peak <= 19,
+            resources mem_peak <= 19,
         { let x = p.values[i]; }
     } => Err(err) => assert_vir_error_msg(err, "peak 20 bytes exceeds budget 19 bytes")
 }
@@ -226,7 +226,7 @@ test_verify_one_file! {
     #[test] nested_field_read_charges_reference_and_local verus_code! {
         struct Inner { x: u32 }
         struct Outer { inner: Inner, other: u32 }
-        fn f(p: &Outer) mem_peak <= 11 { let x = p.inner.x; }
+        fn f(p: &Outer) resources mem_peak <= 11 { let x = p.inner.x; }
     } => Err(err) => assert_vir_error_msg(err, "peak 12 bytes exceeds budget 11 bytes")
 }
 
@@ -236,7 +236,7 @@ test_verify_one_file! {
         struct S { values: [u32; 4] }
         fn f(p: &mut S, i: usize, j: usize)
             requires i < 4, j < 4,
-            mem_peak <= 23,
+            resources mem_peak <= 23,
         { p.values[i] = p.values[j]; }
     } => Err(err) => assert_vir_error_msg(err, "peak 24 bytes exceeds budget 23 bytes")
 }
@@ -246,7 +246,7 @@ test_verify_one_file! {
         use vstd::prelude::*;
         #[derive(Copy, Clone)]
         struct Pair { a: u32, b: u32 }
-        fn f(p: Pair) mem_peak <= 16 {
+        fn f(p: Pair) resources mem_peak <= 16 {
             let copy = p;
             assert(copy.a == p.a && copy.b == p.b);
         }
@@ -256,7 +256,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] struct_update_remains_rejected verus_code! {
         struct S { x: u32, y: u32 }
-        fn f(p: S) mem_peak <= 1000 {
+        fn f(p: S) resources mem_peak <= 1000 {
             let updated = S { x: 1, ..p };
         }
     } => Err(err) => assert_vir_error_msg(err, "struct update syntax")
@@ -265,7 +265,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] borrowed_temporary_struct_remains_rejected verus_code! {
         struct S { n: u32 }
-        fn f() mem_peak <= 1000 { let p = &S { n: 42 }; }
+        fn f() resources mem_peak <= 1000 { let p = &S { n: 42 }; }
     } => Err(err) => assert_vir_error_msg(err, "borrowed temporary")
 }
 
@@ -275,7 +275,7 @@ test_verify_one_file! {
         impl Drop for S {
             fn drop(&mut self) opens_invariants none no_unwind {}
         }
-        fn f(p: S) mem_peak <= 1000 {}
+        fn f(p: S) resources mem_peak <= 1000 {}
     } => Err(err) => assert_vir_error_msg(err, "structs with destructors")
 }
 
@@ -284,21 +284,21 @@ test_verify_one_file! {
         struct Inner { n: u32 }
         impl Drop for Inner { fn drop(&mut self) opens_invariants none no_unwind {} }
         struct Outer { inner: Inner }
-        fn f(p: Outer) mem_peak <= 1000 {}
+        fn f(p: Outer) resources mem_peak <= 1000 {}
     } => Err(err) => assert_vir_error_msg(err, "structs with destructors")
 }
 
 test_verify_one_file! {
     #[test] ghost_fields_are_explicitly_rejected verus_code! {
         struct S { n: u32, ghost proof_only: int }
-        fn f(p: S) mem_peak <= 1000 {}
+        fn f(p: S) resources mem_peak <= 1000 {}
     } => Err(err) => assert_vir_error_msg(err, "ghost or tracked struct fields")
 }
 
 test_verify_one_file! {
     #[test] mutable_field_borrow_charges_local_reference verus_code! {
         struct S { n: u32 }
-        fn f(p: &mut S) mem_peak <= 15 {
+        fn f(p: &mut S) resources mem_peak <= 15 {
             let field = &mut p.n;
         }
     } => Err(err) => assert_vir_error_msg(err, "peak 16 bytes exceeds budget 15 bytes")
@@ -311,6 +311,6 @@ test_verify_one_file! {
             #[verifier::type_invariant]
             spec fn valid(&self) -> bool { self.n < 10 }
         }
-        fn f(p: S) mem_peak <= 1000 {}
+        fn f(p: S) resources mem_peak <= 1000 {}
     } => Err(err) => assert_vir_error_msg(err, "opaque, proxy, ghost, or invariant-bearing structs")
 }

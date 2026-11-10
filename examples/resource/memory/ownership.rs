@@ -13,7 +13,7 @@ type Buffer = Box<[u32; 4]>;
 //
 // The budget includes both the owning handle and its heap allocation.
 fn make_buffer() -> Buffer
-    mem_peak <= mem_size(Buffer) + mem_size([u32; 4]),
+    resources mem_peak <= mem_size(Buffer) + mem_size([u32; 4]),
 {
     Box::new([0u32; 4])
 }
@@ -23,7 +23,7 @@ fn make_buffer() -> Buffer
 // The caller keeps the incoming allocation charged throughout this call.
 // Moving the handle into the result transfers its charge too.
 fn hand_back(buffer: Buffer) -> Buffer
-    mem_peak <= mem_size(Buffer),
+    resources mem_peak <= mem_size(Buffer),
 {
     buffer
 }
@@ -33,7 +33,7 @@ fn hand_back(buffer: Buffer) -> Buffer
 // Each handoff transfers the existing handle and allocation. Renaming the owner
 // does not create another buffer or require another handle allowance.
 fn main()
-    mem_peak <= mem_peak(make_buffer),
+    resources mem_peak <= mem_peak(make_buffer),
 {
     let original = make_buffer();
     let received = hand_back(original);

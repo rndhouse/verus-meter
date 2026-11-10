@@ -1357,7 +1357,7 @@ pub(crate) mod parsing {
             Expr::ForLoop(input.parse()?)
         } else if input.peek(Token![loop]) {
             Expr::Loop(input.parse()?)
-        } else if input.peek(Token![mem_peak]) && input.peek2(Token![<=]) {
+        } else if input.peek(Token![resources]) && input.peek2(Token![mem_peak]) {
             Expr::ResourceBlock(input.parse()?)
         } else if input.peek(Token![assume]) {
             Expr::Assume(input.parse()?)
@@ -2029,7 +2029,7 @@ pub(crate) mod parsing {
         } else if token::parsing::peek_keyword(input.cursor(), "builtin") && input.peek2(Token![#])
         {
             expr_builtin(input)
-        } else if input.peek(Token![mem_peak]) && input.peek2(Token![<=]) {
+        } else if input.peek(Token![resources]) && input.peek2(Token![mem_peak]) {
             input.parse().map(Expr::ResourceBlock)
         } else if input.peek(Ident)
             || input.peek(Token![::])

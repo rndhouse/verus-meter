@@ -12,7 +12,7 @@ fn append(values: &mut Vec<u32>, capacity: usize, value: u32)
         old(values).len() < capacity,
     ensures
         final(values)@ == old(values)@.push(value),
-    mem_peak <= mem_size(values) + mem_size(capacity) + mem_size(value),
+    resources mem_peak <= mem_size(values) + mem_size(capacity) + mem_size(value),
 {
     values.push(value);
 }
@@ -21,14 +21,14 @@ fn append(values: &mut Vec<u32>, capacity: usize, value: u32)
 fn count(values: &Vec<u32>) -> (n: usize)
     ensures
         n == values.len(),
-    mem_peak <= mem_size(values) + mem_size(usize),
+    resources mem_peak <= mem_size(values) + mem_size(usize),
 {
     values.len()
 }
 
 // Combine helper guarantees to fill and inspect a bounded collection.
 fn build()
-    mem_peak <= mem_size(Vec<u32>) + 2 * mem_size(u32) + mem_peak(append),
+    resources mem_peak <= mem_size(Vec<u32>) + 2 * mem_size(u32) + mem_peak(append),
 {
     let mut values = Vec::<u32>::with_capacity(2);
     append(&mut values, 2, 10);

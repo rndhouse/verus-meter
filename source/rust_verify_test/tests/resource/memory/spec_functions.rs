@@ -8,7 +8,7 @@ fn conditional_spec_budget() {
         "conditional",
         r#"
         spec fn bytes(large: bool) -> nat { if large { 32 } else { 16 } }
-        fn f(large: bool) mem_peak <= mem_size(large) + bytes(large) {
+        fn f(large: bool) resources mem_peak <= mem_size(large) + bytes(large) {
             if large { let a = [0u32; 8]; } else { let b = [0u32; 4]; }
         }
     "#,
@@ -21,7 +21,7 @@ fn insufficient_spec_budget() {
         "insufficient",
         r#"
         spec fn bytes(large: bool) -> nat { if large { 31 } else { 16 } }
-        fn f(large: bool) mem_peak <= mem_size(large) + bytes(large) {
+        fn f(large: bool) resources mem_peak <= mem_size(large) + bytes(large) {
             if large { let a = [0u32; 8]; } else { let b = [0u32; 4]; }
         }
     "#,
@@ -37,13 +37,13 @@ fn symbolic_arguments_and_call_composition() {
         spec fn bytes(n: nat) -> nat { 24 + 4 * n }
         fn allocate(n: usize)
             requires n <= 100,
-            mem_peak <= mem_size(n) + bytes(n as nat),
+            resources mem_peak <= mem_size(n) + bytes(n as nat),
         { let v = Vec::<u32>::with_capacity(n); }
         fn delegate(n: usize)
             requires n <= 100,
-            mem_peak <= mem_size(n) + mem_peak(allocate(n)),
+            resources mem_peak <= mem_size(n) + mem_peak(allocate(n)),
         { allocate(n); }
-        fn caller() mem_peak <= 48 { delegate(2); }
+        fn caller() resources mem_peak <= 48 { delegate(2); }
     "#,
     );
 }
@@ -54,8 +54,8 @@ fn caller_must_pay_declared_spec_bound() {
         "caller",
         r#"
         spec fn bytes() -> nat { 32 }
-        fn helper() mem_peak <= bytes() { let a = [0u32; 4]; }
-        fn caller() mem_peak <= 31 { helper(); }
+        fn helper() resources mem_peak <= bytes() { let a = [0u32; 4]; }
+        fn caller() resources mem_peak <= 31 { helper(); }
     "#,
         "conditional memory budget exceeded",
     );
@@ -73,7 +73,7 @@ fn spec_body_uses_verus_match_and_nested_calls() {
         spec fn bytes(large: bool) -> nat {
             chosen(if large { Choice::Large } else { Choice::Small })
         }
-        fn f() mem_peak <= bytes(false) { let a = [0u32; 4]; }
+        fn f() resources mem_peak <= bytes(false) { let a = [0u32; 4]; }
     "#,
     );
 }
@@ -88,7 +88,7 @@ fn qualified_and_nested_spec_calls() {
             pub open spec fn base() -> nat { 16 }
             pub open spec fn twice(n: nat) -> nat { 2 * n }
         }
-        fn f() mem_peak <= budgets::twice(budgets::base()) { let a = [0u32; 8]; }
+        fn f() resources mem_peak <= budgets::twice(budgets::base()) { let a = [0u32; 8]; }
     "#,
     );
 }
@@ -99,7 +99,7 @@ fn u64_spec_result() {
         "u64",
         r#"
         spec fn bytes() -> u64 { 16 }
-        fn f() mem_peak <= bytes() { let a = [0u32; 4]; }
+        fn f() resources mem_peak <= bytes() { let a = [0u32; 4]; }
     "#,
     );
 }
@@ -110,7 +110,7 @@ fn oversized_nat_result_is_rejected_even_for_empty_body() {
         "overflow",
         r#"
         spec fn bytes() -> nat { 18446744073709551616 }
-        fn f() mem_peak <= bytes() {}
+        fn f() resources mem_peak <= bytes() {}
     "#,
         "memory budget arithmetic exceeds u64",
     );
@@ -122,7 +122,7 @@ fn executable_budget_call_is_rejected() {
         "exec",
         r#"
         fn bytes() -> u64 { 16 }
-        fn f() mem_peak <= bytes() {}
+        fn f() resources mem_peak <= bytes() {}
     "#,
         "memory budgets require a local, nongeneric spec function",
     );
@@ -135,7 +135,7 @@ fn executable_argument_is_rejected() {
         r#"
         fn select() -> bool { true }
         spec fn bytes(b: bool) -> nat { if b { 16 } else { 0 } }
-        fn f() mem_peak <= bytes(select()) {}
+        fn f() resources mem_peak <= bytes(select()) {}
     "#,
         "memory budget spec functions must return nat or u64",
     );
@@ -147,7 +147,7 @@ fn mutable_parameter_is_rejected() {
         "mutable",
         r#"
         spec fn bytes(b: bool) -> nat { if b { 16 } else { 0 } }
-        fn f(mut b: bool) mem_peak <= bytes(b) { b = false; }
+        fn f(mut b: bool) resources mem_peak <= bytes(b) { b = false; }
     "#,
         "immutable Boolean or native integer input parameters",
     );
@@ -159,7 +159,7 @@ fn signed_result_is_rejected() {
         "signed",
         r#"
         spec fn bytes() -> int { -1 }
-        fn f() mem_peak <= bytes() {}
+        fn f() resources mem_peak <= bytes() {}
     "#,
         "memory budget spec functions must return nat or u64",
     );
@@ -171,8 +171,8 @@ fn argument_free_query_needs_an_envelope() {
         "envelope",
         r#"
         spec fn bytes() -> nat { 16 }
-        fn helper() mem_peak <= bytes() {}
-        fn f() mem_peak <= mem_peak(helper) {}
+        fn helper() resources mem_peak <= bytes() {}
+        fn f() resources mem_peak <= mem_peak(helper) {}
     "#,
         "runtime memory budgets require mem_peak(helper(arguments))",
     );
@@ -184,7 +184,7 @@ fn section_still_requires_a_fixed_budget() {
         "section",
         r#"
         spec fn bytes() -> nat { 16 }
-        fn f() mem_peak <= 16 { mem_peak <= bytes() { let a = [0u32; 4]; } }
+        fn f() resources mem_peak <= 16 { resources mem_peak <= bytes() { let a = [0u32; 4]; } }
     "#,
         "section and checkpoint bounds remain fixed",
     );
@@ -196,7 +196,7 @@ fn uninterpreted_budget_is_rejected() {
         "uninterpreted",
         r#"
         uninterp spec fn bytes() -> nat;
-        fn f() mem_peak <= bytes() {}
+        fn f() resources mem_peak <= bytes() {}
     "#,
         "memory budgets require a local, nongeneric spec function",
     );
@@ -208,7 +208,7 @@ fn recursive_spec_still_needs_a_termination_proof() {
         "termination",
         r#"
         spec fn bytes(n: nat) -> nat { bytes(n) }
-        fn f() mem_peak <= bytes(0) {}
+        fn f() resources mem_peak <= bytes(0) {}
     "#,
         "recursive function must have a `decreases` clause",
     );
@@ -222,7 +222,7 @@ fn unselected_spec_bound_need_not_fit_u64() {
         spec fn enormous() -> nat { 18446744073709551616 }
         fn f(large: bool)
             requires !large,
-            mem_peak <= 1 + if large { enormous() } else { 0 },
+            resources mem_peak <= 1 + if large { enormous() } else { 0 },
         {}
     "#,
     );
@@ -245,7 +245,7 @@ fn model_sizes_inside_spec_bodies() {
         r#"
         struct Buffer { words: [u32; 4], ready: bool }
         spec fn bytes() -> nat { mem_size(Buffer) }
-        fn f() mem_peak <= bytes() { let b = Buffer { words: [0u32;4], ready: false }; }
+        fn f() resources mem_peak <= bytes() { let b = Buffer { words: [0u32;4], ready: false }; }
     "#,
     );
 }
@@ -256,7 +256,7 @@ fn parameter_size_inside_spec_body() {
         "param_size",
         r#"
         spec fn bytes(n: u32) -> nat { mem_size(n) }
-        fn f() mem_peak <= bytes(0) { let n = 0u32; }
+        fn f() resources mem_peak <= bytes(0) { let n = 0u32; }
     "#,
     );
 }
@@ -271,9 +271,9 @@ fn returned_formula_captures_parameters() {
         }
         fn f(n: usize)
             requires n <= 100,
-            mem_peak <= mem_size(n) + formula(4)(n as nat),
+            resources mem_peak <= mem_size(n) + formula(4)(n as nat),
         { let values = Vec::<u32>::with_capacity(n); }
-        fn caller() mem_peak <= 40 { f(2); }
+        fn caller() resources mem_peak <= 40 { f(2); }
     "#,
     );
 }
@@ -284,7 +284,7 @@ fn returned_formula_cannot_underbudget() {
         "small_formula",
         r#"
         spec fn formula() -> spec_fn(nat) -> nat { |n: nat| n }
-        fn f() mem_peak <= formula()(15) { let data = [0u32;4]; }
+        fn f() resources mem_peak <= formula()(15) { let data = [0u32;4]; }
     "#,
         "conditional memory budget exceeded",
     );
@@ -296,7 +296,7 @@ fn size_query_in_formula_argument() {
         "size_argument",
         r#"
         spec fn bytes(n: nat) -> nat { n }
-        fn f() mem_peak <= bytes(mem_size([u32;4])) { let a = [0u32;4]; }
+        fn f() resources mem_peak <= bytes(mem_size([u32;4])) { let a = [0u32;4]; }
     "#,
     );
 }
@@ -308,7 +308,7 @@ fn size_query_does_not_evaluate_argument() {
         r#"
         fn make() -> u32 { 1 }
         spec fn bytes() -> nat { mem_size(make()) }
-        fn f() mem_peak <= bytes() {}
+        fn f() resources mem_peak <= bytes() {}
     "#,
         "expected",
     );

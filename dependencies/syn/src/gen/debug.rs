@@ -3744,6 +3744,7 @@ impl Debug for crate::SignatureInvariants {
 impl Debug for crate::SignatureResources {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         let mut formatter = formatter.debug_struct("SignatureResources");
+        formatter.field("resources_token", &self.resources_token);
         formatter.field("token", &self.token);
         formatter.field("le_token", &self.le_token);
         formatter.field("budget", &self.budget);

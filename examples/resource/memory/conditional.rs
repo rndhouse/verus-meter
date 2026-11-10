@@ -14,7 +14,7 @@ verus! {
 // workspace must fit its allowance. Increasing either array beyond that
 // allowance makes verification fail at its declaration.
 fn workspace(large: bool)
-    mem_peak <= mem_size(large)
+    resources mem_peak <= mem_size(large)
         + if large { mem_size([u32; 8]) } else { mem_size([u32; 4]) },
 {
     if large {
@@ -29,7 +29,7 @@ fn workspace(large: bool)
 // The argument-free query allows either input. Each actual call uses the
 // allowance selected by its argument; consecutive calls reuse that workspace.
 fn main()
-    mem_peak <= mem_peak(workspace),
+    resources mem_peak <= mem_peak(workspace),
 {
     workspace(false);
     workspace(true);

@@ -118,6 +118,7 @@ a.struct[title="struct syn::token::Raw"],
 a.struct[title="struct syn::token::Recommends"],
 a.struct[title="struct syn::token::Ref"],
 a.struct[title="struct syn::token::Requires"],
+a.struct[title="struct syn::token::Resources"],
 a.struct[title="struct syn::token::Return"],
 a.struct[title="struct syn::token::Returns"],
 a.struct[title="struct syn::token::Reveal"],
@@ -287,6 +288,7 @@ a.struct[title="struct syn::token::Raw"]::before,
 a.struct[title="struct syn::token::Recommends"]::before,
 a.struct[title="struct syn::token::Ref"]::before,
 a.struct[title="struct syn::token::Requires"]::before,
+a.struct[title="struct syn::token::Resources"]::before,
 a.struct[title="struct syn::token::Return"]::before,
 a.struct[title="struct syn::token::Returns"]::before,
 a.struct[title="struct syn::token::Reveal"]::before,
@@ -817,6 +819,10 @@ a.struct[title="struct syn::token::Requires"]::before {
 	content: "Token![requires]";
 }
 
+a.struct[title="struct syn::token::Resources"]::before {
+	content: "Token![resources]";
+}
+
 a.struct[title="struct syn::token::Return"]::before {
 	content: "Token![return]";
 }
@@ -1151,6 +1157,7 @@ a.struct[title="struct syn::token::Raw"]::after,
 a.struct[title="struct syn::token::Recommends"]::after,
 a.struct[title="struct syn::token::Ref"]::after,
 a.struct[title="struct syn::token::Requires"]::after,
+a.struct[title="struct syn::token::Resources"]::after,
 a.struct[title="struct syn::token::Return"]::after,
 a.struct[title="struct syn::token::Returns"]::after,
 a.struct[title="struct syn::token::Reveal"]::after,

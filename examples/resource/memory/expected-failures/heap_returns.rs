@@ -12,14 +12,14 @@ type Buffer = Box<[u32; 4]>;
 
 // Supply one independently owned buffer.
 fn make_buffer() -> Buffer
-    mem_peak <= mem_size(Buffer) + mem_size([u32; 4]),
+    resources mem_peak <= mem_size(Buffer) + mem_size([u32; 4]),
 {
     Box::new([0u32; 4])
 }
 
 // Try to keep two heap buffers under a one-allocation allowance.
 fn main()
-    mem_peak <= 2 * mem_size(Buffer) + mem_size([u32; 4]),
+    resources mem_peak <= 2 * mem_size(Buffer) + mem_size([u32; 4]),
 {
     let first = make_buffer();
 

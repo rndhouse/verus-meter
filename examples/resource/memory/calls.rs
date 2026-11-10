@@ -18,7 +18,7 @@ verus! {
 // overlaps the helper's workspace. Referencing the helper's declared budget
 // lets this caller follow changes to that contract automatically.
 pub fn sort_local_array()
-    mem_peak <= mem_size([u32; 8]) + mem_peak(sorting::insertion_sort),
+    resources mem_peak <= mem_size([u32; 8]) + mem_peak(sorting::insertion_sort),
 {
     let mut values = [9u32, 3, 7, 3, 0, 8, 1, 5];
     // Remember the input for the preservation proof without retaining a runtime
@@ -37,7 +37,7 @@ pub fn sort_local_array()
 //
 // There is no additional local data here, so the caller's bound is sufficient.
 fn main()
-    mem_peak <= mem_peak(sort_local_array),
+    resources mem_peak <= mem_peak(sort_local_array),
 {
     sort_local_array();
 }

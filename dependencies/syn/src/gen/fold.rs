@@ -4732,6 +4732,7 @@ where
     F: Fold + ?Sized,
 {
     crate::SignatureResources {
+        resources_token: node.resources_token,
         token: node.token,
         le_token: node.le_token,
         budget: f.fold_resource_expr(node.budget),

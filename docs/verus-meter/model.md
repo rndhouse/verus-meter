@@ -6,8 +6,9 @@ space, while overlapping storage adds together.
 
 ## Writing a budget
 
-Put `mem_peak <= bound` after the function's other specification clauses.
-Functions without this clause receive ordinary Verus verification only.
+Put `resources mem_peak <= bound` after the function's other specification clauses.
+The `resources` clause currently supports one memory bound. Functions without
+this clause receive ordinary Verus verification only.
 
 | Expression | Meaning |
 | --- | --- |
@@ -36,7 +37,7 @@ spec fn element_bytes(capacity: nat) -> nat { mem_size(u32) * capacity }
 
 fn collect(capacity: usize)
     requires capacity <= 1024,
-    mem_peak <= mem_size(capacity) + mem_size(Vec<u32>)
+    resources mem_peak <= mem_size(capacity) + mem_size(Vec<u32>)
         + element_bytes(capacity as nat),
 {
     let values = Vec::<u32>::with_capacity(capacity);
@@ -326,7 +327,7 @@ There is no capacity annotation.
 fn append(values: &mut Vec<u32>, capacity: usize, value: u32)
     requires old(values).len() < capacity,
     ensures final(values)@ == old(values)@.push(value),
-    mem_peak <= mem_size(values) + mem_size(capacity) + mem_size(value),
+    resources mem_peak <= mem_size(values) + mem_size(capacity) + mem_size(value),
 {
     values.push(value);
 }
@@ -395,10 +396,10 @@ A section gives one part of an operation its own workspace allowance:
 
 ```rust
 fn work()
-    mem_peak <= 2 * mem_size([u32; 4]),
+    resources mem_peak <= 2 * mem_size([u32; 4]),
 {
     let original = [1u32, 2, 3, 4];
-    mem_peak <= mem_size(original) {
+    resources mem_peak <= mem_size(original) {
         let copy = original;
         assert(current(mem_peak) <= mem_size(copy));
     }
@@ -430,7 +431,7 @@ See [checkpoints](../../examples/resource/memory/checkpoints.rs) and a
 A conditional function budget can select its allowance from the inputs:
 
 ```rust
-mem_peak <= mem_size(large)
+resources mem_peak <= mem_size(large)
     + if large { mem_size([u32; 8]) } else { mem_size([u32; 4]) },
 ```
 

@@ -13,16 +13,16 @@ verus! {
 // The function owns the original; the outer section owns a working copy; the
 // inner section owns scratch space. Each parent includes its child's allowance.
 fn main()
-    mem_peak <= 3 * mem_size([u32; 4]),
+    resources mem_peak <= 3 * mem_size([u32; 4]),
 {
     let original = [1u32, 2, 3, 4];
 
-    mem_peak <= 2 * mem_size(original) {
+    resources mem_peak <= 2 * mem_size(original) {
         // The original belongs to the function, so this section starts at zero.
         assert(current(mem_peak) <= 0);
         let mut copy = original;
 
-        mem_peak <= mem_size(copy) {
+        resources mem_peak <= mem_size(copy) {
             // Both existing arrays belong to enclosing scopes.
             assert(current(mem_peak) <= 0);
             let scratch = copy;

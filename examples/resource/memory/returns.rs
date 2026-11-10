@@ -14,7 +14,7 @@ type Buffer = [u32; 4];
 // Callers can rely on both the buffer's initial contents and its memory bound.
 fn make_buffer() -> (buffer: Buffer)
     ensures buffer[0] == 7,
-    mem_peak <= mem_size(Buffer),
+    resources mem_peak <= mem_size(Buffer),
 {
     [7u32; 4]
 }
@@ -23,7 +23,7 @@ fn make_buffer() -> (buffer: Buffer)
 //
 // Receiving the buffer preserves the producer's memory guarantee.
 fn main()
-    mem_peak <= mem_peak(make_buffer),
+    resources mem_peak <= mem_peak(make_buffer),
 {
     let buffer = make_buffer();
     assert(buffer[0] == 7);

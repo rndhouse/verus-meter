@@ -3345,6 +3345,7 @@ impl Hash for crate::SignatureResources {
     where
         H: Hasher,
     {
+        self.resources_token.hash(state);
         self.budget.hash(state);
         self.comma.hash(state);
     }

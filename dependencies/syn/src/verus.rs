@@ -226,6 +226,8 @@ ast_struct! {
 ast_struct! {
     /// A resource budget formula, optionally conditional on function inputs.
     pub struct SignatureResources {
+        /// Present for function and section clauses; absent in checkpoint queries.
+        pub resources_token: Option<Token![resources]>,
         pub token: Token![mem_peak],
         pub le_token: Token![<=],
         pub budget: ResourceExpr,
@@ -962,7 +964,7 @@ pub mod parsing {
                 || input.peek(Token![decreases])
                 || input.peek(Token![via])
                 || input.peek(Token![when])
-                || (input.peek(Token![mem_peak]) && input.peek2(Token![<=]))
+                || (input.peek(Token![resources]) && input.peek2(Token![mem_peak]))
                 || input.peek(Token![no_unwind])
                 || input.peek(Token![opens_invariants])
                 || input.peek(Token![outer_mask])
@@ -979,7 +981,7 @@ pub mod parsing {
                 || input.peek2(Token![decreases])
                 || input.peek2(Token![via])
                 || input.peek2(Token![when])
-                || (input.peek2(Token![mem_peak]) && input.peek3(Token![<=]))
+                || (input.peek2(Token![resources]) && input.peek3(Token![mem_peak]))
                 || input.peek2(Token![no_unwind])
                 || input.peek2(Token![opens_invariants])
                 || input.peek2(Token![outer_mask])
@@ -1582,13 +1584,15 @@ pub mod parsing {
     #[cfg_attr(doc_cfg, doc(cfg(feature = "parsing")))]
     impl Parse for Option<SignatureResources> {
         fn parse(input: ParseStream) -> Result<Self> {
-            if !input.peek(Token![mem_peak]) {
+            if !input.peek(Token![resources]) {
                 return Ok(None);
             }
+            let resources_token = Some(input.parse()?);
             let token = input.parse()?;
             let le_token = input.parse()?;
             let budget = input.parse()?;
             Ok(Some(SignatureResources {
+                resources_token,
                 token,
                 le_token,
                 budget,
@@ -1601,7 +1605,7 @@ pub mod parsing {
         fn parse(input: ParseStream) -> Result<Self> {
             let contract = input
                 .parse::<Option<SignatureResources>>()?
-                .ok_or_else(|| input.error("expected mem_peak section contract"))?;
+                .ok_or_else(|| input.error("expected resources section contract"))?;
             Ok(Self {
                 attrs: Vec::new(),
                 contract: Box::new(contract),
@@ -1716,6 +1720,7 @@ pub mod parsing {
                 let metric;
                 let current_paren = parenthesized!(metric in content);
                 let resource = SignatureResources {
+                    resources_token: None,
                     token: metric.parse()?,
                     le_token: content.parse()?,
                     budget: content.parse()?,
@@ -2681,6 +2686,7 @@ mod printing {
     #[cfg_attr(doc_cfg, doc(cfg(feature = "printing")))]
     impl ToTokens for SignatureResources {
         fn to_tokens(&self, tokens: &mut TokenStream) {
+            self.resources_token.to_tokens(tokens);
             self.token.to_tokens(tokens);
             self.le_token.to_tokens(tokens);
             self.budget.to_tokens(tokens);
@@ -3502,7 +3508,7 @@ impl parse::Parse for WithSpecOnFn {
                 || input.peek(Token![decreases])
                 || input.peek(Token![via])
                 || input.peek(Token![when])
-                || (input.peek(Token![mem_peak]) && input.peek2(Token![<=]))
+                || (input.peek(Token![resources]) && input.peek2(Token![mem_peak]))
                 || input.peek(Token![no_unwind])
                 || input.peek(Token![opens_invariants])
         };

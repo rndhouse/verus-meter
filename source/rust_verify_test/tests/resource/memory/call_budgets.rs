@@ -9,9 +9,9 @@ fn assert_memory_failure(err: TestErr) {
 test_verify_one_file! {
     #[test] unused_conditional_maximum_can_exceed_live_storage_range verus_code! {
         fn helper(flag: bool)
-            mem_peak <= if flag { 18446744073709551615 } else { 1 },
+            resources mem_peak <= if flag { 18446744073709551615 } else { 1 },
         {}
-        fn caller(flag: bool) requires !flag, mem_peak <= 2 {
+        fn caller(flag: bool) requires !flag, resources mem_peak <= 2 {
             helper(flag);
             helper(flag);
             let later = 0u8;
@@ -22,9 +22,9 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] selected_conditional_maximum_must_still_fit verus_code! {
         fn helper(flag: bool)
-            mem_peak <= if flag { 18446744073709551615 } else { 1 },
+            resources mem_peak <= if flag { 18446744073709551615 } else { 1 },
         {}
-        fn caller(flag: bool) requires flag, mem_peak <= 18446744073709551615 {
+        fn caller(flag: bool) requires flag, resources mem_peak <= 18446744073709551615 {
             helper(flag);
         }
     } => Err(err) => assert_memory_failure(err)
@@ -34,11 +34,11 @@ test_verify_one_file! {
     #[test] unused_conditional_maximum_with_dynamic_backing verus_code! {
         use vstd::prelude::*;
         fn helper(flag: bool)
-            mem_peak <= if flag { 18446744073709551615 } else { 1 },
+            resources mem_peak <= if flag { 18446744073709551615 } else { 1 },
         {}
         fn caller(cap: usize, flag: bool)
             requires cap <= 4, !flag,
-            mem_peak <= 50,
+            resources mem_peak <= 50,
         {
             let owner = Vec::<u32>::with_capacity(cap);
             helper(flag);
@@ -52,11 +52,11 @@ test_verify_one_file! {
     #[test] large_conditional_envelope_keeps_dynamic_backing_charged verus_code! {
         use vstd::prelude::*;
         fn helper(flag: bool)
-            mem_peak <= if flag { 18446744073709551615 } else { 1 },
+            resources mem_peak <= if flag { 18446744073709551615 } else { 1 },
         {}
         fn caller(cap: usize, flag: bool)
             requires cap <= 4, !flag,
-            mem_peak <= 49,
+            resources mem_peak <= 49,
         {
             let owner = Vec::<u32>::with_capacity(cap);
             helper(flag);
@@ -68,9 +68,9 @@ test_verify_one_file! {
     #[test] unused_conditional_maximum_with_return_destination verus_code! {
         fn helper(flag: bool) -> (result: u8)
             ensures result == 7,
-            mem_peak <= if flag { 18446744073709551615 } else { 2 },
+            resources mem_peak <= if flag { 18446744073709551615 } else { 2 },
         { 7 }
-        fn caller(flag: bool) requires !flag, mem_peak <= 3 {
+        fn caller(flag: bool) requires !flag, resources mem_peak <= 3 {
             let result = helper(flag);
             assert(result == 7);
         }
@@ -80,10 +80,10 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] unused_conditional_maximum_inside_section verus_code! {
         fn helper(flag: bool)
-            mem_peak <= if flag { 18446744073709551615 } else { 1 },
+            resources mem_peak <= if flag { 18446744073709551615 } else { 1 },
         {}
-        fn caller(flag: bool) requires !flag, mem_peak <= 3 {
-            mem_peak <= 2 {
+        fn caller(flag: bool) requires !flag, resources mem_peak <= 3 {
+            resources mem_peak <= 2 {
                 let local = 0u8;
                 helper(flag);
             }
@@ -95,9 +95,9 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] unselected_conditional_envelope_does_not_inflate_checkpoint verus_code! {
         fn helper(flag: bool)
-            mem_peak <= if flag { 18446744073709551615 } else { 1 },
+            resources mem_peak <= if flag { 18446744073709551615 } else { 1 },
         {}
-        fn caller(flag: bool) requires !flag, mem_peak <= 2 {
+        fn caller(flag: bool) requires !flag, resources mem_peak <= 2 {
             helper(flag);
             assert(current(mem_peak) <= 18446744073709551615);
         }
@@ -108,11 +108,11 @@ test_verify_one_file! {
     #[test] conditional_call_after_argument_drop verus_code! {
         use vstd::prelude::*;
         fn helper(flag: bool, done: ())
-            mem_peak <= mem_size(flag) + if flag { 32 } else { 0 },
+            resources mem_peak <= mem_size(flag) + if flag { 32 } else { 0 },
         {
             if flag { let scratch = [0u8; 32]; }
         }
-        fn caller(flag: bool) mem_peak <= 42 {
+        fn caller(flag: bool) resources mem_peak <= 42 {
             let owner = Box::new([0u8; 32]);
             helper(flag, { drop(owner); });
             assert(current(mem_peak) <= 42);
@@ -124,11 +124,11 @@ test_verify_one_file! {
     #[test] argument_storage_before_drop_still_counts verus_code! {
         use vstd::prelude::*;
         fn helper(flag: bool, done: ())
-            mem_peak <= mem_size(flag) + if flag { 32 } else { 0 },
+            resources mem_peak <= mem_size(flag) + if flag { 32 } else { 0 },
         {
             if flag { let scratch = [0u8; 32]; }
         }
-        fn caller(flag: bool) mem_peak <= 41 {
+        fn caller(flag: bool) resources mem_peak <= 41 {
             let owner = Box::new([0u8; 32]);
             helper(flag, { drop(owner); });
         }
@@ -139,11 +139,11 @@ test_verify_one_file! {
     #[test] conditional_call_after_dynamic_argument_drop verus_code! {
         use vstd::prelude::*;
         fn helper(flag: bool, done: ())
-            mem_peak <= mem_size(flag) + if flag { 32 } else { 0 },
+            resources mem_peak <= mem_size(flag) + if flag { 32 } else { 0 },
         {
             if flag { let scratch = [0u8; 32]; }
         }
-        fn caller(cap: usize, flag: bool) requires cap <= 4, mem_peak <= 66 {
+        fn caller(cap: usize, flag: bool) requires cap <= 4, resources mem_peak <= 66 {
             let owner = Vec::<u32>::with_capacity(cap);
             helper(flag, { drop(owner); });
             assert(current(mem_peak) <= 66);
@@ -156,11 +156,11 @@ test_verify_one_file! {
         use vstd::prelude::*;
         fn helper(cap: usize, done: ())
             requires cap <= 4,
-            mem_peak <= mem_size(cap) + mem_size(Vec<u32>) + cap * mem_size(u32),
+            resources mem_peak <= mem_size(cap) + mem_size(Vec<u32>) + cap * mem_size(u32),
         {
             let scratch = Vec::<u32>::with_capacity(cap);
         }
-        fn caller(cap: usize) requires cap <= 4, mem_peak <= 64 {
+        fn caller(cap: usize) requires cap <= 4, resources mem_peak <= 64 {
             let owner = Box::new([0u8; 32]);
             helper(cap, { drop(owner); });
             assert(current(mem_peak) <= 64);
@@ -173,18 +173,18 @@ test_verify_one_file! {
         use vstd::prelude::*;
         fn helper(flag: bool, done: ()) -> (result: u32)
             ensures result == 7,
-            mem_peak <= mem_size(flag) + mem_size(u32) + if flag { 32 } else { 0 },
+            resources mem_peak <= mem_size(flag) + mem_size(u32) + if flag { 32 } else { 0 },
         {
             if flag { let scratch = [0u8; 32]; }
             7
         }
-        fn initialized(flag: bool) mem_peak <= 46 {
+        fn initialized(flag: bool) resources mem_peak <= 46 {
             let owner = Box::new([0u8; 32]);
             let result = helper(flag, { drop(owner); });
             assert(result == 7);
             assert(current(mem_peak) <= 46);
         }
-        fn discarded(flag: bool) mem_peak <= 46 {
+        fn discarded(flag: bool) resources mem_peak <= 46 {
             let owner = Box::new([0u8; 32]);
             helper(flag, { drop(owner); });
             assert(current(mem_peak) <= 46);
@@ -196,11 +196,11 @@ test_verify_one_file! {
     #[test] argument_drop_keeps_other_owners_charged verus_code! {
         use vstd::prelude::*;
         fn helper(flag: bool, done: ())
-            mem_peak <= mem_size(flag) + if flag { 64 } else { 0 },
+            resources mem_peak <= mem_size(flag) + if flag { 64 } else { 0 },
         {
             if flag { let scratch = [0u8; 64]; }
         }
-        fn caller(flag: bool) mem_peak <= 105 {
+        fn caller(flag: bool) resources mem_peak <= 105 {
             let released = Box::new([0u8; 32]);
             let retained = Box::new([0u8; 32]);
             helper(flag, { drop(released); });
@@ -211,365 +211,365 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] constant_call_query verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() mem_peak <= mem_peak(helper(false)) { helper(false); assert(current(mem_peak) <= mem_peak(helper(false))); }
+fn f() resources mem_peak <= mem_peak(helper(false)) { helper(false); assert(current(mem_peak) <= mem_peak(helper(false))); }
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] large_call_query verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() mem_peak <= mem_peak(helper(true)) { helper(true); }
+fn f() resources mem_peak <= mem_peak(helper(true)) { helper(true); }
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] small_allowance_rejects_large_call verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() mem_peak <= mem_peak(helper(false)) { helper(true); }
+fn f() resources mem_peak <= mem_peak(helper(false)) { helper(true); }
     } => Err(err) => assert_vir_error_msg(err, "peak 33 bytes exceeds budget 17 bytes")
 }
 
 test_verify_one_file! {
     #[test] one_byte_short verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() mem_peak <= 16 { helper(false); }
+fn f() resources mem_peak <= 16 { helper(false); }
     } => Err(err) => assert_vir_error_msg(err, "peak 17 bytes exceeds budget 16 bytes")
 }
 
 test_verify_one_file! {
     #[test] argument_free_query_retains_envelope verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() mem_peak <= mem_peak(helper) { helper(true); }
+fn f() resources mem_peak <= mem_peak(helper) { helper(true); }
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] caller_precondition_specializes_call verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f(flag: bool) requires !flag, mem_peak <= 18 { helper(flag); }
+fn f(flag: bool) requires !flag, resources mem_peak <= 18 { helper(flag); }
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] missing_precondition_fails_at_call verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f(flag: bool) mem_peak <= 18 { helper(flag); }
+fn f(flag: bool) resources mem_peak <= 18 { helper(flag); }
     } => Err(err) => assert_memory_failure(err)
 }
 
 test_verify_one_file! {
     #[test] conditional_branch_specializes_call verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f(flag: bool) mem_peak <= 18 { if !flag { helper(flag); } }
+fn f(flag: bool) resources mem_peak <= 18 { if !flag { helper(flag); } }
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] immutable_local_selects_call verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() mem_peak <= 18 { let small = false; helper(small); }
+fn f() resources mem_peak <= 18 { let small = false; helper(small); }
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] local_choice_must_fit verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() mem_peak <= 18 { let large = true; helper(large); }
+fn f() resources mem_peak <= 18 { let large = true; helper(large); }
     } => Err(err) => assert_memory_failure(err)
 }
 
 test_verify_one_file! {
     #[test] forwarded_contracts_compose verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn middle(flag: bool) mem_peak <= mem_size(flag) + mem_peak(helper(flag)) { helper(flag); }
-fn outer(flag: bool) mem_peak <= mem_size(flag) + mem_peak(middle(flag)) { middle(flag); }
-fn f() mem_peak <= mem_peak(outer(false)) { outer(false); }
+fn middle(flag: bool) resources mem_peak <= mem_size(flag) + mem_peak(helper(flag)) { helper(flag); }
+fn outer(flag: bool) resources mem_peak <= mem_size(flag) + mem_peak(middle(flag)) { middle(flag); }
+fn f() resources mem_peak <= mem_peak(outer(false)) { outer(false); }
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] conditional_caller_must_cover_callee verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f(flag: bool) mem_peak <= mem_size(flag) + mem_peak(helper(!flag)) { helper(flag); }
+fn f(flag: bool) resources mem_peak <= mem_size(flag) + mem_peak(helper(!flag)) { helper(flag); }
     } => Err(err) => assert_memory_failure(err)
 }
 
 test_verify_one_file! {
     #[test] caller_storage_stays_live verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() mem_peak <= mem_peak(helper(false)) { let kept = [0u32; 4]; helper(false); }
+fn f() resources mem_peak <= mem_peak(helper(false)) { let kept = [0u32; 4]; helper(false); }
     } => Err(err) => assert_vir_error_msg(err, "peak 33 bytes exceeds budget 17 bytes")
 }
 
 test_verify_one_file! {
     #[test] caller_storage_with_symbolic_call verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f(flag: bool) requires !flag, mem_peak <= 18 { let kept = [0u32; 4]; helper(flag); }
+fn f(flag: bool) requires !flag, resources mem_peak <= 18 { let kept = [0u32; 4]; helper(flag); }
     } => Err(err) => assert_memory_failure(err)
 }
 
 test_verify_one_file! {
     #[test] constant_call_in_section verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() mem_peak <= 33 { let kept = [0u32; 4]; mem_peak <= mem_peak(helper(false)) { helper(false); } }
+fn f() resources mem_peak <= 33 { let kept = [0u32; 4]; resources mem_peak <= mem_peak(helper(false)) { helper(false); } }
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] symbolic_call_in_section verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f(flag: bool) requires !flag, mem_peak <= 18 { mem_peak <= 17 { helper(flag); } }
+fn f(flag: bool) requires !flag, resources mem_peak <= 18 { resources mem_peak <= 17 { helper(flag); } }
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] section_bound_is_independently_enforced verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f(flag: bool) mem_peak <= 100 { mem_peak <= 17 { helper(flag); } }
+fn f(flag: bool) resources mem_peak <= 100 { resources mem_peak <= 17 { helper(flag); } }
     } => Err(err) => assert_memory_failure(err)
 }
 
 test_verify_one_file! {
     #[test] symbolic_checkpoint_preserves_selected_allowance verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f(flag: bool) requires !flag, mem_peak <= 18 { helper(flag); assert(current(mem_peak) <= 18); }
+fn f(flag: bool) requires !flag, resources mem_peak <= 18 { helper(flag); assert(current(mem_peak) <= 18); }
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] mutable_selector_falls_back verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() mem_peak <= 18 { let mut flag = false; helper(flag); }
+fn f() resources mem_peak <= 18 { let mut flag = false; helper(flag); }
     } => Err(err) => assert_vir_error_msg(err, "peak 34 bytes exceeds budget 18 bytes")
 }
 
 test_verify_one_file! {
     #[test] mutable_selector_accepts_envelope verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() mem_peak <= 34 { let mut flag = false; helper(flag); }
+fn f() resources mem_peak <= 34 { let mut flag = false; helper(flag); }
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] side_effecting_selector_falls_back verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() mem_peak <= 17 { helper({ assert(true); false }); }
+fn f() resources mem_peak <= 17 { helper({ assert(true); false }); }
     } => Err(err) => assert_vir_error_msg(err, "peak 33 bytes exceeds budget 17 bytes")
 }
 
 test_verify_one_file! {
     #[test] query_rejects_mutable_input verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f(mut flag: bool) mem_peak <= mem_size(flag) + mem_peak(helper(flag)) { helper(flag); }
+fn f(mut flag: bool) resources mem_peak <= mem_size(flag) + mem_peak(helper(flag)) { helper(flag); }
     } => Err(err) => assert_vir_error_msg(err, "memory budget predicates currently require immutable")
 }
 
 test_verify_one_file! {
     #[test] query_rejects_side_effects verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() mem_peak <= mem_peak(helper({ let flag = false; flag })) {}
+fn f() resources mem_peak <= mem_peak(helper({ let flag = false; flag })) {}
     } => Err(err) => assert_vir_error_msg(err, "memory budget predicates currently support")
 }
 
 test_verify_one_file! {
     #[test] query_does_not_call_or_require_preconditions verus_code! {
 use vstd::prelude::*;
-fn unused(flag: bool) requires false, mem_peak <= if flag { 33 } else { 17 } { assert(false); }
-fn f() mem_peak <= mem_peak(unused(false)) { let data = [0u32; 4]; }
+fn unused(flag: bool) requires false, resources mem_peak <= if flag { 33 } else { 17 } { assert(false); }
+fn f() resources mem_peak <= mem_peak(unused(false)) { let data = [0u32; 4]; }
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] actual_call_still_requires_precondition verus_code! {
 use vstd::prelude::*;
-fn unused(flag: bool) requires false, mem_peak <= if flag { 33 } else { 17 } {}
-fn f() mem_peak <= mem_peak(unused(false)) { unused(false); }
+fn unused(flag: bool) requires false, resources mem_peak <= if flag { 33 } else { 17 } {}
+fn f() resources mem_peak <= mem_peak(unused(false)) { unused(false); }
     } => Err(err) => assert_vir_error_msg(err, "precondition not satisfied")
 }
 
 test_verify_one_file! {
     #[test] declaration_slack_is_preserved verus_code! {
 use vstd::prelude::*;
-fn unused(flag: bool) mem_peak <= if flag { 33 } else { 17 } {}
-fn f() mem_peak <= 1 { unused(false); }
+fn unused(flag: bool) resources mem_peak <= if flag { 33 } else { 17 } {}
+fn f() resources mem_peak <= 1 { unused(false); }
     } => Err(err) => assert_vir_error_msg(err, "peak 17 bytes exceeds budget 1 bytes")
 }
 
 test_verify_one_file! {
     #[test] earlier_argument_slots_overlap_later_calls verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn sink(data: [u32; 4], done: ()) mem_peak <= 16 {}
-fn f() mem_peak <= mem_peak(helper(false)) { sink([0u32; 4], helper(false)); }
+fn sink(data: [u32; 4], done: ()) resources mem_peak <= 16 {}
+fn f() resources mem_peak <= mem_peak(helper(false)) { sink([0u32; 4], helper(false)); }
     } => Err(err) => assert_vir_error_msg(err, "peak 33 bytes exceeds budget 17 bytes")
 }
 
 test_verify_one_file! {
     #[test] earlier_argument_slots_overlap_symbolic_calls verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn sink(data: [u32; 4], done: ()) mem_peak <= 16 {}
-fn f(flag: bool) requires !flag, mem_peak <= 18 { sink([0u32; 4], helper(flag)); }
+fn sink(data: [u32; 4], done: ()) resources mem_peak <= 16 {}
+fn f(flag: bool) requires !flag, resources mem_peak <= 18 { sink([0u32; 4], helper(flag)); }
     } => Err(err) => assert_memory_failure(err)
 }
 
 test_verify_one_file! {
     #[test] borrowed_other_argument_is_supported verus_code! {
 use vstd::prelude::*;
-fn work(flag: bool, data: &mut [u32; 4]) mem_peak <= mem_size(flag) + mem_size(data) + if flag { 32 } else { 16 } {
+fn work(flag: bool, data: &mut [u32; 4]) resources mem_peak <= mem_size(flag) + mem_size(data) + if flag { 32 } else { 16 } {
     if flag { let scratch = [0u32; 8]; } else { let scratch = [0u32; 4]; }
     data[0] = 9;
 }
-fn f(flag: bool) requires !flag, mem_peak <= 42 { let mut data = [0u32; 4]; work(flag, &mut data); }
+fn f(flag: bool) requires !flag, resources mem_peak <= 42 { let mut data = [0u32; 4]; work(flag, &mut data); }
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] multiple_scalar_arguments_and_comparisons verus_code! {
 use vstd::prelude::*;
-fn work(count: u32, flag: bool) mem_peak <= 5 + if count <= 4 && !flag { 16 } else { 32 } {
+fn work(count: u32, flag: bool) resources mem_peak <= 5 + if count <= 4 && !flag { 16 } else { 32 } {
     if count > 4 || flag { let data = [0u32; 8]; } else { let data = [0u32; 4]; }
 }
-fn f() mem_peak <= mem_peak(work(4u32, false)) { work(4u32, false); assert(current(mem_peak) <= 21); }
+fn f() resources mem_peak <= mem_peak(work(4u32, false)) { work(4u32, false); assert(current(mem_peak) <= 21); }
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] specialized_cycles_still_rejected verus_code! {
 use vstd::prelude::*;
-fn f(flag: bool) mem_peak <= 1 + 0 * mem_peak(f(false)) {}
+fn f(flag: bool) resources mem_peak <= 1 + 0 * mem_peak(f(false)) {}
     } => Err(err) => assert_vir_error_msg(err, "circular mem_peak reference")
 }
 
 test_verify_one_file! {
     #[test] specialization_cannot_hide_invalid_branch verus_code! {
 use vstd::prelude::*;
-fn f(flag: bool) mem_peak <= if flag { 18446744073709551615u64 + 1 } else { 1 } {}
-fn g() mem_peak <= mem_peak(f(false)) {}
+fn f(flag: bool) resources mem_peak <= if flag { 18446744073709551615u64 + 1 } else { 1 } {}
+fn g() resources mem_peak <= mem_peak(f(false)) {}
     } => Err(err) => assert_vir_error_msg(err, "memory budget arithmetic exceeds u64")
 }
 
 test_verify_one_file! {
     #[test] call_cycle_still_rejected verus_code! {
 use vstd::prelude::*;
-fn f(flag: bool) mem_peak <= if flag { 100 } else { 100 } { f(false); }
+fn f(flag: bool) resources mem_peak <= if flag { 100 } else { 100 } { f(false); }
     } => Err(err) => assert_vir_error_msg(err, "recursive memory contracts")
 }
 
 test_verify_one_file! {
     #[test] fixed_local_costs_use_reachability verus_code! {
 use vstd::prelude::*;
-fn helper(large: bool) mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
+fn helper(large: bool) resources mem_peak <= mem_size(large) + if large { 32 } else { 16 } {
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f(flag: bool) requires !flag, mem_peak <= 18 { helper(flag); if false { let big = [0u32; 100]; } }
+fn f(flag: bool) requires !flag, resources mem_peak <= 18 { helper(flag); if false { let big = [0u32; 100]; } }
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] invalid_query_even_when_unused verus_code! {
 use vstd::prelude::*;
-fn f(flag: bool) mem_peak <= 1 {}
-fn g() mem_peak <= 0 * mem_peak(f({ let b = false; b })) {}
+fn f(flag: bool) resources mem_peak <= 1 {}
+fn g() resources mem_peak <= 0 * mem_peak(f({ let b = false; b })) {}
     } => Err(err) => assert_vir_error_msg(err, "memory budget predicates currently support")
 }
 
@@ -585,18 +585,18 @@ fn call_budgets_example() {
 
 test_verify_one_file! {
     #[test] aliases_and_zero_argument_queries verus_code! {
-        mod inner { pub fn work(flag: bool) mem_peak <= if flag { 33 } else { 17 } {} }
+        mod inner { pub fn work(flag: bool) resources mem_peak <= if flag { 33 } else { 17 } {} }
         use inner::work as renamed;
-        fn forward() mem_peak <= mem_peak(renamed(false)) { renamed(false); }
-        fn f() mem_peak <= mem_peak(forward()) { forward(); }
+        fn forward() resources mem_peak <= mem_peak(renamed(false)) { renamed(false); }
+        fn f() resources mem_peak <= mem_peak(forward()) { forward(); }
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] later_argument_cannot_change_a_specialized_selector verus_code! {
-        fn change(flag: &mut bool) mem_peak <= mem_size(flag) { *flag = true; }
-        fn work(flag: bool, done: ()) mem_peak <= if flag { 33 } else { 17 } {}
-        fn f() mem_peak <= 18 {
+        fn change(flag: &mut bool) resources mem_peak <= mem_size(flag) { *flag = true; }
+        fn work(flag: bool, done: ()) resources mem_peak <= if flag { 33 } else { 17 } {}
+        fn f() resources mem_peak <= 18 {
             let mut flag = false;
             work(flag, change(&mut flag));
         }
@@ -605,8 +605,8 @@ test_verify_one_file! {
 
 test_verify_one_file! {
     #[test] symbolic_calls_in_reusable_loop verus_code! {
-        fn work(flag: bool) mem_peak <= if flag { 33 } else { 17 } {}
-        fn f(flag: bool, mut run: bool) requires !flag, mem_peak <= 19 {
+        fn work(flag: bool) resources mem_peak <= if flag { 33 } else { 17 } {}
+        fn f(flag: bool, mut run: bool) requires !flag, resources mem_peak <= 19 {
             while run invariant !flag, decreases if run { 1int } else { 0int }, {
                 work(flag);
                 run = false;
@@ -618,7 +618,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] constant_conditional_contract_keeps_proof_semantics verus_code! {
         use vstd::prelude::*;
-        fn f() mem_peak <= if false { 1 } else { 0 } {
+        fn f() resources mem_peak <= if false { 1 } else { 0 } {
             if false { let data = [0u32; 4]; }
         }
     } => Ok(())
@@ -626,7 +626,7 @@ test_verify_one_file! {
 
 test_verify_one_file! {
     #[test] direct_call_builtin_is_not_an_ordinary_spec_function verus_code! {
-        fn helper() mem_peak <= 0 {}
+        fn helper() resources mem_peak <= 0 {}
         fn f() { let x = verus_builtin::resource_mem_peak_call(helper()); }
     } => Err(err) => assert_vir_error_msg(err, "mem_size and mem_peak are only allowed inside a mem_peak clause or checkpoint")
 }

@@ -4545,6 +4545,7 @@ pub fn visit_signature_resources_mut<V>(v: &mut V, node: &mut crate::SignatureRe
 where
     V: VisitMut + ?Sized,
 {
+    skip!(node.resources_token);
     skip!(node.token);
     skip!(node.le_token);
     v.visit_resource_expr_mut(&mut node.budget);
