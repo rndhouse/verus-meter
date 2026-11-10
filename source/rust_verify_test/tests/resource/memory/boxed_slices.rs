@@ -145,7 +145,7 @@ fn region_local_slices_release_their_storage() {
 fn boxed_slice_example_verifies_and_compiles() {
     crate::verify_one_file(
         "boxed_slices",
-        include_str!("../../../../../examples/resource/memory/boxed_slices.rs").into(),
+        include_str!("../../../../../examples/resource/memory/heap/boxed_slices.rs").into(),
         &["--compile"],
     )
     .unwrap();

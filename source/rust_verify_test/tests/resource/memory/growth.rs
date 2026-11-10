@@ -60,7 +60,7 @@ test_verify_one_file! {
 fn growth_example_compiles() {
     crate::verify_one_file(
         "vector_growth_example",
-        include_str!("../../../../../examples/resource/memory/vector_growth.rs").into(),
+        include_str!("../../../../../examples/resource/memory/vectors/vector_growth.rs").into(),
         &["--compile"],
     )
     .unwrap();

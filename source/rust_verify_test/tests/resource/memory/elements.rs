@@ -327,7 +327,8 @@ fn growing_children_are_charged_before_insertion() {
 fn owning_collections_example_verifies_and_compiles() {
     crate::verify_one_file(
         "owning_collections_example",
-        include_str!("../../../../../examples/resource/memory/owning_collections.rs").into(),
+        include_str!("../../../../../examples/resource/memory/vectors/owning_collections.rs")
+            .into(),
         &["--compile"],
     )
     .unwrap();

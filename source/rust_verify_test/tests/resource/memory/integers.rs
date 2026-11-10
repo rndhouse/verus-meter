@@ -181,7 +181,7 @@ test_verify_one_file! {
 fn integer_example() {
     verify_one_file(
         "integer_example",
-        include_str!("../../../../../examples/resource/memory/integers.rs").into(),
+        include_str!("../../../../../examples/resource/memory/basics/integers.rs").into(),
         &["--compile"],
     )
     .unwrap();

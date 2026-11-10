@@ -577,7 +577,7 @@ fn g() resources peak(memory) <= 0 * mem_peak(f({ let b = false; b })) {}
 fn call_budgets_example() {
     verify_one_file(
         "call_budgets_example",
-        include_str!("../../../../../examples/resource/memory/call_budgets.rs").into(),
+        include_str!("../../../../../examples/resource/memory/contracts/call_budgets.rs").into(),
         &["--compile"],
     )
     .unwrap();

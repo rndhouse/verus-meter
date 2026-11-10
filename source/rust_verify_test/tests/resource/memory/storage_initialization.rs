@@ -6,7 +6,7 @@ use crate::verify_one_file;
 fn lexical_examples_use_their_own_budgets() {
     verify_one_file(
         "lexical_examples_use_their_own_budgets",
-        include_str!("../../../../../examples/resource/memory/storage.rs").into(),
+        include_str!("../../../../../examples/resource/memory/basics/storage.rs").into(),
         &[],
     )
     .unwrap();

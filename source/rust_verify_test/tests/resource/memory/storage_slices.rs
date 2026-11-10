@@ -2,7 +2,7 @@ use crate::common::*;
 use crate::verify_one_file;
 
 const SORT_EXAMPLE: &str =
-    include_str!("../../../../../examples/resource/memory/insertion_sort.rs");
+    include_str!("../../../../../examples/resource/memory/algorithms/insertion_sort.rs");
 
 #[test]
 fn insertion_sort_functional_and_resource_contracts() {

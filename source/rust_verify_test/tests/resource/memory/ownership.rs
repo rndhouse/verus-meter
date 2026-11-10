@@ -127,10 +127,10 @@ fn recursive_owner_return_rejected() {
 #[test]
 fn ownership_examples() {
     for (name, code) in [
-        ("ownership", include_str!("../../../../../examples/resource/memory/ownership.rs")),
+        ("ownership", include_str!("../../../../../examples/resource/memory/heap/ownership.rs")),
         (
             "vector_returns",
-            include_str!("../../../../../examples/resource/memory/vector_returns.rs"),
+            include_str!("../../../../../examples/resource/memory/vectors/vector_returns.rs"),
         ),
     ] {
         verify_one_file(name, code.into(), &["--compile"]).unwrap();

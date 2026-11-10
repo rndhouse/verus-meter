@@ -77,8 +77,8 @@ spec fn budget_for(element_bytes: nat) -> spec_fn(nat) -> nat {
 A function clause can apply it as `budget_for(4)(capacity as nat)`. The factory
 must be a local verified spec function; each application uses stable scalar
 arguments and the final numeric result must fit in `u64`.
-See [named budget formulas](../../examples/resource/memory/spec_budgets.rs) and
-[returned formulas](../../examples/resource/memory/function_budgets.rs).
+See [named budget formulas](../../examples/resource/memory/contracts/spec_budgets.rs) and
+[returned formulas](../../examples/resource/memory/contracts/function_budgets.rs).
 
 ## What counts
 
@@ -101,8 +101,8 @@ Integer arrays multiply that size by their length.
   checks still apply.
 
 Separate scopes and successive loop iterations reuse workspace. Keeping two
-arrays in the same scope requires room for both. See [scope reuse](../../examples/resource/memory/storage.rs)
-and [structs](../../examples/resource/memory/structs.rs).
+arrays in the same scope requires room for both. See [scope reuse](../../examples/resource/memory/basics/storage.rs)
+and [structs](../../examples/resource/memory/algorithms/structs.rs).
 
 ## Composing function budgets
 
@@ -118,8 +118,8 @@ helper can change within that allowance. Both functions are checked independentl
 For conditional helpers, actual calls use the allowance selected by their
 arguments. A caller can write `mem_size(flag) + mem_peak(helper(flag))` to forward
 that promise, or use a precondition to justify a smaller fixed bound.
-See [calls](../../examples/resource/memory/calls.rs) and
-[argument-specific budgets](../../examples/resource/memory/call_budgets.rs).
+See [calls](../../examples/resource/memory/algorithms/calls.rs) and
+[argument-specific budgets](../../examples/resource/memory/contracts/call_budgets.rs).
 
 ## Returning and using values
 
@@ -133,14 +133,14 @@ even when different branches return different values. Copies and fresh results
 still require separate storage. These are source-level rules, independent of
 compiler optimizations.
 
-See [returned buffers](../../examples/resource/memory/returns.rs)
+See [returned buffers](../../examples/resource/memory/basics/returns.rs)
 and [retaining too many results](../../examples/resource/memory/expected-failures/returned_buffers.rs).
 
 `Option<T>` costs one tag byte plus `mem_size(T)` in either variant, regardless
 of Rust's physical representation. `Some`, `None`, by-value
 `match`/`if let`, `is_some`, `is_none`, and `unwrap` are supported. Each named
 match binding gets its own slot for that arm. Verus still requires proof that
-`unwrap` receives `Some`. See [using a popped value](../../examples/resource/memory/options.rs).
+`unwrap` receives `Some`. See [using a popped value](../../examples/resource/memory/basics/options.rs).
 
 Returning references, borrowed temporary results, match guards,
 and explicit early `return` remain unsupported.
@@ -156,7 +156,7 @@ strategies are outside the model.
 Moving a box transfers its heap charge. Borrowing its contents
 keeps that charge with the owner. Explicit `drop` or the owner's scope exit releases
 both the handle and the heap object.
-See [heap buffer reuse](../../examples/resource/memory/heap.rs) and
+See [heap buffer reuse](../../examples/resource/memory/heap/heap.rs) and
 [two allocations that exceed their allowance](../../examples/resource/memory/expected-failures/heap_overlap.rs).
 
 Whole-owner reassignment and custom destructors are unsupported. Fixed owning
@@ -183,8 +183,8 @@ has independent capacity and retained-byte state. Growing a child counts the old
 and replacement buffers together at the peak, alongside its enclosing and sibling
 allocations. Helpers may borrow a vector field or its containing struct or box;
 inferred reservations and retained allocation effects follow the affected child
-paths across calls, including returned owners. See [nested ownership](../../examples/resource/memory/nested_ownership.rs)
-and [nested growth](../../examples/resource/memory/nested_growth.rs).
+paths across calls, including returned owners. See [nested ownership](../../examples/resource/memory/heap/nested_ownership.rs)
+and [nested growth](../../examples/resource/memory/vectors/nested_growth.rs).
 
 Fixed owning children support partial moves, explicit drop, reinitialization,
 and replacement through struct fields and boxed contents. Detaching a child
@@ -200,7 +200,7 @@ can return selected children or rearrange them without retaining discarded
 siblings. Helpers may also replace children through borrowed parents. These
 borrowed calls conservatively retain the caller's old allocations throughout the
 call, then install the final child ownership and capacity facts. See
-[child transfers](../../examples/resource/memory/child_transfers.rs).
+[child transfers](../../examples/resource/memory/heap/child_transfers.rs).
 
 Moves and replacements of enclosing owners or their fixed children across branches,
 loops, or memory sections remain unsupported, as do extraction from temporary
@@ -230,14 +230,14 @@ child bytes. Helper summaries preserve captured input ownership and add newly
 retained bytes to the caller's collection. Where a sum cannot be exported using
 immutable scalar inputs, the checked function budget supplies a conservative
 bound. Byte-only helper effects can make loop proofs less precise than direct
-insertion. See [owning collections](../../examples/resource/memory/owning_collections.rs).
+insertion. See [owning collections](../../examples/resource/memory/vectors/owning_collections.rs).
 
 Indexed elements support reads, scalar mutation, growth, and replacement, both
 directly and through checked helpers. The same ownership shapes apply through
 arbitrary supported combinations of fixed and runtime children. Pass indexed
 borrows directly to an operation or helper; allocation effects through a stored
 reference alias are not tracked. Bind allocation-changing replacement expressions
-to a local first. See [indexed owners](../../examples/resource/memory/indexed_owners.rs).
+to a local first. See [indexed owners](../../examples/resource/memory/vectors/indexed_owners.rs).
 
 This is conservative accounting: each indexed borrow leaves the collection's
 existing child sum charged and adds allocations retained by that operation.
@@ -269,7 +269,7 @@ the children, conservatively keeping the caller's old backing charge too.
 The length is captured before the vector is consumed, so later accounting cannot
 read a moved value. Moves, helper calls, explicit drop, and scope exit reuse the
 ordinary ownership rules. Indexed owning elements use the conservative borrowed
-child rules above. See [boxed slices](../../examples/resource/memory/boxed_slices.rs).
+child rules above. See [boxed slices](../../examples/resource/memory/heap/boxed_slices.rs).
 
 A returned local runtime extent that cannot be expressed using immutable scalar
 inputs is conservatively bounded by the producing function's checked memory bound.
@@ -314,8 +314,8 @@ must still fit its existing reservation inside that section.
 Constructor capacities can be literals or immutable unsigned variables.
 Budgets can use inputs directly, for example `32 + 32 + 16 * n` for a loop
 building a `Vec<u32>` with at most `n` pushes. See
-[growing vectors](../../examples/resource/memory/vector_growth.rs),
-[preallocated vectors](../../examples/resource/memory/vectors.rs), and
+[growing vectors](../../examples/resource/memory/vectors/vector_growth.rs),
+[preallocated vectors](../../examples/resource/memory/vectors/vectors.rs), and
 [unbudgeted growth](../../examples/resource/memory/expected-failures/vector_growth.rs).
 
 ## Vector helpers and inferred reservations
@@ -366,7 +366,7 @@ Borrowed owner bindings must be immutable (their contents may be mutably
 borrowed), and vector arguments must resolve to named owners or borrowed parameters,
 possibly through fixed field and box-content paths.
 Local reference aliases and replacement through `&mut Vec<T>` remain unsupported.
-See [vector helpers](../../examples/resource/memory/vector_helpers.rs).
+See [vector helpers](../../examples/resource/memory/vectors/vector_helpers.rs).
 
 ## Passing heap ownership between helpers
 
@@ -382,12 +382,12 @@ its callers' memory requirements even if its numerical allowance stays the same.
 A returned allocation stays charged under its new owner. Forwarding an input
 preserves its existing charge; returning a fresh allocation adds that storage to
 the caller's live memory. The checker derives these transfers from the helper's
-body. See [ownership transfer](../../examples/resource/memory/ownership.rs) and
+body. See [ownership transfer](../../examples/resource/memory/heap/ownership.rs) and
 [an overlapping-allocation failure](../../examples/resource/memory/expected-failures/heap_returns.rs).
 
 Returned vectors preserve their reservations, including capacities supplied through
 immutable scalar inputs. Callers can use them to prove subsequent pushes fit.
-See [a vector factory](../../examples/resource/memory/vector_returns.rs).
+See [a vector factory](../../examples/resource/memory/vectors/vector_returns.rs).
 For now, fresh returned capacities must depend only on literals or immutable inputs,
 and owning results must follow a single tail-expression path. Conditional ownership
 returns and owners inside `Option` remain unsupported.
@@ -413,7 +413,7 @@ The section accounts only for its own work. The function remains responsible for
 rule; sibling sections can reuse their allowances. A generous outer budget does
 not excuse an inner section exceeding its own bound.
 
-See [nested sections](../../examples/resource/memory/sections.rs).
+See [nested sections](../../examples/resource/memory/contracts/sections.rs).
 
 ## Checking progress
 
@@ -431,7 +431,7 @@ Current-memory checkpoints inspect only their execution point, without adding
 earlier iterations' peaks. Checkpoints check bounds independently of ordinary
 proof assertions.
 
-See [checkpoints](../../examples/resource/memory/checkpoints.rs) and a
+See [checkpoints](../../examples/resource/memory/contracts/checkpoints.rs) and a
 [checkpoint that fails](../../examples/resource/memory/expected-failures/checkpoint.rs).
 
 ## Giving different inputs different allowances
@@ -446,7 +446,7 @@ resources peak(memory) <= mem_size(large)
 Verus proves that the executed branch fits the selected allowance. Preconditions,
 preceding proofs, and loop invariants can help establish this, including proving
 that an expensive branch is unreachable. The verifier still determines the
-storage charges automatically. See the [conditional example](../../examples/resource/memory/conditional.rs).
+storage charges automatically. See the [conditional example](../../examples/resource/memory/contracts/conditional.rs).
 
 Currently, conditions support comparisons and Boolean operators over immutable
 `bool` and all native integer inputs. Actual calls can also select allowances using
@@ -471,7 +471,7 @@ concrete structs, non-owning `Option` values, fixed-size boxes, boxed slices,
 vectors with supported growth, and references/slices of supported non-owning values,
 indexing, branches, while loops, and calls to checked functions in the same crate. Integer addition,
 subtraction, multiplication, and signed negation retain Verus's overflow checks.
-See the [integer example](../../examples/resource/memory/integers.rs).
+See the [integer example](../../examples/resource/memory/basics/integers.rs).
 
 `char`, floating-point types, other heap-owning types, destructors, enums other
 than `Option`, generic structs, recursion, closures, and cross-crate calls are

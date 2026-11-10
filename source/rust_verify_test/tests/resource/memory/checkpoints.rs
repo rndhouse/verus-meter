@@ -74,7 +74,7 @@ test_verify_one_file! {
 fn checkpoint_example() {
     verify_one_file(
         "checkpoint_example",
-        include_str!("../../../../../examples/resource/memory/checkpoints.rs").into(),
+        include_str!("../../../../../examples/resource/memory/contracts/checkpoints.rs").into(),
         &[],
     )
     .unwrap();

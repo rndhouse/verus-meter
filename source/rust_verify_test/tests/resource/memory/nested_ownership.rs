@@ -227,7 +227,7 @@ fn borrowed_structs_and_multiple_box_dereferences_preserve_owners() {
 fn nested_ownership_example_verifies_and_compiles() {
     crate::verify_one_file(
         "nested_ownership",
-        include_str!("../../../../../examples/resource/memory/nested_ownership.rs").into(),
+        include_str!("../../../../../examples/resource/memory/heap/nested_ownership.rs").into(),
         &["--compile"],
     )
     .unwrap();

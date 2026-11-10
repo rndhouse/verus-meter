@@ -205,7 +205,7 @@ test_verify_one_file! {
 fn borrowed_vector_example_compiles() {
     crate::verify_one_file(
         "vector_helpers",
-        include_str!("../../../../../examples/resource/memory/vector_helpers.rs").into(),
+        include_str!("../../../../../examples/resource/memory/vectors/vector_helpers.rs").into(),
         &["--compile"],
     )
     .unwrap();

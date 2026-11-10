@@ -66,31 +66,14 @@ and fail verification.
 
 Bounds describe a source-level model, not the compiled program’s actual memory use.
 
-- [Examples](examples/resource/memory): complete programs with explanatory comments.
-  - [Reusing workspace](examples/resource/memory/storage.rs): share a memory allowance across scopes, branches, and loops.
-  - [Calling helpers](examples/resource/memory/calls.rs): combine a caller's data with a helper's memory needs.
-  - [Checkpoints](examples/resource/memory/checkpoints.rs): check the peak reached at individual stages of an operation.
-  - [Sections](examples/resource/memory/sections.rs): divide a larger operation into independently budgeted pieces.
-  - [Conditional budgets](examples/resource/memory/conditional.rs): give different inputs different memory allowances.
-  - [Budgets across calls](examples/resource/memory/call_budgets.rs): preserve those input-specific allowances through a chain of helpers.
-  - [Returning buffers](examples/resource/memory/returns.rs): hand a buffer to its caller without counting its storage twice.
-  - [Heap buffers](examples/resource/memory/heap.rs): reuse a heap allowance by releasing each buffer before creating the next.
-  - [Nested ownership](examples/resource/memory/nested_ownership.rs): compose boxes, vectors, and structs while counting each allocation once.
-  - [Child transfers](examples/resource/memory/child_transfers.rs): move and replace owning fields while preserving allocation lifetimes.
-  - [Nested growth](examples/resource/memory/nested_growth.rs): grow individual vector fields and preserve their allocation effects through helpers.
-  - [Owning collections](examples/resource/memory/owning_collections.rs): account for runtime collections of children that own further allocations.
-  - [Indexed owners](examples/resource/memory/indexed_owners.rs): borrow, change, and replace individual owning elements with conservative retained charges.
-  - [Boxed slices](examples/resource/memory/boxed_slices.rs): convert vectors into fixed-length owning slices and transfer their storage.
-  - [Ownership](examples/resource/memory/ownership.rs): track an allocation's cost as it passes between helpers.
-  - [Vectors](examples/resource/memory/vectors.rs): collect values while proving that every addition fits the reserved capacity.
-  - [Growing vectors](examples/resource/memory/vector_growth.rs): budget for replacement buffers and retained allocations across helper calls.
-  - [Borrowing vectors](examples/resource/memory/vector_helpers.rs): let helpers use a vector within its existing reservation.
-  - [Returning vectors](examples/resource/memory/vector_returns.rs): create a reserved buffer in a helper and use it in the caller.
-  - [Optional results](examples/resource/memory/options.rs): keep a result after releasing the collection that held it.
-  - [Integer types](examples/resource/memory/integers.rs): adjust a counter while checking arithmetic safety and memory use.
-  - [Insertion sort](examples/resource/memory/insertion_sort.rs): prove sorting correctness with workspace that stays fixed as inputs grow.
-  - [Structs](examples/resource/memory/structs.rs): sort data inside a struct while budgeting for both the data and the sorting work.
-  - [Deliberate violations](examples/resource/memory/expected-failures): see verification reject unbudgeted copies, overlapping allocations, and vector growth.
+Explore the [memory examples](examples/resource/memory/README.md):
+
+- **Basics:** [Reuse memory across scopes](examples/resource/memory/basics/storage.rs).
+- **Contracts:** [Budget sections independently](examples/resource/memory/contracts/sections.rs).
+- **Heap:** [Reuse heap buffers](examples/resource/memory/heap/heap.rs).
+- **Vectors:** [Collect values within a budget](examples/resource/memory/vectors/vectors.rs).
+- **Algorithms:** [Verify insertion sort](examples/resource/memory/algorithms/insertion_sort.rs).
+- **Deliberate violations:** [See memory checks reject excess usage](examples/resource/memory/expected-failures).
 
 ## Docs
 

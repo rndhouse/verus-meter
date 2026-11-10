@@ -252,7 +252,7 @@ fn scalar_mutation_through_indexed_owners_needs_no_new_heap_charge() {
 fn indexed_owners_example_verifies_and_compiles() {
     crate::verify_one_file(
         "indexed_owners_example",
-        include_str!("../../../../../examples/resource/memory/indexed_owners.rs").into(),
+        include_str!("../../../../../examples/resource/memory/vectors/indexed_owners.rs").into(),
         &["--compile"],
     )
     .unwrap();

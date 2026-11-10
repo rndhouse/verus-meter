@@ -2,11 +2,11 @@ use crate::common::*;
 use crate::verify_one_file;
 
 fn caller_example() -> String {
-    include_str!("../../../../../examples/resource/memory/calls.rs").replace(
+    include_str!("../../../../../examples/resource/memory/algorithms/calls.rs").replace(
         "#[path = \"insertion_sort.rs\"]\nmod sorting;",
         &format!(
             "mod sorting {{ {} }}",
-            include_str!("../../../../../examples/resource/memory/insertion_sort.rs")
+            include_str!("../../../../../examples/resource/memory/algorithms/insertion_sort.rs")
         ),
     )
 }

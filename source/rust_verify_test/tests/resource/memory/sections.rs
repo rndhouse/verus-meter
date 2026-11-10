@@ -13,7 +13,7 @@ test_verify_one_file! {
 fn nested_workspace_example() {
     verify_one_file(
         "nested_workspace_example",
-        include_str!("../../../../../examples/resource/memory/sections.rs").into(),
+        include_str!("../../../../../examples/resource/memory/contracts/sections.rs").into(),
         &["--compile"],
     )
     .unwrap();

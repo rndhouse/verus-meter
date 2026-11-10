@@ -232,7 +232,7 @@ fn unselected_spec_bound_need_not_fit_u64() {
 fn spec_budget_example_compiles() {
     crate::verify_one_file(
         "spec_budgets",
-        include_str!("../../../../../examples/resource/memory/spec_budgets.rs").into(),
+        include_str!("../../../../../examples/resource/memory/contracts/spec_budgets.rs").into(),
         &["--compile"],
     )
     .unwrap();

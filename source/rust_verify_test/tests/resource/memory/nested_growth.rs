@@ -132,7 +132,7 @@ fn zero_sized_nested_elements_do_not_allocate() {
 fn nested_growth_example_verifies_and_compiles() {
     crate::verify_one_file(
         "nested_growth_example",
-        include_str!("../../../../../examples/resource/memory/nested_growth.rs").into(),
+        include_str!("../../../../../examples/resource/memory/vectors/nested_growth.rs").into(),
         &["--compile"],
     )
     .unwrap();

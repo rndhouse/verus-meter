@@ -217,7 +217,7 @@ fn region_boundaries_cannot_hide_child_transfers() {
 fn child_transfers_example_verifies_and_compiles() {
     crate::verify_one_file(
         "child_transfers_example",
-        include_str!("../../../../../examples/resource/memory/child_transfers.rs").into(),
+        include_str!("../../../../../examples/resource/memory/heap/child_transfers.rs").into(),
         &["--compile"],
     )
     .unwrap();

@@ -315,7 +315,7 @@ test_verify_one_file! {
 fn heap_example() {
     verify_one_file(
         "heap_example",
-        include_str!("../../../../../examples/resource/memory/heap.rs").into(),
+        include_str!("../../../../../examples/resource/memory/heap/heap.rs").into(),
         &["--compile"],
     )
     .unwrap();
