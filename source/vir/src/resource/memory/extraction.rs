@@ -4,9 +4,8 @@
 
 use super::{
     analysis::Analysis,
-    contracts,
     heap::{Owner, OwnerSlot},
-    metadata::expr as metadata,
+    metadata::{expr as metadata, operations::Removal},
     model::unsupported,
 };
 use crate::ast::*;
@@ -79,24 +78,17 @@ impl Analysis<'_> {
                 }
                 let focused = self.focus_arguments(args, &source.span)?;
                 let (state, typ, value) = self.vector_receiver(receiver)?;
-                let tag = if optional {
+                let pop = if optional {
                     let TypX::Datatype(_, types, _) = &*typ else { unreachable!() };
                     let len = super::vectors::length(&source.span, types.clone(), value.clone());
+                    let len =
+                        SpannedTyped::new(&source.span, &crate::ast_util::int_typ(), len.x.clone());
                     let len = self.allocation_snapshot(&source.span, len);
-                    Some(super::growth::select(
-                        &source.span,
-                        crate::ast_util::mk_ineq(
-                            &source.span,
-                            &contracts::literal(&source.span, 0),
-                            &len,
-                            InequalityOp::Lt,
-                        ),
-                        contracts::literal(&source.span, 1),
-                        contracts::literal(&source.span, 0),
-                    ))
+                    Some(Removal::pop(&source.span, len))
                 } else {
                     None
                 };
+                let tag = pop.as_ref().and_then(|removal| removal.tag.clone());
                 let (name, path) = super::paths::expr(receiver, &typ).unwrap();
                 let elements = self
                     .heap
@@ -156,50 +148,41 @@ impl Analysis<'_> {
                         "extracting an owning child across a memory section",
                     ));
                 }
-                let TypX::Datatype(_, types, _) = &*typ else { unreachable!() };
-                let len = super::vectors::length(&source.span, types.clone(), value);
-                let len =
-                    SpannedTyped::new(&source.span, &crate::ast_util::int_typ(), len.x.clone());
-                let index = if optional {
-                    contracts::subtract(&source.span, len, contracts::literal(&source.span, 1))
+                let mut removal = if let Some(pop) = pop {
+                    pop
                 } else {
-                    super::projections::spec_value(&args[1])?
+                    let TypX::Datatype(_, types, _) = &*typ else { unreachable!() };
+                    let len = super::vectors::length(&source.span, types.clone(), value);
+                    let len =
+                        SpannedTyped::new(&source.span, &crate::ast_util::int_typ(), len.x.clone());
+                    let index = super::projections::spec_value(&args[1])?;
+                    let index = SpannedTyped::new(
+                        &source.span,
+                        &crate::ast_util::int_typ(),
+                        index.x.clone(),
+                    );
+                    Removal::remove(&source.span, len, index)
                 };
-                let index =
-                    SpannedTyped::new(&source.span, &crate::ast_util::int_typ(), index.x.clone());
-                let index = self.allocation_snapshot(&source.span, index);
-                let selected_path =
-                    metadata::push(&source.span, metadata::path(&source.span, []), index.clone());
-                let selected = metadata::subtree(
-                    &source.span,
-                    elements.records.clone(),
-                    selected_path.clone(),
-                );
-                let selected = self.metadata_local(&source.span, "extracted_element", selected);
+                removal.index = self.allocation_snapshot(&source.span, removal.index);
+                let partition = removal.partition(&source.span, elements.records.clone());
+                let selected =
+                    self.metadata_local(&source.span, "extracted_element", partition.selected);
                 self.metadata_partition(
                     &source.span,
                     elements.records.clone(),
-                    selected_path.clone(),
+                    removal.path(&source.span),
                 );
-                let remaining = if optional {
-                    metadata::without(&source.span, elements.records.clone(), selected_path)
-                } else {
+                if !optional {
                     self.growth.before.entry(source.span.id).or_default().push(metadata::lemma(
                         &source.span,
                         "remove_partition",
-                        vec![elements.records.clone(), index.clone()],
+                        vec![elements.records.clone(), removal.index],
                     ));
-                    metadata::operation(
-                        &source.span,
-                        "remove_index",
-                        vec![elements.records.clone(), index],
-                        metadata::memory_type(),
-                    )
-                };
+                }
                 self.growth.before.entry(source.span.id).or_default().push(metadata::assign(
                     &source.span,
                     &elements.records,
-                    remaining,
+                    partition.remaining,
                 ));
                 self.set_element_records(&source.span, &elements, false);
                 self.forget_collection_length(&name, &path);

@@ -91,6 +91,10 @@ path components name fixed children; nonnegative components name runtime indices
 Verified [forest algebra](../../source/vstd/std_specs/memory.rs) justifies selection,
 partition, composition, and removal with reindexing. Structural serialization and
 restoration recurse over supported types, independently of nesting combinations.
+Shared [ownership operations](../../source/vir/src/resource/memory/metadata/operations.rs)
+define child extraction, reindexing, and replacement for both local accounting and
+helper templates. Local accounting schedules snapshots, lifetime changes, and
+overlap checks around these descriptor transformations.
 Recursive forest selectors, costs and descriptor lookup stay opaque at use
 sites. Emit the algebra's proved facts explicitly to keep nested queries from
 expanding into large families of sequence indices.

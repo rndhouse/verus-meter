@@ -246,23 +246,18 @@ impl Analysis<'_> {
         let (child, selected_path) = if precise {
             original = Some(self.metadata_local(span, "loan_parent", elements.records.clone()));
             let selected_path = self.metadata_path(span, spec_value(&index)?)?;
-            let selected = super::metadata::expr::subtree(
+            let partition = super::metadata::operations::detach(
                 span,
                 elements.records.clone(),
                 selected_path.clone(),
             );
-            let selected = self.metadata_local(span, "element_loan", selected);
+            let selected = self.metadata_local(span, "element_loan", partition.selected);
             self.assert_owner_minima(span, typ, value.clone(), selected.clone(), &elements.minima)?;
             self.metadata_partition(span, elements.records.clone(), selected_path.clone());
-            let remaining = super::metadata::expr::without(
-                span,
-                elements.records.clone(),
-                selected_path.clone(),
-            );
             self.growth.before.entry(span.id).or_default().push(super::metadata::expr::assign(
                 span,
                 &elements.records,
-                remaining,
+                partition.remaining,
             ));
             self.set_element_records(span, &elements, false);
             let mut child = self.owner_from_metadata(span, typ, selected)?;

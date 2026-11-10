@@ -140,10 +140,11 @@ fn node(value: &Expr) -> Expr {
         }
     }
     if let Some(args) = call(value, "replace") {
-        return simplify(&expr::add(
+        return simplify(&super::super::metadata::operations::replace(
             span,
-            expr::without(span, args[0].clone(), args[1].clone()),
-            expr::prefix(span, args[2].clone(), args[1].clone()),
+            args[0].clone(),
+            args[1].clone(),
+            args[2].clone(),
         ));
     }
     if let Some(args) = call(value, "remove_index") {

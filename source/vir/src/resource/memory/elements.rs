@@ -278,7 +278,12 @@ impl Analysis<'_> {
             super::metadata::expr::assign(
                 span,
                 &elements.records,
-                super::metadata::expr::add(span, elements.records.clone(), nested),
+                super::metadata::operations::attach(
+                    span,
+                    elements.records.clone(),
+                    path.clone(),
+                    child_records.clone(),
+                ),
             ),
         ]);
         self.growth.after.entry(span.id).or_default().extend(proofs);

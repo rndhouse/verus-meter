@@ -328,7 +328,7 @@ impl Trace<'_> {
                 selected = expr::subtree(span, selected, path);
             }
             root.memory = parents.into_iter().rev().fold(child.memory, |memory, (parent, path)| {
-                expr::operation(span, "replace", vec![parent, path, memory], expr::memory_type())
+                super::super::metadata::operations::replace(span, parent, path, memory)
             });
             let class = Self::class(&location.1);
             if !class.iter().any(|step| matches!(step, Step::Repeated)) {

@@ -1,6 +1,7 @@
 //! Container operation adapters for finite ownership transformations.
 
 use super::*;
+use crate::resource::memory::metadata::operations::Removal;
 
 impl Trace<'_> {
     pub(super) fn call(
@@ -131,33 +132,18 @@ impl Trace<'_> {
                 let optional = intrinsic == Some(ResourceIntrinsic::VecPop);
                 let (location, mut node) = self.receiver(args.first()?)?;
                 let length = property(span, node.memory.clone(), "length");
-                let index = if optional {
-                    contracts::subtract(span, length.clone(), expr::integer(span, 1))
+                let removal = if optional {
+                    Removal::pop(span, length)
                 } else {
-                    self.scalar(args.get(1)?)?
+                    Removal::remove(span, length, self.scalar(args.get(1)?)?)
                 };
-                let path = expr::push(span, expr::path(span, []), index.clone());
-                let selected = expr::subtree(span, node.memory.clone(), path.clone());
-                let remaining = if optional {
-                    expr::without(span, node.memory.clone(), path)
-                } else {
-                    expr::operation(
-                        span,
-                        "remove_index",
-                        vec![node.memory.clone(), index],
-                        expr::memory_type(),
-                    )
-                };
+                let partition = removal.partition(span, node.memory.clone());
                 let next = with_root(
                     span,
-                    remaining,
+                    partition.remaining,
                     property(span, node.memory.clone(), "bytes"),
                     property(span, node.memory.clone(), "capacity"),
-                    contracts::maximum(
-                        span,
-                        expr::integer(span, 0),
-                        contracts::subtract(span, length.clone(), expr::integer(span, 1)),
-                    ),
+                    removal.length,
                     self.layouts.owning_elements(&node.typ),
                 );
                 let mut minima: Minima = node
@@ -190,12 +176,7 @@ impl Trace<'_> {
                             )
                         })
                         .collect();
-                    let tag = growth::select(
-                        span,
-                        mk_ineq(span, &expr::integer(span, 0), &length, InequalityOp::Lt),
-                        expr::integer(span, 1),
-                        expr::integer(span, 0),
-                    );
+                    let tag = removal.tag.expect("pop result tag");
                     expr::add(
                         span,
                         expr::push(
@@ -205,12 +186,12 @@ impl Trace<'_> {
                         ),
                         expr::prefix(
                             span,
-                            selected,
+                            partition.selected,
                             expr::path(span, [self.layouts.metadata_slot(&OwnerSlot::Contents)]),
                         ),
                     )
                 } else {
-                    selected
+                    partition.selected
                 };
                 Some(Value::Owner(Node { typ: value.typ.clone(), memory, minima }))
             }
