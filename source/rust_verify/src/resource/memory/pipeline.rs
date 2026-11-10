@@ -9,6 +9,12 @@ use std::sync::Arc;
 use vir::ast::{Dt, Fun, KrateX, VirErr, VirErrAs};
 use vir::resolution_inference::ResolutionInfo;
 
+/// Prepare a crate's memory guarantees for verification alongside its other proofs.
+///
+/// The memory analysis checks supported operations and accounting rules, then adds
+/// assertions for bounds that need proof. Remove memory-only annotations afterward,
+/// leaving those assertions for Verus to verify. Optional traces explain the
+/// accounting; they do not change the checks.
 pub(crate) fn check(
     ctxt: &Context<'_>,
     krate: &mut KrateX,
@@ -37,6 +43,10 @@ pub(crate) fn check(
     })
 }
 
+/// Identify the standard library types whose memory behavior the model understands.
+///
+/// Use compiler identities so a user-defined type named `Vec` or `Option` cannot
+/// accidentally receive the standard library's accounting rules.
 fn identities(ctxt: &Context<'_>) -> (Option<Dt>, Option<Dt>, Option<Dt>) {
     let global_allocator =
         ctxt.tcx.lang_items().global_alloc_ty().map(|id| Dt::Path(ctxt.def_id_to_vir_path(id)));
@@ -48,7 +58,11 @@ fn identities(ctxt: &Context<'_>) -> (Option<Dt>, Option<Dt>, Option<Dt>) {
     (global_allocator, diagnostic_type("Vec"), diagnostic_type("Option"))
 }
 
-/// Resolve model type sizes before ordinary well-formedness and mode checking.
+/// Turn memory-size queries into numbers that ordinary Verus proofs can use.
+///
+/// Sizes come from the source-level memory model, not machine layout. Resolving
+/// them before ordinary function checks lets specifications use `value_size` and
+/// `ref_size` without teaching the rest of Verus about memory accounting.
 pub(crate) fn resolve_sizes(
     ctxt: &Context<'_>,
     krate: &KrateX,
