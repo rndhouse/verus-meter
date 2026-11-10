@@ -1,27 +1,6 @@
+use super::support::exact_peak;
 use crate::common::*;
 use crate::verify_one_file;
-
-fn caller_example() -> String {
-    include_str!("../../../../../examples/resource/memory/algorithms/calls.rs").replace(
-        "#[path = \"insertion_sort.rs\"]\nmod sorting;",
-        &format!(
-            "mod sorting {{ {} }}",
-            include_str!("../../../../../examples/resource/memory/algorithms/insertion_sort.rs")
-        ),
-    )
-}
-
-#[test]
-fn complete_sorting_call_chain() {
-    verify_one_file("complete_sorting_call_chain", caller_example(), &[]).unwrap();
-}
-
-#[test]
-fn complete_sorting_call_chain_one_byte_short() {
-    let code = caller_example().replace("value_size([u32; 8])", "31u64");
-    let err = verify_one_file("complete_sorting_call_chain_one_byte_short", code, &[]).unwrap_err();
-    assert_vir_error_msg(err, "peak 76 bytes exceeds budget 75 bytes");
-}
 
 test_verify_one_file! {
     #[test] caller_slots_overlap_callee_peak verus_code! {
@@ -75,9 +54,12 @@ test_verify_one_file! {
     } => Ok(())
 }
 
-test_verify_one_file! {
-    #[test] transitive_contracts verus_code! {
-        fn outer() resources peak(memory) <= 20 {
+#[test]
+fn transitive_contracts() {
+    // Each caller retains its local while the next helper uses its allowance.
+    exact_peak(
+        "transitive_contracts",
+        r"fn outer() resources peak(memory) <= BUDGET {
             let local = 1u32;
             middle();
         }
@@ -85,8 +67,9 @@ test_verify_one_file! {
             let local = 1u32;
             leaf();
         }
-        fn leaf() resources peak(memory) <= 12 { let x = 1u32; }
-    } => Ok(())
+        fn leaf() resources peak(memory) <= 12 { let x = 1u32; }",
+        20,
+    );
 }
 
 test_verify_one_file! {

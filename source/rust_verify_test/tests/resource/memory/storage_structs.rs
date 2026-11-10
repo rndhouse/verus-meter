@@ -1,37 +1,38 @@
+use super::support::exact_peak;
 use crate::common::*;
 use crate::verify_one_file;
 
-fn struct_example() -> String {
-    include_str!("../../../../../examples/resource/memory/algorithms/structs.rs").replace(
-        "#[path = \"insertion_sort.rs\"]\nmod sorting;",
-        &format!(
-            "mod sorting {{ {} }}",
-            include_str!("../../../../../examples/resource/memory/algorithms/insertion_sort.rs")
-        ),
-    )
+test_verify_one_file! {
+    #[test] struct_budget_follows_all_fields verus_code! {
+        struct Original { value: u32 }
+        struct Extended { value: u32, extra: u32 }
+        fn original() resources peak(memory) <= value_size(Original) {
+            let data = Original { value: 7 };
+        }
+        fn extended() resources peak(memory) <= value_size(Extended) {
+            let data = Extended { value: 7, extra: 9 };
+        }
+        proof fn sizes() {
+            assert(value_size(Extended) == value_size(Original) + value_size(u32));
+        }
+    } => Ok(())
 }
 
 #[test]
-fn sorting_through_struct_field() {
-    verify_one_file("sorting_through_struct_field", struct_example(), &[]).unwrap();
-}
-
-#[test]
-fn sorting_struct_one_byte_short() {
-    let code = struct_example().replace("value_size(SortBuffer)", "32u64");
-    let err = verify_one_file("sorting_struct_one_byte_short", code, &[]).unwrap_err();
-    assert_vir_error_msg(err, "peak 85 bytes exceeds budget 84 bytes");
-}
-
-#[test]
-fn changed_struct_field_updates_budget() {
-    let code = struct_example()
-        .replace("pub ready: bool,", "pub ready: bool, pub extra: u32,")
-        .replace("ready: false,", "ready: false, extra: 0u32,");
-    verify_one_file("changed_struct_field_updates_budget", code.clone(), &[]).unwrap();
-    let frozen = code.replace("value_size(SortBuffer)", "33u64");
-    let err = verify_one_file("changed_struct_field_frozen_budget", frozen, &[]).unwrap_err();
-    assert_vir_error_msg(err, "peak 89 bytes exceeds budget 85 bytes");
+fn struct_field_call_exact_budget() {
+    // The owning struct remains live while a helper borrows its array field.
+    exact_peak(
+        "struct_field_call",
+        r"struct Buffer { values: [u32; 4], ready: bool }
+        fn fill(values: &mut [u32; 4]) resources peak(memory) <= ref_size(values) {
+            values[0] = 7;
+        }
+        fn run() resources peak(memory) <= BUDGET {
+            let mut buffer = Buffer { values: [0u32; 4], ready: false };
+            fill(&mut buffer.values);
+        }",
+        25,
+    );
 }
 
 test_verify_one_file! {

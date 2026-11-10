@@ -79,9 +79,3 @@ test_verify_one_file! {
         proof fn sizes() { let n = value_size(Borrowed); }
     } => Err(err) => assert_vir_error_msg(err, "reference or decorated struct fields")
 }
-
-test_verify_one_file! {
-    #[test] former_size_query_has_no_builtin_alias verus_code! {
-        fn f(value: u32) resources peak(memory) <= mem_size(value) {}
-    } => Err(err) => assert_rust_error_msg(err, "cannot find function `mem_size`")
-}

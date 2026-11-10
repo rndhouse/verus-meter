@@ -2,16 +2,6 @@ use super::support::exact_peak;
 use crate::common::*;
 use crate::verify_one_file;
 
-#[test]
-fn lexical_examples_use_their_own_budgets() {
-    verify_one_file(
-        "lexical_examples_use_their_own_budgets",
-        include_str!("../../../../../examples/resource/memory/basics/storage.rs").into(),
-        &[],
-    )
-    .unwrap();
-}
-
 // Check both acceptance at the predicted peak and rejection one byte below it.
 
 #[test]

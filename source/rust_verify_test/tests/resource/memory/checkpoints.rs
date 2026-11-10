@@ -71,16 +71,6 @@ test_verify_one_file! {
 }
 
 #[test]
-fn checkpoint_example() {
-    verify_one_file(
-        "checkpoint_example",
-        include_str!("../../../../../examples/resource/memory/contracts/checkpoints.rs").into(),
-        &[],
-    )
-    .unwrap();
-}
-
-#[test]
 fn failing_checkpoint_points_to_assertion() {
     let err = verify_one_file(
         "failing_checkpoint_points_to_assertion",

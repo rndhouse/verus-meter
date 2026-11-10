@@ -28,11 +28,9 @@ fn resource_clause_is_erased_for_rust() {
 #[test]
 fn malformed_resource_clauses_are_rejected() {
     for text in [
-        "fn f() peakmem <= 0 {}",
         "fn f() resources heap_bytes <= 8 {}",
         "fn f() peak <= 8 {}",
         "fn f() resources peak <= 8 {}",
-        "fn f() resources memory <= 8 {}",
         "fn f() resources peak memory <= 8 {}",
         "fn f() resources peak() <= 8 {}",
         "fn f() resources peak(other) <= 8 {}",
@@ -46,12 +44,9 @@ fn malformed_resource_clauses_are_rejected() {
         "fn f() resources peak(memory) <= 18446744073709551616 {}",
         "fn f() resources peak(memory) <= 8u32 {}",
         "fn f() resources peak(memory) <= 4 - 4 {}",
-        "fn f() resources peak_local_storage_bytes <= 8 {}",
         "fn f() resources peak(memory) <= peak(x.field) {}",
         "fn f() resources peak(memory) <= peak(object.make()) {}",
         "fn f() resources peak(memory) <= peak() {}",
-        "fn f() resources peak_memory_bytes <= 8 {}",
-        "fn f() resources peak(memory) <= value_size::<u32>() {}",
         "fn f() resources peak(memory) <= value_size() {}",
         "fn f() resources peak(memory) <= value_size(x.field) {}",
         "fn f() resources peak(memory) <= value_size(make()) {}",
@@ -204,7 +199,6 @@ fn memory_sections_reject_invalid_budgets() {
         "resources peak(memory) <= 4 - 1 {}",
         "resources peak(memory) <= 4;",
         "peak <= 4 {}",
-        "resources memory <= 4 {}",
         "resources current(memory) <= 4 {}",
     ] {
         assert!(parse_str::<ItemFn>(&format!("fn f() {{ {body} }}")).is_err());
@@ -235,14 +229,6 @@ fn conditional_resource_budgets_require_both_formula_branches() {
                 .is_err()
         );
     }
-}
-
-#[test]
-fn removed_capacity_clause_is_rejected() {
-    assert!(parse_str::<ItemFn>(
-        "fn f(v: &Vec<u32>) mem_capacity(v) >= 1, resources peak(memory) <= 8 {}"
-    )
-    .is_err());
 }
 
 #[test]

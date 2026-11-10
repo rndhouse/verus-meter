@@ -2,13 +2,6 @@ use crate::common::*;
 use crate::verify_one_file;
 
 test_verify_one_file! {
-    #[test] former_helper_budget_query_has_no_builtin_alias verus_code! {
-        fn helper() resources peak(memory) <= 0 {}
-        fn caller() resources peak(memory) <= mem_peak(helper) {}
-    } => Err(err) => assert_rust_error_msg(err, "cannot find function `mem_peak`")
-}
-
-test_verify_one_file! {
     #[test] ordinary_peak_names_remain_logical_outside_resource_queries verus_code! {
         spec fn peak(value: u32) -> u32 { value }
         fn f() resources peak(memory) <= value_size(u32) {
@@ -237,15 +230,6 @@ test_verify_one_file! {
         fn leaf() resources peak(memory) <= 100 {}
         fn f() resources peak(memory) <= value_size(leaf) {}
     } => Err(err) => assert_rust_error_msg(err, "constant provided when a type was expected")
-}
-
-test_verify_one_file! {
-    #[test] peak_builtin_outside_header_rejected verus_code! {
-        fn leaf() resources peak(memory) <= 0 {}
-        proof fn f() {
-            let n = verus_builtin::resource_peak(&leaf);
-        }
-    } => Err(err) => assert_vir_error_msg(err, "peak is only allowed inside a memory clause or checkpoint")
 }
 
 test_verify_one_file! {

@@ -1,40 +1,46 @@
+use super::support::exact_peak;
 use crate::common::*;
 use crate::verify_one_file;
 
-const SORT_EXAMPLE: &str =
-    include_str!("../../../../../examples/resource/memory/algorithms/insertion_sort.rs");
-
 #[test]
-fn insertion_sort_functional_and_resource_contracts() {
-    verify_one_file("insertion_sort_functional_and_resource_contracts", SORT_EXAMPLE.into(), &[])
-        .unwrap();
+fn slice_loop_workspace_exact_budget() {
+    // Iterations reuse the local value's storage; one byte less must still fail.
+    exact_peak(
+        "slice_loop_workspace",
+        r"fn visit(values: &mut [u32]) resources peak(memory) <= BUDGET {
+            let mut i = 0usize;
+            while i < values.len()
+                invariant i <= values.len(),
+                decreases values.len() - i,
+            {
+                let saved = values[i];
+                values[i] = saved;
+                i += 1;
+            }
+        }",
+        28,
+    );
 }
 
-#[test]
-fn insertion_sort_one_byte_short() {
-    let code = SORT_EXAMPLE.replace("value_size(u32)", "3u64");
-    assert_ne!(code, SORT_EXAMPLE);
-    let err = verify_one_file("insertion_sort_one_byte_short", code, &[]).unwrap_err();
-    assert_vir_error_msg(err, "peak 44 bytes exceeds budget 43 bytes");
-}
-
-#[test]
-fn insertion_sort_added_workspace_breaks_contract() {
-    let code = SORT_EXAMPLE
-        .replace("let n = values.len();", "let scratch = [0u32; 64]; let n = values.len();");
-    assert_ne!(code, SORT_EXAMPLE);
-    let err =
-        verify_one_file("insertion_sort_added_workspace_breaks_contract", code, &[]).unwrap_err();
-    assert_any_vir_error_msg(err, "memory budget exceeded");
-}
-
-#[test]
-fn insertion_sort_wrong_comparison_breaks_functional_proof() {
-    let code = SORT_EXAMPLE.replace("values[j - 1] > key", "values[j - 1] < key");
-    assert_ne!(code, SORT_EXAMPLE);
-    let err = verify_one_file("insertion_sort_wrong_comparison_breaks_functional_proof", code, &[])
-        .unwrap_err();
-    assert_any_vir_error_msg(err, "invariant not satisfied");
+test_verify_one_file! {
+    #[test] memory_contract_does_not_bypass_loop_invariant verus_code! {
+        use vstd::prelude::*;
+        fn visit(values: &mut [u32])
+            requires old(values).len() > 0,
+            resources peak(memory) <= ref_size(values) + value_size(usize),
+        {
+            let mut i = 0usize;
+            while i < values.len()
+                invariant
+                    i <= values.len(),
+                    i == 0, // FAILS
+                decreases values.len() - i,
+            {
+                values[i] = 0;
+                i += 1;
+            }
+        }
+    } => Err(err) => assert_one_fails(err)
 }
 
 test_verify_one_file! {
