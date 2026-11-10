@@ -46,47 +46,56 @@ impl Trace<'_> {
         locals: &mut Vec<VarIdent>,
     ) -> Option<Expr> {
         let span = &pattern.span;
-        match &pattern.x {
-            PatternX::Wildcard => Some(crate::ast_util::mk_bool(span, true)),
-            PatternX::Var(binding) if binding.by_ref == ByRef::No => {
-                locals.push(binding.name.clone());
-                self.state.values.insert(binding.name.clone(), value);
+        if !matches!(value, Value::Owner(_)) {
+            return match &pattern.x {
+                PatternX::Wildcard => Some(crate::ast_util::mk_bool(span, true)),
+                PatternX::Var(binding) if binding.by_ref == ByRef::No => {
+                    locals.push(binding.name.clone());
+                    self.state.values.insert(binding.name.clone(), value);
+                    Some(crate::ast_util::mk_bool(span, true))
+                }
+                _ => None,
+            };
+        }
+        let transition = self.checked.patterns.get(&span.id)?.clone();
+        self.used.insert((checked::Kind::Pattern, span.id));
+        match transition {
+            checked::Pattern::Discard => Some(crate::ast_util::mk_bool(span, true)),
+            checked::Pattern::Bind(name) => {
+                locals.push(name.clone());
+                self.state.values.insert(name, value);
                 Some(crate::ast_util::mk_bool(span, true))
             }
-            PatternX::Constructor(_, variant, fields) if self.layouts.option(&pattern.typ) => {
+            checked::Pattern::Absent => {
+                let Value::Owner(node) = value else { return None };
+                Some(mk_eq(span, &property(span, node.memory, "length"), &expr::integer(span, 0)))
+            }
+            checked::Pattern::Present { payload, pattern } => {
                 let Value::Owner(node) = value else { return None };
                 let tag = property(span, node.memory.clone(), "length");
-                match (variant.as_str(), fields.as_slice()) {
-                    ("None", []) => Some(mk_eq(span, &tag, &expr::integer(span, 0))),
-                    ("Some", [field]) => {
-                        let payload = self.layouts.option_payload(&pattern.typ, span).ok()?.clone();
-                        let minima = node
-                            .minima
-                            .into_iter()
-                            .filter_map(|(path, floor)| {
-                                path.strip_prefix(&[Step::Fixed(OwnerSlot::Contents)])
-                                    .map(|path| (path.to_vec(), floor))
-                            })
-                            .collect();
-                        let memory = expr::subtree(
-                            span,
-                            node.memory,
-                            expr::path(span, [self.layouts.metadata_slot(&OwnerSlot::Contents)]),
-                        );
-                        let condition = self.pattern(
-                            &field.a,
-                            Value::Owner(Node { typ: payload, memory, minima }),
-                            locals,
-                        )?;
-                        Some(crate::ast_util::conjoin(
-                            span,
-                            &vec![mk_eq(span, &tag, &expr::integer(span, 1)), condition],
-                        ))
-                    }
-                    _ => None,
-                }
+                let minima = node
+                    .minima
+                    .into_iter()
+                    .filter_map(|(path, floor)| {
+                        path.strip_prefix(&[Step::Fixed(OwnerSlot::Contents)])
+                            .map(|rest| (rest.to_vec(), floor))
+                    })
+                    .collect();
+                let memory = expr::subtree(
+                    span,
+                    node.memory,
+                    expr::path(span, [self.layouts.metadata_slot(&OwnerSlot::Contents)]),
+                );
+                let condition = self.pattern(
+                    &pattern,
+                    Value::Owner(Node { typ: payload, memory, minima }),
+                    locals,
+                )?;
+                Some(crate::ast_util::conjoin(
+                    span,
+                    &vec![mk_eq(span, &tag, &expr::integer(span, 1)), condition],
+                ))
             }
-            _ => None,
         }
     }
 }

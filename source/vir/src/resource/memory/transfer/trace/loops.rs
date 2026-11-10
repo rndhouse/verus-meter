@@ -8,7 +8,7 @@ use super::*;
 pub(super) enum Effect {
     Mutation(VarIdent),
     Read(VarIdent),
-    Append(Location, Typ, Value),
+    Append { location: Location, typ: Typ, child: Value, element: u64, grow: bool },
     Pop(Location, Typ),
 }
 
@@ -16,7 +16,7 @@ impl Effect {
     fn root(&self) -> &VarIdent {
         match self {
             Self::Mutation(name) | Self::Read(name) => name,
-            Self::Append(location, _, _) | Self::Pop(location, _) => &location.0,
+            Self::Append { location, .. } | Self::Pop(location, _) => &location.0,
         }
     }
 }
@@ -49,12 +49,14 @@ impl Trace<'_> {
         body: &Expr,
     ) -> Option<Value> {
         let before = self.state.clone();
+        let used = self.used.clone();
         let effects = self.effects.len();
         let depth = self.branch_depth;
         if let Some(value) = self.collection_loop(span, condition, body) {
             return Some(value);
         }
         self.state = before;
+        self.used = used;
         self.effects.truncate(effects);
         self.branch_depth = depth;
         // Preserve the existing read-only traversal case, without exporting
@@ -140,7 +142,7 @@ impl Trace<'_> {
             effects.iter().filter(|effect| before.values.contains_key(effect.root())).collect();
         let [effect] = persistent.as_slice() else { return None };
         let (location, mut node) = match effect {
-            Effect::Append(location, typ, _) | Effect::Pop(location, typ) => {
+            Effect::Append { location, typ, .. } | Effect::Pop(location, typ) => {
                 // Fixed paths are stable throughout the iteration. An indexed
                 // receiver could select a different collection on each pass.
                 if location.1.iter().any(|slot| matches!(slot, OwnerSlot::Element(_))) {
@@ -163,7 +165,7 @@ impl Trace<'_> {
         let capacity = property(span, node.memory.clone(), "capacity");
         let bytes = property(span, node.memory.clone(), "bytes");
         if growing {
-            let Effect::Append(_, _, child) = effect else { return None };
+            let Effect::Append { child, element, grow, .. } = effect else { return None };
             let Value::Scalar(next) = self.state.values.get(counter.as_ref()?)? else {
                 return None;
             };
@@ -216,23 +218,28 @@ impl Trace<'_> {
             // Every replacement in an append-only interval is bounded by
             // growth at its final length. Reservation floors are separate
             // from this upper bound; sufficient spare capacity retains bytes.
-            let element = self.layouts.vector_element(&node.typ, span).ok()?;
-            let replacement = contracts::multiply(
-                span,
-                contracts::literal(span, element),
-                growth::grown_capacity(span, final_length.clone(), element),
-            );
-            let retained = choice(
-                span,
-                mk_ineq(span, &final_length, &capacity, InequalityOp::Le),
-                bytes.clone(),
-                contracts::maximum(span, bytes, replacement),
-            );
+            let element = *element;
+            let (capacity, retained) = if *grow {
+                let replacement = contracts::multiply(
+                    span,
+                    contracts::literal(span, element),
+                    growth::grown_capacity(span, final_length.clone(), element),
+                );
+                let retained = choice(
+                    span,
+                    mk_ineq(span, &final_length, &capacity, InequalityOp::Le),
+                    bytes.clone(),
+                    contracts::maximum(span, bytes, replacement),
+                );
+                (contracts::maximum(span, capacity, final_length.clone()), retained)
+            } else {
+                (capacity, bytes)
+            };
             node.memory = with_root(
                 span,
                 node.memory,
                 retained,
-                contracts::maximum(span, capacity, final_length.clone()),
+                capacity,
                 final_length,
                 self.layouts.owning_elements(&node.typ),
             );
@@ -244,15 +251,13 @@ impl Trace<'_> {
             }
             // The condition must read this exact collection, not an unrelated
             // counter which happens to be paired with a pop in the body.
-            let ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), args, .. } = &left.x
+            let checked::Operation::Length { receiver } =
+                self.checked.operations.get(&left.span.id)?.clone()
             else {
                 return None;
             };
-            let (tested, _) = self.receiver(args.first()?)?;
-            if attrs.resource_intrinsic != Some(ResourceIntrinsic::VecLen)
-                || tested.0 != location.0
-                || tested.1 != location.1
-            {
+            let tested = self.checked_location(&receiver)?;
+            if tested.0 != location.0 || tested.1 != location.1 {
                 return None;
             }
             let final_length = contracts::minimum(

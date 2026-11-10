@@ -192,6 +192,31 @@ impl Analysis<'_> {
         self.check_committed_memory(c);
         self.produced = result;
         let retained = if destination { 0 } else { result_size };
+        let mut borrowed = std::collections::HashMap::new();
+        for (index, (arg, parameter)) in args.iter().zip(callee.x.params.iter()).enumerate() {
+            if parameter.x.mode == Mode::Exec {
+                if let Some(typ) = self.layouts.borrowed_owner(&parameter.x.typ) {
+                    let location = super::paths::expr(arg, typ)
+                        .ok_or_else(|| unsupported(&arg.span, "this borrowed owner argument"))?;
+                    borrowed.insert(
+                        index,
+                        super::transfer::checked::Place {
+                            source: arg.clone(),
+                            typ: typ.clone(),
+                            location,
+                        },
+                    );
+                }
+            }
+        }
+        self.transitions.operation(
+            &expr.span,
+            super::transfer::checked::Operation::Call {
+                target: target.clone(),
+                args: args.clone(),
+                borrowed,
+            },
+        );
         self.calls.push((target.clone(), expr.span.clone()));
         Ok(retained)
     }

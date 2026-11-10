@@ -39,6 +39,8 @@ pub(super) struct Checkpoint {
 
 /// One function's evolving ownership state and already checked callee facts.
 pub(super) struct Analysis<'a> {
+    /// Executable ownership transitions accepted by this body's accounting.
+    pub(super) transitions: super::transfer::Checked,
     /// Live named values, including their identities across moves.
     pub(super) slots: HashMap<VarIdent, super::lifetime::Value>,
     /// An expression result waiting to become a destination or return value.
@@ -136,6 +138,7 @@ impl Analysis<'_> {
         new_value: bool,
     ) -> Result<(), VirErr> {
         let mut locals = Vec::new();
+        let mut owned_locals = Vec::new();
         self.storage.event(&expr.span, "enter lexical scope".into());
         for stmt in stmts.iter() {
             match &stmt.x {
@@ -180,6 +183,7 @@ impl Analysis<'_> {
                     };
                     self.slots.insert(binding.name.clone(), value);
                     if self.layouts.owner(&binding.typ) {
+                        owned_locals.push(binding.name.clone());
                         let mut owner = self
                             .result_owner
                             .take()
@@ -203,6 +207,9 @@ impl Analysis<'_> {
             } else {
                 self.discard(tail)?;
             }
+        }
+        if !owned_locals.is_empty() {
+            self.transitions.scope(&expr.span, owned_locals);
         }
         for (span, name) in locals.into_iter().rev() {
             self.drop_owner(&name, &span)?;
@@ -583,6 +590,7 @@ pub(super) fn check(
         unsupported(&function.span, "functions without execution-mode information")
     })?;
     let mut analysis = Analysis {
+        transitions: Default::default(),
         slots: HashMap::new(),
         produced: None,
         summaries,
@@ -712,6 +720,7 @@ pub(super) fn check(
             functions,
             summaries,
             &modes.var_modes,
+            &analysis.transitions,
         )?,
         vectors: super::vector_calls::VectorSummary {
             removals: input_vectors

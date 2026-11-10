@@ -7,6 +7,7 @@
 //! are unsupported; byte bounds cannot substitute for ownership effects.
 
 mod calls;
+pub(super) mod checked;
 mod consistency;
 mod proofs;
 mod simplify;
@@ -20,6 +21,7 @@ use crate::ast::*;
 use crate::messages::Span;
 use std::collections::{BTreeMap, HashMap};
 
+pub(super) use checked::Checked;
 pub(super) use consistency::validate;
 
 #[derive(Clone)]
@@ -81,8 +83,9 @@ pub(super) fn summarize(
     functions: &HashMap<Fun, Function>,
     summaries: &HashMap<Fun, super::summary::FunctionSummary>,
     modes: &HashMap<VarIdent, Mode>,
+    checked: &Checked,
 ) -> Result<Option<Template>, VirErr> {
-    let template = trace::summarize(function, layouts, functions, summaries, modes);
+    let template = trace::summarize(function, layouts, functions, summaries, modes, checked);
     if template.is_none() && required(function, layouts)? {
         return Err(super::model::unsupported(
             &function.span,

@@ -132,6 +132,13 @@ impl Analysis<'_> {
             owner.kind.clone(),
             self.growth.vectors[state].backing.bytes.clone(),
         );
+        self.transitions.operation(
+            &expr.span,
+            super::transfer::checked::Operation::Vector {
+                capacity: owner.capacity.clone().unwrap(),
+                element: self.layouts.vector_element(&expr.typ, &expr.span)?,
+            },
+        );
         Ok(Some(owner))
     }
 
@@ -241,6 +248,8 @@ impl Analysis<'_> {
         intrinsic: Option<ResourceIntrinsic>,
     ) -> Result<u64, VirErr> {
         let (state_id, typ, vector) = self.vector_receiver(receiver)?;
+        let grow = !self.growth.vectors[state_id].reserved
+            && !self.growth.section_protected.contains(&state_id);
         if self.layouts.owning_elements(&typ)
             && matches!(
                 intrinsic,
@@ -279,7 +288,7 @@ impl Analysis<'_> {
                 None
             };
             let room = mk_ineq(&expr.span, &len, &capacity, InequalityOp::Lt);
-            if state.reserved || self.growth.section_protected.contains(&state_id) {
+            if !grow {
                 self.checks.push((expr.span.clone(), room));
                 self.storage.record_live(&expr.span)?;
             } else {
@@ -351,6 +360,33 @@ impl Analysis<'_> {
             self.discard(&args[1])?;
         } else if args.len() != 1 {
             return Err(unsupported(&expr.span, "this vector operation"));
+        }
+        let location = super::paths::expr(receiver, &typ).expect("checked vector receiver");
+        let receiver = super::transfer::checked::Place {
+            source: receiver.clone(),
+            typ: typ.clone(),
+            location,
+        };
+        let operation = match intrinsic {
+            Some(ResourceIntrinsic::VecPush) => Some(super::transfer::checked::Operation::Push {
+                receiver,
+                child: args[1].clone(),
+                element: self.growth.vectors[state_id].element,
+                grow,
+            }),
+            Some(ResourceIntrinsic::VecPop | ResourceIntrinsic::VecRemove) => {
+                Some(super::transfer::checked::Operation::Remove {
+                    receiver,
+                    index: args.get(1).cloned(),
+                })
+            }
+            Some(ResourceIntrinsic::VecLen) => {
+                Some(super::transfer::checked::Operation::Length { receiver })
+            }
+            _ => None,
+        };
+        if let Some(operation) = operation {
+            self.transitions.operation(&expr.span, operation);
         }
         // Push accounts for replacement storage above. A discarded pop result creates
         // no declared slot; a bound Option result uses its caller-provided destination.

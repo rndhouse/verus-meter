@@ -32,6 +32,21 @@ impl Analysis<'_> {
                 || unsupported(&place.span, "moving a missing or borrowed child owner"),
             )?
         };
+        self.transitions.movement(
+            &place.span,
+            super::transfer::checked::Place {
+                source: SpannedTyped::new(
+                    &place.span,
+                    typ,
+                    ExprX::ReadPlace(
+                        place.clone(),
+                        UnfinalizedReadKind { preliminary_kind: ReadKind::Copy, id: 0 },
+                    ),
+                ),
+                typ: typ.clone(),
+                location: (name.clone(), path.clone()),
+            },
+        );
         self.growth.forget_element_places(&owner);
         self.storage
             .event(&place.span, "transfer child ownership without copying allocations".into());
@@ -83,6 +98,21 @@ impl Analysis<'_> {
             typ,
             super::projections::spec_value(&crate::ast_util::place_to_spec_expr(place))?,
         )?;
+        self.transitions.assignment(
+            &place.span,
+            super::transfer::checked::Place {
+                source: SpannedTyped::new(
+                    &place.span,
+                    typ,
+                    ExprX::ReadPlace(
+                        place.clone(),
+                        UnfinalizedReadKind { preliminary_kind: ReadKind::Copy, id: 0 },
+                    ),
+                ),
+                typ: typ.clone(),
+                location: (name.clone(), path.clone()),
+            },
+        );
         self.heap.mark_replaced(&name, &path);
         let owner = self
             .heap

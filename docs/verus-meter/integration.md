@@ -101,10 +101,15 @@ expanding into large families of sequence indices.
 
 [Ownership templates](../../source/vir/src/resource/memory/transfer/mod.rs) describe
 finite physical-forest transformations separately from frame-local charges.
-Infer them from checked executable bodies and compose them bottom-up through
-helpers. Instantiate against snapshots of eligible local owners; ordinary callee
-peak profiles still keep incoming storage charged throughout the call. Fixed
-descriptor properties and runtime forests are separate template inputs. Logical
+Derive them from the [checked transitions](../../source/vir/src/resource/memory/transfer/checked.rs)
+recorded by body accounting, and compose them bottom-up through helpers. These
+records supply operation kinds, allocation sizes, child slots, resolved places,
+checked growth permissions, and owning scope releases. The symbolic evaluator
+specializes scalar expressions and control flow; it must consume every recorded transition before exporting a
+template. It must not rediscover ownership operations from source call names or
+reconstruct a consumed place from its outer type. Instantiate against snapshots
+of eligible local owners; ordinary callee peak profiles still keep incoming
+storage charged throughout the call. Fixed descriptor properties and runtime forests are separate template inputs. Logical
 counts describe occupied elements independently of byte bounds and reservation
 minima; snapshot a count before its source becomes inaccessible, such as when
 moving beneath an optional payload. Runtime ownership interfaces require a

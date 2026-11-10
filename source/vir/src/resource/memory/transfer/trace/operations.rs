@@ -4,25 +4,22 @@ use super::*;
 use crate::resource::memory::metadata::operations::Removal;
 
 impl Trace<'_> {
-    pub(super) fn call(
+    pub(super) fn operation(
         &mut self,
         value: &Expr,
-        target: &Fun,
-        intrinsic: Option<ResourceIntrinsic>,
-        args: &Exprs,
+        operation: checked::Operation,
     ) -> Option<Value> {
         let span = &value.span;
-        match intrinsic {
-            Some(ResourceIntrinsic::ArrayRepeat) => {
+        use checked::Operation;
+        match operation {
+            Operation::Evaluate { args } => {
                 for argument in args.iter() {
                     self.value(argument)?;
                 }
                 Some(Value::Unknown)
             }
-            Some(ResourceIntrinsic::VecNew | ResourceIntrinsic::VecWithCapacity) => {
-                let capacity =
-                    if args.is_empty() { expr::integer(span, 0) } else { self.scalar(&args[0])? };
-                let element = self.layouts.vector_element(&value.typ, span).ok()?;
+            Operation::Vector { capacity, element } => {
+                let capacity = self.scalar(&capacity)?;
                 let memory = expr::push(
                     span,
                     expr::empty(span, expr::record_type()),
@@ -43,13 +40,8 @@ impl Trace<'_> {
                     minima: [(vec![], Floor { capacity, element })].into(),
                 }))
             }
-            Some(ResourceIntrinsic::BoxNew) => {
-                let child = self.value(args.first()?)?;
-                let crate::resource::memory::layout::AllocationLayout::Fixed(bytes) =
-                    self.layouts.box_layout(&value.typ, span).ok()??
-                else {
-                    return None;
-                };
+            Operation::Box { payload, bytes } => {
+                let child = self.value(&payload)?;
                 let mut memory = expr::push(
                     span,
                     expr::empty(span, expr::record_type()),
@@ -80,24 +72,35 @@ impl Trace<'_> {
                 }
                 Some(Value::Owner(Node { typ: value.typ.clone(), memory, minima }))
             }
-            Some(ResourceIntrinsic::VecLen) => {
-                let (location, node) = self.receiver(args.first()?)?;
+            Operation::Length { receiver } => {
+                let location = self.checked_location(&receiver)?;
+                let node = self.get(span, &location, &receiver.typ)?;
                 self.effects.push(loops::Effect::Read(location.0));
                 Some(Value::Scalar(property(span, node.memory, "length")))
             }
-            Some(ResourceIntrinsic::VecPush) => {
-                let (location, mut node) = self.receiver(args.first()?)?;
-                let child = self.value(args.get(1)?)?;
+            Operation::Push { receiver, child, element, grow } => {
+                let location = self.checked_location(&receiver)?;
+                let mut node = self.get(span, &location, &receiver.typ)?;
+                let child = self.value(&child)?;
                 let appended = child.clone();
                 let length = property(span, node.memory.clone(), "length");
-                let (capacity, bytes, _) = growth::push_transition(
-                    span,
-                    property(span, node.memory.clone(), "capacity"),
-                    property(span, node.memory.clone(), "bytes"),
-                    length.clone(),
-                    self.layouts.vector_element(&node.typ, span).ok()?,
-                    true,
-                );
+                let capacity = property(span, node.memory.clone(), "capacity");
+                let bytes = property(span, node.memory.clone(), "bytes");
+                let (capacity, bytes) = if grow {
+                    // Physical forests contain caller bytes as well as local
+                    // replacements, so exact spare capacity can be reused here.
+                    let (capacity, bytes, _) = growth::push_transition(
+                        span,
+                        capacity,
+                        bytes,
+                        length.clone(),
+                        element,
+                        true,
+                    );
+                    (capacity, bytes)
+                } else {
+                    (capacity, bytes)
+                };
                 if let Value::Owner(child) = child {
                     self.appends = true;
                     let path = expr::push(span, expr::path(span, []), length.clone());
@@ -124,18 +127,25 @@ impl Trace<'_> {
                 self.set(span, &location, node)?;
                 if self.branch_depth == 0 {
                     self.effects.pop();
-                    self.effects.push(loops::Effect::Append(location, typ, appended));
+                    self.effects.push(loops::Effect::Append {
+                        location,
+                        typ,
+                        child: appended,
+                        element,
+                        grow,
+                    });
                 }
                 Some(Value::Unit)
             }
-            Some(ResourceIntrinsic::VecPop | ResourceIntrinsic::VecRemove) => {
-                let optional = intrinsic == Some(ResourceIntrinsic::VecPop);
-                let (location, mut node) = self.receiver(args.first()?)?;
+            Operation::Remove { receiver, index } => {
+                let optional = index.is_none();
+                let location = self.checked_location(&receiver)?;
+                let mut node = self.get(span, &location, &receiver.typ)?;
                 let length = property(span, node.memory.clone(), "length");
                 let removal = if optional {
                     Removal::pop(span, length)
                 } else {
-                    Removal::remove(span, length, self.scalar(args.get(1)?)?)
+                    Removal::remove(span, length, self.scalar(index.as_ref()?)?)
                 };
                 let partition = removal.partition(span, node.memory.clone());
                 let next = with_root(
@@ -195,8 +205,8 @@ impl Trace<'_> {
                 };
                 Some(Value::Owner(Node { typ: value.typ.clone(), memory, minima }))
             }
-            Some(ResourceIntrinsic::OptionUnwrap) => {
-                let Value::Owner(node) = self.value(args.first()?)? else {
+            Operation::Unwrap { source } => {
+                let Value::Owner(node) = self.value(&source)? else {
                     return Some(Value::Unknown);
                 };
                 let minima = node
@@ -217,25 +227,23 @@ impl Trace<'_> {
                     minima,
                 }))
             }
-            Some(ResourceIntrinsic::OptionIsSome | ResourceIntrinsic::OptionIsNone) => {
-                let typ = crate::resource::memory::paths::referent(&args.first()?.typ);
-                let location = self.location(&args[0], typ)?;
-                let node = self.get(span, &location, typ)?;
+            Operation::Predicate { receiver, present } => {
+                let location = self.checked_location(&receiver)?;
+                let node = self.get(span, &location, &receiver.typ)?;
                 let some =
                     mk_eq(span, &property(span, node.memory, "length"), &expr::integer(span, 1));
-                let condition = if intrinsic == Some(ResourceIntrinsic::OptionIsSome) {
+                let condition = if present {
                     some
                 } else {
                     SpannedTyped::new(span, &bool_typ(), ExprX::Unary(UnaryOp::Not, some))
                 };
                 Some(Value::Scalar(condition))
             }
-            Some(ResourceIntrinsic::VecIntoBoxedSlice) => {
-                let Value::Owner(mut node) = self.value(args.first()?)? else {
+            Operation::IntoSlice { source, element } => {
+                let Value::Owner(mut node) = self.value(&source)? else {
                     return None;
                 };
                 let length = property(span, node.memory.clone(), "length");
-                let element = self.layouts.vector_element(&node.typ, span).ok()?;
                 node.memory = with_root(
                     span,
                     node.memory,
@@ -248,15 +256,24 @@ impl Trace<'_> {
                 node.typ = value.typ.clone();
                 Some(Value::Owner(node))
             }
-            Some(ResourceIntrinsic::HeapDrop) => {
-                self.value(args.first()?)?;
+            Operation::Drop { source } => {
+                self.value(&source)?;
                 Some(Value::Unit)
             }
-            _ => self.checked_call(value, target, args),
+            Operation::Aggregate { fields, tag } => self.construct(value, fields, tag),
+            Operation::Call { target, args, borrowed } => {
+                self.checked_call(value, &target, &args, &borrowed)
+            }
         }
     }
 
-    fn checked_call(&mut self, value: &Expr, target: &Fun, args: &Exprs) -> Option<Value> {
+    fn checked_call(
+        &mut self,
+        value: &Expr,
+        target: &Fun,
+        args: &Exprs,
+        borrowed: &HashMap<usize, checked::Place>,
+    ) -> Option<Value> {
         let function = self.functions.get(target)?;
         let template = self.summaries.get(target)?.transfer.as_ref()?;
         self.appends |= template.appends;
@@ -266,9 +283,9 @@ impl Trace<'_> {
             if parameter.x.mode != Mode::Exec {
                 continue;
             }
-            let actual = if let Some(typ) = self.layouts.borrowed_owner(&parameter.x.typ) {
-                let location = self.location(arg, typ)?;
-                let node = self.get(&arg.span, &location, typ)?;
+            let actual = if let Some(place) = borrowed.get(&index) {
+                let location = self.checked_location(place)?;
+                let node = self.get(&arg.span, &location, &place.typ)?;
                 locations.insert(index, location);
                 Value::Owner(node)
             } else {

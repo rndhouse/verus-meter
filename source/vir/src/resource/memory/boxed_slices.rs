@@ -70,6 +70,10 @@ impl Analysis<'_> {
         let id = super::accounting::Accounting::fresh_allocation();
         self.storage.set_allocation(id, allocation.kind.clone(), amount.clone());
         self.storage.record_live(&expr.span)?;
+        self.transitions.operation(
+            &expr.span,
+            super::transfer::checked::Operation::IntoSlice { source: arg.clone(), element },
+        );
         Ok(Some(Owner {
             geometry: Some(len),
             kind: allocation.kind,

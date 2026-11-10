@@ -162,7 +162,9 @@ impl Analysis<'_> {
             )?;
         }
         let mut owner = super::heap::Owner::default();
+        let mut transitions = Vec::new();
         for (index, field) in fields.into_iter().enumerate() {
+            let mut owned_slot = None;
             self.initialize_expr(field)?;
             if self.layouts.owner(&field.typ) {
                 let ExprX::Ctor(_, _, initializers, _) = &expr.x else {
@@ -182,10 +184,19 @@ impl Analysis<'_> {
                 if self.layouts.option(&expr.typ) {
                     self.freeze_owner_geometry(field, &mut child);
                 }
+                owned_slot = Some(slot.clone());
                 owner.children.insert(slot, child);
             }
+            transitions.push((field.clone(), owned_slot));
         }
         if self.layouts.owner(&expr.typ) {
+            self.transitions.operation(
+                &expr.span,
+                super::transfer::checked::Operation::Aggregate {
+                    fields: transitions,
+                    tag: u64::from(self.layouts.option(&expr.typ) && !owner.children.is_empty()),
+                },
+            );
             if self.layouts.option(&expr.typ) {
                 owner.geometry = Some(super::contracts::literal(
                     &expr.span,
@@ -218,6 +229,15 @@ impl Analysis<'_> {
                 owner.children.insert(super::heap::OwnerSlot::Contents, child);
             }
             self.result_owner = Some(owner);
+        } else if matches!(&expr.x, ExprX::Call { .. }) {
+            self.transitions.operation(
+                &expr.span,
+                super::transfer::checked::Operation::Evaluate {
+                    args: std::sync::Arc::new(
+                        transitions.into_iter().map(|(field, _)| field).collect(),
+                    ),
+                },
+            );
         }
         Ok(Some(if destination { 0 } else { bytes }))
     }

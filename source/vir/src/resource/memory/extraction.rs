@@ -63,6 +63,10 @@ impl Analysis<'_> {
                     unsupported(&source.span, "an Option without a payload owner")
                 })?;
                 self.release_owner(option, &source.span);
+                self.transitions.operation(
+                    &source.span,
+                    super::transfer::checked::Operation::Unwrap { source: arg.clone() },
+                );
                 Ok(Some(child))
             }
             Some(ResourceIntrinsic::VecPop | ResourceIntrinsic::VecRemove) => {
@@ -165,6 +169,17 @@ impl Analysis<'_> {
                 }
                 self.storage.record_live(&source.span)?;
                 self.finish_projections(&source.span, focused)?;
+                self.transitions.operation(
+                    &source.span,
+                    super::transfer::checked::Operation::Remove {
+                        receiver: super::transfer::checked::Place {
+                            source: receiver.clone(),
+                            typ,
+                            location: (name, path),
+                        },
+                        index: args.get(1).cloned(),
+                    },
+                );
                 Ok(Some(option))
             }
             _ => Ok(None),

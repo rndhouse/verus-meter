@@ -1,10 +1,17 @@
-//! Interpret parametric ownership transformations from checked bodies.
+//! Specialize checked ownership transitions into parametric forests.
+//!
+//! Source syntax supplies scalar expressions and control flow. Ownership rules,
+//! layout sizes, and resolved paths come exclusively from body accounting; a
+//! template is exported only after every recorded transition is consumed.
 //! Unrepresentable effects fail inference; runtime ownership interfaces then
 //! report unsupported instead of exporting a byte-only approximation.
 
 mod loops;
 mod operations;
 mod patterns;
+
+#[cfg(test)]
+mod tests;
 
 use super::*;
 use crate::ast_util::{bool_typ, int_typ, mk_eq, mk_ineq};
@@ -30,6 +37,10 @@ struct Trace<'a> {
     functions: &'a HashMap<Fun, Function>,
     summaries: &'a HashMap<Fun, super::super::summary::FunctionSummary>,
     modes: &'a HashMap<VarIdent, Mode>,
+    /// Authoritative operation decisions made by body accounting.
+    checked: &'a Checked,
+    /// Whole-body coverage, including branches and representative loop bodies.
+    used: HashSet<(checked::Kind, u64)>,
     state: State,
     symbols: Vec<Symbol>,
     appends: bool,
@@ -46,12 +57,15 @@ pub(super) fn summarize(
     functions: &HashMap<Fun, Function>,
     summaries: &HashMap<Fun, super::super::summary::FunctionSummary>,
     modes: &HashMap<VarIdent, Mode>,
+    checked: &Checked,
 ) -> Option<Template> {
     let mut trace = Trace {
         layouts,
         functions,
         summaries,
         modes,
+        checked,
+        used: HashSet::new(),
         state: State::default(),
         symbols: vec![],
         appends: false,
@@ -77,6 +91,9 @@ pub(super) fn summarize(
         trace.state.values.insert(parameter.x.name.clone(), value);
     }
     let result = trace.value(function.x.body.as_ref()?)?;
+    if !checked.covered(&trace.used) {
+        return None;
+    }
     if layouts.owner(&function.x.outer_ret.x.typ) && !matches!(result, Value::Owner(_)) {
         return None;
     }
@@ -253,30 +270,18 @@ impl Trace<'_> {
         Some(())
     }
 
-    fn location(&mut self, value: &Expr, typ: &Typ) -> Option<Location> {
-        let (name, path) = super::super::paths::expr(value, typ)?;
+    fn checked_location(&mut self, place: &checked::Place) -> Option<Location> {
+        let (name, path) = &place.location;
         let mut indices = HashMap::new();
-        self.indices_expr(value, &mut indices)?;
+        self.indices_expr(&place.source, &mut indices)?;
         let expressions = path
             .iter()
             .map(|slot| match slot {
                 OwnerSlot::Element(id) => indices.get(id).cloned(),
-                _ => Some(expr::integer(&value.span, self.layouts.metadata_slot(slot))),
+                _ => Some(expr::integer(&place.source.span, self.layouts.metadata_slot(slot))),
             })
             .collect::<Option<Vec<_>>>()?;
-        Some((name, path, expressions))
-    }
-
-    fn place_location(&mut self, place: &Place, typ: &Typ) -> Option<Location> {
-        let value = SpannedTyped::new(
-            &place.span,
-            &place.typ,
-            ExprX::ReadPlace(
-                place.clone(),
-                UnfinalizedReadKind { preliminary_kind: ReadKind::Copy, id: 0 },
-            ),
-        );
-        self.location(&value, typ)
+        Some((name.clone(), path.clone(), expressions))
     }
 
     fn path(span: &Span, steps: &[Expr]) -> Expr {
@@ -365,18 +370,11 @@ impl Trace<'_> {
         Some(child)
     }
 
-    fn receiver(&mut self, value: &Expr) -> Option<(Location, Node)> {
-        let mut typ = super::super::paths::referent(&value.typ);
-        while let TypX::Decorate(TypDecoration::Box, _, inner) = &**typ {
-            typ = inner;
+    fn block(&mut self, span: &Span, statements: &Stmts, tail: &Option<Expr>) -> Option<Value> {
+        let mut locals = self.checked.scopes.get(&span.id).cloned().unwrap_or_default();
+        if !locals.is_empty() {
+            self.used.insert((checked::Kind::Scope, span.id));
         }
-        let location = self.location(value, typ)?;
-        let owner = self.get(&value.span, &location, typ)?;
-        Some((location, owner))
-    }
-
-    fn block(&mut self, statements: &Stmts, tail: &Option<Expr>) -> Option<Value> {
-        let mut locals = Vec::new();
         for statement in statements.iter() {
             match &statement.x {
                 StmtX::Expr(value) => {
@@ -394,8 +392,13 @@ impl Trace<'_> {
                     } else {
                         Value::Unknown
                     };
+                    if !locals.contains(&binding.name) {
+                        if matches!(value, Value::Owner(_)) {
+                            return None;
+                        }
+                        locals.push(binding.name.clone());
+                    }
                     self.state.values.insert(binding.name.clone(), value);
-                    locals.push(binding.name.clone());
                 }
             }
         }
@@ -410,9 +413,13 @@ impl Trace<'_> {
         if let PlaceX::Temporary(value) = &place.x {
             return self.value(value);
         }
+        if let Some(transition) = self.checked.moves.get(&place.span.id).cloned() {
+            self.used.insert((checked::Kind::Move, place.span.id));
+            let location = self.checked_location(&transition)?;
+            return Some(Value::Owner(self.take(&place.span, &location, &transition.typ)?));
+        }
         if self.layouts.owner(&place.typ) {
-            let location = self.place_location(place, &place.typ)?;
-            return Some(Value::Owner(self.take(&place.span, &location, &place.typ)?));
+            return None;
         }
         if let PlaceX::Local(name) = &place.x {
             return Some(self.state.values.get(name).cloned().unwrap_or(Value::Unknown));
@@ -449,18 +456,25 @@ impl Trace<'_> {
         {
             return Some(Value::Unit);
         }
+        if let Some(operation) = self.checked.operations.get(&span.id).cloned() {
+            // Temporary wrappers may share a call's source span. Dispatch only
+            // at the executable operation, so its operands are evaluated once.
+            if matches!(&value.x, ExprX::Call { .. } | ExprX::Ctor(..)) {
+                self.used.insert((checked::Kind::Operation, span.id));
+                return self.operation(value, operation);
+            }
+        }
         match &value.x {
             ExprX::Const(_) => Some(Value::Scalar(value.clone())),
             ExprX::Var(name) => {
                 if self.layouts.owner(&value.typ) {
-                    let location = self.location(value, &value.typ)?;
-                    Some(Value::Owner(self.take(span, &location, &value.typ)?))
+                    None
                 } else {
                     Some(self.state.values.get(name).cloned().unwrap_or(Value::Unknown))
                 }
             }
             ExprX::ReadPlace(place, _) => self.place_value(place),
-            ExprX::Block(statements, tail) => self.block(statements, tail),
+            ExprX::Block(statements, tail) => self.block(span, statements, tail),
             ExprX::If(condition, yes, no) => self.branch(span, condition, yes, no),
             ExprX::Match(scrutinee, arms, _) => self.match_value(span, scrutinee, arms),
             ExprX::Logical(op, left, right) => {
@@ -474,12 +488,15 @@ impl Trace<'_> {
             }
             ExprX::Assign { place, rhs, op, typ, .. } => {
                 let value = self.value(rhs)?;
-                if self.layouts.owner(typ) {
+                if let Some(transition) = self.checked.assignments.get(&place.span.id).cloned() {
+                    self.used.insert((checked::Kind::Assign, place.span.id));
                     let Value::Owner(child) = value else {
                         return None;
                     };
-                    let location = self.place_location(place, typ)?;
+                    let location = self.checked_location(&transition)?;
                     self.set(span, &location, child)?;
+                } else if self.layouts.owner(typ) {
+                    return None;
                 } else if let PlaceX::Local(name) = &place.x {
                     let value = if let (Some(op), Value::Scalar(right)) = (op, &value) {
                         let Value::Scalar(left) = self.state.values.get(name)? else {
@@ -507,15 +524,6 @@ impl Trace<'_> {
                 Some(Value::Scalar(Self::binary(span, *op, left, right, &value.typ)))
             }
             ExprX::Unary(op, operand) => {
-                if let UnaryOp::Length(_) = op {
-                    let typ = super::super::paths::referent(&operand.typ);
-                    let location = self.location(operand, typ)?;
-                    return Some(Value::Scalar(property(
-                        span,
-                        self.get(span, &location, typ)?.memory,
-                        "length",
-                    )));
-                }
                 let operand = self.scalar(operand)?;
                 Some(Value::Scalar(SpannedTyped::new(span, &value.typ, ExprX::Unary(*op, operand))))
             }
@@ -527,9 +535,7 @@ impl Trace<'_> {
                     ExprX::UnaryOpr(op.clone(), operand),
                 )))
             }
-            ExprX::Ctor(_, variant, fields, None) if self.layouts.owner(&value.typ) => {
-                self.construct(value, variant, fields)
-            }
+            ExprX::Ctor(..) if self.layouts.owner(&value.typ) => None,
             ExprX::Ctor(Dt::Tuple(0), _, fields, None) if fields.is_empty() => Some(Value::Unit),
             ExprX::Ctor(_, _, fields, None) => {
                 for field in fields.iter() {
@@ -543,9 +549,7 @@ impl Trace<'_> {
                 }
                 Some(Value::Unknown)
             }
-            ExprX::Call { target: CallTarget::Fun(_, target, _, _, attrs), args, .. } => {
-                self.call(value, target, attrs.resource_intrinsic, args)
-            }
+            ExprX::Call { .. } => None,
             ExprX::Loop { body, cond, .. } => self.loop_value(span, cond, body),
             _ => None,
         }
@@ -639,8 +643,8 @@ impl Trace<'_> {
     fn construct(
         &mut self,
         value: &Expr,
-        variant: &Ident,
-        fields: &Binders<Expr>,
+        fields: Vec<(Expr, Option<OwnerSlot>)>,
+        tag: u64,
     ) -> Option<Value> {
         let span = &value.span;
         let mut memory = expr::push(
@@ -650,20 +654,14 @@ impl Trace<'_> {
                 span,
                 expr::integer(span, 0),
                 expr::integer(span, 0),
-                expr::integer(
-                    span,
-                    i128::from(self.layouts.option(&value.typ) && variant.as_str() == "Some"),
-                ),
+                expr::integer(span, i128::from(tag)),
             ),
         );
         let mut minima = Minima::new();
-        for field in fields.iter() {
-            if let Value::Owner(child) = self.value(&field.a)? {
-                let slot = if self.layouts.option(&value.typ) {
-                    OwnerSlot::Contents
-                } else {
-                    OwnerSlot::Field(field.name.clone())
-                };
+        for (field, slot) in fields {
+            let value = self.value(&field)?;
+            if let Some(slot) = slot {
+                let Value::Owner(child) = value else { return None };
                 memory = expr::add(
                     span,
                     memory,

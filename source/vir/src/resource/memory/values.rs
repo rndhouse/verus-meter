@@ -84,6 +84,26 @@ impl Analysis<'_> {
             "Option payload result",
         )?;
         self.discard(&args[0])?;
+        if self.layouts.owner(typ) {
+            let location = super::paths::expr(&args[0], typ)
+                .ok_or_else(|| unsupported(&expr.span, "this owning Option receiver"))?;
+            self.transitions.operation(
+                &expr.span,
+                super::transfer::checked::Operation::Predicate {
+                    receiver: super::transfer::checked::Place {
+                        source: args[0].clone(),
+                        typ: typ.clone(),
+                        location,
+                    },
+                    present: attrs.resource_intrinsic == Some(ResourceIntrinsic::OptionIsSome),
+                },
+            );
+        } else if attrs.resource_intrinsic == Some(ResourceIntrinsic::OptionUnwrap) {
+            self.transitions.operation(
+                &expr.span,
+                super::transfer::checked::Operation::Unwrap { source: args[0].clone() },
+            );
+        }
         Ok(Some(bytes))
     }
 
@@ -97,8 +117,13 @@ impl Analysis<'_> {
         if !crate::ast_util::types_equal(&pattern.typ, typ) {
             return Err(unsupported(&pattern.span, "this Option pattern coercion"));
         }
+        let owning = owner.is_some();
+        use super::transfer::checked::Pattern as Transition;
         match &pattern.x {
             PatternX::Wildcard => {
+                if owning {
+                    self.transitions.pattern(&pattern.span, Transition::Discard);
+                }
                 if let Some(owner) = owner {
                     self.release_owner(owner, &pattern.span);
                 }
@@ -110,6 +135,9 @@ impl Analysis<'_> {
                 }
                 let bytes = self.layouts.return_size(&binding.typ, &pattern.span)?;
                 slots.push((binding.name.clone(), bytes));
+                if owning {
+                    self.transitions.pattern(&pattern.span, Transition::Bind(binding.name.clone()));
+                }
                 if let Some(mut owner) = owner {
                     // Optional payloads have frozen geometry while inaccessible.
                     // The pattern makes them executable values again, so future
@@ -134,6 +162,9 @@ impl Analysis<'_> {
                 }
                 match (variant.as_str(), fields.as_slice()) {
                     ("None", []) => {
+                        if owning {
+                            self.transitions.pattern(&pattern.span, Transition::Absent);
+                        }
                         if let Some(owner) = owner {
                             self.release_owner(owner, &pattern.span);
                         }
@@ -141,6 +172,15 @@ impl Analysis<'_> {
                     }
                     ("Some", [field]) => {
                         let payload = self.layouts.option_payload(typ, &pattern.span)?.clone();
+                        if owning {
+                            self.transitions.pattern(
+                                &pattern.span,
+                                Transition::Present {
+                                    payload: payload.clone(),
+                                    pattern: field.a.clone(),
+                                },
+                            );
+                        }
                         let child = owner.as_mut().and_then(|owner| {
                             owner.children.remove(&super::heap::OwnerSlot::Contents)
                         });

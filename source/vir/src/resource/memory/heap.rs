@@ -355,6 +355,10 @@ impl Analysis<'_> {
                 .ok_or_else(|| unsupported(&expr.span, "a box payload without ownership"))?;
             owner.children.insert(OwnerSlot::Contents, child);
         }
+        self.transitions.operation(
+            &expr.span,
+            super::transfer::checked::Operation::Box { payload: args[0].clone(), bytes },
+        );
         Ok(Some(owner))
     }
 
@@ -479,6 +483,10 @@ impl Analysis<'_> {
             }
             let owner = self.move_owner_to(place, &types[0])?;
             self.release_owner(owner, &expr.span);
+            self.transitions.operation(
+                &expr.span,
+                super::transfer::checked::Operation::Drop { source: args[0].clone() },
+            );
             return Ok(Some(0));
         }
         Ok(None)
