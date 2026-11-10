@@ -44,8 +44,6 @@ pub(super) struct Owner {
     pub(super) geometry: Option<Expr>,
     /// False for aggregate-only summaries that expose no logical child count.
     pub(super) geometry_known: bool,
-    /// Conservative dependencies acquired by extraction from opaque inputs.
-    pub(super) captures: HashSet<super::allocations::Capture>,
     /// Separately owned allocations beneath fields or a box payload. Their inline
     /// handles are already included in the containing value/allocation layout.
     pub(super) children: BTreeMap<OwnerSlot, Owner>,
@@ -74,7 +72,6 @@ impl Default for Owner {
             source: None,
             geometry: None,
             geometry_known: true,
-            captures: HashSet::new(),
             children: BTreeMap::new(),
             elements: None,
             kind: MemoryKind::host_heap(),
@@ -155,44 +152,14 @@ impl Owner {
     pub(super) fn inputs(&self) -> HashSet<usize> {
         let mut inputs = HashSet::new();
         self.visit(&mut |node| {
-            inputs.extend(node.captures.iter().filter_map(|capture| match capture {
-                super::allocations::Capture::Owned(index) => Some(*index),
-                super::allocations::Capture::Borrowed(_) => None,
-            }));
             if let Some(input) = node.input {
                 inputs.insert(input);
             }
             if let Some(elements) = &node.elements {
                 inputs.extend(elements.inputs.iter().copied());
-                inputs.extend(elements.captures.iter().filter_map(|capture| match capture {
-                    super::allocations::Capture::Owned(index) => Some(*index),
-                    super::allocations::Capture::Borrowed(_) => None,
-                }));
             }
         });
         inputs
-    }
-
-    pub(super) fn owned_inputs(&self) -> HashSet<usize> {
-        let mut inputs = HashSet::new();
-        self.visit(&mut |node| {
-            inputs.extend(node.input);
-            if let Some(elements) = &node.elements {
-                inputs.extend(elements.inputs.iter().copied());
-            }
-        });
-        inputs
-    }
-
-    pub(super) fn captured_inputs(&self) -> HashSet<super::allocations::Capture> {
-        let mut captures = HashSet::new();
-        self.visit(&mut |node| {
-            captures.extend(node.captures.iter().cloned());
-            if let Some(elements) = &node.elements {
-                captures.extend(elements.captures.iter().cloned());
-            }
-        });
-        captures
     }
 }
 
@@ -456,9 +423,7 @@ impl Analysis<'_> {
     pub(super) fn release_owner_storage(&mut self, owner: Owner, span: &Span, inputs: bool) {
         if inputs {
             for input in owner.inputs() {
-                if !self.pinned_inputs.contains(&input) {
-                    self.storage.release_input(input);
-                }
+                self.storage.release_input(input);
             }
         }
         for child in owner.children.into_values() {

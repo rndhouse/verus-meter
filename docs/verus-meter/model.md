@@ -235,11 +235,9 @@ to a boxed slice transfers the same child sums.
 
 Ordinary loop invariants provide the logical length bound. Generated, checked
 invariants relate direct insertions to that length and bound the accumulated
-child bytes. Helper summaries preserve captured input ownership and add newly
-retained bytes to the caller's collection. Where a sum cannot be exported using
-immutable scalar inputs, the checked function budget supplies a conservative
-bound. Byte-only helper effects can make loop proofs less precise than direct
-insertion. See [owning collections](../../examples/resource/memory/vectors/owning_collections.rs).
+child bytes. Helper interfaces involving runtime owning children require a
+precise ownership transformation; a byte bound alone is insufficient.
+See [owning collections](../../examples/resource/memory/vectors/owning_collections.rs).
 
 Indexed elements support reads, scalar mutation, growth, and replacement, both
 directly and through checked helpers. The same ownership shapes apply through
@@ -257,32 +255,31 @@ dropping the container leaves an extracted child's allocations charged independe
 construction, unwrap, matching, calls, and drop. See
 [element transfers](../../examples/resource/memory/vectors/element_transfers.rs).
 
-Checked helpers can describe how their input allocation forests become their
-results and modified arguments. Calls instantiate these descriptions with the
-caller's individual allocations, preserving child reservations and extraction
-credits through nested helpers. This requires no additional contract syntax.
+Checked helpers describe how allocation forests become their results and modified
+arguments. Calls require precise metadata for their owner arguments. Fresh
+collection constructors, whole-owner transfers, and supported append operations
+preserve individual child reservations without additional contract syntax.
 The structural traversal handles fixed children and runtime children separately,
 so supported ownership shapes compose without rules for each nesting combination.
-Descriptions also cover by-value optional matches and two collection loop forms:
-counted loops appending one child with an iteration-independent footprint, and
-loops popping from the end until a length limit is reached. Repeated regions keep
-the complete nested child metadata; retaining a prefix releases removed children
-while preserving the survivors' reservations. Loop bounds must remain stable,
-and mutations in each iteration must be unconditional. Existing callee peak
-budgets still cover temporary allocations and buffer replacement during the call.
+Counted constructor loops can append one child with an iteration-independent
+footprint. Loop bounds must remain stable and the append must be unconditional.
+Callee peak budgets still cover temporary allocations and buffer replacement.
 See [helper collections](../../examples/resource/memory/vectors/helper_collections.rs).
 
-Helpers whose control flow or value dependencies cannot be represented by a
-finite ownership description still expose conservative aggregate byte bounds.
-Extracting from such a collection carries a copy of its storage upper bound and
-incoming lifetime dependencies; it does not invent an individual release credit
-or spare-capacity guarantee. This can require a larger budget than direct local
-operations. Loop entry bounds, forest sums, and uniform child reservation facts
-are checked at entry and on back edges. Algorithms that need stronger bounds can
-still fail verification. Slice views of owning vectors remain unsupported; owning
-boxed slices support direct indexing. An
-enclosing collection cannot gain child allocations inside a separately budgeted
-memory section.
+Missing ownership support is an error even with a generous memory budget. A helper
+whose control flow or value dependencies cannot be represented by a finite ownership
+transformation is unsupported. Local analysis does not yet have individual forests
+for incoming runtime children: extracting or indexing those children, or passing
+such an incoming collection to another runtime-ownership helper, is unsupported.
+Loop-carried helper effects that lose individual metadata are also unsupported.
+There is no aggregate ownership fallback or copied parent charge for an unknown child.
+Conservative upper bounds remain valid for byte sizes and peak usage.
+
+Loop entry bounds, forest sums, and uniform child reservation facts are checked
+at entry and on back edges. Algorithms that need stronger bounds can still fail
+verification. Slice views of owning vectors remain unsupported; owning boxed
+slices support direct indexing when their child metadata is available. An enclosing
+collection cannot gain child allocations inside a separately budgeted memory section.
 
 ## Runtime-sized boxed slices
 

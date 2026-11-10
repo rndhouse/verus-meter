@@ -1,8 +1,8 @@
 // Update individual buffers while keeping the whole collection within budget.
 //
-// Each buffer's memory use contributes to the collection's bound. The model
-// conservatively retains charges for removed or replaced buffers until the
-// collection is dropped, when its allowance can be reused for other work.
+// Each buffer's memory use contributes to the collection's bound. Individual
+// child metadata lets removal and replacement release the displaced allocations;
+// dropping the collection releases every remaining child.
 
 use vstd::prelude::*;
 

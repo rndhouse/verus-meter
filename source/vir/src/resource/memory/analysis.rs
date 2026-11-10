@@ -39,11 +39,6 @@ pub(super) struct Checkpoint {
 
 /// One function's evolving ownership state and already checked callee facts.
 pub(super) struct Analysis<'a> {
-    /// Opaque captures may share a provenance dependency. Keep those original
-    /// input lifetimes through this frame, independently of local charge IDs.
-    pub(super) pinned_inputs: HashSet<usize>,
-    pub(super) parameters: HashMap<VarIdent, usize>,
-    pub(super) capture_calls: HashMap<u64, super::captures::CallSources>,
     /// Live named values, including their identities across moves.
     pub(super) slots: HashMap<VarIdent, super::lifetime::Value>,
     /// An expression result waiting to become a destination or return value.
@@ -588,9 +583,6 @@ pub(super) fn check(
         unsupported(&function.span, "functions without execution-mode information")
     })?;
     let mut analysis = Analysis {
-        pinned_inputs: HashSet::new(),
-        parameters: f.params.iter().enumerate().map(|(i, p)| (p.x.name.clone(), i)).collect(),
-        capture_calls: HashMap::new(),
         slots: HashMap::new(),
         produced: None,
         summaries,
@@ -713,77 +705,72 @@ pub(super) fn check(
         bound: super::footprint::MemoryBudget::total(bound.clone()),
         kind: CheckKind::Function,
     }));
-    Ok(Some(FunctionAnalysis {
-        report,
-        summary: super::summary::FunctionSummary {
-            transfer: super::transfer::summarize(
-                function,
-                layouts,
-                functions,
-                summaries,
-                &modes.var_modes,
-            ),
-            vectors: super::vector_calls::VectorSummary {
-                removals: input_vectors
-                    .into_iter()
-                    .filter_map(|(path, id)| {
-                        (!analysis.growth.vectors[id].append_only).then_some(path)
-                    })
-                    .collect(),
-                returned_capacities,
-                reservations: capacities
-                    .into_iter()
-                    .map(|((name, path), capacity)| {
-                        let index = f.params.iter().position(|p| p.x.name == name).unwrap();
-                        ((index, path), capacity)
-                    })
-                    .collect(),
-            },
+    let summary = super::summary::FunctionSummary {
+        transfer: super::transfer::summarize(
+            function,
+            layouts,
+            functions,
+            summaries,
+            &modes.var_modes,
+        )?,
+        vectors: super::vector_calls::VectorSummary {
+            removals: input_vectors
+                .into_iter()
+                .filter_map(|(path, id)| (!analysis.growth.vectors[id].append_only).then_some(path))
+                .collect(),
+            returned_capacities,
+            reservations: capacities
+                .into_iter()
+                .map(|((name, path), capacity)| {
+                    let index = f.params.iter().position(|p| p.x.name == name).unwrap();
+                    ((index, path), capacity)
+                })
+                .collect(),
+        },
 
-            return_parameter,
-            input_paths: analysis.input_paths.clone(),
-            profiles,
-            allocations: super::allocations::AllocationSummary {
-                returned,
-                children: child_replacements,
-                collections: {
-                    let mut effects = HashMap::new();
-                    for (index, param) in f.params.iter().enumerate() {
-                        if let Some(owner) = analysis.heap.borrowed.get(&param.x.name) {
-                            for (path, effect) in super::elements::additions(
-                                owner,
-                                &analysis.growth,
-                                &analysis.bound,
-                                function,
-                            ) {
-                                if !analysis.heap.is_replaced(&param.x.name, &path) {
-                                    effects.insert((index, path), effect);
-                                }
+        return_parameter,
+        input_paths: analysis.input_paths.clone(),
+        profiles,
+        allocations: super::allocations::AllocationSummary {
+            returned,
+            children: child_replacements,
+            collections: {
+                let mut effects = HashMap::new();
+                for (index, param) in f.params.iter().enumerate() {
+                    if let Some(owner) = analysis.heap.borrowed.get(&param.x.name) {
+                        for (path, effect) in super::elements::additions(owner, &analysis.growth) {
+                            if !analysis.heap.is_replaced(&param.x.name, &path) {
+                                effects.insert((index, path), effect);
                             }
                         }
                     }
-                    effects
-                },
-                retained: {
-                    let mut effects = HashMap::new();
-                    for (index, param) in f.params.iter().enumerate() {
-                        if let Some(owner) = analysis.heap.borrowed.get(&param.x.name) {
-                            for (path, charge) in super::ownership::replacements(
-                                owner,
-                                &analysis.growth,
-                                function,
-                                &analysis.bound,
-                            ) {
-                                if !analysis.heap.is_replaced(&param.x.name, &path) {
-                                    effects.insert((index, path), charge);
-                                }
+                }
+                effects
+            },
+            retained: {
+                let mut effects = HashMap::new();
+                for (index, param) in f.params.iter().enumerate() {
+                    if let Some(owner) = analysis.heap.borrowed.get(&param.x.name) {
+                        for (path, charge) in super::ownership::replacements(
+                            owner,
+                            &analysis.growth,
+                            function,
+                            &analysis.bound,
+                        ) {
+                            if !analysis.heap.is_replaced(&param.x.name, &path) {
+                                effects.insert((index, path), charge);
                             }
                         }
                     }
-                    effects
-                },
+                }
+                effects
             },
         },
+    };
+    super::transfer::validate(function, layouts, &summary)?;
+    Ok(Some(FunctionAnalysis {
+        report,
+        summary,
         calls: analysis.calls,
         symbolic_bound,
         obligations: analysis.obligations,

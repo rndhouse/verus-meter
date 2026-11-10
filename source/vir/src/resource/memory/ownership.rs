@@ -68,14 +68,6 @@ pub(super) fn summarize(
         path: &mut super::heap::OwnerPath,
         capacities: &mut std::collections::BTreeMap<super::heap::OwnerPath, Expr>,
     ) -> Result<ReturnedOwner, VirErr> {
-        if !owner.captures.is_empty() {
-            let mut plain = owner.clone();
-            let sources = std::mem::take(&mut plain.captures);
-            return Ok(ReturnedOwner::Captured {
-                sources,
-                owner: Box::new(node(function, &plain, growth, bound, path, capacities)?),
-            });
-        }
         let mut children = std::collections::BTreeMap::new();
         for (slot, child) in &owner.children {
             path.push(slot.clone());
@@ -87,7 +79,7 @@ pub(super) fn summarize(
                 index,
                 children,
                 replacement: replacement(owner, growth, function, bound),
-                addition: super::elements::addition(owner, growth, bound, function),
+                addition: super::elements::addition(owner, growth),
             });
         }
         let (capacity, replacement) =
@@ -95,10 +87,7 @@ pub(super) fn summarize(
         if let Some(capacity) = capacity {
             capacities.insert(path.clone(), capacity);
         }
-        let elements = owner
-            .elements
-            .as_ref()
-            .map(|elements| super::elements::summarize(elements, growth, bound, function));
+        let elements = owner.elements.as_ref().map(super::elements::summarize);
         if let Some(allocation) = replacement {
             return Ok(ReturnedOwner::Replaced { allocation, elements });
         }
@@ -133,13 +122,6 @@ impl ReturnedOwner {
     /// Inputs can survive anywhere in the result, including under newly allocated boxes.
     fn inputs(&self, inputs: &mut std::collections::HashSet<usize>) {
         match self {
-            Self::Captured { sources, owner } => {
-                owner.inputs(inputs);
-                inputs.extend(sources.iter().filter_map(|source| match source {
-                    allocations::Capture::Owned(index) => Some(*index),
-                    allocations::Capture::Borrowed(_) => None,
-                }));
-            }
             Self::Input { index, addition, children, .. } => {
                 for child in children.values() {
                     child.inputs(inputs);
@@ -254,14 +236,8 @@ impl Analysis<'_> {
                 )
             })
             .transpose()?;
-        let captured = self.capture_calls.remove(&expr.span.id).unwrap_or_default();
-        for (index, owner) in transferred.iter_mut().enumerate() {
-            if let Some(owner) = owner.take() {
-                if !captured.contains_key(&allocations::Capture::Owned(index)) {
-                    return Err(unsupported(&expr.span, "unconsumed ownership summary inputs"));
-                }
-                self.release_owner(owner, &expr.span);
-            }
+        if transferred.iter().any(Option::is_some) {
+            return Err(unsupported(&expr.span, "unconsumed ownership summary inputs"));
         }
         Ok(result)
     }
@@ -317,17 +293,10 @@ impl Analysis<'_> {
         path: &mut super::heap::OwnerPath,
     ) -> Result<Owner, VirErr> {
         let OwnerCall { expr, callee, args, .. } = *call;
-        if let ReturnedOwner::Captured { sources, owner } = summary {
-            let mut result = self.adopt_owner_tree(call, typ, owner, path)?;
-            let (amount, dependencies) = self.captured_sources(&expr.span, sources);
-            self.add_capture_charge(&expr.span, &mut result, amount, dependencies, true);
-            return Ok(result);
-        }
         let mut replacement = None;
         let mut owner = match summary {
-            ReturnedOwner::Captured { .. } => unreachable!(),
             ReturnedOwner::Input { index, replacement, addition, .. } => {
-                let mut owner = call.transferred[*index].take().ok_or_else(|| {
+                let owner = call.transferred[*index].take().ok_or_else(|| {
                     unsupported(&expr.span, "a returned input without transferred ownership")
                 })?;
                 if let Some(charge) = replacement {
@@ -341,18 +310,11 @@ impl Analysis<'_> {
                         allocations::instantiate(charge, callee, args, &self.stable_scalars)?;
                     self.retain_vector_growth(&expr.span, id, charge)?;
                 }
-                if let Some(effect) = addition {
-                    let elements = owner.elements.as_mut().ok_or_else(|| {
-                        unsupported(&expr.span, "an input collection without child state")
-                    })?;
-                    self.apply_element_summary(
+                if addition.is_some() {
+                    return Err(unsupported(
                         &expr.span,
-                        elements,
-                        effect,
-                        callee,
-                        args,
-                        call.transferred,
-                    )?;
+                        "collection additions without a precise helper summary",
+                    ));
                 }
                 owner
             }
@@ -387,11 +349,15 @@ impl Analysis<'_> {
                 path.pop();
             }
         }
-        if let ReturnedOwner::Node { elements: Some(summary), .. }
-        | ReturnedOwner::Replaced { elements: Some(summary), .. } = summary
-        {
-            owner.elements =
-                Some(self.adopt_elements(&expr.span, summary, callee, args, call.transferred)?);
+        if matches!(
+            summary,
+            ReturnedOwner::Node { elements: Some(_), .. }
+                | ReturnedOwner::Replaced { elements: Some(_), .. }
+        ) {
+            return Err(unsupported(
+                &expr.span,
+                "returned collections without a precise helper summary",
+            ));
         }
         let capacity = call
             .capacities

@@ -71,43 +71,6 @@ fn matching_an_extracted_owner_transfers_the_payload() {
 }
 
 #[test]
-fn opaque_borrowed_extraction_keeps_the_result_charged() {
-    // The unreachable removal loop exercises aggregate fallback today. The
-    // assertions must also hold if inference later recognizes this helper.
-    let code = "fn take(v: &mut Vec<Box<[u8;32]>>) -> (r: Option<Box<[u8;32]>>)
-        requires old(v).len() == 1, ensures r.is_some(), resources peak(memory) <= 17 {
-            while v.len() > 1 invariant v.len() >= 1, decreases v.len(), { v.remove(0); }
-            v.pop()
-        }
-        fn f() resources peak(memory) <= BOUND {
-            let mut v = Vec::<Box<[u8;32]>>::with_capacity(1);
-            let b = Box::new([0u8;32]); v.push(b);
-            let child = take(&mut v).unwrap(); drop(v);
-            let scratch = [0u8;200]; drop(child);
-        }";
-    verifies("borrowed_extraction", &code.replace("BOUND", "320"));
-    // The result still owns a handle (8) and payload (32) beside scratch (200).
-    rejects("borrowed_extraction_live", &code.replace("BOUND", "239"), "memory budget exceeded");
-}
-
-#[test]
-fn opaque_owned_extraction_transfers_input_dependencies() {
-    let code = "fn take(mut v: Vec<Box<[u8;32]>>) -> (r: Box<[u8;32]>)
-        requires v.len() == 1, resources peak(memory) <= 40 {
-            while v.len() > 1 invariant v.len() >= 1, decreases v.len(), { v.remove(0); }
-            v.pop().unwrap()
-        }
-        fn f() resources peak(memory) <= BOUND {
-            let mut v = Vec::<Box<[u8;32]>>::with_capacity(1);
-            let b = Box::new([0u8;32]); v.push(b);
-            let child = take(v); let scratch = [0u8;200]; drop(child);
-        }";
-    verifies("owned_extraction", &code.replace("BOUND", "320"));
-    // Require the real result storage, without fixing the fallback's overcharge.
-    rejects("owned_extraction_live", &code.replace("BOUND", "239"), "memory budget exceeded");
-}
-
-#[test]
 fn removing_reindexes_surviving_element_metadata() {
     let code = "fn f() resources peak(memory) <= BOUND {
         let mut v = Vec::<Vec<u32>>::with_capacity(2);
@@ -209,30 +172,6 @@ fn a_fill_loop_and_a_drain_loop_share_the_same_footprints() {
         drop(v); let scratch = [0u8;152];
     }",
     );
-}
-
-#[test]
-fn opaque_dependencies_survive_branches_and_reinsertion() {
-    let code = "fn take(v: &mut Vec<Box<[u8;32]>>) -> (r: Option<Box<[u8;32]>>)
-        requires old(v).len() == 1, ensures r.is_some(), resources peak(memory) <= 17 {
-            while v.len() > 1 invariant v.len() >= 1, decreases v.len(), { v.remove(0); }
-            v.pop()
-        }
-        fn relay(flag: bool, v: &mut Vec<Box<[u8;32]>>) -> Box<[u8;32]>
-            requires flag, old(v).len() == 1, resources peak(memory) <= 96 {
-            let mut stash = Vec::<Box<[u8;32]>>::with_capacity(1);
-            if flag { let child = take(v).unwrap(); stash.push(child); }
-            let child = stash.pop().unwrap(); drop(stash); child
-        }
-        fn f() resources peak(memory) <= BOUND {
-            let mut v = Vec::<Box<[u8;32]>>::with_capacity(1);
-            let b = Box::new([0u8;32]); v.push(b);
-            let child = relay(true, &mut v); drop(v);
-            let scratch = [0u8;280]; drop(child);
-        }";
-    verifies("captured_reinsertion", &code.replace("BOUND", "512"));
-    // Even exact inference needs the result's 40 bytes beside scratch (280).
-    rejects("captured_reinsertion_live", &code.replace("BOUND", "319"), "memory budget exceeded");
 }
 
 #[test]

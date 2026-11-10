@@ -3,12 +3,13 @@
 use super::support::{rejects, verifies};
 
 #[test]
-fn indexed_read_borrows_preserve_the_collection_charge() {
-    verifies(
+fn incoming_read_borrows_require_individual_metadata() {
+    rejects(
         "indexed_read",
         "fn read(b: &Box<u32>) -> u32 resources peak(memory) <= 12 { **b }
         fn f(v: &Vec<Box<u32>>, i: usize) -> u32
-            requires i < v.len(), resources peak(memory) <= 40 { read(&v[i]) }",
+            requires i < v.len(), resources peak(memory) <= 10000 { read(&v[i]) }",
+        "indexing a child without precise allocation metadata",
     );
 }
 
@@ -156,25 +157,7 @@ fn projections_cannot_hide_section_retention() {
         let child = Vec::<u32>::new(); v.push(child);
         resources peak(memory) <= 64 { v[0].push(1); }
     }",
-        "changing owning children of an enclosing collection inside a memory section",
-    );
-}
-
-#[test]
-fn borrowed_collection_effects_survive_call_boundaries() {
-    verifies(
-        "indexed_borrowed_effect",
-        "fn grow(v: &mut Vec<Vec<u32>>)
-        requires old(v).len() == 1, old(v)[0].len() == 0,
-        resources peak(memory) <= 24 { v[0].push(1); }
-        fn relay(v: &mut Vec<Vec<u32>>)
-        requires old(v).len() == 1, old(v)[0].len() == 0,
-        resources peak(memory) <= 32 { grow(v); }
-        fn f() resources peak(memory) <= 200 {
-            let mut v = Vec::<Vec<u32>>::with_capacity(1);
-            let child = Vec::<u32>::new(); v.push(child);
-            relay(&mut v); drop(v); let scratch = [0u8;200];
-        }",
+        "indexing a child without precise allocation metadata",
     );
 }
 
@@ -191,8 +174,8 @@ fn discarding_a_removed_child_releases_its_footprint() {
 }
 
 #[test]
-fn read_only_indexing_in_a_section_does_not_transfer_ownership() {
-    verifies(
+fn indexed_borrows_in_sections_require_precise_metadata() {
+    rejects(
         "indexed_section_read",
         "fn read(v: &Vec<u32>) -> (r: usize)
         ensures r == v.len(), resources peak(memory) <= 16 { v.len() }
@@ -201,25 +184,7 @@ fn read_only_indexing_in_a_section_does_not_transfer_ownership() {
             let child = Vec::<u32>::new(); v.push(child);
             resources peak(memory) <= 24 { let n = read(&v[0]); assert(n == 0); }
         }",
-    );
-}
-
-#[test]
-fn removing_through_helpers_invalidates_length_based_invariants() {
-    verifies(
-        "indexed_removal_effect",
-        "fn remove(v: &mut Vec<Box<u32>>)
-        ensures final(v).len() == if old(v).len() == 0 { 0 } else { old(v).len() - 1 },
-        resources peak(memory) <= 8 { v.pop(); }
-        fn relay(v: &mut Vec<Box<u32>>)
-        ensures final(v).len() == if old(v).len() == 0 { 0 } else { old(v).len() - 1 },
-        resources peak(memory) <= 16 { remove(v); }
-        fn f() resources peak(memory) <= 128 {
-            let mut v = Vec::<Box<u32>>::with_capacity(1);
-            let b = Box::new(1u32); v.push(b); relay(&mut v);
-            let mut i = 0usize;
-            while i < 1 invariant i <= 1, v.len() == 0, decreases 1-i, { i += 1; }
-        }",
+        "indexing a child without precise allocation metadata",
     );
 }
 

@@ -101,46 +101,10 @@ impl Analysis<'_> {
                     .unwrap()
                     .clone();
                 if !elements.precise {
-                    let mut option = Owner { geometry: tag.clone(), ..Default::default() };
-                    if !discard {
-                        if elements
-                            .states
-                            .values()
-                            .any(|id| self.growth.protected_elements.contains(id))
-                        {
-                            return Err(unsupported(
-                                &source.span,
-                                "extracting an owning child across a memory section",
-                            ));
-                        }
-                        let parent = self.heap.root(&name).unwrap().at(&path).unwrap().clone();
-                        let sources = self.capture_dependencies(&name, &path, &parent);
-                        let amount = self.capture_amount(&source.span, &parent);
-                        let amount = self.allocation_snapshot(&source.span, amount);
-                        let payload = if optional {
-                            self.layouts.option_payload(&source.typ, &source.span)?.clone()
-                        } else {
-                            source.typ.clone()
-                        };
-                        let mut child = self.input_owner(
-                            &payload,
-                            &source.span,
-                            0,
-                            &name,
-                            &mut vec![],
-                            &Default::default(),
-                        )?;
-                        self.capture_tree(&source.span, &mut child, amount, &sources);
-                        if optional {
-                            option.children.insert(OwnerSlot::Contents, child);
-                        } else {
-                            option = child;
-                        }
-                        self.storage.record_live(&source.span)?;
-                    }
-                    self.forget_collection_length(&name, &path);
-                    self.finish_projections(&source.span, focused)?;
-                    return Ok(Some(option));
+                    return Err(unsupported(
+                        &source.span,
+                        "extracting a child without precise allocation metadata",
+                    ));
                 }
                 if elements.states.values().any(|id| self.growth.protected_elements.contains(id)) {
                     return Err(unsupported(

@@ -1,5 +1,6 @@
 //! Interpret parametric ownership transformations from checked bodies.
-//! Unsupported effects or value dependencies decline precision.
+//! Unrepresentable effects fail inference; runtime ownership interfaces then
+//! report unsupported instead of exporting a byte-only approximation.
 
 mod loops;
 mod operations;

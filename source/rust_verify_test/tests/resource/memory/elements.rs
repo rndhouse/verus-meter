@@ -225,14 +225,6 @@ fn section_cannot_hide_new_children_of_enclosing_collection() {
 }
 
 #[test]
-fn owning_pop_from_an_input_uses_conservative_dependencies() {
-    verifies(
-        "element_pop",
-        "fn f(mut v: Vec<Box<u32>>) resources peak(memory) <= 100 { let removed = v.pop(); }",
-    );
-}
-
-#[test]
 fn recursive_collection_layouts_are_rejected() {
     rejects(
         "recursive_elements",
@@ -258,20 +250,17 @@ fn runtime_child_bytes_cannot_be_omitted_from_the_budget() {
 }
 
 #[test]
-fn captures_survive_nested_borrowed_helper_calls() {
+fn precise_append_effects_follow_fixed_owner_paths() {
     let code = "struct C { data: Box<Vec<Box<[u8;16]>>> }
         fn append(v: &mut Vec<Box<[u8;16]>>, b: Box<[u8;16]>)
             requires old(v).len() == 0, ensures final(v).len() == 1,
             resources peak(memory) <= 16 { v.push(b); }
-        fn relay(p: &mut C, b: Box<[u8;16]>)
-            requires old(p).data.len() == 0, ensures final(p).data.len() == 1,
-            resources peak(memory) <= 32 { append(&mut *p.data, b); }
         fn f() resources peak(memory) <= BOUND {
             let mut p = C { data: Box::new(Vec::with_capacity(1)) };
-            let b = Box::new([0u8;16]); relay(&mut p, b); let scratch = [0u8;64];
+            let b = Box::new([0u8;16]); append(&mut *p.data, b); let scratch = [0u8;64];
         }";
-    verifies("nested_captures", &code.replace("BOUND", "120"));
-    rejects("nested_captures_short", &code.replace("BOUND", "119"), "memory budget exceeded");
+    verifies("nested_append", &code.replace("BOUND", "120"));
+    rejects("nested_append_short", &code.replace("BOUND", "119"), "memory budget exceeded");
 }
 
 #[test]

@@ -2,22 +2,24 @@
 use super::support::{rejects, verifies};
 
 #[test]
-fn matching_optional_children_preserves_reservations() {
-    let code = "fn append(v: &mut Vec<Vec<u32>>, source: &mut Vec<Vec<u32>>)
-        requires old(v).len() == 0, old(source).len() == 1, old(source)[0].len() == 0,
-        ensures final(v).len() == 1, final(v)[0].len() == 0,
-        resources peak(memory) <= 80 {
-            match source.pop() { Some(payload) => v.push(payload), None => {} }
+fn loop_carried_helper_appends_cannot_discard_precision() {
+    rejects(
+        "helper_append_loop",
+        "fn append(v: &mut Vec<Vec<u32>>)
+        requires old(v).len() <= 1,
+        ensures final(v).len() == old(v).len() + 1,
+        resources peak(memory) <= 100 {
+            let child = Vec::<u32>::with_capacity(4); v.push(child);
         }
-        fn f() resources peak(memory) <= BOUND {
-            let mut v = Vec::<Vec<u32>>::with_capacity(1);
-            let mut source = Vec::<Vec<u32>>::with_capacity(1);
-            let child = Vec::<u32>::with_capacity(4);
-            source.push(child); append(&mut v, &mut source); drop(source);
-            v[0].push(7); let scratch = [0u8;200];
-        }";
-    verifies("matched_child", &code.replace("BOUND", "264"));
-    rejects("matched_child_short", &code.replace("BOUND", "263"), "memory budget exceeded");
+        fn f() resources peak(memory) <= 10000 {
+            let mut v = Vec::<Vec<u32>>::with_capacity(2);
+            let mut i = 0usize;
+            while i < 2 invariant i <= 2, v.len() == i, decreases 2-i, {
+                append(&mut v); i += 1;
+            }
+        }",
+        "loop-carried helper effects without precise allocation metadata",
+    );
 }
 
 #[test]
@@ -43,27 +45,6 @@ fn counted_builders_preserve_uniform_child_reservations() {
         }";
     verifies("counted_children", &code.replace("BOUND", "304"));
     rejects("counted_children_short", &code.replace("BOUND", "303"), "memory budget exceeded");
-}
-
-#[test]
-fn shrinking_helpers_release_children_and_preserve_survivors() {
-    let code = "fn shrink(v: &mut Vec<Vec<u32>>)
-        requires old(v).len() == 2, old(v)[0].len() == 0,
-        ensures final(v).len() == 1, final(v)[0].len() == 0,
-        resources peak(memory) <= 40 {
-            while v.len() > 1
-                invariant 1 <= v.len() <= 2, v[0].len() == 0,
-                decreases v.len(),
-            { v.pop(); }
-        }
-        fn f() resources peak(memory) <= BOUND {
-            let mut v = Vec::<Vec<u32>>::with_capacity(2);
-            let a = Vec::<u32>::with_capacity(4); v.push(a);
-            let b = Vec::<u32>::with_capacity(8); v.push(b);
-            shrink(&mut v); v[0].push(7); let scratch = [0u8;200];
-        }";
-    verifies("shrunken_children", &code.replace("BOUND", "288"));
-    rejects("shrunken_children_short", &code.replace("BOUND", "287"), "memory budget exceeded");
 }
 
 #[test]
@@ -122,7 +103,7 @@ fn repeated_nested_owners_compose_with_boxed_slice_results() {
 }
 
 #[test]
-fn conditional_collection_mutations_keep_children_charged() {
+fn unrepresentable_collection_control_flow_is_unsupported() {
     let code = "fn make() -> (v: Vec<Vec<u32>>)
         ensures v.len() == 1, v[0].len() == 0,
         resources peak(memory) <= 200 {
@@ -143,13 +124,10 @@ fn conditional_collection_mutations_keep_children_charged() {
         fn f() resources peak(memory) <= BOUND {
             let mut v = make(); v[0].push(7); let scratch = [0u8;200];
         }";
-    verifies("conditional_loop_fallback", &code.replace("BOUND", "800"));
     rejects(
-        "conditional_loop_live_child",
-        // Even precise accounting needs handle 24 + outer buffer 48 + child
-        // buffer 16 + scratch 200. Do not require rejection of a sufficient bound.
-        &code.replace("BOUND", "287"),
-        "memory budget exceeded",
+        "conditional_loop_unsupported",
+        &code.replace("BOUND", "10000"),
+        "no precise helper summary can be inferred",
     );
 }
 
@@ -180,25 +158,6 @@ fn repeated_regions_can_be_shrunk_before_returning() {
         }";
     verifies("repeated_then_shrunk", &code.replace("BOUND", "344"));
     rejects("repeated_then_shrunk_short", &code.replace("BOUND", "343"), "memory budget exceeded");
-}
-
-#[test]
-fn matching_none_preserves_the_existing_destination() {
-    let code = "fn append(v: &mut Vec<Vec<u32>>, source: &mut Vec<Vec<u32>>)
-        requires old(v).len() == 1, old(v)[0].len() == 0, old(source).len() == 0,
-        ensures final(v).len() == 1, final(v)[0].len() == 0,
-        resources peak(memory) <= 80 {
-            match source.pop() { Some(payload) => v.push(payload), None => {} }
-        }
-        fn f() resources peak(memory) <= BOUND {
-            let mut v = Vec::<Vec<u32>>::with_capacity(2);
-            let child = Vec::<u32>::with_capacity(4); v.push(child);
-            let mut source = Vec::<Vec<u32>>::new();
-            append(&mut v, &mut source); drop(source);
-            v[0].push(7); let scratch = [0u8;200];
-        }";
-    verifies("matched_none", &code.replace("BOUND", "288"));
-    rejects("matched_none_short", &code.replace("BOUND", "287"), "memory budget exceeded");
 }
 
 #[test]

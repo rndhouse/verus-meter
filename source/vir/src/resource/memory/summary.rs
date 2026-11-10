@@ -3,7 +3,7 @@
 /// Call-composition facts established together by a checked function body.
 #[derive(Clone)]
 pub(super) struct FunctionSummary {
-    /// Optional physical-ownership transformation, parameterized by caller forests.
+    /// Physical-ownership transformation, required for runtime ownership interfaces.
     pub(super) transfer: Option<super::transfer::Template>,
     /// Container-independent ownership, byte sizes, and retained replacements.
     pub(super) allocations: super::allocations::AllocationSummary,

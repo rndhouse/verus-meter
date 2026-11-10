@@ -3,9 +3,11 @@
 //! Templates describe physical allocation forests, independently of a callee's
 //! frame-local charges. Calls substitute their own forests and scalar snapshots;
 //! no ghost arguments or user annotations cross the executable interface.
-//! An unrepresentable effect declines the template and keeps aggregate accounting.
+//! Runtime ownership interfaces require a representable template. Missing rules
+//! are unsupported; byte bounds cannot substitute for ownership effects.
 
 mod calls;
+mod consistency;
 mod proofs;
 mod simplify;
 mod trace;
@@ -17,6 +19,8 @@ use super::metadata::{
 use crate::ast::*;
 use crate::messages::Span;
 use std::collections::{BTreeMap, HashMap};
+
+pub(super) use consistency::validate;
 
 #[derive(Clone)]
 pub(super) enum Input {
@@ -77,8 +81,42 @@ pub(super) fn summarize(
     functions: &HashMap<Fun, Function>,
     summaries: &HashMap<Fun, super::summary::FunctionSummary>,
     modes: &HashMap<VarIdent, Mode>,
-) -> Option<Template> {
-    trace::summarize(function, layouts, functions, summaries, modes)
+) -> Result<Option<Template>, VirErr> {
+    let template = trace::summarize(function, layouts, functions, summaries, modes);
+    if template.is_none() && required(function, layouts)? {
+        return Err(super::model::unsupported(
+            &function.span,
+            "this runtime ownership transformation; no precise helper summary can be inferred",
+        ));
+    }
+    Ok(template)
+}
+
+/// Fixed trees have an explicit structural summary. Runtime owning children
+/// additionally require a forest transformation, even beneath fixed wrappers.
+pub(super) fn required(
+    function: &Function,
+    layouts: &super::layout::Layouts,
+) -> Result<bool, VirErr> {
+    let mut types: Vec<_> = function
+        .x
+        .params
+        .iter()
+        .filter(|parameter| parameter.x.mode == Mode::Exec)
+        .map(|parameter| {
+            layouts.borrowed_owner(&parameter.x.typ).unwrap_or(&parameter.x.typ).clone()
+        })
+        .collect();
+    types.push(function.x.outer_ret.x.typ.clone());
+    while let Some(typ) = types.pop() {
+        if layouts.owning_elements(&typ) {
+            return Ok(true);
+        }
+        if layouts.owner(&typ) {
+            types.extend(layouts.owned_children(&typ, &function.span)?.into_values());
+        }
+    }
+    Ok(false)
 }
 
 fn substitute(value: &Expr, values: &HashMap<VarIdent, Expr>) -> Expr {

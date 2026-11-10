@@ -214,9 +214,6 @@ impl Analysis<'_> {
         for (name, old) in state.heap.owners.iter().chain(state.heap.borrowed.iter()) {
             if let Some(current) = self.heap.root_mut(name) {
                 old.visit_paths(&mut vec![], &mut |path, node| {
-                    if let Some(owner) = current.at_mut(path) {
-                        owner.captures.extend(node.captures.iter().cloned());
-                    }
                     if let Some(elements) =
                         current.at_mut(path).and_then(|owner| owner.elements.as_mut())
                     {
@@ -228,7 +225,6 @@ impl Analysis<'_> {
                                 &old.minima,
                             );
                             elements.inputs.extend(old.inputs.iter().copied());
-                            elements.captures.extend(old.captures.iter().cloned());
                         }
                     }
                 });

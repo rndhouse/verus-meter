@@ -6,6 +6,16 @@ use super::model::{eligible, slice, unsupported};
 use crate::ast::*;
 
 impl Analysis<'_> {
+    /// Check the committed call state after pending ownership effects settle.
+    pub(super) fn check_committed_memory(&mut self, span: &crate::messages::Span) {
+        let cost = self
+            .storage
+            .live_expression(span)
+            .map(span, &|amount| Ok::<_, VirErr>(self.growth.after_value(span, amount)))
+            .unwrap();
+        self.storage.call_cost(span, cost, &Default::default(), &Default::default(), true);
+    }
+
     fn call(
         &mut self,
         expr: &Expr,
@@ -31,9 +41,6 @@ impl Analysis<'_> {
         }
         let transfer = self.prepare_transfer_call(expr, callee, args)?;
         self.check_vector_call(expr, callee, args)?;
-        if transfer.is_none() {
-            self.prepare_capture_call(expr, callee, args)?;
-        }
         let result_size = self.layouts.return_size(&expr.typ, &expr.span)?;
         let bound = super::contracts::instantiate(
             callee,
@@ -177,7 +184,6 @@ impl Analysis<'_> {
                 self.apply_transfer_call(expr, callee, args, transfer, &mut transferred)?;
         } else {
             self.apply_vector_call_effects(expr, callee, args)?;
-            self.apply_collection_call_effects(expr, callee, args, &mut transferred)?;
             self.apply_child_call_effects(expr, callee, args, &mut transferred)?;
             self.result_owner =
                 self.complete_ownership_call(expr, callee, args, &mut transferred)?;

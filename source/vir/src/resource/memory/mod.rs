@@ -34,7 +34,6 @@ mod boxed_slices;
 mod budget;
 mod call_graph;
 mod calls;
-mod captures;
 mod children;
 mod construction;
 mod contracts;

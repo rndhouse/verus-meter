@@ -16,38 +16,12 @@ impl Analysis<'_> {
         function: &Function,
         args: &Exprs,
     ) -> Result<Option<Prepared>, VirErr> {
-        let Some(template) = self.summaries[&function.x.name].transfer.clone() else {
-            return Ok(None);
-        };
-        if template.borrowed.is_empty() && !matches!(template.result, Value::Owner(_)) {
+        if !super::required(function, self.layouts)? {
             return Ok(None);
         }
-        // Fixed ownership and scalar buffers use the existing allocation
-        // transfers. Forest templates add information when an interface has
-        // runtime owning children, including extraction from such an input.
-        let mut types: Vec<_> = function
-            .x
-            .params
-            .iter()
-            .filter(|parameter| parameter.x.mode == Mode::Exec)
-            .map(|parameter| {
-                self.layouts.borrowed_owner(&parameter.x.typ).unwrap_or(&parameter.x.typ).clone()
-            })
-            .collect();
-        types.push(function.x.outer_ret.x.typ.clone());
-        let mut repeated = false;
-        while let Some(typ) = types.pop() {
-            if self.layouts.owning_elements(&typ) {
-                repeated = true;
-                break;
-            }
-            if self.layouts.owner(&typ) {
-                types.extend(self.layouts.owned_children(&typ, &value.span)?.into_values());
-            }
-        }
-        if !repeated {
-            return Ok(None);
-        }
+        let template = self.summaries[&function.x.name].transfer.clone().ok_or_else(|| {
+            unsupported(&value.span, "a runtime ownership call without a precise helper summary")
+        })?;
         // Determine eligibility without changing accounting or scheduling proofs.
         let mut owners = BTreeMap::new();
         for (index, (argument, parameter)) in args.iter().zip(function.x.params.iter()).enumerate()
@@ -60,10 +34,16 @@ impl Analysis<'_> {
                 continue;
             }
             let Some((name, path)) = super::super::paths::expr(argument, typ) else {
-                return Ok(None);
+                return Err(unsupported(
+                    &value.span,
+                    "a runtime ownership argument without a tracked owner; bind the argument first",
+                ));
             };
             if self.growth.section_owners.contains(&name) {
-                return Ok(None);
+                return Err(unsupported(
+                    &value.span,
+                    "runtime ownership transfers across a memory section",
+                ));
             }
             if !super::super::paths::indexed(&path)
                 && self.summaries[&function.x.name]
@@ -71,17 +51,22 @@ impl Analysis<'_> {
                     .children
                     .keys()
                     .any(|(parameter, _)| *parameter == index)
-                && self.heap.check_transfer(&name, &value.span).is_err()
             {
-                return Ok(None);
+                self.heap.check_transfer(&name, &value.span)?;
             }
             if self.heap.borrowed.contains_key(&name) {
-                return Ok(None);
+                return Err(unsupported(
+                    &value.span,
+                    "a runtime ownership call without precise argument metadata",
+                ));
             }
             let Some(owner) = self.heap.root(&name).and_then(|root| root.at(&path)) else {
-                return Ok(None);
+                return Err(unsupported(
+                    &value.span,
+                    "a runtime ownership argument without a live tracked owner",
+                ));
             };
-            let mut precise = owner.inputs().is_empty() && owner.captured_inputs().is_empty();
+            let mut precise = owner.inputs().is_empty();
             owner.visit(&mut |node| {
                 precise &= node.geometry_known || node.source.is_some();
                 precise &= node.elements.as_ref().is_none_or(|elements| {
@@ -95,20 +80,24 @@ impl Analysis<'_> {
                     node.vector.is_none_or(|id| !self.growth.section_protected.contains(&id));
             });
             if !precise {
-                return Ok(None);
+                return Err(unsupported(
+                    &value.span,
+                    "a runtime ownership call without precise argument metadata",
+                ));
             }
             owners.insert(index, owner.clone());
         }
         for argument in args.iter() {
-            if self.check_projection_effects(argument).is_err() {
-                return Ok(None);
-            }
+            self.check_projection_effects(argument)?;
         }
         let mut scalar = BTreeMap::new();
         for symbol in &template.symbols {
             if let Input::Scalar(index) = symbol.input {
                 let Ok(pure) = super::super::projections::spec_value(&args[index]) else {
-                    return Ok(None);
+                    return Err(unsupported(
+                        &value.span,
+                        "a computed scalar in a runtime ownership call; bind the argument first",
+                    ));
                 };
                 scalar.insert(index, pure);
             }

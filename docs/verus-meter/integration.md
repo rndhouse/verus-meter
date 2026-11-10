@@ -107,8 +107,12 @@ peak profiles still keep incoming storage charged throughout the call. Fixed
 descriptor properties and runtime forests are separate template inputs. Logical
 counts describe occupied elements independently of byte bounds and reservation
 minima; snapshot a count before its source becomes inaccessible, such as when
-moving beneath an optional payload. Unsupported effects retain the aggregate
-fallback. Commit borrowed effects into existing proof-state IDs so
+moving beneath an optional payload. Runtime ownership interfaces require a
+template, and calls require precise argument metadata. Missing inference or
+metadata is unsupported, never an aggregate fallback. Interface consistency
+checks reject disagreement about results and affected borrowed parameters;
+these checks do not prove equivalence of complete forest expressions.
+Commit borrowed effects into existing proof-state IDs so
 branch joins and loop invariants observe the updated allocations.
 By-value optional patterns join parametric branch states. Collection loop
 summaries interpret a representative iteration and require one unconditional
@@ -126,16 +130,14 @@ avoid repeating executable indexing or its bounds checks.
 
 [Extraction](../../source/vir/src/resource/memory/extraction.rs) transfers storage
 into an independently owned result, including conditional Option payloads.
-[Opaque captures](../../source/vir/src/resource/memory/captures.rs) duplicate
-conservative bounds when a helper exposes no individual metadata. Preserve owned
-and borrowed input dependencies across calls, branches, nested children, and
-collection insertion. These dependencies may extend an original input lifetime;
-ending a copied charge must never end another owner's charge.
+Incoming runtime children have abstract provenance; indexing or extracting them
+is unsupported until local analysis can represent their individual forests.
+Do not duplicate an enclosing charge to stand in for an unknown child.
 
 Loop proofs preserve forest validity and sums, immutable entry facts, and inferred
 reservation candidates indexed by fixed and repeated ownership steps. Every
-candidate is checked at loop entry and on back edges. Opaque mutations invalidate
-precision before analyzing a reusable iteration. Shared ownership still needs
+candidate is checked at loop entry and on back edges. Loop-carried helper effects
+that would invalidate precision are unsupported. Shared ownership still needs
 separate last-owner release rules.
 
 Activate finite transfer laws at operation sites and broader sibling-view rules

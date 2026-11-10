@@ -2,21 +2,21 @@
 //!
 //! A precise projection partitions the selected allocation subtree out of the
 //! parent forest and restores its ordinary ownership shape. Finishing the loan
-//! returns its updated descriptors and charge. Opaque summaries retain their
-//! aggregate charge and add new allocations conservatively.
+//! returns its updated descriptors and charge. Opaque children are unsupported.
 
 use super::analysis::Analysis;
-use super::heap::Owner;
 use super::model::unsupported;
 use super::paths::LocalPath;
 use crate::ast::*;
 use crate::messages::Span;
 
 pub(super) struct Projection {
+    /// Operation-local slot used while the child is borrowed.
     location: LocalPath,
     /// A precise loan has already removed this subtree from the parent sum.
-    path: Option<Expr>,
-    original: Option<Expr>,
+    path: Expr,
+    /// Parent forest before detachment, used to prove preservation of siblings.
+    original: Expr,
 }
 
 /// Read an executable projection as a pure value. In particular, do not repeat
@@ -110,7 +110,7 @@ impl Analysis<'_> {
         for arg in args.iter() {
             self.focus_expression(arg, span, &mut focused)?;
         }
-        if focused.iter().any(|projection| projection.path.is_some()) {
+        if !focused.is_empty() {
             for arg in args.iter() {
                 self.check_projection_effects(arg)?;
             }
@@ -242,40 +242,37 @@ impl Analysis<'_> {
             self.heap.root(name).unwrap().at(parent).unwrap().elements.as_ref().unwrap().clone();
         let precise = elements.precise
             && elements.states.values().all(|id| !self.growth.protected_elements.contains(id));
-        let mut original = None;
-        let (child, selected_path) = if precise {
-            original = Some(self.metadata_local(span, "loan_parent", elements.records.clone()));
-            let selected_path = self.metadata_path(span, spec_value(&index)?)?;
-            let partition = super::metadata::operations::detach(
-                span,
-                elements.records.clone(),
-                selected_path.clone(),
-            );
-            let selected = self.metadata_local(span, "element_loan", partition.selected);
-            self.assert_owner_minima(span, typ, value.clone(), selected.clone(), &elements.minima)?;
-            self.metadata_partition(span, elements.records.clone(), selected_path.clone());
-            self.growth.before.entry(span.id).or_default().push(super::metadata::expr::assign(
-                span,
-                &elements.records,
-                partition.remaining,
-            ));
-            self.set_element_records(span, &elements, false);
-            let mut child = self.owner_from_metadata(span, typ, selected)?;
-            self.install_owner_minima(&mut child, &elements.minima);
-            self.bind_collection_sources(span, &mut child, typ, value)?;
-            let mut collections = Vec::new();
-            child.visit(&mut |node| {
-                if let Some(elements) = &node.elements {
-                    collections.push(elements.clone());
-                }
-            });
-            for elements in collections {
-                self.assert_element_minima(span, &elements, false)?;
+        if !precise {
+            return Err(unsupported(span, "indexing a child without precise allocation metadata"));
+        }
+        let original = self.metadata_local(span, "loan_parent", elements.records.clone());
+        let selected_path = self.metadata_path(span, spec_value(&index)?)?;
+        let partition = super::metadata::operations::detach(
+            span,
+            elements.records.clone(),
+            selected_path.clone(),
+        );
+        let selected = self.metadata_local(span, "element_loan", partition.selected);
+        self.assert_owner_minima(span, typ, value.clone(), selected.clone(), &elements.minima)?;
+        self.metadata_partition(span, elements.records.clone(), selected_path.clone());
+        self.growth.before.entry(span.id).or_default().push(super::metadata::expr::assign(
+            span,
+            &elements.records,
+            partition.remaining,
+        ));
+        self.set_element_records(span, &elements, false);
+        let mut child = self.owner_from_metadata(span, typ, selected)?;
+        self.install_owner_minima(&mut child, &elements.minima);
+        self.bind_collection_sources(span, &mut child, typ, value)?;
+        let mut collections = Vec::new();
+        child.visit(&mut |node| {
+            if let Some(elements) = &node.elements {
+                collections.push(elements.clone());
             }
-            (child, Some(selected_path))
-        } else {
-            (self.input_owner(typ, span, 0, name, &mut vec![], &Default::default())?, None)
-        };
+        });
+        for elements in collections {
+            self.assert_element_minima(span, &elements, false)?;
+        }
         self.heap.root_mut(name).unwrap().replace_child(path, child);
         focused.push(Projection { location, path: selected_path, original });
         Ok(())
@@ -299,10 +296,6 @@ impl Analysis<'_> {
                 .root_mut(&name)
                 .and_then(|root| root.take_child(&path))
                 .ok_or_else(|| unsupported(span, "an indexed borrow lost its owner"))?;
-            if projection.path.is_none() && !self.projection_changed(&child) {
-                self.release_owner_storage(child, span, false);
-                continue;
-            }
             let (_, parent) = path.split_last().unwrap();
             let mut elements = self
                 .heap
@@ -313,35 +306,15 @@ impl Analysis<'_> {
                 .elements
                 .take()
                 .expect("collection state");
-            if let Some(selected_path) = projection.path {
-                self.return_element_loan(
-                    span,
-                    &mut elements,
-                    projection.original.unwrap(),
-                    selected_path,
-                    child,
-                )?;
-            } else {
-                self.merge_projected_child(span, &mut elements, child)?;
-            }
+            self.return_element_loan(
+                span,
+                &mut elements,
+                projection.original,
+                projection.path,
+                child,
+            )?;
             self.heap.root_mut(&name).unwrap().at_mut(parent).unwrap().elements = Some(elements);
         }
         self.record_element_updates(span)
-    }
-
-    fn projection_changed(&self, child: &Owner) -> bool {
-        let mut changed = !child.inputs().is_empty();
-        child.visit(&mut |node| {
-            changed |= node.bytes != 0 || node.extent.is_some();
-            if let Some(id) = node.vector {
-                changed |= self.growth.vectors[id].backing.changed;
-            } else {
-                changed |= node.dynamic.is_some();
-            }
-            if let Some(elements) = &node.elements {
-                changed |= elements.states.values().any(|id| self.growth.elements[*id].changed);
-            }
-        });
-        changed
     }
 }

@@ -314,13 +314,10 @@ impl Analysis<'_> {
             Ok::<(), VirErr>(())
         })?;
         if opaque {
-            for owner in self.heap.owners.values_mut().chain(self.heap.borrowed.values_mut()) {
-                owner.visit_mut(&mut |node| {
-                    if let Some(elements) = &mut node.elements {
-                        elements.precise = false;
-                    }
-                });
-            }
+            return Err(super::model::unsupported(
+                span,
+                "loop-carried helper effects without precise allocation metadata",
+            ));
         }
         if !transfers {
             return Ok(());
