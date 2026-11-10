@@ -2,7 +2,8 @@
 //
 // Each section accounts for its own storage and the budgets of its children.
 // The enclosing section or function remains responsible for storage already live
-// when a child begins. peak(memory) always refers to the nearest section.
+// when a child begins. Memory queries use the nearest budgeted section, or the
+// function when outside a section.
 
 use vstd::prelude::*;
 
