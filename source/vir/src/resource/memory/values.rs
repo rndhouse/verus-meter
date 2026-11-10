@@ -110,7 +110,16 @@ impl Analysis<'_> {
                 }
                 let bytes = self.layouts.return_size(&binding.typ, &pattern.span)?;
                 slots.push((binding.name.clone(), bytes));
-                if let Some(owner) = owner {
+                if let Some(mut owner) = owner {
+                    // Optional payloads have frozen geometry while inaccessible.
+                    // The pattern makes them executable values again, so future
+                    // snapshots must observe mutations through this binding.
+                    let value = SpannedTyped::new(
+                        &pattern.span,
+                        &binding.typ,
+                        ExprX::Var(binding.name.clone()),
+                    );
+                    self.bind_collection_sources(&pattern.span, &mut owner, &binding.typ, value)?;
                     self.heap.owners.insert(binding.name.clone(), owner);
                 }
                 if binding.user_mut == Some(false) && super::contracts::scalar(&binding.typ) {
@@ -177,11 +186,15 @@ impl Analysis<'_> {
             option_owner = self.result_owner.take();
             bytes
         } else {
-            self.access(scrutinee, &scrutinee.typ)?;
             if self.layouts.owner(&scrutinee.typ) {
-                option_owner = Some(self.move_owner(scrutinee)?);
-                let value = self.take_value(scrutinee)?;
+                // Consume inline storage before detaching its owner, using the
+                // same move path as ordinary values. Partial moves keep the
+                // enclosing value's storage and transfer only this field.
+                let value = self.produce_place(scrutinee, &scrutinee.typ, false, &expr.span)?;
+                option_owner = self.result_owner.take();
                 self.release_value(value, &expr.span);
+            } else {
+                self.access(scrutinee, &scrutinee.typ)?;
             }
             0
         };
@@ -220,6 +233,8 @@ impl Analysis<'_> {
                 } else {
                     result = Some(value);
                 }
+            } else if super::model::unit(&arm.x.body.typ) {
+                self.discard(&arm.x.body)?;
             } else {
                 self.initialize_expr(&arm.x.body)?;
             }
