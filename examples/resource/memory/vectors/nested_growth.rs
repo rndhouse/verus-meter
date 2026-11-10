@@ -1,4 +1,7 @@
 // Grow one buffer while keeping the memory reserved for another available.
+//
+// Each buffer keeps its own reservation, even when a helper grows its neighbor.
+// Releasing both buffers makes room for a later task.
 
 use vstd::prelude::*;
 

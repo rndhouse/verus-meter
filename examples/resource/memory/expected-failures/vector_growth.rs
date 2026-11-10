@@ -1,6 +1,8 @@
 // rust_verify/tests/example.rs expect-errors --- Intentionally requires unbudgeted growth.
-// Growth is supported, but the budget must cover the old and replacement buffers
-// simultaneously. This budget only covers the original buffer.
+// Shows why growing a collection needs an allowance beyond its original reservation.
+//
+// The budget must cover the old and replacement buffers simultaneously.
+// This budget only covers the original buffer, so verification rejects growth.
 
 use vstd::prelude::*;
 

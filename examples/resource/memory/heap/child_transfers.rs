@@ -1,3 +1,8 @@
+// Move and replace buffers without losing track of their memory use.
+//
+// A buffer can outlive the struct that held it. Its allocation remains charged
+// until its new owner releases it, after which the allowance can be reused.
+
 use vstd::prelude::*;
 
 verus! {

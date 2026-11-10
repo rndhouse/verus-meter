@@ -1,4 +1,7 @@
 // Grow a vector while proving that its memory use stays within budget.
+//
+// Growth may need room for old and replacement buffers at the same time.
+// The contract allows for that overlap as values are added, including by helpers.
 
 use vstd::prelude::*;
 

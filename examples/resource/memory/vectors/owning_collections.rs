@@ -1,4 +1,7 @@
 // Bound a collection's memory use, including the buffers owned by its elements.
+//
+// Moving buffers into a collection keeps their allocations in its budget.
+// Releasing the collection frees that allowance for a later task.
 
 use vstd::prelude::*;
 
