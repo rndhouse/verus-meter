@@ -215,6 +215,9 @@ impl Analysis<'_> {
             crate::fun!(CrateId::Vstd => "seq"; "group_seq_axioms"),
             crate::fun!(CrateId::Vstd => "std_specs", "memory"; "group_metadata_algebra"),
             crate::fun!(CrateId::Vstd => "std_specs", "memory"; "select_root"),
+            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "take_children_add"),
+            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "take_children_prefix"),
+            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "take_children_repeat"),
         ] {
             let activation =
                 SpannedTyped::new(span, &crate::ast_util::unit_typ(), ExprX::Fuel(group, 1, true));

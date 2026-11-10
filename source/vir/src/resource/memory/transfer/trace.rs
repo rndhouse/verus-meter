@@ -1,7 +1,9 @@
-//! Interpret only the ownership-relevant, pure portion of a checked body.
-//! Unsupported value dependencies or reusable mutations decline precision.
+//! Interpret parametric ownership transformations from checked bodies.
+//! Unsupported effects or value dependencies decline precision.
 
+mod loops;
 mod operations;
+mod patterns;
 
 use super::*;
 use crate::ast_util::{bool_typ, int_typ, mk_eq, mk_ineq};
@@ -30,6 +32,11 @@ struct Trace<'a> {
     state: State,
     symbols: Vec<Symbol>,
     appends: bool,
+    /// Effects on persistent owners distinguish collection regions from
+    /// temporary child construction during a representative loop iteration.
+    effects: Vec<loops::Effect>,
+    /// Mutations beneath a branch are not unconditional iteration effects.
+    branch_depth: usize,
 }
 
 pub(super) fn summarize(
@@ -47,6 +54,8 @@ pub(super) fn summarize(
         state: State::default(),
         symbols: vec![],
         appends: false,
+        effects: vec![],
+        branch_depth: 0,
     };
     for (index, parameter) in function.x.params.iter().enumerate() {
         if parameter.x.mode != Mode::Exec {
@@ -304,6 +313,7 @@ impl Trace<'_> {
     }
 
     fn set(&mut self, span: &Span, location: &Location, child: Node) -> Option<()> {
+        self.effects.push(loops::Effect::Mutation(location.0.clone()));
         if location.1.is_empty() {
             self.state.values.insert(location.0.clone(), Value::Owner(child));
         } else {
@@ -338,6 +348,7 @@ impl Trace<'_> {
     fn take(&mut self, span: &Span, location: &Location, typ: &Typ) -> Option<Node> {
         let child = self.get(span, location, typ)?;
         if location.1.is_empty() {
+            self.effects.push(loops::Effect::Mutation(location.0.clone()));
             self.state.values.remove(&location.0);
         } else {
             self.set(
@@ -450,6 +461,7 @@ impl Trace<'_> {
             ExprX::ReadPlace(place, _) => self.place_value(place),
             ExprX::Block(statements, tail) => self.block(statements, tail),
             ExprX::If(condition, yes, no) => self.branch(span, condition, yes, no),
+            ExprX::Match(scrutinee, arms, _) => self.match_value(span, scrutinee, arms),
             ExprX::Logical(op, left, right) => {
                 let condition = self.scalar(left)?;
                 let constant = crate::ast_util::mk_bool(span, *op != LogicalOp::And);
@@ -533,40 +545,20 @@ impl Trace<'_> {
             ExprX::Call { target: CallTarget::Fun(_, target, _, _, attrs), args, .. } => {
                 self.call(value, target, attrs.resource_intrinsic, args)
             }
-            ExprX::Loop { body, cond, .. } => {
-                // A read-only traversal can preserve ownership even when its
-                // scalar result cannot be expressed by a finite template.
-                let mut effects = false;
-                for region in cond.iter().chain(std::iter::once(body)) {
-                    let _ = crate::ast_visitor::expr_visitor_check(region, &mut |_, value| {
-                        effects |= self.layouts.owner(&value.typ)
-                            || matches!(value.x, ExprX::Call { .. } | ExprX::Return(_));
-                        Ok::<(), VirErr>(())
-                    });
-                }
-                if effects {
-                    return None;
-                }
-                for value in self.state.values.values_mut() {
-                    if matches!(value, Value::Scalar(_)) {
-                        *value = Value::Unknown;
-                    }
-                }
-                Some(Value::Unit)
-            }
+            ExprX::Loop { body, cond, .. } => self.loop_value(span, cond, body),
             _ => None,
         }
     }
 
     fn binary(span: &Span, op: BinaryOp, left: Expr, right: Expr, typ: &Typ) -> Expr {
         let op = match op {
-            BinaryOp::Arith(ArithOp::Add(_)) => {
+            BinaryOp::Arith(ArithOp::Add(OverflowBehavior::Error(_))) => {
                 BinaryOp::Arith(ArithOp::Add(OverflowBehavior::Allow))
             }
-            BinaryOp::Arith(ArithOp::Sub(_)) => {
+            BinaryOp::Arith(ArithOp::Sub(OverflowBehavior::Error(_))) => {
                 BinaryOp::Arith(ArithOp::Sub(OverflowBehavior::Allow))
             }
-            BinaryOp::Arith(ArithOp::Mul(_)) => {
+            BinaryOp::Arith(ArithOp::Mul(OverflowBehavior::Error(_))) => {
                 BinaryOp::Arith(ArithOp::Mul(OverflowBehavior::Allow))
             }
             _ => op,
@@ -592,16 +584,23 @@ impl Trace<'_> {
         yes: &Expr,
         no: &Option<Expr>,
     ) -> Option<Value> {
+        self.branch_depth += 1;
         let before = self.state.clone();
         let yes_value = self.value(yes)?;
         let yes = self.state.clone();
         self.state = before;
         let no_value = if let Some(no) = no { self.value(no)? } else { Value::Unit };
         let no = self.state.clone();
+        self.state = Self::join_state(span, condition.clone(), yes, no)?;
+        self.branch_depth -= 1;
+        Self::join_value(span, condition, &yes_value, &no_value)
+    }
+
+    fn join_state(span: &Span, condition: Expr, yes: State, no: State) -> Option<State> {
         if yes.values.keys().collect::<HashSet<_>>() != no.values.keys().collect::<HashSet<_>>() {
             return None;
         }
-        self.state.values = yes
+        let values = yes
             .values
             .iter()
             .map(|(name, left)| {
@@ -611,9 +610,9 @@ impl Trace<'_> {
                 ))
             })
             .collect::<Option<_>>()?;
-        self.state.written.extend(yes.written);
-        self.state.written.extend(no.written);
-        Self::join_value(span, condition, &yes_value, &no_value)
+        let mut written = yes.written;
+        written.extend(no.written);
+        Some(State { values, written })
     }
 
     fn join_value(span: &Span, condition: Expr, yes: &Value, no: &Value) -> Option<Value> {

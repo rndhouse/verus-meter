@@ -13,6 +13,7 @@ mod element_transfers;
 mod elements;
 mod growth;
 mod heap;
+mod helper_control;
 mod inference;
 mod integers;
 mod lifetimes;

@@ -263,6 +263,14 @@ caller's individual allocations, preserving child reservations and extraction
 credits through nested helpers. This requires no additional contract syntax.
 The structural traversal handles fixed children and runtime children separately,
 so supported ownership shapes compose without rules for each nesting combination.
+Descriptions also cover by-value optional matches and two collection loop forms:
+counted loops appending one child with an iteration-independent footprint, and
+loops popping from the end until a length limit is reached. Repeated regions keep
+the complete nested child metadata; retaining a prefix releases removed children
+while preserving the survivors' reservations. Loop bounds must remain stable,
+and mutations in each iteration must be unconditional. Existing callee peak
+budgets still cover temporary allocations and buffer replacement during the call.
+See [helper collections](../../examples/resource/memory/vectors/helper_collections.rs).
 
 Helpers whose control flow or value dependencies cannot be represented by a
 finite ownership description still expose conservative aggregate byte bounds.

@@ -91,6 +91,9 @@ path components name fixed children; nonnegative components name runtime indices
 Verified [forest algebra](../../source/vstd/std_specs/memory.rs) justifies selection,
 partition, composition, and removal with reindexing. Structural serialization and
 restoration recurse over supported types, independently of nesting combinations.
+Recursive forest selectors, costs and descriptor lookup stay opaque at use
+sites. Emit the algebra's proved facts explicitly to keep nested queries from
+expanding into large families of sequence indices.
 
 [Ownership templates](../../source/vir/src/resource/memory/transfer/mod.rs) describe
 finite physical-forest transformations separately from frame-local charges.
@@ -103,6 +106,12 @@ minima; snapshot a count before its source becomes inaccessible, such as when
 moving beneath an optional payload. Unsupported effects retain the aggregate
 fallback. Commit borrowed effects into existing proof-state IDs so
 branch joins and loop invariants observe the updated allocations.
+By-value optional patterns join parametric branch states. Collection loop
+summaries interpret a representative iteration and require one unconditional
+persistent append or pop. A fresh iteration symbol rejects index-dependent
+footprints; stable bounds and isolated effects justify repetition or prefix
+retention over complete child forests. Reservation lower bounds remain separate
+from the conservative append-only backing-byte upper bound.
 
 [Indexed projections](../../source/vir/src/resource/memory/projections.rs) loan a
 selected footprint from a precise collection and return its final descriptors.

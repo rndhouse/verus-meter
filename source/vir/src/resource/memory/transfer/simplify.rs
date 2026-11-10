@@ -39,6 +39,8 @@ fn rootless(value: &Expr) -> bool {
     empty(value)
         || call(value, "runtime").is_some()
         || call(value, "descendants").is_some()
+        || call(value, "repeat").is_some()
+        || call(value, "take_children").is_some()
         || call(value, "prefix")
             .is_some_and(|args| path(&args[1]).is_some_and(|path| !path.is_empty()))
         || call(value, "add").is_some_and(|args| rootless(&args[0]) && rootless(&args[1]))
@@ -182,6 +184,71 @@ fn node(value: &Expr) -> Expr {
             }
         }
     }
+    if let Some(args) = call(value, "take_children") {
+        let memory = &args[0];
+        let length = &args[1];
+        let apply = |memory| {
+            expr::operation(
+                span,
+                "take_children",
+                vec![memory, length.clone()],
+                expr::memory_type(),
+            )
+        };
+        if empty(memory) {
+            return memory.clone();
+        }
+        // Prefix retention counts only nonnegative runtime indices. Keep the
+        // conditional theorem for symbolic starts in the proof algebra.
+        if let Some(parts) =
+            call(memory, "repeat").filter(|parts| contracts::constant(&parts[1]).is_some())
+        {
+            let count = contracts::minimum(
+                span,
+                parts[2].clone(),
+                contracts::maximum(
+                    span,
+                    expr::integer(span, 0),
+                    contracts::subtract(span, length.clone(), parts[1].clone()),
+                ),
+            );
+            return simplify(&expr::operation(
+                span,
+                "repeat",
+                vec![parts[0].clone(), parts[1].clone(), count],
+                expr::memory_type(),
+            ));
+        }
+        if let Some(parts) = call(memory, "add") {
+            return simplify(&expr::add(span, apply(parts[0].clone()), apply(parts[1].clone())));
+        }
+        if let Some(parts) = call(memory, "push") {
+            if call(&parts[1], "allocated").is_some_and(|record| empty(&record[0])) {
+                return simplify(&apply(parts[0].clone()));
+            }
+        }
+        if let Some(parts) = call(memory, "prefix") {
+            if let Some(prefix) = path(&parts[1]) {
+                if let Some(slot) = prefix.first() {
+                    let conditions = vec![
+                        crate::ast_util::mk_ineq(
+                            span,
+                            &expr::integer(span, 0),
+                            slot,
+                            InequalityOp::Le,
+                        ),
+                        crate::ast_util::mk_ineq(span, slot, length, InequalityOp::Lt),
+                    ];
+                    return simplify(&super::choice(
+                        span,
+                        crate::ast_util::conjoin(span, &conditions),
+                        memory.clone(),
+                        expr::empty(span, expr::record_type()),
+                    ));
+                }
+            }
+        }
+    }
     for (operation, cutting) in [("subtree", false), ("without", true)] {
         let Some(args) = call(value, operation) else {
             continue;
@@ -204,6 +271,43 @@ fn node(value: &Expr) -> Expr {
                 expr::subtree(span, memory, selected.clone())
             }
         };
+        if !cutting && selected_path.len() == 1 {
+            let index = &selected_path[0];
+            if let Some(parts) = call(memory, "repeat") {
+                let conditions = vec![
+                    crate::ast_util::mk_ineq(span, &parts[1], index, InequalityOp::Le),
+                    crate::ast_util::mk_ineq(
+                        span,
+                        index,
+                        &contracts::add(span, parts[1].clone(), parts[2].clone()),
+                        InequalityOp::Lt,
+                    ),
+                ];
+                return simplify(&super::choice(
+                    span,
+                    crate::ast_util::conjoin(span, &conditions),
+                    parts[0].clone(),
+                    expr::empty(span, expr::record_type()),
+                ));
+            }
+            if let Some(parts) = call(memory, "take_children") {
+                let conditions = vec![
+                    crate::ast_util::mk_ineq(
+                        span,
+                        &expr::integer(span, 0),
+                        index,
+                        InequalityOp::Le,
+                    ),
+                    crate::ast_util::mk_ineq(span, index, &parts[1], InequalityOp::Lt),
+                ];
+                return simplify(&super::choice(
+                    span,
+                    crate::ast_util::conjoin(span, &conditions),
+                    expr::subtree(span, parts[0].clone(), selected.clone()),
+                    expr::empty(span, expr::record_type()),
+                ));
+            }
+        }
         if let Some(parts) = call(memory, "add") {
             return simplify(&expr::add(span, apply(parts[0].clone()), apply(parts[1].clone())));
         }

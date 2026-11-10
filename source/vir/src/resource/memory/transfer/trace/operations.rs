@@ -80,12 +80,14 @@ impl Trace<'_> {
                 Some(Value::Owner(Node { typ: value.typ.clone(), memory, minima }))
             }
             Some(ResourceIntrinsic::VecLen) => {
-                let (_, node) = self.receiver(args.first()?)?;
+                let (location, node) = self.receiver(args.first()?)?;
+                self.effects.push(loops::Effect::Read(location.0));
                 Some(Value::Scalar(property(span, node.memory, "length")))
             }
             Some(ResourceIntrinsic::VecPush) => {
                 let (location, mut node) = self.receiver(args.first()?)?;
                 let child = self.value(args.get(1)?)?;
+                let appended = child.clone();
                 let length = property(span, node.memory.clone(), "length");
                 let (capacity, bytes, _) = growth::push_transition(
                     span,
@@ -117,7 +119,12 @@ impl Trace<'_> {
                     contracts::add(span, length, expr::integer(span, 1)),
                     self.layouts.owning_elements(&node.typ),
                 );
+                let typ = node.typ.clone();
                 self.set(span, &location, node)?;
+                if self.branch_depth == 0 {
+                    self.effects.pop();
+                    self.effects.push(loops::Effect::Append(location, typ, appended));
+                }
                 Some(Value::Unit)
             }
             Some(ResourceIntrinsic::VecPop | ResourceIntrinsic::VecRemove) => {
@@ -162,7 +169,12 @@ impl Trace<'_> {
                     })
                     .collect();
                 node.memory = next;
+                let typ = node.typ.clone();
                 self.set(span, &location, node)?;
+                if optional && self.branch_depth == 0 {
+                    self.effects.pop();
+                    self.effects.push(loops::Effect::Pop(location, typ));
+                }
                 if !self.layouts.owner(&value.typ) {
                     return Some(Value::Unknown);
                 }

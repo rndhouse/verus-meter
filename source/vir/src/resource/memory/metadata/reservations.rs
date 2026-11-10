@@ -446,22 +446,34 @@ impl Analysis<'_> {
                 mk_ineq(span, &index, &length, InequalityOp::Lt),
             ],
         );
+        // One ownership class can cross several runtime collections. Quantify
+        // its indices together and trigger on the complete leaf selection;
+        // instantiating an outer quantifier merely to introduce another
+        // quantified metadata view creates excessive matching in deep loops.
+        let mut binders = vec![Arc::new(VarBinderX { name, a: int_typ() })];
+        let (body, triggers) = if let ExprX::Quant(quantifier, inner_binders, inner) = &body.x {
+            if *quantifier == crate::ast_util::QUANT_FORALL {
+                if let ExprX::WithTriggers { triggers, body } = &inner.x {
+                    binders.extend(inner_binders.iter().cloned());
+                    (body.clone(), triggers.clone())
+                } else {
+                    (body.clone(), Arc::new(vec![Arc::new(vec![memory])]))
+                }
+            } else {
+                (body.clone(), Arc::new(vec![Arc::new(vec![memory])]))
+            }
+        } else {
+            (body.clone(), Arc::new(vec![Arc::new(vec![memory])]))
+        };
         let body = SpannedTyped::new(
             span,
             &bool_typ(),
-            ExprX::WithTriggers {
-                triggers: Arc::new(vec![Arc::new(vec![memory])]),
-                body: mk_implies(span, &range, &body),
-            },
+            ExprX::WithTriggers { triggers, body: mk_implies(span, &range, &body) },
         );
         Ok(SpannedTyped::new(
             span,
             &bool_typ(),
-            ExprX::Quant(
-                crate::ast_util::QUANT_FORALL,
-                Arc::new(vec![Arc::new(VarBinderX { name, a: int_typ() })]),
-                body,
-            ),
+            ExprX::Quant(crate::ast_util::QUANT_FORALL, Arc::new(binders), body),
         ))
     }
 }

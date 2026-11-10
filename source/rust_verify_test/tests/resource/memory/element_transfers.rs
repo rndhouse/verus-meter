@@ -74,7 +74,7 @@ fn matching_an_extracted_owner_transfers_the_payload() {
 fn opaque_borrowed_extraction_keeps_original_storage_alive() {
     let code = "fn take(v: &mut Vec<Box<[u8;32]>>) -> (r: Option<Box<[u8;32]>>)
         requires old(v).len() == 1, ensures r.is_some(), resources peak(memory) <= 17 {
-            while v.len() > 1 invariant v.len() >= 1, decreases v.len(), { v.pop(); }
+            while v.len() > 1 invariant v.len() >= 1, decreases v.len(), { v.remove(0); }
             v.pop()
         }
         fn f() resources peak(memory) <= BOUND {
@@ -91,7 +91,7 @@ fn opaque_borrowed_extraction_keeps_original_storage_alive() {
 fn opaque_owned_extraction_transfers_input_dependencies() {
     let code = "fn take(mut v: Vec<Box<[u8;32]>>) -> (r: Box<[u8;32]>)
         requires v.len() == 1, resources peak(memory) <= 40 {
-            while v.len() > 1 invariant v.len() >= 1, decreases v.len(), { v.pop(); }
+            while v.len() > 1 invariant v.len() >= 1, decreases v.len(), { v.remove(0); }
             v.pop().unwrap()
         }
         fn f() resources peak(memory) <= BOUND {
@@ -194,7 +194,7 @@ fn a_fill_loop_and_a_drain_loop_share_the_same_footprints() {
 fn opaque_dependencies_survive_branches_and_reinsertion() {
     let code = "fn take(v: &mut Vec<Box<[u8;32]>>) -> (r: Option<Box<[u8;32]>>)
         requires old(v).len() == 1, ensures r.is_some(), resources peak(memory) <= 17 {
-            while v.len() > 1 invariant v.len() >= 1, decreases v.len(), { v.pop(); }
+            while v.len() > 1 invariant v.len() >= 1, decreases v.len(), { v.remove(0); }
             v.pop()
         }
         fn relay(flag: bool, v: &mut Vec<Box<[u8;32]>>) -> Box<[u8;32]>

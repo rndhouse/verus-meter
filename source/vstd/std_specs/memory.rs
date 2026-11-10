@@ -63,13 +63,21 @@ pub proof fn well_formed_push(memory: Seq<Record>, value: Record)
 pub broadcast proof fn cost_empty(kind: int)
     ensures #[trigger] cost(Seq::empty(), kind) == 0,
 {
+    reveal(cost);
 }
+
+/// Empty forests have no physical descriptor at any path.
+pub broadcast proof fn lookup_empty(path: Seq<int>)
+    ensures #[trigger] lookup(Seq::<Record>::empty(), path) == empty_record(path),
+{ reveal(lookup); }
 
 /// Selecting or cutting an empty forest leaves it empty.
 pub broadcast proof fn select_empty(path: Seq<int>)
     ensures #[trigger] subtree(Seq::empty(), path) == Seq::<Record>::empty(),
         without(Seq::empty(), path) == Seq::<Record>::empty(),
 {
+    reveal(subtree);
+    reveal(without);
 }
 
 /// A single runtime or fixed slot overlaps precisely the same slot.
@@ -155,6 +163,7 @@ pub broadcast group group_metadata_algebra {
     Seq::add_empty_left,
     Seq::add_empty_right,
     cost_empty,
+    lookup_empty,
     select_empty,
     singleton_prefix,
     skip_prefix,
@@ -163,6 +172,7 @@ pub broadcast group group_metadata_algebra {
     cost_add,
     cost_push,
     cost_prefix,
+    cost_repeat,
     remove_add,
     remove_prefix,
     lookup_add,
@@ -337,8 +347,12 @@ pub proof fn cost_runtime_partition(memory: Seq<Record>, kind: int)
     }
 }
 
+// Keep recursive inspection inside the algebra's proofs. Eager unfolding at
+// callers introduces large families of Seq indices after nested forest joins.
+
 /// Sum one memory kind. Inline handles belong to their enclosing
 /// source value or allocation and do not appear as additional records.
+#[verifier::opaque]
 pub open spec fn cost(memory: Seq<Record>, kind: int) -> int
     decreases memory.len(),
 {
@@ -349,6 +363,7 @@ pub open spec fn cost(memory: Seq<Record>, kind: int) -> int
 }
 
 /// Find the most recently installed descriptor at an allocation path.
+#[verifier::opaque]
 pub open spec fn lookup(memory: Seq<Record>, path: Seq<int>) -> Record
     decreases memory.len(),
 {
@@ -616,6 +631,7 @@ pub proof fn runtime_presence(memory: Seq<Record>, child: Seq<Record>, parent: S
 }
 
 /// Place an owner's complete footprint under a parent path.
+#[verifier::opaque]
 pub open spec fn prefix(memory: Seq<Record>, path: Seq<int>) -> Seq<Record>
     decreases memory.len(),
 {
@@ -627,6 +643,7 @@ pub open spec fn prefix(memory: Seq<Record>, path: Seq<int>) -> Seq<Record>
 }
 
 /// Select a complete subtree and make its paths relative to its new root.
+#[verifier::opaque]
 pub open spec fn subtree(memory: Seq<Record>, path: Seq<int>) -> Seq<Record>
     decreases memory.len(),
 {
@@ -639,6 +656,7 @@ pub open spec fn subtree(memory: Seq<Record>, path: Seq<int>) -> Seq<Record>
 }
 
 /// Keep the enclosing allocation and all siblings when detaching a subtree.
+#[verifier::opaque]
 pub open spec fn without(memory: Seq<Record>, path: Seq<int>) -> Seq<Record>
     decreases memory.len(),
 {
@@ -733,6 +751,175 @@ pub broadcast proof fn remove_prefix(memory: Seq<Record>, slot: int, index: int)
         if slot > index {
             assert(value.path.update(0, slot - 1) =~= seq![slot - 1] + memory.last().path);
         }
+    }
+}
+
+/// Repeated children keep their full nested forest at consecutive indices.
+/// Callers use `repeat_facts` to avoid recursively expanding a whole region.
+#[verifier::opaque]
+pub open spec fn repeat(child: Seq<Record>, start: int, count: int) -> Seq<Record>
+    decreases count,
+{
+    if count <= 0 { Seq::empty() } else {
+        repeat(child, start, count - 1) + prefix(child, seq![start + count - 1])
+    }
+}
+
+/// Quantitative views of a repeated region stay available after range cuts.
+pub broadcast proof fn cost_repeat(child: Seq<Record>, start: int, count: int, kind: int)
+    requires count >= 0,
+    ensures #[trigger] cost(repeat(child, start, count), kind) == count * cost(child, kind),
+    decreases count,
+{
+    reveal_with_fuel(repeat, 2);
+    if count > 0 {
+        cost_repeat(child, start, count - 1, kind);
+        let before = repeat(child, start, count - 1);
+        let path = seq![start + count - 1];
+        cost_prefix(child, path, kind);
+        cost_add(before, prefix(child, path), kind);
+        assert(cost(repeat(child, start, count), kind)
+            == cost(before, kind) + cost(child, kind));
+        assert((count - 1) * cost(child, kind) + cost(child, kind)
+            == count * cost(child, kind)) by (nonlinear_arith);
+        assert(cost(repeat(child, start, count), kind) == count * cost(child, kind));
+    } else {
+        cost_empty(kind);
+        assert(count * cost(child, kind) == 0) by (nonlinear_arith)
+            requires count == 0;
+    }
+}
+
+/// A repeated region has a uniform per-element footprint and exact index views.
+pub proof fn repeat_facts(child: Seq<Record>, start: int, count: int)
+    requires well_formed(child), start >= 0, count >= 0,
+    ensures well_formed(repeat(child, start, count)),
+        cost(repeat(child, start, count), 0) == count * cost(child, 0),
+        runtime(repeat(child, start, count)) == repeat(child, start, count),
+        nonruntime(repeat(child, start, count)) == Seq::<Record>::empty(),
+        descendants(repeat(child, start, count)) == repeat(child, start, count),
+        forall|index: int| #[trigger] subtree(repeat(child, start, count), seq![index]) ==
+            if start <= index < start + count { child } else { Seq::<Record>::empty() },
+    decreases count,
+{
+    reveal_with_fuel(repeat, 2);
+    cost_repeat(child, start, count, 0);
+    if count > 0 {
+        repeat_facts(child, start, count - 1);
+        let before = repeat(child, start, count - 1);
+        let path = seq![start + count - 1];
+        let next = prefix(child, path);
+        well_formed_prefix(child, path);
+        well_formed_add(before, next);
+        runtime_add(before, next);
+        runtime_prefix(child, path);
+        descendants_add(before, next);
+        descendants_prefix(child, path);
+    }
+    assert forall|index: int| #[trigger] subtree(repeat(child, start, count), seq![index]) ==
+        if start <= index < start + count { child } else { Seq::<Record>::empty() } by {
+        if count > 0 {
+            let before = repeat(child, start, count - 1);
+            let path = seq![start + count - 1];
+            select_add(before, prefix(child, path), seq![index]);
+            select_prefix(child, path, seq![index]);
+            singleton_prefix(start + count - 1, index);
+            singleton_prefix(index, start + count - 1);
+        } else { select_empty(seq![index]); }
+    }
+}
+
+/// Keep the existing runtime children before a logical end index.
+pub open spec fn take_children(memory: Seq<Record>, length: int) -> Seq<Record>
+    decreases memory.len(),
+{
+    if memory.len() == 0 { Seq::empty() } else {
+        let before = take_children(memory.drop_last(), length);
+        let value = memory.last();
+        if value.path.len() > 0 && 0 <= value.path[0] < length { before.push(value) } else { before }
+    }
+}
+
+/// Retaining a range never increases storage and preserves its child views.
+pub proof fn take_children_facts(memory: Seq<Record>, length: int)
+    requires well_formed(memory),
+    ensures well_formed(take_children(memory, length)),
+        0 <= cost(take_children(memory, length), 0) <= cost(memory, 0),
+        runtime(take_children(memory, length)) == take_children(memory, length),
+        nonruntime(take_children(memory, length)) == Seq::<Record>::empty(),
+        descendants(take_children(memory, length)) == take_children(memory, length),
+        forall|index: int| #[trigger] subtree(take_children(memory, length), seq![index]) ==
+            if 0 <= index < length { subtree(memory, seq![index]) } else { Seq::<Record>::empty() },
+    decreases memory.len(),
+{
+    reveal_with_fuel(take_children, 2);
+    reveal_with_fuel(subtree, 2);
+    reveal_with_fuel(well_formed, 2);
+    reveal_with_fuel(cost, 2);
+    if memory.len() > 0 {
+        take_children_facts(memory.drop_last(), length);
+        let before = take_children(memory.drop_last(), length);
+        let value = memory.last();
+        if value.path.len() > 0 && 0 <= value.path[0] < length {
+            assert(before.push(value).drop_last() =~= before);
+            runtime_push(before, value);
+            descendants_push(before, value);
+        }
+        assert forall|index: int| #[trigger] subtree(take_children(memory, length), seq![index]) ==
+            if 0 <= index < length { subtree(memory, seq![index]) } else { Seq::<Record>::empty() } by {
+            select_push(memory.drop_last(), value, seq![index]);
+            if value.path.len() > 0 && 0 <= value.path[0] < length {
+                select_push(before, value, seq![index]);
+            }
+            slot_prefix(index, value.path);
+        }
+    }
+}
+
+/// Range retention distributes over independently composed allocation forests.
+pub broadcast proof fn take_children_add(left: Seq<Record>, right: Seq<Record>, length: int)
+    ensures #[trigger] take_children(left + right, length) == take_children(left, length) + take_children(right, length),
+    decreases right.len(),
+{
+    reveal_with_fuel(take_children, 2);
+    if right.len() == 0 { assert(left + right =~= left); }
+    else {
+        take_children_add(left, right.drop_last(), length);
+        assert((left + right).drop_last() =~= left + right.drop_last());
+    }
+}
+
+/// A complete child is retained or released according to its runtime index.
+pub broadcast proof fn take_children_prefix(memory: Seq<Record>, path: Seq<int>, length: int)
+    requires path.len() > 0,
+    ensures #[trigger] take_children(prefix(memory, path), length) ==
+        if 0 <= path[0] < length { prefix(memory, path) } else { Seq::<Record>::empty() },
+    decreases memory.len(),
+{
+    reveal_with_fuel(take_children, 2);
+    reveal_with_fuel(prefix, 2);
+    if memory.len() > 0 {
+        take_children_prefix(memory.drop_last(), path, length);
+        let before = prefix(memory.drop_last(), path);
+        let value = Record { path: path + memory.last().path, ..memory.last() };
+        assert(before.push(value).drop_last() =~= before);
+    }
+}
+
+/// Shrinking a repeated region keeps the same complete child descriptors.
+pub broadcast proof fn take_children_repeat(child: Seq<Record>, start: int, count: int, length: int)
+    requires start >= 0, count >= 0,
+    ensures #[trigger] take_children(repeat(child, start, count), length) ==
+        repeat(child, start, if length <= start { 0 } else if length >= start + count { count } else { length - start }),
+    decreases count,
+{
+    reveal_with_fuel(repeat, 2);
+    if count > 0 {
+        let before = repeat(child, start, count - 1);
+        let path = seq![start + count - 1];
+        take_children_add(before, prefix(child, path), length);
+        take_children_prefix(child, path, length);
+        take_children_repeat(child, start, count - 1, length);
     }
 }
 
