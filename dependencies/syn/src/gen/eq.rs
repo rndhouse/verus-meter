@@ -2518,8 +2518,8 @@ impl PartialEq for crate::ResourceExpr {
                 crate::ResourceExpr::Mul(other0, _, other2),
             ) => self0 == other0 && self2 == other2,
             (
-                crate::ResourceExpr::MemSize(self0, _, self2),
-                crate::ResourceExpr::MemSize(other0, _, other2),
+                crate::ResourceExpr::Size(self0, _, self2),
+                crate::ResourceExpr::Size(other0, _, other2),
             ) => self0 == other0 && self2 == other2,
             (
                 crate::ResourceExpr::MemPeak(self0, _, self2),

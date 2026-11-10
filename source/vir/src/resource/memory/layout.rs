@@ -195,6 +195,29 @@ impl Layouts {
         self.size_inner(typ, span, &mut HashSet::new())
     }
 
+    /// Select the existing inline layout for a reference, excluding borrowed data.
+    pub(super) fn ref_size(&self, typ: &Typ, span: &Span) -> Result<u64, VirErr> {
+        if !matches!(&**typ, TypX::MutRef(_) | TypX::Decorate(TypDecoration::Ref, None, _)) {
+            return Err(crate::messages::error(
+                span,
+                "ref_size requires a reference type or binding",
+            ));
+        }
+        self.size(typ, span)
+    }
+
+    /// Select the existing inline layout for a non-reference value. Allocations
+    /// behind owning handles remain separate charges in the accounting model.
+    pub(super) fn owned_size(&self, typ: &Typ, span: &Span) -> Result<u64, VirErr> {
+        if matches!(&**typ, TypX::MutRef(_) | TypX::Decorate(TypDecoration::Ref, None, _)) {
+            return Err(crate::messages::error(
+                span,
+                "owned_size requires a non-reference type or binding; use ref_size for references",
+            ));
+        }
+        self.size(typ, span)
+    }
+
     /// A box owns a fixed value or a runtime-length sequence of supported values.
     /// Its handle and heap object are sized separately so moves do not duplicate
     /// the allocation and borrows keep backing storage charged to its owner.

@@ -138,8 +138,9 @@ impl Printer {
                 });
                 self.resource_budget(right);
             }
-            ResourceExpr::MemSize(_, _, typ) => {
-                self.word("mem_size(");
+            ResourceExpr::Size(name, _, typ) => {
+                self.ident(name);
+                self.word("(");
                 self.ty(typ);
                 self.word(")");
             }
@@ -517,7 +518,7 @@ impl Printer {
         self.outer_attrs(&expr.attrs);
         self.expr_beginning_of_line(&expr.func, needs_paren, beginning_of_line, left_fixup);
         self.word("(");
-        if matches!(&*expr.func, Expr::Path(p) if p.path.is_ident("mem_size"))
+        if matches!(&*expr.func, Expr::Path(p) if (p.path.is_ident("owned_size") || p.path.is_ident("ref_size")))
             && expr.args.len() == 1
         {
             if let Expr::Verbatim(tokens) = &expr.args[0] {
@@ -1735,7 +1736,7 @@ mod resource_tests {
     #[test]
     fn argument_specific_budget_round_trip() {
         let file = verus_syn::parse_file(
-            "fn f(flag: bool) { resources peak(memory) <= mem_size(flag) + mem_peak(module::helper(!flag, 4u32,)) { resources peak(memory) <= mem_peak(helper(false)) {} } }",
+            "fn f(flag: bool) { resources peak(memory) <= owned_size(flag) + mem_peak(module::helper(!flag, 4u32,)) { resources peak(memory) <= mem_peak(helper(false)) {} } }",
         ).unwrap();
         let pretty = crate::unparse(&file);
         let reparsed = verus_syn::parse_file(&pretty).unwrap();
@@ -1745,7 +1746,7 @@ mod resource_tests {
     #[test]
     fn conditional_budget_round_trip() {
         let file = verus_syn::parse_file(
-            "fn f() { resources peak(memory) <= mem_size(flag) + if flag { 32 } else { 16 } { let x = 1; } }",
+            "fn f() { resources peak(memory) <= owned_size(flag) + if flag { 32 } else { 16 } { let x = 1; } }",
         )
         .unwrap();
         let pretty = crate::unparse(&file);
@@ -1756,7 +1757,7 @@ mod resource_tests {
     #[test]
     fn memory_sections_keep_executable_contents() {
         let file = verus_syn::parse_file(
-            "fn f() { resources peak(memory) <= 2 * (mem_size([u32; 4]) + mem_peak(helper)) { let x = 1; resources peak(memory) <= 0 { consume(x); } } }",
+            "fn f() { resources peak(memory) <= 2 * (owned_size([u32; 4]) + mem_peak(helper)) { let x = 1; resources peak(memory) <= 0 { consume(x); } } }",
         ).unwrap();
         let pretty = crate::unparse(&file);
         let reparsed = verus_syn::parse_file(&pretty).unwrap();

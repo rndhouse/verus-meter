@@ -11,8 +11,8 @@ verus! {
 //
 // The budget covers the input, reserved result, and values tracking progress.
 spec fn collection_budget(capacity: nat) -> nat {
-    mem_size(usize) + mem_size(Vec<u32>) + capacity * mem_size(u32)
-        + mem_size([u32; 4]) + mem_size(usize)
+    owned_size(usize) + owned_size(Vec<u32>) + capacity * owned_size(u32)
+        + owned_size([u32; 4]) + owned_size(usize)
 }
 
 // Keep the positive numbers from a small input without growing the result buffer.

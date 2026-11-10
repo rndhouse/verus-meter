@@ -3198,7 +3198,7 @@ impl Hash for crate::ResourceExpr {
                 v0.hash(state);
                 v2.hash(state);
             }
-            crate::ResourceExpr::MemSize(v0, _, v2) => {
+            crate::ResourceExpr::Size(v0, _, v2) => {
                 state.write_u8(6u8);
                 v0.hash(state);
                 v2.hash(state);

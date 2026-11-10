@@ -13,7 +13,7 @@ type Buffer = Box<[u32; 4]>;
 //
 // The budget includes both the owning handle and its heap allocation.
 fn make_buffer() -> Buffer
-    resources peak(memory) <= mem_size(Buffer) + mem_size([u32; 4]),
+    resources peak(memory) <= owned_size(Buffer) + owned_size([u32; 4]),
 {
     Box::new([0u32; 4])
 }
@@ -23,7 +23,7 @@ fn make_buffer() -> Buffer
 // The caller keeps the incoming allocation charged throughout this call.
 // Moving the handle into the result transfers its charge too.
 fn hand_back(buffer: Buffer) -> Buffer
-    resources peak(memory) <= mem_size(Buffer),
+    resources peak(memory) <= owned_size(Buffer),
 {
     buffer
 }

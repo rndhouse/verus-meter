@@ -13,13 +13,13 @@ verus! {
 // The error belongs to the assertion: copying is permitted by the function's
 // contract, but the claimed peak at this point only allows one array.
 fn main()
-    resources peak(memory) <= 2 * mem_size([u32; 4]),
+    resources peak(memory) <= 2 * owned_size([u32; 4]),
 {
     let original = [1u32, 2, 3, 4];
     let copy = original;
 
     // Verus reports the violation here: the peak includes both arrays.
-    assert(peak(memory) <= mem_size(original));
+    assert(peak(memory) <= owned_size(original));
     assert(copy[0] == original[0]);
 }
 

@@ -6420,7 +6420,7 @@
             }
           }
         ],
-        "MemSize": [
+        "Size": [
           {
             "proc_macro2": "Ident"
           },

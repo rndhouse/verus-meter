@@ -14,30 +14,30 @@ verus! {
 // The function owns the original; the outer section owns a working copy; the
 // inner section owns scratch space. Each parent includes its child's allowance.
 fn main()
-    resources peak(memory) <= 3 * mem_size([u32; 4]),
+    resources peak(memory) <= 3 * owned_size([u32; 4]),
 {
     let original = [1u32, 2, 3, 4];
 
-    resources peak(memory) <= 2 * mem_size(original) {
+    resources peak(memory) <= 2 * owned_size(original) {
         // The original belongs to the function, so this section starts at zero.
         assert(peak(memory) <= 0);
         let mut copy = original;
 
-        resources peak(memory) <= mem_size(copy) {
+        resources peak(memory) <= owned_size(copy) {
             // Both existing arrays belong to enclosing scopes.
             assert(peak(memory) <= 0);
             let scratch = copy;
             copy[0] = scratch[3];
-            assert(peak(memory) <= mem_size(scratch));
+            assert(peak(memory) <= owned_size(scratch));
         }
 
         // Scratch has gone out of scope, but its allowance remains in the peak.
-        assert(peak(memory) <= 2 * mem_size(copy));
+        assert(peak(memory) <= 2 * owned_size(copy));
         assert(copy[0] == 4);
     }
 
     // Outside the sections, the checkpoint includes the original as well.
-    assert(peak(memory) <= 3 * mem_size(original));
+    assert(peak(memory) <= 3 * owned_size(original));
     assert(original[0] == 1);
 }
 

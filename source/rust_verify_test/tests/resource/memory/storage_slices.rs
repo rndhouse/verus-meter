@@ -12,7 +12,7 @@ fn insertion_sort_functional_and_resource_contracts() {
 
 #[test]
 fn insertion_sort_one_byte_short() {
-    let code = SORT_EXAMPLE.replace("mem_size(u32)", "3u64");
+    let code = SORT_EXAMPLE.replace("owned_size(u32)", "3u64");
     assert_ne!(code, SORT_EXAMPLE);
     let err = verify_one_file("insertion_sort_one_byte_short", code, &[]).unwrap_err();
     assert_vir_error_msg(err, "peak 44 bytes exceeds budget 43 bytes");

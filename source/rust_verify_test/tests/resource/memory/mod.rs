@@ -22,6 +22,7 @@ mod reachability;
 mod return_sharing;
 mod returns;
 mod sections;
+mod size_queries;
 mod spec_functions;
 mod storage;
 mod storage_budgets;

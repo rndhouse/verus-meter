@@ -19,8 +19,8 @@ struct Buffer {
 fn make(n: usize) -> (b: Box<Buffer>)
     requires n <= 4,
     ensures b.values.len() == 0, *b.marker == 42,
-    resources peak(memory) <= mem_size(n) + mem_size(Box<Buffer>) + mem_size(Buffer)
-        + mem_size(u32) + n * mem_size(u32),
+    resources peak(memory) <= owned_size(n) + owned_size(Box<Buffer>) + owned_size(Buffer)
+        + owned_size(u32) + n * owned_size(u32),
 {
     Box::new(Buffer { values: Vec::with_capacity(n), marker: Box::new(42) })
 }
@@ -28,7 +28,7 @@ fn make(n: usize) -> (b: Box<Buffer>)
 // Transfer ownership while preserving the data and its memory cost.
 fn forward(b: Box<Buffer>) -> (r: Box<Buffer>)
     ensures r == b,
-    resources peak(memory) <= mem_size(b),
+    resources peak(memory) <= owned_size(b),
 {
     b
 }
@@ -37,7 +37,7 @@ fn forward(b: Box<Buffer>) -> (r: Box<Buffer>)
 //
 // The allowance covers the saved length alongside the later byte workspace.
 fn main()
-    resources peak(memory) <= mem_size(usize) + mem_size([u8; 88]),
+    resources peak(memory) <= owned_size(usize) + owned_size([u8; 88]),
 {
     let first = make(4);
     let second = forward(first);

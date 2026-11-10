@@ -2566,8 +2566,8 @@ impl Clone for crate::ResourceExpr {
             crate::ResourceExpr::Mul(v0, v1, v2) => {
                 crate::ResourceExpr::Mul(v0.clone(), v1.clone(), v2.clone())
             }
-            crate::ResourceExpr::MemSize(v0, v1, v2) => {
-                crate::ResourceExpr::MemSize(v0.clone(), v1.clone(), v2.clone())
+            crate::ResourceExpr::Size(v0, v1, v2) => {
+                crate::ResourceExpr::Size(v0.clone(), v1.clone(), v2.clone())
             }
             crate::ResourceExpr::MemPeak(v0, v1, v2) => {
                 crate::ResourceExpr::MemPeak(v0.clone(), v1.clone(), v2.clone())

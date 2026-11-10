@@ -34,7 +34,7 @@ pub fn sort_buffer(buffer: &mut SortBuffer)
         final(buffer).ready,
         sorting::sorted_prefix(final(buffer).values@, 8),
         final(buffer).values@.to_multiset() == old(buffer).values@.to_multiset(),
-    resources peak(memory) <= mem_size(buffer) + mem_peak(sorting::insertion_sort),
+    resources peak(memory) <= ref_size(buffer) + mem_peak(sorting::insertion_sort),
 {
     // Working through a field borrow avoids a second array-sized workspace.
     sorting::insertion_sort(&mut buffer.values);
@@ -48,7 +48,7 @@ pub fn sort_buffer(buffer: &mut SortBuffer)
 // both together. The type-based query follows changes to the buffer's fields
 // and can be used before its local variable is in scope.
 pub fn sort_local_struct()
-    resources peak(memory) <= mem_size(SortBuffer) + mem_peak(sort_buffer),
+    resources peak(memory) <= owned_size(SortBuffer) + mem_peak(sort_buffer),
 {
     let mut buffer = SortBuffer {
         values: [9u32, 3, 7, 3, 0, 8, 1, 5],

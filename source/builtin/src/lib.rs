@@ -173,17 +173,35 @@ pub fn resource_quantity<T>(_value: &T) -> u64 {
     unimplemented!()
 }
 
+/// Erased marker selecting a non-reference binding's inline size.
 #[cfg(verus_keep_ghost)]
-#[rustc_diagnostic_item = "verus::verus_builtin::resource_mem_size_value"]
+#[rustc_diagnostic_item = "verus::verus_builtin::resource_owned_size_value"]
 #[verifier::spec]
-pub fn resource_mem_size_value<T: ?Sized>(_value: &T) -> u64 {
+pub fn resource_owned_size_value<T: ?Sized>(_value: &T) -> u64 {
     unimplemented!()
 }
 
+/// Erased marker selecting a non-reference type's inline size.
 #[cfg(verus_keep_ghost)]
-#[rustc_diagnostic_item = "verus::verus_builtin::resource_mem_size_type"]
+#[rustc_diagnostic_item = "verus::verus_builtin::resource_owned_size_type"]
 #[verifier::spec]
-pub fn resource_mem_size_type<T: ?Sized>() -> u64 {
+pub fn resource_owned_size_type<T: ?Sized>() -> u64 {
+    unimplemented!()
+}
+
+/// Erased marker measuring a reference binding without its borrowed data.
+#[cfg(verus_keep_ghost)]
+#[rustc_diagnostic_item = "verus::verus_builtin::resource_ref_size_value"]
+#[verifier::spec]
+pub fn resource_ref_size_value<T: ?Sized>(_value: &T) -> u64 {
+    unimplemented!()
+}
+
+/// Erased marker measuring a reference type without its borrowed data.
+#[cfg(verus_keep_ghost)]
+#[rustc_diagnostic_item = "verus::verus_builtin::resource_ref_size_type"]
+#[verifier::spec]
+pub fn resource_ref_size_type<T: ?Sized>() -> u64 {
     unimplemented!()
 }
 

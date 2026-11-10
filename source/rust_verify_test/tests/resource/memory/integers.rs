@@ -3,7 +3,7 @@ use crate::common::*;
 use crate::verify_one_file;
 
 // Each width is exercised at its exact allowance and one byte below it. This
-// checks actual charges independently of mem_size's use in contract formulas.
+// checks actual charges independently of owned_size's use in contract formulas.
 
 fn integer_cases(typ: &str, bytes: u64) {
     let code = format!(
@@ -18,7 +18,7 @@ fn integer_cases(typ: &str, bytes: u64) {
             sum -= 1;
             sum *= 2;
             assert(sum == 10 && difference == 1 && product == 6);
-            assert(peak(memory) <= 5 * mem_size({typ}));
+            assert(peak(memory) <= 5 * owned_size({typ}));
         }}
     "#
     );
@@ -28,15 +28,15 @@ fn integer_cases(typ: &str, bytes: u64) {
         r#"
         fn update(data: &mut [{typ}]) requires data.len() >= 1,
             ensures final(data)[0] == 7{typ},
-            resources peak(memory) <= mem_size(data),
+            resources peak(memory) <= ref_size(data),
         {{ data[0] = 7{typ}; }}
-        fn read(data: &[{typ}]) resources peak(memory) <= mem_size(data) {{ let _unused = (); }}
+        fn read(data: &[{typ}]) resources peak(memory) <= ref_size(data) {{ let _unused = (); }}
         fn f() resources peak(memory) <= BUDGET {{
             let mut data = [0{typ}; 3];
             update(&mut data);
             read(&data);
             assert(data[0] == 7{typ});
-            assert(peak(memory) <= mem_size([{typ}; 3]) + mem_size(&[{typ}]));
+            assert(peak(memory) <= owned_size([{typ}; 3]) + ref_size(&[{typ}]));
         }}
     "#
     );
@@ -45,14 +45,14 @@ fn integer_cases(typ: &str, bytes: u64) {
     let code = format!(
         r#"
         fn helper(value: {typ})
-            resources peak(memory) <= mem_size(value) + if value < 3{typ} {{ mem_size([{typ}; 2]) }} else {{ mem_size([{typ}; 4]) }},
+            resources peak(memory) <= owned_size(value) + if value < 3{typ} {{ owned_size([{typ}; 2]) }} else {{ owned_size([{typ}; 4]) }},
         {{
             if value < 3{typ} {{ let data = [0{typ}; 2]; }}
             else {{ let data = [0{typ}; 4]; }}
         }}
-        fn forward(value: {typ}) resources peak(memory) <= mem_size(value) + mem_peak(helper(value)) {{ helper(value); }}
+        fn forward(value: {typ}) resources peak(memory) <= owned_size(value) + mem_peak(helper(value)) {{ helper(value); }}
         fn narrowed(value: {typ}) requires value == 2{typ},
-            resources peak(memory) <= mem_size(value) + mem_peak(helper(2{typ})),
+            resources peak(memory) <= owned_size(value) + mem_peak(helper(2{typ})),
         {{ helper(value); }}
         fn f() resources peak(memory) <= BUDGET {{ forward(2{typ}); narrowed(2{typ}); }}
     "#
@@ -88,7 +88,7 @@ fn signed_literals_and_negation() {
                 let negative = [-1{typ}, -2{typ}];
                 assert(positive == 3{typ});
                 assert(minimum < negative[0]);
-                assert(peak(memory) <= 5 * mem_size({typ}));
+                assert(peak(memory) <= 5 * owned_size({typ}));
             }}
         "#
         );
@@ -99,11 +99,11 @@ fn signed_literals_and_negation() {
 test_verify_one_file! {
     #[test] negative_selector_queries_and_forwarding verus_code! {
         use vstd::prelude::*;
-        fn helper(n: i16) resources peak(memory) <= mem_size(n) + if n < -1i16 { mem_size([i16; 2]) } else { mem_size([i16; 4]) } {
+        fn helper(n: i16) resources peak(memory) <= owned_size(n) + if n < -1i16 { owned_size([i16; 2]) } else { owned_size([i16; 4]) } {
             if n < -1i16 { let scratch = [-1i16; 2]; }
             else { let scratch = [-1i16; 4]; }
         }
-        fn forward(n: i16) resources peak(memory) <= mem_size(n) + mem_peak(helper(n)) { helper(n); }
+        fn forward(n: i16) resources peak(memory) <= owned_size(n) + mem_peak(helper(n)) { helper(n); }
         fn f() resources peak(memory) <= mem_peak(forward(-2i16)) {
             forward(-2i16);
             assert(peak(memory) <= 8);
@@ -113,7 +113,7 @@ test_verify_one_file! {
 
 test_verify_one_file! {
     #[test] negative_selector_wrong_branch_rejected verus_code! {
-        fn helper(n: i64) resources peak(memory) <= mem_size(n) + if n < -1i64 { 1 } else { 2 } {}
+        fn helper(n: i64) resources peak(memory) <= owned_size(n) + if n < -1i64 { 1 } else { 2 } {}
         fn f() resources peak(memory) <= mem_peak(helper(-2i64)) { helper(0i64); }
     } => Err(err) => assert_vir_error_msg(err, "peak 10 bytes exceeds budget 9 bytes")
 }
@@ -150,7 +150,7 @@ fn mixed_integer_struct_has_no_padding() {
         struct Record { small: u8, signed: i16, wide: u128, offset: isize }
         fn f() resources peak(memory) <= BUDGET {
             let record = Record { small: 1u8, signed: -2i16, wide: 3u128, offset: -4isize };
-            assert(peak(memory) <= mem_size(Record));
+            assert(peak(memory) <= owned_size(Record));
         }
     "#,
         27,
@@ -161,7 +161,7 @@ test_verify_one_file! {
     #[test] wide_array_size_overflow_rejected verus_code! {
         use vstd::prelude::*;
         global size_of usize == 8;
-        fn f() resources peak(memory) <= mem_size([u128; 1152921504606846976]) {}
+        fn f() resources peak(memory) <= owned_size([u128; 1152921504606846976]) {}
     } => Err(err) => assert_vir_error_msg(err, "array sizes exceeding u64")
 }
 
@@ -173,7 +173,7 @@ test_verify_one_file! {
 
 test_verify_one_file! {
     #[test] mathematical_integer_storage_still_rejected verus_code! {
-        fn f() resources peak(memory) <= mem_size(int) {}
+        fn f() resources peak(memory) <= owned_size(int) {}
     } => Err(err) => assert_vir_error_msg(err, "does not support this type")
 }
 
@@ -190,7 +190,7 @@ fn integer_example() {
 test_verify_one_file! {
     #[test] wide_selector_comparisons_keep_all_bits verus_code! {
         fn helper(n: u128)
-            resources peak(memory) <= mem_size(n) + if n > 18446744073709551615u128 { 1 } else { 2 },
+            resources peak(memory) <= owned_size(n) + if n > 18446744073709551615u128 { 1 } else { 2 },
         {}
         fn f() resources peak(memory) <= mem_peak(helper(18446744073709551616u128)) {
             helper(18446744073709551616u128);

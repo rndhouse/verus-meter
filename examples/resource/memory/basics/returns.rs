@@ -14,7 +14,7 @@ type Buffer = [u32; 4];
 // Callers can rely on both the buffer's initial contents and its memory bound.
 fn make_buffer() -> (buffer: Buffer)
     ensures buffer[0] == 7,
-    resources peak(memory) <= mem_size(Buffer),
+    resources peak(memory) <= owned_size(Buffer),
 {
     [7u32; 4]
 }
@@ -27,7 +27,7 @@ fn main()
 {
     let buffer = make_buffer();
     assert(buffer[0] == 7);
-    assert(peak(memory) <= mem_size(Buffer));
+    assert(peak(memory) <= owned_size(Buffer));
 }
 
 }

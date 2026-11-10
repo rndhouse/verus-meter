@@ -15,7 +15,10 @@ pub type BudgetExpr = Arc<Spanned<BudgetExprX>>;
 #[derive(Clone, Debug, Serialize, Deserialize, ToDebugSNode)]
 pub enum BudgetExprX {
     Literal(u64),
-    MemSize(Typ),
+    /// Inline size of a non-reference value, excluding separately owned allocations.
+    OwnedSize(Typ),
+    /// Storage occupied by a reference, excluding its referent.
+    RefSize(Typ),
     Function(Fun),
     Add(BudgetExpr, BudgetExpr),
     Mul(BudgetExpr, BudgetExpr),
@@ -65,7 +68,8 @@ impl Resolver<'_> {
             }
             BudgetExprX::Quantity(_) | BudgetExprX::SpecCall(_) => Ok(u64::MAX),
             BudgetExprX::Literal(n) => Ok(*n),
-            BudgetExprX::MemSize(typ) => self.layouts.size(typ, &expr.span),
+            BudgetExprX::OwnedSize(typ) => self.layouts.owned_size(typ, &expr.span),
+            BudgetExprX::RefSize(typ) => self.layouts.ref_size(typ, &expr.span),
             BudgetExprX::Function(name) => {
                 let n = self.function(name, &expr.span)?;
                 let formula = super::contracts::function_bound(

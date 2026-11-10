@@ -119,7 +119,7 @@ test_verify_one_file! {
             assert(n == cap);
         }
         fn run(cap: usize) requires cap <= 4,
-            resources peak(memory) <= mem_size(cap) + mem_size(Vec<u32>) + cap * mem_size(u32) + 40,
+            resources peak(memory) <= owned_size(cap) + owned_size(Vec<u32>) + cap * owned_size(u32) + 40,
         {
             let mut v = Vec::<u32>::with_capacity(cap);
             fill(&mut v, cap);

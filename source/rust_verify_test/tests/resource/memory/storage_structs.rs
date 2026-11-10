@@ -18,7 +18,7 @@ fn sorting_through_struct_field() {
 
 #[test]
 fn sorting_struct_one_byte_short() {
-    let code = struct_example().replace("mem_size(SortBuffer)", "32u64");
+    let code = struct_example().replace("owned_size(SortBuffer)", "32u64");
     let err = verify_one_file("sorting_struct_one_byte_short", code, &[]).unwrap_err();
     assert_vir_error_msg(err, "peak 85 bytes exceeds budget 84 bytes");
 }
@@ -29,7 +29,7 @@ fn changed_struct_field_updates_budget() {
         .replace("pub ready: bool,", "pub ready: bool, pub extra: u32,")
         .replace("ready: false,", "ready: false, extra: 0u32,");
     verify_one_file("changed_struct_field_updates_budget", code.clone(), &[]).unwrap();
-    let frozen = code.replace("mem_size(SortBuffer)", "33u64");
+    let frozen = code.replace("owned_size(SortBuffer)", "33u64");
     let err = verify_one_file("changed_struct_field_frozen_budget", frozen, &[]).unwrap_err();
     assert_vir_error_msg(err, "peak 89 bytes exceeds budget 85 bytes");
 }

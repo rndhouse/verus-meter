@@ -181,7 +181,7 @@ fn constructor_argument_initializes_parameter() {
         "constructor_argument_initializes_parameter",
         r#"
         struct Buffer { values: [u32; 8], ready: bool }
-        fn leaf(b: Buffer) resources peak(memory) <= mem_size(b) {}
+        fn leaf(b: Buffer) resources peak(memory) <= owned_size(b) {}
         fn f() resources peak(memory) <= BUDGET {
             leaf(Buffer { values: [0u32; 8], ready: false });
         }"#,

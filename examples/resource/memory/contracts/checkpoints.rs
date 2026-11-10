@@ -12,21 +12,21 @@ verus! {
 // The whole-function contract allows both arrays. The checkpoints show when
 // that allowance becomes necessary and why the peak remains after scope exit.
 fn main()
-    resources peak(memory) <= 2 * mem_size([u32; 4]),
+    resources peak(memory) <= 2 * owned_size([u32; 4]),
 {
     let original = [1u32, 2, 3, 4];
-    assert(peak(memory) <= mem_size(original));
+    assert(peak(memory) <= owned_size(original));
 
     {
         let mut copy = original;
         copy[0] = 9;
-        assert(peak(memory) <= mem_size(original) + mem_size(copy));
+        assert(peak(memory) <= owned_size(original) + owned_size(copy));
         assert(copy[0] == 9);
     }
 
     // Only the original remains live; the earlier peak still includes the copy.
-    assert(current(memory) <= mem_size(original));
-    assert(peak(memory) <= 2 * mem_size(original));
+    assert(current(memory) <= owned_size(original));
+    assert(peak(memory) <= 2 * owned_size(original));
     assert(original[0] == 1);
 }
 

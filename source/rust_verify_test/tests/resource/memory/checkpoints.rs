@@ -3,7 +3,7 @@ use crate::verify_one_file;
 
 test_verify_one_file! {
     #[test] runtime_checkpoint_bound_is_rejected verus_code! {
-        fn f(n: u64) resources peak(memory) <= mem_size(n) {
+        fn f(n: u64) resources peak(memory) <= owned_size(n) {
             assert(peak(memory) <= n);
         }
     } => Err(err) => assert_vir_error_msg(err, "immutable Boolean or native integer input parameters")
@@ -13,16 +13,16 @@ test_verify_one_file! {
     #[test] impl_parameters_in_checkpoints_and_sections verus_code! {
         struct Worker {}
         impl Worker {
-            fn associated(n: u32) resources peak(memory) <= 2 * mem_size(n) {
-                assert(peak(memory) <= mem_size(n));
-                resources peak(memory) <= mem_size(n) {
+            fn associated(n: u32) resources peak(memory) <= 2 * owned_size(n) {
+                assert(peak(memory) <= owned_size(n));
+                resources peak(memory) <= owned_size(n) {
                     let copy = n;
-                    assert(peak(memory) <= mem_size(copy));
+                    assert(peak(memory) <= owned_size(copy));
                 }
-                assert(peak(memory) <= 2 * mem_size(n));
+                assert(peak(memory) <= 2 * owned_size(n));
             }
-            fn method(&self, n: u32) resources peak(memory) <= mem_size(&Worker) + mem_size(n) {
-                assert(peak(memory) <= mem_size(&Worker) + mem_size(n));
+            fn method(&self, n: u32) resources peak(memory) <= ref_size(&Worker) + owned_size(n) {
+                assert(peak(memory) <= ref_size(&Worker) + owned_size(n));
             }
         }
     } => Ok(())
@@ -34,7 +34,7 @@ test_verify_one_file! {
         impl Worker {
             fn work(n: u8) resources peak(memory) <= 5 {
                 let extra = 0u32;
-                assert(peak(memory) <= mem_size(n));
+                assert(peak(memory) <= owned_size(n));
             }
         }
     } => Err(err) => assert_vir_error_msg(err, "peak 5 bytes exceeds bound 1 bytes")
@@ -44,18 +44,18 @@ test_verify_one_file! {
     #[test] impl_resource_bindings_are_scoped verus_code! {
         use vstd::prelude::*;
         type Buffer = [u8; 16];
-        fn outer(Buffer: u32) resources peak(memory) <= mem_size(Buffer) {
+        fn outer(Buffer: u32) resources peak(memory) <= owned_size(Buffer) {
             struct Worker {}
             impl Worker {
-                fn with_parameter(Buffer: u32) resources peak(memory) <= mem_size(Buffer) {
-                    assert(peak(memory) <= mem_size(Buffer));
+                fn with_parameter(Buffer: u32) resources peak(memory) <= owned_size(Buffer) {
+                    assert(peak(memory) <= owned_size(Buffer));
                 }
-                fn without_parameter() resources peak(memory) <= mem_size(Buffer) {
+                fn without_parameter() resources peak(memory) <= owned_size(Buffer) {
                     let data = [0u8; 16];
-                    assert(peak(memory) <= mem_size(Buffer));
+                    assert(peak(memory) <= owned_size(Buffer));
                 }
             }
-            assert(peak(memory) <= mem_size(Buffer));
+            assert(peak(memory) <= owned_size(Buffer));
         }
     } => Ok(())
 }
@@ -63,9 +63,9 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] current_function_calls_remain_logical_assertions verus_code! {
         spec fn current(x: u32) -> u32 { x }
-        fn f(x: u32) resources peak(memory) <= mem_size(x) {
+        fn f(x: u32) resources peak(memory) <= owned_size(x) {
             assert(current(x) == x);
-            assert(peak(memory) <= mem_size(x));
+            assert(peak(memory) <= owned_size(x));
         }
     } => Ok(())
 }
@@ -102,7 +102,7 @@ test_verify_one_file! {
         use vstd::prelude::*;
         fn f() resources peak(memory) <= 260 {
             let first = 0u32;
-            assert(peak(memory) <= mem_size(first));
+            assert(peak(memory) <= owned_size(first));
             let later = [0u32; 64];
         }
     } => Ok(())
@@ -147,10 +147,10 @@ test_verify_one_file! {
         fn f(condition: bool) resources peak(memory) <= 257 {
             if condition {
                 let large = [0u32; 64];
-                assert(peak(memory) <= mem_size(condition) + mem_size(large));
+                assert(peak(memory) <= owned_size(condition) + owned_size(large));
             } else {
                 let small = 0u32;
-                assert(peak(memory) <= mem_size(condition) + mem_size(small));
+                assert(peak(memory) <= owned_size(condition) + owned_size(small));
             }
             assert(peak(memory) <= 257);
         }
@@ -175,7 +175,7 @@ test_verify_one_file! {
             while run
                 decreases if run { 1int } else { 0int },
             {
-                assert(peak(memory) <= mem_size(run));
+                assert(peak(memory) <= owned_size(run));
                 let scratch = [0u32; 4];
                 run = false;
             }
@@ -187,11 +187,11 @@ test_verify_one_file! {
     #[test] loop_peak_is_reused_and_not_reset verus_code! {
         use vstd::prelude::*;
         fn f(mut run: bool) resources peak(memory) <= 17 {
-            assert(peak(memory) <= mem_size(run));
+            assert(peak(memory) <= owned_size(run));
             while run
                 decreases if run { 1int } else { 0int },
             {
-                assert(peak(memory) <= mem_size(run) + mem_size([u32; 4]));
+                assert(peak(memory) <= owned_size(run) + owned_size([u32; 4]));
                 let scratch = [0u32; 4];
                 run = false;
             }
@@ -245,7 +245,7 @@ test_verify_one_file! {
         use vstd::prelude::*;
         fn f() resources peak(memory) <= 0 {
             let x = 0u32;
-            assert(peak(memory) <= mem_size(x));
+            assert(peak(memory) <= owned_size(x));
         }
     } => Err(err) => assert_vir_error_msg(err, "peak 4 bytes exceeds budget 0 bytes")
 }
@@ -267,9 +267,9 @@ test_verify_one_file! {
         struct Data { value: u32 }
         fn f() resources peak(memory) <= 8 {
             let data = Data { value: 5 };
-            assert(peak(memory) <= mem_size(data));
+            assert(peak(memory) <= owned_size(data));
             let moved = data;
-            assert(peak(memory) <= 2 * mem_size(moved));
+            assert(peak(memory) <= 2 * owned_size(moved));
             assert(moved.value == 5);
         }
     } => Ok(())
@@ -282,7 +282,7 @@ test_verify_one_file! {
         fn f() resources peak(memory) <= 8 {
             let data = Data { value: 5 };
             let moved = data;
-            assert(peak(memory) <= mem_size(data) + mem_size(moved));
+            assert(peak(memory) <= owned_size(data) + owned_size(moved));
         }
     } => Ok(())
 }
@@ -292,8 +292,8 @@ test_verify_one_file! {
         use vstd::prelude::*;
         struct Buffer { value: u32 }
         fn f() resources peak(memory) <= 16 {
-            { let Buffer = [0u32; 4]; assert(peak(memory) <= mem_size(Buffer)); }
-            assert(peak(memory) <= mem_size(Buffer));
+            { let Buffer = [0u32; 4]; assert(peak(memory) <= owned_size(Buffer)); }
+            assert(peak(memory) <= owned_size(Buffer));
         }
     } => Err(err) => assert_vir_error_msg(err, "peak 16 bytes exceeds bound 4 bytes")
 }
@@ -301,14 +301,14 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] checkpoint_arithmetic_overflow_is_rejected verus_code! {
         use vstd::prelude::*;
-        fn f() resources peak(memory) <= 0 { assert(peak(memory) <= 18446744073709551615u64 + mem_size(u32)); }
+        fn f() resources peak(memory) <= 0 { assert(peak(memory) <= 18446744073709551615u64 + owned_size(u32)); }
     } => Err(err) => assert_vir_error_msg(err, "memory budget arithmetic exceeds u64")
 }
 
 test_verify_one_file! {
     #[test] checkpoint_rejects_unsupported_types verus_code! {
         use vstd::prelude::*;
-        fn f() resources peak(memory) <= 0 { assert(peak(memory) <= mem_size(char)); }
+        fn f() resources peak(memory) <= 0 { assert(peak(memory) <= owned_size(char)); }
     } => Err(err) => assert_vir_error_msg(err, "resource model")
 }
 
@@ -317,7 +317,7 @@ test_verify_one_file! {
         use vstd::prelude::*;
         fn f(condition: bool) resources peak(memory) <= 17 {
             { let scratch = [0u32; 4]; }
-            if condition {} else { assert(peak(memory) <= mem_size(condition)); }
+            if condition {} else { assert(peak(memory) <= owned_size(condition)); }
         }
     } => Err(err) => assert_vir_error_msg(err, "peak 17 bytes exceeds bound 1 bytes")
 }
@@ -341,7 +341,7 @@ test_verify_one_file! {
         use vstd::prelude::*;
         fn f() resources peak(memory) <= 16 {
             let array: [u32; 4];
-            assert(peak(memory) <= mem_size(array));
+            assert(peak(memory) <= owned_size(array));
             array = [0u32; 4];
         }
     } => Ok(())

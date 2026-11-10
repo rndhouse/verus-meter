@@ -14,8 +14,8 @@ verus! {
 // workspace must fit its allowance. Increasing either array beyond that
 // allowance makes verification fail at its declaration.
 fn workspace(large: bool)
-    resources peak(memory) <= mem_size(large)
-        + if large { mem_size([u32; 8]) } else { mem_size([u32; 4]) },
+    resources peak(memory) <= owned_size(large)
+        + if large { owned_size([u32; 8]) } else { owned_size([u32; 4]) },
 {
     if large {
         let scratch = [0u32; 8];

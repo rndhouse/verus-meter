@@ -4562,8 +4562,8 @@ where
                 Box::new(f.fold_resource_expr(*_binding_2)),
             )
         }
-        crate::ResourceExpr::MemSize(_binding_0, _binding_1, _binding_2) => {
-            crate::ResourceExpr::MemSize(
+        crate::ResourceExpr::Size(_binding_0, _binding_1, _binding_2) => {
+            crate::ResourceExpr::Size(
                 f.fold_ident(_binding_0),
                 _binding_1,
                 f.fold_type(_binding_2),

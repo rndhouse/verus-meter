@@ -6,7 +6,7 @@ use crate::verify_one_file;
 fn scalar_return() {
     verifies(
         "scalar_return",
-        "fn increment(x: u32) -> (r: u32) requires x < 100, ensures r == x + 1, resources peak(memory) <= mem_size(x) + mem_size(u32) { x + 1 } fn caller() resources peak(memory) <= 8 { let result = increment(2); assert(result == 3); }",
+        "fn increment(x: u32) -> (r: u32) requires x < 100, ensures r == x + 1, resources peak(memory) <= owned_size(x) + owned_size(u32) { x + 1 } fn caller() resources peak(memory) <= 8 { let result = increment(2); assert(result == 3); }",
     );
     rejects(
         "short_scalar_return",
@@ -19,7 +19,7 @@ fn scalar_return() {
 fn array_return_shares_destination() {
     verifies(
         "array_return",
-        "fn make() -> (r: [u32; 4]) ensures r[0] == 7, resources peak(memory) <= mem_size([u32; 4]) { [7u32; 4] } fn caller() resources peak(memory) <= mem_size([u32; 4]) { let data = make(); assert(data[0] == 7); }",
+        "fn make() -> (r: [u32; 4]) ensures r[0] == 7, resources peak(memory) <= owned_size([u32; 4]) { [7u32; 4] } fn caller() resources peak(memory) <= owned_size([u32; 4]) { let data = make(); assert(data[0] == 7); }",
     );
     rejects(
         "short_array_call",
@@ -66,7 +66,7 @@ fn call_results_remain_live_for_expression() {
 fn option_return() {
     verifies(
         "option_return",
-        "fn maybe(flag: bool) -> (r: Option<u32>) ensures flag ==> r == Some(7), !flag ==> r == None::<u32>, resources peak(memory) <= mem_size(flag) + mem_size(Option<u32>) { if flag { Some(7) } else { None } } fn caller() resources peak(memory) <= 9 { let result = maybe(true); let value = result.unwrap(); assert(value == 7); }",
+        "fn maybe(flag: bool) -> (r: Option<u32>) ensures flag ==> r == Some(7), !flag ==> r == None::<u32>, resources peak(memory) <= owned_size(flag) + owned_size(Option<u32>) { if flag { Some(7) } else { None } } fn caller() resources peak(memory) <= 9 { let result = maybe(true); let value = result.unwrap(); assert(value == 7); }",
     );
 }
 
@@ -82,7 +82,7 @@ fn pop_result_can_be_used() {
 fn match_option_result() {
     verifies(
         "match_option",
-        "fn value(o: Option<u32>) -> (r: u32) ensures o == Some(7) ==> r == 7, resources peak(memory) <= mem_size(o) + 2 * mem_size(u32) { match o { Some(n) => n, None => 0 } } fn f() resources peak(memory) <= 13 { let n = value(Some(7)); assert(n == 7); }",
+        "fn value(o: Option<u32>) -> (r: u32) ensures o == Some(7) ==> r == 7, resources peak(memory) <= owned_size(o) + 2 * owned_size(u32) { match o { Some(n) => n, None => 0 } } fn f() resources peak(memory) <= 13 { let n = value(Some(7)); assert(n == 7); }",
     );
 }
 
@@ -123,7 +123,7 @@ fn result_storage_starts_when_produced() {
 fn struct_result() {
     verifies(
         "struct_result",
-        "struct Pair { n: u32, ready: bool } fn make() -> (p: Pair) ensures p.n == 7 && p.ready, resources peak(memory) <= mem_size(Pair) { Pair { n: 7, ready: true } } fn f() resources peak(memory) <= mem_peak(make) { let p = make(); assert(p.n == 7 && p.ready); }",
+        "struct Pair { n: u32, ready: bool } fn make() -> (p: Pair) ensures p.n == 7 && p.ready, resources peak(memory) <= owned_size(Pair) { Pair { n: 7, ready: true } } fn f() resources peak(memory) <= mem_peak(make) { let p = make(); assert(p.n == 7 && p.ready); }",
     );
 }
 
@@ -169,7 +169,7 @@ fn ordinary_if_and_block_results() {
 fn option_layout_and_local_construction() {
     verifies(
         "option_sizes",
-        "struct Data { n: Option<u32>, ready: bool } fn f() resources peak(memory) <= 13 { let a: Option<u32> = None; let b = Some(7u32); let c: Option<Option<()>> = Some(None); let d: Option<()> = Some(()); assert(peak(memory) <= 2 * mem_size(Option<u32>) + mem_size(Option<Option<()>>) + mem_size(Option<()>)); } fn layout() resources peak(memory) <= mem_size(Data) { let d = Data { n: Some(7), ready: true }; }",
+        "struct Data { n: Option<u32>, ready: bool } fn f() resources peak(memory) <= 13 { let a: Option<u32> = None; let b = Some(7u32); let c: Option<Option<()>> = Some(None); let d: Option<()> = Some(()); assert(peak(memory) <= 2 * owned_size(Option<u32>) + owned_size(Option<Option<()>>) + owned_size(Option<()>)); } fn layout() resources peak(memory) <= owned_size(Data) { let d = Data { n: Some(7), ready: true }; }",
     );
 }
 
@@ -194,7 +194,7 @@ fn unwrap_still_requires_some() {
 fn conditional_return_budget() {
     verifies(
         "conditional_return",
-        "fn f(flag: bool) -> u32 resources peak(memory) <= mem_size(flag) + mem_size(u32) + if flag { 4 } else { 0 } { if flag { let local = 7u32; local } else { 0 } } fn caller(flag: bool) resources peak(memory) <= mem_size(flag) + mem_peak(f(flag)) { let result = f(flag); }",
+        "fn f(flag: bool) -> u32 resources peak(memory) <= owned_size(flag) + owned_size(u32) + if flag { 4 } else { 0 } { if flag { let local = 7u32; local } else { 0 } } fn caller(flag: bool) resources peak(memory) <= owned_size(flag) + mem_peak(f(flag)) { let result = f(flag); }",
     );
 }
 
@@ -202,7 +202,7 @@ fn conditional_return_budget() {
 fn conditional_option_match() {
     verifies(
         "conditional_option_match",
-        "fn f(flag: bool, value: Option<u32>) -> u32 requires flag ==> value.is_some(), !flag ==> value.is_none(), resources peak(memory) <= mem_size(flag) + mem_size(value) + mem_size(u32) + if flag { 4 } else { 0 } { match value { Some(n) => n, None => 0 } }",
+        "fn f(flag: bool, value: Option<u32>) -> u32 requires flag ==> value.is_some(), !flag ==> value.is_none(), resources peak(memory) <= owned_size(flag) + owned_size(value) + owned_size(u32) + if flag { 4 } else { 0 } { match value { Some(n) => n, None => 0 } }",
     );
 }
 
@@ -210,7 +210,7 @@ fn conditional_option_match() {
 fn runtime_budget_return_credit() {
     verifies(
         "runtime_return",
-        "fn make(cap: usize) -> (r: u32) requires 1 <= cap <= 4, ensures r == 7, resources peak(memory) <= mem_size(cap) + mem_size(u32) + mem_size(Vec<u32>) + cap * mem_size(u32) { let mut v = Vec::<u32>::with_capacity(cap); v.push(7); v.pop().unwrap() } fn caller(cap: usize) requires 1 <= cap <= 4, resources peak(memory) <= mem_size(cap) + mem_peak(make(cap)) { let value = make(cap); assert(value == 7); }",
+        "fn make(cap: usize) -> (r: u32) requires 1 <= cap <= 4, ensures r == 7, resources peak(memory) <= owned_size(cap) + owned_size(u32) + owned_size(Vec<u32>) + cap * owned_size(u32) { let mut v = Vec::<u32>::with_capacity(cap); v.push(7); v.pop().unwrap() } fn caller(cap: usize) requires 1 <= cap <= 4, resources peak(memory) <= owned_size(cap) + mem_peak(make(cap)) { let value = make(cap); assert(value == 7); }",
     );
 }
 
@@ -337,7 +337,7 @@ fn returned_value_examples() {
 fn returned_capacity_controls_vector_allocation() {
     verifies(
         "returned_capacity",
-        "fn limit() -> (n: usize) ensures n <= 4, resources peak(memory) <= mem_size(usize) { 4 } fn f() resources peak(memory) <= 48 { let capacity = limit(); let v = Vec::<u32>::with_capacity(capacity); }",
+        "fn limit() -> (n: usize) ensures n <= 4, resources peak(memory) <= owned_size(usize) { 4 } fn f() resources peak(memory) <= 48 { let capacity = limit(); let v = Vec::<u32>::with_capacity(capacity); }",
     );
 }
 
@@ -345,6 +345,6 @@ fn returned_capacity_controls_vector_allocation() {
 fn conditional_noncopy_struct_return() {
     verifies(
         "conditional_struct_return",
-        "struct Data { n: u32, flag: bool } fn f(flag: bool) -> (r: Data) ensures r.n == 7, resources peak(memory) <= mem_size(flag) + mem_size(Data) + if flag { mem_size(Data) } else { 0 } { if flag { let local = Data { n: 7, flag: true }; local } else { Data { n: 7, flag: false } } }",
+        "struct Data { n: u32, flag: bool } fn f(flag: bool) -> (r: Data) ensures r.n == 7, resources peak(memory) <= owned_size(flag) + owned_size(Data) + if flag { owned_size(Data) } else { 0 } { if flag { let local = Data { n: 7, flag: true }; local } else { Data { n: 7, flag: false } } }",
     );
 }

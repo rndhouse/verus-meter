@@ -3,7 +3,7 @@ use crate::verify_one_file;
 
 test_verify_one_file! {
     #[test] runtime_section_bound_is_rejected verus_code! {
-        fn f(n: u64) resources peak(memory) <= mem_size(n) {
+        fn f(n: u64) resources peak(memory) <= owned_size(n) {
             resources peak(memory) <= n {}
         }
     } => Err(err) => assert_vir_error_msg(err, "immutable Boolean or native integer input parameters")
@@ -33,7 +33,7 @@ test_verify_one_file! {
         use vstd::prelude::*;
         fn f() resources peak(memory) <= 16 {
             let original = [0u32; 4];
-            resources peak(memory) <= mem_size(original) { let copy = original; }
+            resources peak(memory) <= owned_size(original) { let copy = original; }
         }
     } => Err(err) => assert_vir_error_msg(err, "memory budget exceeded: peak 32 bytes exceeds budget 16 bytes")
 }
@@ -103,7 +103,7 @@ test_verify_one_file! {
     #[test] calls_use_section_accounting verus_code! {
         use vstd::prelude::*;
         fn helper() resources peak(memory) <= 64 {}
-        fn f() resources peak(memory) <= mem_size([u32; 4]) + mem_peak(helper) {
+        fn f() resources peak(memory) <= owned_size([u32; 4]) + mem_peak(helper) {
             let original = [0u32; 4];
             resources peak(memory) <= mem_peak(helper) {
                 helper();
@@ -128,7 +128,7 @@ test_verify_one_file! {
 
 test_verify_one_file! {
     #[test] existing_data_can_be_changed_without_local_storage verus_code! {
-        fn f() resources peak(memory) <= mem_size(u32) {
+        fn f() resources peak(memory) <= owned_size(u32) {
             let mut value = 0u32;
             resources peak(memory) <= 0 { value = 5; }
             assert(value == 5);
@@ -191,9 +191,9 @@ test_verify_one_file! {
         use vstd::prelude::*;
         fn f() resources peak(memory) <= 20 {
             let value = [0u32; 4];
-            resources peak(memory) <= mem_size(value) {
+            resources peak(memory) <= owned_size(value) {
                 let value = 0u32;
-                assert(peak(memory) <= mem_size(value));
+                assert(peak(memory) <= owned_size(value));
             }
         }
     } => Err(err) => assert_vir_error_msg(err, "peak 32 bytes exceeds budget 20 bytes")

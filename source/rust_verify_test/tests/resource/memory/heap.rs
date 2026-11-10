@@ -6,7 +6,7 @@ use crate::verify_one_file;
 fn local_box() {
     exact_peak(
         "local_box",
-        r#"fn f() resources peak(memory) <= BUDGET { let data = Box::new([0u8; 16]); assert(peak(memory) <= mem_size(data) + mem_size([u8; 16])); }"#,
+        r#"fn f() resources peak(memory) <= BUDGET { let data = Box::new([0u8; 16]); assert(peak(memory) <= owned_size(data) + owned_size([u8; 16])); }"#,
         24,
     );
 }
@@ -115,7 +115,7 @@ fn zero_sized_object_tracks_ownership() {
 fn borrowed_helper_retains_backing_object() {
     exact_peak(
         "borrowed_helper_retains_backing_object",
-        r#"fn fill(data: &mut [u8; 16]) ensures final(data)[0] == 7, resources peak(memory) <= mem_size(data) { data[0] = 7; }
+        r#"fn fill(data: &mut [u8; 16]) ensures final(data)[0] == 7, resources peak(memory) <= ref_size(data) { data[0] = 7; }
 fn f() resources peak(memory) <= BUDGET { let mut data = Box::new([0u8; 16]); fill(&mut *data); assert(data[0] == 7); }"#,
         32,
     );
@@ -125,8 +125,8 @@ fn f() resources peak(memory) <= BUDGET { let mut data = Box::new([0u8; 16]); fi
 fn borrowed_slice_retains_backing_object() {
     exact_peak(
         "borrowed_slice_retains_backing_object",
-        r#"fn fill(data: &mut [u8]) requires data.len() >= 1, ensures final(data)[0] == 7, resources peak(memory) <= mem_size(data) { data[0] = 7; }
-fn read(data: &[u8]) resources peak(memory) <= mem_size(data) {}
+        r#"fn fill(data: &mut [u8]) requires data.len() >= 1, ensures final(data)[0] == 7, resources peak(memory) <= ref_size(data) { data[0] = 7; }
+fn read(data: &[u8]) resources peak(memory) <= ref_size(data) {}
 fn f() resources peak(memory) <= BUDGET { let mut data = Box::new([0u8; 16]); fill(&mut *data); read(&*data); assert(data[0] == 7); }"#,
         40,
     );
@@ -172,7 +172,7 @@ fn f() resources peak(memory) <= BUDGET { let mut parent = Box::new([0u8; 16]); 
 test_verify_one_file! {
     #[test] conditional_heap_obligations verus_code! {
         use vstd::prelude::*;
-        fn f(large: bool) resources peak(memory) <= mem_size(large) + mem_size(Box<[u8; 16]>) + if large { 16 } else { 8 } {
+        fn f(large: bool) resources peak(memory) <= owned_size(large) + owned_size(Box<[u8; 16]>) + if large { 16 } else { 8 } {
          if large { let data = Box::new([0u8; 16]); } else { let data = Box::new([0u8; 8]); }
         }
     } => Ok(())
@@ -181,7 +181,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] conditional_heap_bound_is_enforced verus_code! {
         use vstd::prelude::*;
-        fn f(large: bool) resources peak(memory) <= mem_size(large) + 8 + if large { 16 } else { 8 } {
+        fn f(large: bool) resources peak(memory) <= owned_size(large) + 8 + if large { 16 } else { 8 } {
          let data = Box::new([0u8; 16]);
         }
     } => Err(err) => assert_vir_error_msg(err, "conditional memory budget exceeded")
@@ -248,7 +248,7 @@ test_verify_one_file! {
     #[test] owning_struct_handles_have_layout verus_code! {
         use vstd::prelude::*;
         struct Owner { data: Box<[u8; 16]> }
-        fn f() resources peak(memory) <= mem_size(Owner) {}
+        fn f() resources peak(memory) <= owned_size(Owner) {}
     } => Ok(())
 }
 
@@ -367,13 +367,13 @@ test_verify_one_file! {
     #[test] heap_budgets_compose_for_actual_arguments verus_code! {
         use vstd::prelude::*;
         fn helper(large: bool)
-            resources peak(memory) <= mem_size(large) + mem_size(Box<u8>) + if large { 16 } else { 8 },
+            resources peak(memory) <= owned_size(large) + owned_size(Box<u8>) + if large { 16 } else { 8 },
         {
             if large { let data = Box::new([0u8; 16]); }
             else { let data = Box::new([0u8; 8]); }
         }
         fn caller(large: bool)
-            resources peak(memory) <= mem_size(large) + mem_size(Box<u8>) + mem_size(u8) + mem_peak(helper(large)),
+            resources peak(memory) <= owned_size(large) + owned_size(Box<u8>) + owned_size(u8) + mem_peak(helper(large)),
         {
             let retained = Box::new(0u8);
             helper(large);
@@ -385,13 +385,13 @@ test_verify_one_file! {
     #[test] heap_cannot_hide_behind_conditional_call verus_code! {
         use vstd::prelude::*;
         fn helper(large: bool)
-            resources peak(memory) <= mem_size(large) + mem_size(Box<u8>) + if large { 16 } else { 8 },
+            resources peak(memory) <= owned_size(large) + owned_size(Box<u8>) + if large { 16 } else { 8 },
         {
             if large { let data = Box::new([0u8; 16]); }
             else { let data = Box::new([0u8; 8]); }
         }
         fn caller(large: bool)
-            resources peak(memory) <= mem_size(large) + mem_peak(helper(large)),
+            resources peak(memory) <= owned_size(large) + mem_peak(helper(large)),
         {
             let retained = Box::new(0u8);
             helper(large);

@@ -18,7 +18,7 @@ fn complete_sorting_call_chain() {
 
 #[test]
 fn complete_sorting_call_chain_one_byte_short() {
-    let code = caller_example().replace("mem_size([u32; 8])", "31u64");
+    let code = caller_example().replace("owned_size([u32; 8])", "31u64");
     let err = verify_one_file("complete_sorting_call_chain_one_byte_short", code, &[]).unwrap_err();
     assert_vir_error_msg(err, "peak 76 bytes exceeds budget 75 bytes");
 }

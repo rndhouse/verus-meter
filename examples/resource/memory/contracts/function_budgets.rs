@@ -8,7 +8,7 @@ verus! {
 
 // Describe a family of reservations using one captured element size.
 spec fn reservation(bytes_per_item: nat) -> spec_fn(nat) -> nat {
-    |capacity: nat| mem_size(Vec<u32>) + bytes_per_item * capacity
+    |capacity: nat| owned_size(Vec<u32>) + bytes_per_item * capacity
 }
 
 // Collect values within a reservation chosen by the caller.
@@ -17,7 +17,7 @@ spec fn reservation(bytes_per_item: nat) -> spec_fn(nat) -> nat {
 // also counts the capacity parameter; the precondition bounds every input.
 fn collect(capacity: usize)
     requires 2 <= capacity <= 1024,
-    resources peak(memory) <= mem_size(capacity) + reservation(mem_size(u32))(capacity as nat),
+    resources peak(memory) <= owned_size(capacity) + reservation(owned_size(u32))(capacity as nat),
 {
     let mut values = Vec::<u32>::with_capacity(capacity);
     values.push(10);

@@ -5,8 +5,8 @@ test_verify_one_file! {
     #[test] value_type_and_arithmetic verus_code! {
         use vstd::prelude::*;
         fn f(x: u32, flag: bool)
-            resources peak(memory) <= mem_size(x) + mem_size(flag)
-                + mem_size([u32; 4]),
+            resources peak(memory) <= owned_size(x) + owned_size(flag)
+                + owned_size([u32; 4]),
         {
             let scratch = [0u32; 4];
         }
@@ -16,7 +16,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] noncopy_parameter_is_not_consumed verus_code! {
         struct Data { x: u32 }
-        fn f(data: Data) resources peak(memory) <= 2 * mem_size(data) {
+        fn f(data: Data) resources peak(memory) <= 2 * owned_size(data) {
             let moved = data;
         }
     } => Ok(())
@@ -25,15 +25,15 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] reference_query_excludes_backing_data verus_code! {
         struct Large { data: [u32; 100] }
-        fn f(buffer: &mut Large) resources peak(memory) <= mem_size(buffer) {}
-        fn g(buffer: &[u32]) resources peak(memory) <= mem_size(buffer) {}
+        fn f(buffer: &mut Large) resources peak(memory) <= ref_size(buffer) {}
+        fn g(buffer: &[u32]) resources peak(memory) <= ref_size(buffer) {}
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] type_query_uses_unpadded_struct_layout verus_code! {
         struct Data { x: u32, flag: bool }
-        fn f(x: Data) resources peak(memory) <= mem_size(Data) {}
+        fn f(x: Data) resources peak(memory) <= owned_size(Data) {}
     } => Ok(())
 }
 
@@ -71,7 +71,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] parameter_shadows_function verus_code! {
         fn leaf() resources peak(memory) <= 100 {}
-        fn f(leaf: u32) resources peak(memory) <= mem_size(leaf) {
+        fn f(leaf: u32) resources peak(memory) <= owned_size(leaf) {
             let x = 0u32;
         }
     } => Err(err) => assert_vir_error_msg(err, "peak 8 bytes exceeds budget 4 bytes")
@@ -112,7 +112,7 @@ test_verify_one_file! {
 
 test_verify_one_file! {
     #[test] addition_overflow verus_code! {
-        fn f() resources peak(memory) <= 18446744073709551615u64 + mem_size(u32) {}
+        fn f() resources peak(memory) <= 18446744073709551615u64 + owned_size(u32) {}
     } => Err(err) => assert_vir_error_msg(err, "memory budget arithmetic exceeds u64")
 }
 
@@ -146,7 +146,7 @@ test_verify_one_file! {
 
 test_verify_one_file! {
     #[test] unsupported_type_query_rejected verus_code! {
-        fn f() resources peak(memory) <= mem_size(char) {}
+        fn f() resources peak(memory) <= owned_size(char) {}
     } => Err(err) => assert_vir_error_msg(err, "resource model")
 }
 
@@ -156,7 +156,7 @@ test_verify_one_file! {
         proof fn f() {
             let n = verus_builtin::resource_mem_peak(&helper);
         }
-    } => Err(err) => assert_vir_error_msg(err, "mem_size and mem_peak are only allowed inside a memory clause or checkpoint")
+    } => Err(err) => assert_vir_error_msg(err, "mem_peak is only allowed inside a memory clause or checkpoint")
 }
 
 test_verify_one_file! {
@@ -165,16 +165,16 @@ test_verify_one_file! {
             pub struct Buffer { pub values: [u32; 4], pub ready: bool }
             pub type Alias = Buffer;
         }
-        fn f(buffer: data::Buffer) resources peak(memory) <= mem_size(data::Alias) {}
+        fn f(buffer: data::Buffer) resources peak(memory) <= owned_size(data::Alias) {}
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] parameter_name_takes_precedence_over_type verus_code! {
         struct Buffer { values: [u32; 4] }
-        fn f(Buffer: bool) resources peak(memory) <= mem_size(Buffer) { let extra = 0u32; }
+        fn f(Buffer: bool) resources peak(memory) <= owned_size(Buffer) { let extra = 0u32; }
         fn g(Buffer: bool, data: crate::Buffer)
-            resources peak(memory) <= mem_size(Buffer) + mem_size(crate::Buffer),
+            resources peak(memory) <= owned_size(Buffer) + owned_size(crate::Buffer),
         {}
     } => Err(err) => assert_vir_error_msg(err, "peak 5 bytes exceeds budget 1 bytes")
 }
@@ -182,27 +182,27 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] compound_type_queries verus_code! {
         fn f(array: &mut [u32; 4], slice: &[u32], owned: [u32; 3])
-            resources peak(memory) <= mem_size(&mut [u32; 4]) + mem_size(&[u32])
-                + mem_size([u32; 3]) + mem_size(()),
+            resources peak(memory) <= ref_size(&mut [u32; 4]) + ref_size(&[u32])
+                + owned_size([u32; 3]) + owned_size(()),
         {}
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] compound_query_still_requires_a_supported_type verus_code! {
-        fn f() resources peak(memory) <= mem_size([[u32; 2]; 3]) {}
+        fn f() resources peak(memory) <= owned_size([[u32; 2]; 3]) {}
     } => Err(err) => assert_vir_error_msg(err, "resource model")
 }
 
 test_verify_one_file! {
     #[test] multiplication_precedes_addition verus_code! {
-        fn f(data: [u32; 5]) resources peak(memory) <= 10 + 2 * mem_size(u32) {}
+        fn f(data: [u32; 5]) resources peak(memory) <= 10 + 2 * owned_size(u32) {}
     } => Err(err) => assert_vir_error_msg(err, "peak 20 bytes exceeds budget 18 bytes")
 }
 
 test_verify_one_file! {
     #[test] parentheses_override_precedence verus_code! {
-        fn f(data: [u32; 12]) resources peak(memory) <= (10 + 2) * mem_size(u32) {}
+        fn f(data: [u32; 12]) resources peak(memory) <= (10 + 2) * owned_size(u32) {}
     } => Ok(())
 }
 
@@ -214,9 +214,9 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] mem_size_cannot_query_function_budget verus_code! {
+    #[test] owned_size_cannot_query_function_budget verus_code! {
         fn leaf() resources peak(memory) <= 100 {}
-        fn f() resources peak(memory) <= mem_size(leaf) {}
+        fn f() resources peak(memory) <= owned_size(leaf) {}
     } => Err(err) => assert_rust_error_msg(err, "constant provided when a type was expected")
 }
 
@@ -226,7 +226,7 @@ test_verify_one_file! {
         proof fn f() {
             let n = verus_builtin::resource_mem_peak(&leaf);
         }
-    } => Err(err) => assert_vir_error_msg(err, "mem_size and mem_peak are only allowed inside a memory clause or checkpoint")
+    } => Err(err) => assert_vir_error_msg(err, "mem_peak is only allowed inside a memory clause or checkpoint")
 }
 
 test_verify_one_file! {
@@ -235,7 +235,7 @@ test_verify_one_file! {
         fn f(x: u32)
             requires mem_peak(x),
             ensures mem_peak(x),
-            resources peak(memory) <= mem_size(x),
+            resources peak(memory) <= owned_size(x),
         {}
     } => Ok(())
 }
@@ -243,7 +243,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] model_size_in_proof verus_code! {
         proof fn f() {
-            let n = mem_size(u32);
+            let n = owned_size(u32);
             assert(n == 4);
         }
     } => Ok(())

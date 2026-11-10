@@ -48,7 +48,9 @@ pub(in crate::syntax) fn lower_budget(
             let right = lower_budget(visitor, right, parameters);
             quote_spanned!(expr.span() => (#left #op #right))
         }
-        ResourceExpr::MemSize(_, _, typ) => {
+        ResourceExpr::Size(name, _, typ) => {
+            let value_marker = Ident::new(&format!("resource_{name}_value"), name.span());
+            let type_marker = Ident::new(&format!("resource_{name}_type"), name.span());
             // A simple name matching a parameter denotes its type. All other
             // arguments are Rust types, resolved by rustc (including aliases).
             let mut unwrapped = typ;
@@ -59,10 +61,10 @@ pub(in crate::syntax) fn lower_budget(
                 if path.qself.is_none()
                     && path.path.get_ident().is_some_and(|id| parameters.contains(id))
                 {
-                    return quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_mem_size_value(&#path));
+                    return quote_spanned_builtin!(builtin, expr.span() => #builtin::#value_marker(&#path));
                 }
             }
-            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_mem_size_type::<#typ>())
+            quote_spanned_builtin!(builtin, expr.span() => #builtin::#type_marker::<#typ>())
         }
         ResourceExpr::MemPeakCall(_, _, call) => {
             quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_mem_peak_call(#call))
@@ -75,7 +77,7 @@ pub(in crate::syntax) fn lower_budget(
 
 impl Visitor {
     /// Resolve type queries in specifications without evaluating their operands.
-    pub(in crate::syntax) fn handle_spec_mem_size(&mut self, expr: &mut Expr) -> bool {
+    pub(in crate::syntax) fn handle_spec_size_query(&mut self, expr: &mut Expr) -> bool {
         if self.inside_ghost == 0 {
             return false;
         }
@@ -85,7 +87,7 @@ impl Visitor {
         let Expr::Path(path) = &*call.func else {
             return false;
         };
-        if !path.path.is_ident("mem_size") {
+        if !path.path.is_ident("owned_size") && !path.path.is_ident("ref_size") {
             return false;
         }
         let span = expr.span();
@@ -114,7 +116,7 @@ impl Visitor {
             *expr = quote_verbatim!(span, attrs => ::core::compile_error!("memory sections require a verified exec function body"));
             return true;
         }
-        // Resolve mem_size names before visiting declarations in the section.
+        // Resolve size-query names before visiting declarations in the section.
         let bindings = self.resource_bindings.clone();
         let budget = lower_budget(self, &section.contract.budget, &bindings);
         self.visit_block_mut(&mut section.block);

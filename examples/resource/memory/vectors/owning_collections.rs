@@ -12,8 +12,8 @@ verus! {
 fn build(n: usize) -> (buffers: Vec<Vec<u32>>)
     requires n <= 4,
     ensures buffers.len() == n,
-    resources peak(memory) <= mem_size(n) + mem_size(Vec<Vec<u32>>) + mem_size(usize)
-        + mem_size(Vec<u32>) + n * (mem_size(Vec<u32>) + mem_size([u32; 3])),
+    resources peak(memory) <= owned_size(n) + owned_size(Vec<Vec<u32>>) + owned_size(usize)
+        + owned_size(Vec<u32>) + n * (owned_size(Vec<u32>) + owned_size([u32; 3])),
 {
     let mut buffers = Vec::<Vec<u32>>::with_capacity(n);
     let mut i = 0usize;
@@ -32,7 +32,7 @@ fn build(n: usize) -> (buffers: Vec<Vec<u32>>)
 //
 // The later byte workspace sets the allowance for the complete operation.
 fn main()
-    resources peak(memory) <= mem_size([u8; 512]),
+    resources peak(memory) <= owned_size([u8; 512]),
 {
     let buffers = build(3);
     // Making the collection fixed-length preserves the buffers it owns.

@@ -637,8 +637,10 @@ fn verus_item_to_vir<'tcx, 'a>(
                     | SpecItem::NoMethodBody
                     | SpecItem::ResourceSpecBudget
                     | SpecItem::ResourceQuantity
-                    | SpecItem::ResourceMemSizeValue
-                    | SpecItem::ResourceMemSizeType
+                    | SpecItem::ResourceRefSizeValue
+                    | SpecItem::ResourceOwnedSizeValue
+                    | SpecItem::ResourceRefSizeType
+                    | SpecItem::ResourceOwnedSizeType
                     | SpecItem::ResourceMemPeak
                     | SpecItem::ResourceMemPeakCall
                     | SpecItem::ResourceAssertCurrentMemory
@@ -946,7 +948,10 @@ fn verus_item_to_vir<'tcx, 'a>(
                         mk_expr(ExprX::ResourceAssert(budget))
                     }
                 }
-                SpecItem::ResourceMemSizeValue | SpecItem::ResourceMemSizeType => {
+                SpecItem::ResourceOwnedSizeValue
+                | SpecItem::ResourceRefSizeValue
+                | SpecItem::ResourceRefSizeType
+                | SpecItem::ResourceOwnedSizeType => {
                     record_spec_fn_pure_args_only(bctx, expr);
                     let typ = bctx.mid_ty_to_vir(expr.span, &node_substs.type_at(0))?;
                     let target = CallTarget::Fun(
@@ -958,7 +963,16 @@ fn verus_item_to_vir<'tcx, 'a>(
                             autospec: AutospecUsage::Final,
                             const_var: false,
                             assume_external_allowed: false,
-                            resource_intrinsic: Some(vir::ast::ResourceIntrinsic::MemSize),
+                            resource_intrinsic: Some(
+                                if matches!(
+                                    spec_item,
+                                    SpecItem::ResourceRefSizeType | SpecItem::ResourceRefSizeValue
+                                ) {
+                                    vir::ast::ResourceIntrinsic::RefSize
+                                } else {
+                                    vir::ast::ResourceIntrinsic::OwnedSize
+                                },
+                            ),
                         },
                     );
                     mk_expr(ExprX::Call {
@@ -973,7 +987,7 @@ fn verus_item_to_vir<'tcx, 'a>(
                 | SpecItem::ResourceMemPeak
                 | SpecItem::ResourceMemPeakCall => err_span(
                     expr.span,
-                    "mem_size and mem_peak are only allowed inside a memory clause or checkpoint",
+                    "mem_peak is only allowed inside a memory clause or checkpoint",
                 ),
                 SpecItem::NoUnwind => {
                     record_spec_fn_pure_args_only(bctx, expr);

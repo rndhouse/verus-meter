@@ -186,8 +186,14 @@ fn resolve_size_expression(expr: &Expr, layouts: &layout::Layouts) -> Result<Exp
 
 fn resolve_size_node(expr: &Expr, layouts: &layout::Layouts) -> Result<Expr, VirErr> {
     if let ExprX::Call { target: CallTarget::Fun(_, _, types, _, attrs), .. } = &expr.x {
-        if attrs.resource_intrinsic == Some(ResourceIntrinsic::MemSize) {
-            let bytes = layouts.size(&types[0], &expr.span)?;
+        if let Some(query @ (ResourceIntrinsic::OwnedSize | ResourceIntrinsic::RefSize)) =
+            attrs.resource_intrinsic
+        {
+            let bytes = match query {
+                ResourceIntrinsic::OwnedSize => layouts.owned_size(&types[0], &expr.span)?,
+                ResourceIntrinsic::RefSize => layouts.ref_size(&types[0], &expr.span)?,
+                _ => unreachable!(),
+            };
             return Ok(SpannedTyped::new(
                 &expr.span,
                 &expr.typ,

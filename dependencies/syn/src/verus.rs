@@ -248,7 +248,7 @@ ast_struct! {
 
 ast_enum! {
     /// Resource formulas, with ordinary expressions for conditional predicates.
-    /// A bare `mem_size` path may name a parameter; other arguments denote types.
+    /// A size query's bare path may name a parameter; other arguments denote types.
     pub enum ResourceExpr {
         Literal(LitInt),
         Quantity(Ident),
@@ -256,7 +256,8 @@ ast_enum! {
         Paren(token::Paren, Box<ResourceExpr>),
         Add(Box<ResourceExpr>, Token![+], Box<ResourceExpr>),
         Mul(Box<ResourceExpr>, Token![*], Box<ResourceExpr>),
-        MemSize(Ident, token::Paren, Type),
+        /// An `owned_size` or `ref_size` query, preserving its written name.
+        Size(Ident, token::Paren, Type),
         MemPeak(Ident, token::Paren, ExprPath),
         MemPeakCall(Ident, token::Paren, ExprCall),
         If(Token![if], Box<Expr>, token::Brace, Box<ResourceExpr>, Token![else], token::Brace, Box<ResourceExpr>),
@@ -1531,7 +1532,7 @@ pub mod parsing {
         let query = path.path.segments.len() == 1
             && matches!(
                 path.path.segments[0].ident.to_string().as_str(),
-                "mem_size" | "mem_peak"
+                "owned_size" | "ref_size" | "mem_peak"
             );
         if !query && ahead.peek(token::Paren) {
             let function: ExprPath = input.parse()?;
@@ -1553,19 +1554,19 @@ pub mod parsing {
             }
         }
         let name: Ident = input.parse()?;
-        if name != "mem_size" && name != "mem_peak" {
+        if name != "owned_size" && name != "ref_size" && name != "mem_peak" {
             if input.peek(token::Paren) {
                 return Err(Error::new(
                     name.span(),
-                    "expected mem_size(type/parameter) or mem_peak(function)",
+                    "expected owned_size(type/parameter), ref_size(reference), or mem_peak(function)",
                 ));
             }
             return Ok(ResourceExpr::Quantity(name));
         }
         let content;
         let paren = parenthesized!(content in input);
-        let expr = if name == "mem_size" {
-            ResourceExpr::MemSize(name, paren, content.parse()?)
+        let expr = if name == "owned_size" || name == "ref_size" {
+            ResourceExpr::Size(name, paren, content.parse()?)
         } else {
             match content.parse::<Expr>()? {
                 Expr::Path(function) => ResourceExpr::MemPeak(name, paren, function),
@@ -1578,7 +1579,7 @@ pub mod parsing {
             }
         };
         if !content.is_empty() {
-            return Err(content.error("expected a single mem_size or mem_peak argument"));
+            return Err(content.error("expected a single size or mem_peak argument"));
         }
         Ok(expr)
     }
@@ -2670,7 +2671,7 @@ mod printing {
                     op.to_tokens(tokens);
                     right.to_tokens(tokens);
                 }
-                ResourceExpr::MemSize(name, paren, typ) => {
+                ResourceExpr::Size(name, paren, typ) => {
                     name.to_tokens(tokens);
                     paren.surround(tokens, |tokens| typ.to_tokens(tokens));
                 }

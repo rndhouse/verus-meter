@@ -10,7 +10,7 @@ verus! {
 //
 // Keeping this formula separate lets other operations reuse the same allowance.
 spec fn element_bytes(capacity: nat) -> nat {
-    mem_size(u32) * capacity
+    owned_size(u32) * capacity
 }
 
 // Collect values within a reservation chosen by the caller.
@@ -19,7 +19,7 @@ spec fn element_bytes(capacity: nat) -> nat {
 // parameter and vector handle. The precondition bounds every permitted input.
 fn collect(capacity: usize)
     requires 2 <= capacity <= 1024,
-    resources peak(memory) <= mem_size(capacity) + mem_size(Vec<u32>)
+    resources peak(memory) <= owned_size(capacity) + owned_size(Vec<u32>)
         + element_bytes(capacity as nat),
 {
     let mut values = Vec::<u32>::with_capacity(capacity);

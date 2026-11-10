@@ -18,14 +18,13 @@ A simple example:
 ```rust
 // Reverse a small buffer using either a copy or a sequence of swaps.
 //
-// The caller keeps paying for the borrowed array; mem_size(values) counts
-// only the reference. The `if` lets us specify a different memory bound for
-// each reversal strategy.
+// The caller keeps paying for the borrowed array. The `if` lets us specify
+// a different memory bound for each reversal strategy.
 fn reverse(values: &mut [u32; 4], use_scratch: bool)
-    resources peak(memory) <= mem_size(values) + mem_size(use_scratch) + if use_scratch {
-        mem_size([u32; 4])
+    resources peak(memory) <= ref_size(values) + owned_size(use_scratch) + if use_scratch {
+        owned_size([u32; 4])
     } else {
-        mem_size(u32)
+        owned_size(u32)
     },
 {
     if use_scratch {
@@ -46,7 +45,7 @@ fn reverse(values: &mut [u32; 4], use_scratch: bool)
 
 // Reverse two buffers using the memory needed for just one reversal.
 fn main()
-    resources peak(memory) <= mem_size([u32; 4]) + mem_peak(reverse),
+    resources peak(memory) <= owned_size([u32; 4]) + mem_peak(reverse),
 {
     {
         let mut first = [1u32, 2, 3, 4];

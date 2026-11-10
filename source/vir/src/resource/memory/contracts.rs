@@ -274,8 +274,11 @@ pub(super) fn lower(
             return super::spec_budget::validate(&value, allowed, functions);
         }
         BudgetExprX::Literal(n) => return Ok(literal(&expr.span, *n)),
-        BudgetExprX::MemSize(typ) => {
-            return Ok(literal(&expr.span, layouts.size(typ, &expr.span)?));
+        BudgetExprX::OwnedSize(typ) => {
+            return Ok(literal(&expr.span, layouts.owned_size(typ, &expr.span)?));
+        }
+        BudgetExprX::RefSize(typ) => {
+            return Ok(literal(&expr.span, layouts.ref_size(typ, &expr.span)?));
         }
         BudgetExprX::Function(name) => {
             return Ok(literal(

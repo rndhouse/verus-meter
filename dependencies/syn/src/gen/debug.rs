@@ -3589,8 +3589,8 @@ impl Debug for crate::ResourceExpr {
                 formatter.field(v2);
                 formatter.finish()
             }
-            crate::ResourceExpr::MemSize(v0, v1, v2) => {
-                let mut formatter = formatter.debug_tuple("MemSize");
+            crate::ResourceExpr::Size(v0, v1, v2) => {
+                let mut formatter = formatter.debug_tuple("Size");
                 formatter.field(v0);
                 formatter.field(v1);
                 formatter.field(v2);

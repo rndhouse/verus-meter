@@ -110,7 +110,7 @@ pub(crate) struct Visitor {
     inside_impl: Option<Box<(Generics, Box<Type>)>>,
     // A place to put items that are emitted while visiting
     additional_items: Vec<Item>,
-    // Names visible to mem_size at a memory checkpoint.
+    // Names visible to size queries at a memory checkpoint.
     resource_bindings: Vec<Ident>,
 }
 
@@ -4580,7 +4580,7 @@ impl VisitMut for Visitor {
         self.handle_atomic_call(expr);
         self.normalize_expr_proof_note_attrs(expr);
 
-        if self.handle_spec_mem_size(expr)
+        if self.handle_spec_size_query(expr)
             || self.handle_resource_block(expr)
             || self.chain_operators(expr)
             || self.closure_quant_operators(expr)

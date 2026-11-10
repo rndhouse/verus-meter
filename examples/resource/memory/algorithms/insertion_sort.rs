@@ -72,7 +72,7 @@ pub fn insertion_sort(values: &mut [u32])
         final(values)@.len() == old(values)@.len(),
         sorted_prefix(final(values)@, final(values)@.len() as int),
         final(values)@.to_multiset() == old(values)@.to_multiset(),
-    resources peak(memory) <= mem_size(values) + 3 * mem_size(usize) + mem_size(u32),
+    resources peak(memory) <= ref_size(values) + 3 * owned_size(usize) + owned_size(u32),
 {
     let n = values.len();
     let mut i: usize = 0;

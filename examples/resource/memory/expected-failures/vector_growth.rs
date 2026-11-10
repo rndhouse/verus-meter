@@ -11,7 +11,7 @@ verus! {
 // The first push fits. The second needs additional backing storage that the
 // contract has not allowed for.
 fn main()
-    resources peak(memory) <= mem_size(Vec<u32>) + mem_size(u32),
+    resources peak(memory) <= owned_size(Vec<u32>) + owned_size(u32),
 {
     let mut values = Vec::<u32>::with_capacity(1);
     values.push(10);

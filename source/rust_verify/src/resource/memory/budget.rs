@@ -47,7 +47,7 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
         ExprKind::Call(callee, args) => {
             let callee_type = bctx.types.expr_ty(callee);
             let TyKind::FnDef(id, substitutions) = callee_type.kind() else {
-                return err_span(expr.span, "expected mem_size or mem_peak in resource clause");
+                return err_span(expr.span, "expected a size or mem_peak query in resource clause");
             };
             let substitutions = crate::rust_to_vir_base::fn_def_args(*substitutions, expr.span)?;
             let item = bctx.ctxt.get_verus_item(*id);
@@ -100,11 +100,13 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
                         BudgetExprX::FunctionCall(target, std::sync::Arc::new(arguments)),
                     ));
                 }
-                Some(VerusItem::Spec(SpecItem::ResourceMemSizeType)) if args.is_empty() => {
-                    substitutions.type_at(0)
-                }
                 Some(VerusItem::Spec(
-                    SpecItem::ResourceMemSizeValue | SpecItem::ResourceMemPeak,
+                    SpecItem::ResourceOwnedSizeType | SpecItem::ResourceRefSizeType,
+                )) if args.is_empty() => substitutions.type_at(0),
+                Some(VerusItem::Spec(
+                    SpecItem::ResourceOwnedSizeValue
+                    | SpecItem::ResourceRefSizeValue
+                    | SpecItem::ResourceMemPeak,
                 )) if args.len() == 1 => {
                     let ExprKind::AddrOf(_, _, value) = args[0].kind else {
                         return err_span(expr.span, "expected a borrowed resource query argument");
@@ -140,11 +142,20 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
                 _ => {
                     return err_span(
                         expr.span,
-                        "only mem_size and mem_peak queries are allowed in resource budgets",
+                        "only owned_size, ref_size, and mem_peak queries are allowed in resource budgets",
                     );
                 }
             };
-            BudgetExprX::MemSize(bctx.mid_ty_to_vir(expr.span, &typ)?)
+            if matches!(
+                item,
+                Some(VerusItem::Spec(
+                    SpecItem::ResourceRefSizeType | SpecItem::ResourceRefSizeValue
+                ))
+            ) {
+                BudgetExprX::RefSize(bctx.mid_ty_to_vir(expr.span, &typ)?)
+            } else {
+                BudgetExprX::OwnedSize(bctx.mid_ty_to_vir(expr.span, &typ)?)
+            }
         }
         _ => return err_span(expr.span, "unsupported resource budget expression"),
     };

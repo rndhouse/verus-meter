@@ -4578,7 +4578,7 @@ where
             skip!(_binding_1);
             v.visit_resource_expr(&**_binding_2);
         }
-        crate::ResourceExpr::MemSize(_binding_0, _binding_1, _binding_2) => {
+        crate::ResourceExpr::Size(_binding_0, _binding_1, _binding_2) => {
             v.visit_ident(_binding_0);
             skip!(_binding_1);
             v.visit_type(_binding_2);

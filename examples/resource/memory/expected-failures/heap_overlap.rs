@@ -15,7 +15,7 @@ type Buffer = [u8; 16];
 // Ending the first owner's scope or explicitly dropping it would release its
 // heap object. This example deliberately keeps it alive to expose the violation.
 fn main()
-    resources peak(memory) <= 2 * mem_size(Box<Buffer>) + mem_size(Buffer),
+    resources peak(memory) <= 2 * owned_size(Box<Buffer>) + owned_size(Buffer),
 {
     let first = Box::new([0u8; 16]);
 
