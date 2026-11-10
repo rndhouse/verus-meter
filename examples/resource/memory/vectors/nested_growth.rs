@@ -12,20 +12,23 @@ struct Buffers {
 
 // Add a value while preserving the other buffer's contents and reservation.
 //
-// The caller accounts for the existing buffers; the helper allows for growth.
+// The caller accounts for the existing buffers. The helper allows for its
+// reference and the minimum four-element buffer used when a u32 vector grows.
 fn append(buffers: &mut Buffers)
     requires old(buffers).values.len() == 0,
     ensures
         final(buffers).values@ == seq![7u32],
         final(buffers).spare@ == old(buffers).spare@,
-    resources peak(memory) <= 24,
+    resources peak(memory) <= mem_size(buffers) + mem_size([u32; 4]),
 {
     buffers.values.push(7);
 }
 
 // Use both buffers, then release them to make room for another task.
+//
+// The later byte workspace sets the allowance for the complete operation.
 fn main()
-    resources peak(memory) <= 160,
+    resources peak(memory) <= mem_size([u8; 160]),
 {
     let mut buffers = Box::new(Buffers {
         values: Vec::new(),

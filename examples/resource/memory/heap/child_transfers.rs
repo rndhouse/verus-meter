@@ -7,16 +7,22 @@ struct Buffers {
     spare: Box<[u8; 16]>,
 }
 
-// The old backing allocation remains live while the new buffer is allocated.
+// Replace a child buffer while preserving the rest of its owner.
+//
+// The caller retains the old allocation during the call; this allowance covers
+// the reference and the four-element replacement buffer.
 fn replace(buffers: &mut Buffers)
     ensures final(buffers).active.len() == 0,
-    resources peak(memory) <= 24,
+    resources peak(memory) <= mem_size(buffers) + mem_size([u32; 4]),
 {
     buffers.active = Vec::with_capacity(4);
 }
 
+// Move a child out, then release its storage before the next task.
+//
+// The later byte workspace sets the allowance for the complete operation.
 fn main()
-    resources peak(memory) <= 256,
+    resources peak(memory) <= mem_size([u8; 256]),
 {
     let mut buffers = Buffers {
         active: Vec::with_capacity(2),

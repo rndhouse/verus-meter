@@ -7,9 +7,13 @@ use vstd::prelude::*;
 verus! {
 
 // Produce a fixed-length buffer containing the selected values.
+//
+// Conversion allows for both handles, the vector's four reserved elements, and
+// the two elements copied into the boxed slice before the old buffer is released.
 fn pack() -> (b: Box<[u32]>)
     ensures b.len() == 2, b[0] == 7, b[1] == 9,
-    resources peak(memory) <= 64,
+    resources peak(memory) <= mem_size(Vec<u32>) + mem_size(Box<[u32]>)
+        + mem_size([u32; 4]) + mem_size([u32; 2]),
 {
     let mut v = Vec::<u32>::with_capacity(4);
     v.push(7);
@@ -26,8 +30,10 @@ fn forward(b: Box<[u32]>) -> (r: Box<[u32]>)
 }
 
 // Release the returned buffer before using the allowance for another task.
+//
+// The later byte workspace sets the allowance for the complete operation.
 fn main()
-    resources peak(memory) <= 96,
+    resources peak(memory) <= mem_size([u8; 96]),
 {
     let b = pack();
     let c = forward(b);

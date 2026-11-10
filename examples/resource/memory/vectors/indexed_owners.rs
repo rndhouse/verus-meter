@@ -6,18 +6,24 @@ struct Row {
     cells: Vec<u32>,
 }
 
+// Grow one row while preserving the other rows' memory allowances.
+//
 // The caller keeps paying for the row's original allocation. This helper's
-// allowance covers its reference and a possible replacement buffer.
+// allowance covers its reference and a possible replacement buffer. The
+// model's minimum u32 buffer holds four elements.
 fn add(row: &mut Row)
     requires old(row).cells.len() <= 1,
     ensures final(row).cells.len() == old(row).cells.len() + 1,
-    resources peak(memory) <= 24,
+    resources peak(memory) <= mem_size(row) + mem_size([u32; 4]),
 {
     row.cells.push(7);
 }
 
+// Update individual buffers, then reuse their storage for another task.
+//
+// Only the saved length remains live alongside the later byte workspace.
 fn main()
-    resources peak(memory) <= 256,
+    resources peak(memory) <= mem_size(usize) + mem_size([u8; 248]),
 {
     let mut rows = Vec::<Row>::with_capacity(2);
     let first = Row { cells: Vec::new() };
@@ -41,7 +47,7 @@ fn main()
     drop(frozen);
 
     // Dropping the whole collection releases all retained child charges.
-    // Only the eight-byte count remains alongside this scratch space.
+    // Only the saved count remains alongside this scratch space.
     let scratch = [0u8; 248];
 }
 

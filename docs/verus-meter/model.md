@@ -312,8 +312,8 @@ allocations. A memory section can grow its own vectors; an enclosing vector
 must still fit its existing reservation inside that section.
 
 Constructor capacities can be literals or immutable unsigned variables.
-Budgets can use inputs directly, for example `32 + 32 + 16 * n` for a loop
-building a `Vec<u32>` with at most `n` pushes. See
+Budgets can scale with inputs, using `mem_size` to express storage costs
+for the handles and elements rather than unexplained byte totals. See
 [growing vectors](../../examples/resource/memory/vectors/vector_growth.rs),
 [preallocated vectors](../../examples/resource/memory/vectors/vectors.rs), and
 [unbudgeted growth](../../examples/resource/memory/expected-failures/vector_growth.rs).

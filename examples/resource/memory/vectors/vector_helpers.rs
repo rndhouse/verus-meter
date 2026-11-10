@@ -27,6 +27,8 @@ fn count(values: &Vec<u32>) -> (n: usize)
 }
 
 // Combine helper guarantees to fill and inspect a bounded collection.
+//
+// The caller reserves space for two elements; helpers add their declared needs.
 fn build()
     resources peak(memory) <= mem_size(Vec<u32>) + 2 * mem_size(u32) + mem_peak(append),
 {

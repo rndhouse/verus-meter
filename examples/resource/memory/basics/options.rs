@@ -9,7 +9,7 @@ verus! {
 
 // Keep the last number while releasing the collection that held it.
 //
-// The allowance covers the vector, its reserved elements, and the optional
+// The allowance covers the vector, its two reserved elements, and the optional
 // result. Functional verification proves that this collection provides a number.
 fn last_number() -> (result: Option<u32>)
     ensures result == Some(20),

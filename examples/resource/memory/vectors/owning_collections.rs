@@ -6,11 +6,14 @@ verus! {
 
 // Build a collection of buffers within a budget that grows with their number.
 //
-// The allowance covers both the collection and the storage each buffer owns.
+// The fixed allowance covers the input, collection handle, loop index, and a
+// child being prepared. Each entry adds a child handle and its three-element
+// buffer; moved children remain charged through the collection.
 fn build(n: usize) -> (buffers: Vec<Vec<u32>>)
     requires n <= 4,
     ensures buffers.len() == n,
-    resources peak(memory) <= 64 + 36*n,
+    resources peak(memory) <= mem_size(n) + mem_size(Vec<Vec<u32>>) + mem_size(usize)
+        + mem_size(Vec<u32>) + n * (mem_size(Vec<u32>) + mem_size([u32; 3])),
 {
     let mut buffers = Vec::<Vec<u32>>::with_capacity(n);
     let mut i = 0usize;
@@ -26,8 +29,10 @@ fn build(n: usize) -> (buffers: Vec<Vec<u32>>)
 }
 
 // Release the whole collection before reusing its memory allowance.
+//
+// The later byte workspace sets the allowance for the complete operation.
 fn main()
-    resources peak(memory) <= 512,
+    resources peak(memory) <= mem_size([u8; 512]),
 {
     let buffers = build(3);
     // Making the collection fixed-length preserves the buffers it owns.
