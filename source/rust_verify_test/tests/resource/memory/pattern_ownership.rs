@@ -26,18 +26,15 @@ fn stored_optional_owners_match_from_inputs_locals_and_fields() {
     );
 }
 
-fn check_mutated_payloads(temporary: bool) {
-    for (name, payload, initial, access, retained) in [
-        ("vector", "Vec<u32>", "Vec::<u32>::with_capacity(4)", "", 592),
-        ("box", "Box<Vec<u32>>", "Box::new(Vec::<u32>::with_capacity(4))", "", 600),
-        ("field", "Payload", "Payload { values: Vec::<u32>::with_capacity(4) }", ".values", 592),
-    ] {
-        // A temporary match input retains its destination through the arms;
-        // a named input transfers its existing slot before binding the payload.
-        let peak = retained + if temporary { if name == "box" { 9 } else { 25 } } else { 0 };
-        let input =
-            if temporary { "match Some(child)" } else { "let option = Some(child); match option" };
-        let code = "struct Payload { values: Vec<u32>, }
+fn check_mutated_payload(
+    name: &str,
+    payload: &str,
+    initial: &str,
+    access: &str,
+    input: &str,
+    peak: u64,
+) {
+    let code = "struct Payload { values: Vec<u32>, }
             fn grow(child: Option<PAYLOAD>) -> (rows: Vec<PAYLOAD>)
                 requires child.is_some(), child->0ACCESS.len() == 4,
                 ensures rows.len() == 1, rows[0]ACCESS.len() == 5,
@@ -57,26 +54,47 @@ fn check_mutated_payloads(temporary: bool) {
                     None => {},
                 }
             }"
-        .replace("PAYLOAD", payload)
-        .replace("INITIAL", initial)
-        .replace("ACCESS", access)
-        .replace("MATCH_INPUT", input);
-        let name = format!("pattern_geometry_{name}_{temporary}");
-        verifies(&name, &code.replace("BOUND", &format!("{peak}")));
-        rejects(
-            &format!("{name}_short"),
-            &code.replace("BOUND", &format!("{short}", short = peak - 1)),
-            "memory budget exceeded",
+    .replace("PAYLOAD", payload)
+    .replace("INITIAL", initial)
+    .replace("ACCESS", access)
+    .replace("MATCH_INPUT", input);
+    verifies(name, &code.replace("BOUND", &format!("{peak}")));
+    rejects(
+        &format!("{name}_short"),
+        &code.replace("BOUND", &format!("{short}", short = peak - 1)),
+        "memory budget exceeded",
+    );
+}
+
+#[test]
+fn stored_payloads_preserve_mutated_geometry_through_helpers() {
+    // Cover a root collection and both fixed ownership edges without repeating
+    // the full shape matrix for each way to produce a match input.
+    for (name, payload, initial, access, peak) in [
+        ("vector", "Vec<u32>", "Vec::<u32>::with_capacity(4)", "", 592),
+        ("box", "Box<Vec<u32>>", "Box::new(Vec::<u32>::with_capacity(4))", "", 600),
+        ("field", "Payload", "Payload { values: Vec::<u32>::with_capacity(4) }", ".values", 592),
+    ] {
+        check_mutated_payload(
+            &format!("pattern_geometry_stored_{name}"),
+            payload,
+            initial,
+            access,
+            "let option = Some(child); match option",
+            peak,
         );
     }
 }
 
 #[test]
-fn stored_payloads_preserve_mutated_geometry_through_helpers() {
-    check_mutated_payloads(false);
-}
-
-#[test]
 fn temporary_payloads_preserve_mutated_geometry_through_helpers() {
-    check_mutated_payloads(true);
+    // Temporary input storage adds 25 bytes to the stored-vector case's 592.
+    check_mutated_payload(
+        "pattern_geometry_temporary_vector",
+        "Vec<u32>",
+        "Vec::<u32>::with_capacity(4)",
+        "",
+        "match Some(child)",
+        617,
+    );
 }

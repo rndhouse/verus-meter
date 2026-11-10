@@ -122,7 +122,7 @@ fn repeated_nested_owners_compose_with_boxed_slice_results() {
 }
 
 #[test]
-fn conditional_collection_mutations_use_aggregate_fallback() {
+fn conditional_collection_mutations_keep_children_charged() {
     let code = "fn make() -> (v: Vec<Vec<u32>>)
         ensures v.len() == 1, v[0].len() == 0,
         resources peak(memory) <= 200 {
@@ -145,8 +145,10 @@ fn conditional_collection_mutations_use_aggregate_fallback() {
         }";
     verifies("conditional_loop_fallback", &code.replace("BOUND", "800"));
     rejects(
-        "conditional_loop_no_false_reservation",
-        &code.replace("BOUND", "288"),
+        "conditional_loop_live_child",
+        // Even precise accounting needs handle 24 + outer buffer 48 + child
+        // buffer 16 + scratch 200. Do not require rejection of a sufficient bound.
+        &code.replace("BOUND", "287"),
         "memory budget exceeded",
     );
 }

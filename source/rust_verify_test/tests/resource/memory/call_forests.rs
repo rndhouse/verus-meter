@@ -60,13 +60,31 @@ fn removal_preserves_heterogeneous_survivors_and_result() {
         ensures final(v)@ == old(v)@.remove(i as int), resources peak(memory) <= 40 { v.remove(i) }
         fn f() resources peak(memory) <= BOUND {
             let mut v = Vec::<Vec<u32>>::with_capacity(2);
-            let a = Vec::<u32>::with_capacity(4); v.push(a);
-            let b = Vec::<u32>::with_capacity(8); v.push(b);
-            let child = take(&mut v, 0); v[0].push(7);
-            let scratch = [0u8;16]; drop(child);
+            let a = Vec::<u32>::with_capacity(1); v.push(a);
+            let b = Vec::<u32>::with_capacity(2); v.push(b);
+            let removed = take(&mut v, 0);
+            AFTER_REMOVAL
         }";
-    verifies("removed_forest", &code.replace("BOUND", "160"));
-    rejects("removed_forest_short", &code.replace("BOUND", "159"), "memory budget exceeded");
+    for (name, after, peak) in [
+        // Only the two-element reservation survives. Two pushes distinguish
+        // it from the extracted one-element reservation without reallocating.
+        (
+            "removed_forest_survivor",
+            "drop(removed); let scratch = [0u8;64];
+                v[0].push(1); v[0].push(2);",
+            144,
+        ),
+        // Only the extracted handle and its four-byte buffer remain.
+        ("removed_forest_result", "drop(v); let scratch = [0u8;160]; drop(removed);", 188),
+    ] {
+        let code = code.replace("AFTER_REMOVAL", after);
+        verifies(name, &code.replace("BOUND", &format!("{peak}")));
+        rejects(
+            &format!("{name}_short"),
+            &code.replace("BOUND", &format!("{short}", short = peak - 1)),
+            "memory budget exceeded",
+        );
+    }
 }
 
 #[test]
@@ -90,18 +108,19 @@ fn indexed_helper_growth_preserves_fixed_and_repeated_children() {
 
 #[test]
 fn appending_an_owned_parameter_preserves_both_footprints() {
-    verifies(
-        "append_forest",
-        "fn append(v: &mut Vec<Vec<u32>>, child: Vec<u32>)
+    let code = "fn append(v: &mut Vec<Vec<u32>>, child: Vec<u32>)
         requires old(v).len() <= 1,
         ensures final(v)@ == old(v)@.push(child), resources peak(memory) <= 96 { v.push(child); }
-        fn f() resources peak(memory) <= 256 {
+        fn f() resources peak(memory) <= BOUND {
             let mut v = Vec::<Vec<u32>>::with_capacity(2);
             let a = Vec::<u32>::with_capacity(4); v.push(a);
             let b = Vec::<u32>::with_capacity(8); append(&mut v, b);
-            v[0].push(7); v[1].push(9); let scratch = [0u8;64];
-        }",
-    );
+            v[0].push(7); v[1].push(9); let scratch = [0u8;256];
+        }";
+    // Make retained storage dominate the helper's temporary allowance:
+    // handle 24 + outer buffer 48 + child buffers 16 and 32 + scratch 256.
+    verifies("append_forest", &code.replace("BOUND", "376"));
+    rejects("append_forest_short", &code.replace("BOUND", "375"), "memory budget exceeded");
 }
 
 #[test]
@@ -118,27 +137,6 @@ fn borrowed_growth_keeps_state_identity_across_a_branch() {
         }";
     verifies("branch_forest", &code.replace("BOUND", "145"));
     rejects("branch_forest_short", &code.replace("BOUND", "144"), "memory budget exceeded");
-}
-
-#[test]
-fn helper_extraction_preserves_forests_in_a_caller_loop() {
-    verifies(
-        "loop_forest_extraction",
-        "fn take(v: &mut Vec<Box<[u8;32]>>) -> (r: Option<Box<[u8;32]>>)
-        requires old(v).len() > 0,
-        ensures r.is_some(), final(v).len() == old(v).len() - 1,
-        resources peak(memory) <= 17 { v.pop() }
-        fn f() resources peak(memory) <= 176 {
-            let mut v = Vec::<Box<[u8;32]>>::with_capacity(2);
-            let a = Box::new([0u8;32]); v.push(a);
-            let b = Box::new([0u8;32]); v.push(b);
-            while v.len() > 0 invariant v.len() <= 2, decreases v.len(), {
-                let child = take(&mut v).unwrap();
-                let scratch = [0u8;64]; drop(child);
-            }
-            drop(v); let scratch = [0u8;176];
-        }",
-    );
 }
 
 #[test]

@@ -71,7 +71,9 @@ fn matching_an_extracted_owner_transfers_the_payload() {
 }
 
 #[test]
-fn opaque_borrowed_extraction_keeps_original_storage_alive() {
+fn opaque_borrowed_extraction_keeps_the_result_charged() {
+    // The unreachable removal loop exercises aggregate fallback today. The
+    // assertions must also hold if inference later recognizes this helper.
     let code = "fn take(v: &mut Vec<Box<[u8;32]>>) -> (r: Option<Box<[u8;32]>>)
         requires old(v).len() == 1, ensures r.is_some(), resources peak(memory) <= 17 {
             while v.len() > 1 invariant v.len() >= 1, decreases v.len(), { v.remove(0); }
@@ -84,7 +86,8 @@ fn opaque_borrowed_extraction_keeps_original_storage_alive() {
             let scratch = [0u8;200]; drop(child);
         }";
     verifies("borrowed_extraction", &code.replace("BOUND", "320"));
-    rejects("borrowed_extraction_live", &code.replace("BOUND", "256"), "memory budget exceeded");
+    // The result still owns a handle (8) and payload (32) beside scratch (200).
+    rejects("borrowed_extraction_live", &code.replace("BOUND", "239"), "memory budget exceeded");
 }
 
 #[test]
@@ -100,20 +103,38 @@ fn opaque_owned_extraction_transfers_input_dependencies() {
             let child = take(v); let scratch = [0u8;200]; drop(child);
         }";
     verifies("owned_extraction", &code.replace("BOUND", "320"));
-    rejects("owned_extraction_live", &code.replace("BOUND", "256"), "memory budget exceeded");
+    // Require the real result storage, without fixing the fallback's overcharge.
+    rejects("owned_extraction_live", &code.replace("BOUND", "239"), "memory budget exceeded");
 }
 
 #[test]
 fn removing_reindexes_surviving_element_metadata() {
     let code = "fn f() resources peak(memory) <= BOUND {
         let mut v = Vec::<Vec<u32>>::with_capacity(2);
-        let a = Vec::<u32>::with_capacity(4); v.push(a);
-        let b = Vec::<u32>::with_capacity(8); v.push(b);
-        let removed = v.remove(0); v[0].push(7);
-        let scratch = [0u8;16]; drop(removed);
+        let a = Vec::<u32>::with_capacity(1); v.push(a);
+        let b = Vec::<u32>::with_capacity(2); v.push(b);
+        let removed = v.remove(0);
+        AFTER_REMOVAL
     }";
-    verifies("element_remove", &code.replace("BOUND", "160"));
-    rejects("element_remove_short", &code.replace("BOUND", "159"), "memory budget exceeded");
+    for (name, after, peak) in [
+        // Dropping the extracted owner isolates the survivor's charge and
+        // reservation: its second push must fit the original two-element buffer.
+        (
+            "element_remove_survivor",
+            "drop(removed); let scratch = [0u8;64];
+                v[0].push(1); v[0].push(2);",
+            144,
+        ),
+        ("element_remove_result", "drop(v); let scratch = [0u8;160]; drop(removed);", 188),
+    ] {
+        let code = code.replace("AFTER_REMOVAL", after);
+        verifies(name, &code.replace("BOUND", &format!("{peak}")));
+        rejects(
+            &format!("{name}_short"),
+            &code.replace("BOUND", &format!("{short}", short = peak - 1)),
+            "memory budget exceeded",
+        );
+    }
 }
 
 #[test]
@@ -210,7 +231,8 @@ fn opaque_dependencies_survive_branches_and_reinsertion() {
             let scratch = [0u8;280]; drop(child);
         }";
     verifies("captured_reinsertion", &code.replace("BOUND", "512"));
-    rejects("captured_reinsertion_live", &code.replace("BOUND", "400"), "memory budget exceeded");
+    // Even exact inference needs the result's 40 bytes beside scratch (280).
+    rejects("captured_reinsertion_live", &code.replace("BOUND", "319"), "memory budget exceeded");
 }
 
 #[test]
