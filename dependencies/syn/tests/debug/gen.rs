@@ -6305,6 +6305,9 @@ impl Debug for Lite<syn::SignatureResources> {
         if self.value.resources_token.is_some() {
             formatter.field("resources_token", &Present);
         }
+        if self.value.peak.is_some() {
+            formatter.field("peak", &Present);
+        }
         formatter.field("budget", Lite(&self.value.budget));
         if self.value.comma.is_some() {
             formatter.field("comma", &Present);
@@ -8242,6 +8245,11 @@ impl Debug for Lite<syn::token::Override> {
 impl Debug for Lite<syn::token::PathSep> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("Token![::]")
+    }
+}
+impl Debug for Lite<syn::token::Peak> {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("Token![peak]")
     }
 }
 impl Debug for Lite<syn::token::Percent> {

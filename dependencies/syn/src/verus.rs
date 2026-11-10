@@ -228,6 +228,8 @@ ast_struct! {
     pub struct SignatureResources {
         /// Present for function and section clauses; absent in checkpoint queries.
         pub resources_token: Option<Token![resources]>,
+        /// The peak query enclosing the metric in a contract; absent in checkpoints.
+        pub peak: Option<(Token![peak], token::Paren)>,
         pub token: Token![memory],
         pub le_token: Token![<=],
         pub budget: ResourceExpr,
@@ -964,7 +966,7 @@ pub mod parsing {
                 || input.peek(Token![decreases])
                 || input.peek(Token![via])
                 || input.peek(Token![when])
-                || (input.peek(Token![resources]) && input.peek2(Token![memory]))
+                || (input.peek(Token![resources]) && input.peek2(Token![peak]))
                 || input.peek(Token![no_unwind])
                 || input.peek(Token![opens_invariants])
                 || input.peek(Token![outer_mask])
@@ -981,7 +983,7 @@ pub mod parsing {
                 || input.peek2(Token![decreases])
                 || input.peek2(Token![via])
                 || input.peek2(Token![when])
-                || (input.peek2(Token![resources]) && input.peek3(Token![memory]))
+                || (input.peek2(Token![resources]) && input.peek3(Token![peak]))
                 || input.peek2(Token![no_unwind])
                 || input.peek2(Token![opens_invariants])
                 || input.peek2(Token![outer_mask])
@@ -1588,11 +1590,19 @@ pub mod parsing {
                 return Ok(None);
             }
             let resources_token = Some(input.parse()?);
-            let token = input.parse()?;
+            let peak_token = input.parse()?;
+            let metric;
+            let paren_token = parenthesized!(metric in input);
+            let token = metric.parse()?;
+            if !metric.is_empty() {
+                return Err(metric.error("expected only memory in peak(memory)"));
+            }
+            let peak = Some((peak_token, paren_token));
             let le_token = input.parse()?;
             let budget = input.parse()?;
             Ok(Some(SignatureResources {
                 resources_token,
+                peak,
                 token,
                 le_token,
                 budget,
@@ -1721,6 +1731,7 @@ pub mod parsing {
                 let current_paren = parenthesized!(metric in content);
                 let resource = SignatureResources {
                     resources_token: None,
+                    peak: None,
                     token: metric.parse()?,
                     le_token: content.parse()?,
                     budget: content.parse()?,
@@ -2687,7 +2698,12 @@ mod printing {
     impl ToTokens for SignatureResources {
         fn to_tokens(&self, tokens: &mut TokenStream) {
             self.resources_token.to_tokens(tokens);
-            self.token.to_tokens(tokens);
+            if let Some((peak, paren)) = &self.peak {
+                peak.to_tokens(tokens);
+                paren.surround(tokens, |tokens| self.token.to_tokens(tokens));
+            } else {
+                self.token.to_tokens(tokens);
+            }
             self.le_token.to_tokens(tokens);
             self.budget.to_tokens(tokens);
             self.comma.to_tokens(tokens);
@@ -3508,7 +3524,7 @@ impl parse::Parse for WithSpecOnFn {
                 || input.peek(Token![decreases])
                 || input.peek(Token![via])
                 || input.peek(Token![when])
-                || (input.peek(Token![resources]) && input.peek2(Token![memory]))
+                || (input.peek(Token![resources]) && input.peek2(Token![peak]))
                 || input.peek(Token![no_unwind])
                 || input.peek(Token![opens_invariants])
         };

@@ -6,9 +6,10 @@ space, while overlapping storage adds together.
 
 ## Writing a budget
 
-Put `resources memory <= bound` after the function's other specification clauses.
-The `resources` clause currently supports one memory bound. Functions without
-this clause receive ordinary Verus verification only.
+Put `resources peak(memory) <= bound` after the function's other specification
+clauses. The bound covers the peak over the entire function or section. The
+`resources` clause currently supports one memory bound. Functions without this
+clause receive ordinary Verus verification only.
 
 | Expression | Meaning |
 | --- | --- |
@@ -38,7 +39,7 @@ spec fn element_bytes(capacity: nat) -> nat { mem_size(u32) * capacity }
 
 fn collect(capacity: usize)
     requires capacity <= 1024,
-    resources memory <= mem_size(capacity) + mem_size(Vec<u32>)
+    resources peak(memory) <= mem_size(capacity) + mem_size(Vec<u32>)
         + element_bytes(capacity as nat),
 {
     let values = Vec::<u32>::with_capacity(capacity);
@@ -328,7 +329,7 @@ There is no capacity annotation.
 fn append(values: &mut Vec<u32>, capacity: usize, value: u32)
     requires old(values).len() < capacity,
     ensures final(values)@ == old(values)@.push(value),
-    resources memory <= mem_size(values) + mem_size(capacity) + mem_size(value),
+    resources peak(memory) <= mem_size(values) + mem_size(capacity) + mem_size(value),
 {
     values.push(value);
 }
@@ -397,10 +398,10 @@ A section gives one part of an operation its own workspace allowance:
 
 ```rust
 fn work()
-    resources memory <= 2 * mem_size([u32; 4]),
+    resources peak(memory) <= 2 * mem_size([u32; 4]),
 {
     let original = [1u32, 2, 3, 4];
-    resources memory <= mem_size(original) {
+    resources peak(memory) <= mem_size(original) {
         let copy = original;
         assert(peak(memory) <= mem_size(copy));
     }
@@ -438,7 +439,7 @@ See [checkpoints](../../examples/resource/memory/checkpoints.rs) and a
 A conditional function budget can select its allowance from the inputs:
 
 ```rust
-resources memory <= mem_size(large)
+resources peak(memory) <= mem_size(large)
     + if large { mem_size([u32; 8]) } else { mem_size([u32; 4]) },
 ```
 
@@ -509,7 +510,7 @@ its peak is computed by selecting usage at each point and then taking the maximu
 For example, successive phases using 100 local bytes and 100 heap bytes have a
 combined peak of 100, even though each individual kind peaks at 100.
 
-`resources memory` clauses bound total usage. Internally, budgets
+`resources peak(memory)` clauses bound total usage. Internally, budgets
 pair a memory selection with a byte expression, and proof obligations project the
 footprint onto that selection. Reports expose the same selection mechanism.
 Source syntax for kind-specific clauses and device allocator models are not yet

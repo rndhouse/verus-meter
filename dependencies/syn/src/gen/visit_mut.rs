@@ -4546,6 +4546,10 @@ where
     V: VisitMut + ?Sized,
 {
     skip!(node.resources_token);
+    if let Some(it) = &mut node.peak {
+        skip!((it).0);
+        skip!((it).1);
+    }
     skip!(node.token);
     skip!(node.le_token);
     v.visit_resource_expr_mut(&mut node.budget);

@@ -6787,6 +6787,18 @@
             "token": "Resources"
           }
         },
+        "peak": {
+          "option": {
+            "tuple": [
+              {
+                "token": "Peak"
+              },
+              {
+                "group": "Paren"
+              }
+            ]
+          }
+        },
         "token": {
           "token": "Memory"
         },
@@ -8357,6 +8369,7 @@
     "OuterMask": "outer_mask",
     "Override": "override",
     "PathSep": "::",
+    "Peak": "peak",
     "Percent": "%",
     "PercentEq": "%=",
     "Plus": "+",

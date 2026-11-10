@@ -10,13 +10,13 @@ struct Buffers {
 // The old backing allocation remains live while the new buffer is allocated.
 fn replace(buffers: &mut Buffers)
     ensures final(buffers).active.len() == 0,
-    resources memory <= 24,
+    resources peak(memory) <= 24,
 {
     buffers.active = Vec::with_capacity(4);
 }
 
 fn main()
-    resources memory <= 256,
+    resources peak(memory) <= 256,
 {
     let mut buffers = Buffers {
         active: Vec::with_capacity(2),

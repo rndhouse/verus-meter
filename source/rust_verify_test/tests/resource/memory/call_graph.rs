@@ -8,10 +8,10 @@ fn order_includes_calls_nested_in_arguments() {
         code_str! {
             use vstd::prelude::*;
             verus! {
-                fn caller() -> (r: u32) ensures r == 3, resources memory <= 12 { increment(seed()) }
+                fn caller() -> (r: u32) ensures r == 3, resources peak(memory) <= 12 { increment(seed()) }
                 fn increment(x: u32) -> (r: u32) requires x < u32::MAX,
-                    ensures r == x + 1, resources memory <= 8 { x + 1 }
-                fn seed() -> (r: u32) ensures r == 2, resources memory <= 4 { 2 }
+                    ensures r == x + 1, resources peak(memory) <= 8 { x + 1 }
+                fn seed() -> (r: u32) ensures r == 2, resources peak(memory) <= 4 { 2 }
             }
         }
         .to_string(),
@@ -27,8 +27,8 @@ fn body_budget_queries_are_not_executable_edges() {
         code_str! {
             use vstd::prelude::*;
             verus! {
-                fn first() resources memory <= 0 { assert(peak(memory) <= mem_peak(second)); }
-                fn second() resources memory <= 0 { assert(peak(memory) <= mem_peak(first)); }
+                fn first() resources peak(memory) <= 0 { assert(peak(memory) <= mem_peak(second)); }
+                fn second() resources peak(memory) <= 0 { assert(peak(memory) <= mem_peak(first)); }
             }
         }
         .to_string(),
@@ -45,7 +45,7 @@ fn ghost_initializers_and_proof_bodies_do_not_add_work() {
             use vstd::prelude::*;
             verus! {
                 spec fn value() -> u32 { 3 }
-                fn f() resources memory <= 0 {
+                fn f() resources peak(memory) <= 0 {
                     let ghost n = value();
                     proof { assert(n == 3); }
                 }
@@ -63,7 +63,7 @@ fn unreachable_exec_calls_still_participate_in_recursion_policy() {
         "unreachable_cycle",
         code_str! {
             use vstd::prelude::*;
-            verus! { fn f() resources memory <= 0 { if false { f(); } } }
+            verus! { fn f() resources peak(memory) <= 0 { if false { f(); } } }
         }
         .to_string(),
         &[],
@@ -80,8 +80,8 @@ fn cycle_through_a_constructor_is_rejected_at_a_call() {
             use vstd::prelude::*;
             verus! {
                 struct Data { value: u32 }
-                fn first() -> Data resources memory <= 8 { Data { value: second() } }
-                fn second() -> u32 resources memory <= 8 { let data = first(); data.value }
+                fn first() -> Data resources peak(memory) <= 8 { Data { value: second() } }
+                fn second() -> u32 resources peak(memory) <= 8 { let data = first(); data.value }
             }
         }
         .to_string(),

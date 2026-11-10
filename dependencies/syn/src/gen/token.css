@@ -104,6 +104,7 @@ a.struct[title="struct syn::token::OrOr"],
 a.struct[title="struct syn::token::OuterMask"],
 a.struct[title="struct syn::token::Override"],
 a.struct[title="struct syn::token::PathSep"],
+a.struct[title="struct syn::token::Peak"],
 a.struct[title="struct syn::token::Percent"],
 a.struct[title="struct syn::token::PercentEq"],
 a.struct[title="struct syn::token::Plus"],
@@ -275,6 +276,7 @@ a.struct[title="struct syn::token::OrOr"]::before,
 a.struct[title="struct syn::token::OuterMask"]::before,
 a.struct[title="struct syn::token::Override"]::before,
 a.struct[title="struct syn::token::PathSep"]::before,
+a.struct[title="struct syn::token::Peak"]::before,
 a.struct[title="struct syn::token::Percent"]::before,
 a.struct[title="struct syn::token::PercentEq"]::before,
 a.struct[title="struct syn::token::Plus"]::before,
@@ -765,6 +767,10 @@ a.struct[title="struct syn::token::PathSep"]::before {
 	content: "Token![::]";
 }
 
+a.struct[title="struct syn::token::Peak"]::before {
+	content: "Token![peak]";
+}
+
 a.struct[title="struct syn::token::Percent"]::before {
 	content: "Token![%]";
 }
@@ -1157,6 +1163,7 @@ a.struct[title="struct syn::token::Mut"]::after,
 a.struct[title="struct syn::token::Ne"]::after,
 a.struct[title="struct syn::token::Open"]::after,
 a.struct[title="struct syn::token::Override"]::after,
+a.struct[title="struct syn::token::Peak"]::after,
 a.struct[title="struct syn::token::Priv"]::after,
 a.struct[title="struct syn::token::Proof"]::after,
 a.struct[title="struct syn::token::Pub"]::after,

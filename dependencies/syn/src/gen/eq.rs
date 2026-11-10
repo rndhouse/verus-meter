@@ -2637,8 +2637,8 @@ impl Eq for crate::SignatureResources {}
 #[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]
 impl PartialEq for crate::SignatureResources {
     fn eq(&self, other: &Self) -> bool {
-        self.resources_token == other.resources_token && self.budget == other.budget
-            && self.comma == other.comma
+        self.resources_token == other.resources_token && self.peak == other.peak
+            && self.budget == other.budget && self.comma == other.comma
     }
 }
 #[cfg_attr(docsrs, doc(cfg(feature = "extra-traits")))]

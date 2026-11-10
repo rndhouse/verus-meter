@@ -12,7 +12,7 @@ verus! {
 // The whole-function contract allows both arrays. The checkpoints show when
 // that allowance becomes necessary and why the peak remains after scope exit.
 fn main()
-    resources memory <= 2 * mem_size([u32; 4]),
+    resources peak(memory) <= 2 * mem_size([u32; 4]),
 {
     let original = [1u32, 2, 3, 4];
     assert(peak(memory) <= mem_size(original));

@@ -22,7 +22,7 @@ spec fn collection_budget(capacity: nat) -> nat {
 // the evidence it needs to check every push.
 fn collect_positive(capacity: usize)
     requires 4 <= capacity <= 16,
-    resources memory <= collection_budget(capacity as nat),
+    resources peak(memory) <= collection_budget(capacity as nat),
 {
     let input = [0u32, 4, 0, 7];
     let mut selected = Vec::<u32>::with_capacity(capacity);
@@ -47,7 +47,7 @@ fn collect_positive(capacity: usize)
 //
 // The call query substitutes the argument into the helper's memory formula.
 fn main()
-    resources memory <= mem_peak(collect_positive(4)),
+    resources peak(memory) <= mem_peak(collect_positive(4)),
 {
     collect_positive(4);
 }

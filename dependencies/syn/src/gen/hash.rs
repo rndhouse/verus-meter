@@ -3346,6 +3346,7 @@ impl Hash for crate::SignatureResources {
         H: Hasher,
     {
         self.resources_token.hash(state);
+        self.peak.hash(state);
         self.budget.hash(state);
         self.comma.hash(state);
     }

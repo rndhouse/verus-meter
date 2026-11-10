@@ -2695,6 +2695,7 @@ impl Clone for crate::SignatureResources {
     fn clone(&self) -> Self {
         crate::SignatureResources {
             resources_token: self.resources_token.clone(),
+            peak: self.peak.clone(),
             token: self.token.clone(),
             le_token: self.le_token.clone(),
             budget: self.budget.clone(),

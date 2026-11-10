@@ -20,7 +20,7 @@ spec fn vector_storage(capacity: nat) -> nat {
 fn make_buffer(capacity: usize) -> (buffer: Vec<u32>)
     requires capacity <= 16,
     ensures buffer.len() == 0,
-    resources memory <= mem_size(capacity) + vector_storage(capacity as nat),
+    resources peak(memory) <= mem_size(capacity) + vector_storage(capacity as nat),
 {
     Vec::with_capacity(capacity)
 }
@@ -32,7 +32,7 @@ fn make_buffer(capacity: usize) -> (buffer: Vec<u32>)
 // its parameter and result slots.
 fn count(buffer: Vec<u32>) -> (length: usize)
     ensures length == buffer.len(),
-    resources memory <= mem_size(buffer) + mem_size(usize),
+    resources peak(memory) <= mem_size(buffer) + mem_size(usize),
 {
     buffer.len()
 }
@@ -43,7 +43,7 @@ fn count(buffer: Vec<u32>) -> (length: usize)
 // The allocation remains live through both calls and the intervening pushes.
 fn use_buffer(capacity: usize)
     requires 2 <= capacity <= 16,
-    resources memory <= mem_size(capacity) + vector_storage(capacity as nat) + mem_peak(count),
+    resources peak(memory) <= mem_size(capacity) + vector_storage(capacity as nat) + mem_peak(count),
 {
     let mut buffer = make_buffer(capacity);
     buffer.push(3);
@@ -54,7 +54,7 @@ fn use_buffer(capacity: usize)
 
 // Run the whole operation within the allowance for two values.
 fn main()
-    resources memory <= mem_peak(use_buffer(2)),
+    resources peak(memory) <= mem_peak(use_buffer(2)),
 {
     use_buffer(2);
 }

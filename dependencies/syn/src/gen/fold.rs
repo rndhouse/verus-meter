@@ -4733,6 +4733,7 @@ where
 {
     crate::SignatureResources {
         resources_token: node.resources_token,
+        peak: (node.peak).map(|it| ((it).0, (it).1)),
         token: node.token,
         le_token: node.le_token,
         budget: f.fold_resource_expr(node.budget),

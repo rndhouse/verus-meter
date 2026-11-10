@@ -14,7 +14,7 @@ type Buffer = [u32; 4];
 //
 // Its result becomes the caller's buffer without an extra copy.
 fn make_buffer() -> Buffer
-    resources memory <= mem_size(Buffer),
+    resources peak(memory) <= mem_size(Buffer),
 {
     [0u32; 4]
 }
@@ -23,7 +23,7 @@ fn make_buffer() -> Buffer
 //
 // The first result stays live when the second destination is introduced.
 fn main()
-    resources memory <= mem_peak(make_buffer),
+    resources peak(memory) <= mem_peak(make_buffer),
 {
     let first = make_buffer();
 

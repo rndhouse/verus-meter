@@ -9,7 +9,7 @@ verus! {
 // Produce a fixed-length buffer containing the selected values.
 fn pack() -> (b: Box<[u32]>)
     ensures b.len() == 2, b[0] == 7, b[1] == 9,
-    resources memory <= 64,
+    resources peak(memory) <= 64,
 {
     let mut v = Vec::<u32>::with_capacity(4);
     v.push(7);
@@ -20,14 +20,14 @@ fn pack() -> (b: Box<[u32]>)
 // Pass the buffer to another owner without creating a copy.
 fn forward(b: Box<[u32]>) -> (r: Box<[u32]>)
     ensures r == b,
-    resources memory <= mem_size(Box<[u32]>),
+    resources peak(memory) <= mem_size(Box<[u32]>),
 {
     b
 }
 
 // Release the returned buffer before using the allowance for another task.
 fn main()
-    resources memory <= 96,
+    resources peak(memory) <= 96,
 {
     let b = pack();
     let c = forward(b);

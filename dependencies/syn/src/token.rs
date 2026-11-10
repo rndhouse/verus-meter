@@ -764,6 +764,7 @@ define_keywords! {
     "opens_invariants"   pub struct OpensInvariants
     "invariant_except_break"   pub struct InvariantExceptBreak
     "resources"    pub struct Resources
+    "peak"         pub struct Peak
     "memory"       pub struct Memory
     "mem_peak"     pub struct MemPeak
     "no_unwind"   pub struct NoUnwind
@@ -1061,6 +1062,7 @@ macro_rules! Token {
     [opens_invariants] => { $crate::token::OpensInvariants };
     [invariant_except_break] => { $crate::token::InvariantExceptBreak };
     [resources]    => { $crate::token::Resources };
+    [peak]         => { $crate::token::Peak };
     [memory]       => { $crate::token::Memory };
     [mem_peak]     => { $crate::token::MemPeak };
     [no_unwind]   => { $crate::token::NoUnwind };
