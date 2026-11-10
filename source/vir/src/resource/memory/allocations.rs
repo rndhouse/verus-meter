@@ -15,6 +15,9 @@ use std::collections::{HashMap, HashSet};
 /// through the summary's path table, retaining caller allocation identities.
 #[derive(Clone)]
 pub(super) enum ReturnedOwner {
+    /// A runtime extraction can depend on an opaque incoming footprint. The
+    /// caller duplicates its upper bound rather than inventing a byte credit.
+    Captured { sources: HashSet<Capture>, owner: Box<ReturnedOwner> },
     /// Transfer one input node, composing its children independently.
     Input {
         /// Provenance ID identifying the node in the callee input-path table.
@@ -37,6 +40,15 @@ pub(super) enum ReturnedOwner {
     },
     /// A fresh allocation whose growth requires a conservative byte bound.
     Replaced { allocation: Charge<Expr>, elements: Option<super::elements::ElementSummary> },
+}
+
+/// Incoming storage whose original charge must outlive an opaque extraction.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) enum Capture {
+    /// A disjoint owned input node, indexed by the function's input-path table.
+    Owned(usize),
+    /// A borrowed parameter subtree, whose original bytes belong to its caller.
+    Borrowed(super::paths::InputPath),
 }
 
 /// Allocation effects established by a checked function body. Temporary peaks

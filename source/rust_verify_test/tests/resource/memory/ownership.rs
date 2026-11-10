@@ -100,11 +100,10 @@ fn incoming_vector_push_requires_bounded_growth() {
     );
 }
 #[test]
-fn return_capacity_cannot_reference_local() {
-    rejects(
+fn local_capacity_uses_a_conservative_call_summary() {
+    verifies(
         "local_capacity",
         "fn f() -> Vec<u32> resources peak(memory) <= 100 { let n = 2usize; Vec::with_capacity(n) }",
-        "returned vector capacities depending on locals",
     );
 }
 #[test]

@@ -50,6 +50,7 @@ fn vec_intrinsic(tcx: TyCtxt<'_>, id: DefId) -> Option<vir::ast::ResourceIntrins
         "with_capacity" => Some(VecWithCapacity),
         "push" => Some(VecPush),
         "pop" => Some(VecPop),
+        "remove" => Some(VecRemove),
         "len" => Some(VecLen),
         "as_slice" => Some(VecAsSlice),
         "as_mut_slice" => Some(VecAsMutSlice),

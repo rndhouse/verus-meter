@@ -45,17 +45,18 @@ pub(super) fn summarize_result(
     }
     if let Some(capacity) = &owner.capacity {
         let inputs = contracts::inputs(function);
+        let mut in_scope = true;
         crate::ast_visitor::expr_visitor_check(capacity, &mut |_, expr| {
             if let ExprX::Var(name) = &expr.x {
                 if !inputs.contains(name) {
-                    return Err(unsupported(
-                        &expr.span,
-                        "returned vector capacities depending on locals; use an immutable input or a literal",
-                    ));
+                    in_scope = false;
                 }
             }
-            Ok(())
+            Ok::<(), VirErr>(())
         })?;
+        if !in_scope {
+            return Ok((Some(contracts::literal(&function.span, 0)), None));
+        }
     }
     Ok((owner.capacity.clone(), None))
 }
@@ -96,6 +97,11 @@ impl Analysis<'_> {
                 )?;
             path.extend(child.iter().cloned());
             self.forget_collection_length(&name, &path);
+            if let Some(elements) =
+                self.heap.root_mut(&name).unwrap().at_mut(&path).unwrap().elements.as_mut()
+            {
+                elements.precise = false;
+            }
         }
         Ok(())
     }

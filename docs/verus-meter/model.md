@@ -131,8 +131,9 @@ See [calls](../../examples/resource/memory/algorithms/calls.rs) and
 ## Returning and using values
 
 Checked helpers can return native integers, `bool`, fixed integer arrays,
-concrete structs, and `Option<T>` with supported non-owning payloads. Results
-use tail expressions, including value-producing blocks, `if`, and `match`.
+concrete structs, and `Option<T>` with supported payloads, including owners. Results
+use tail expressions, including value-producing blocks. Non-owning results can
+also use `if` and `match`.
 
 A result starts counting when it is produced, so it need not overlap earlier
 scratch work. Moving an existing value into the result transfers its charge,
@@ -211,8 +212,9 @@ call, then install the final child ownership and capacity facts. See
 
 Moves and replacements of enclosing owners or their fixed children across branches,
 loops, or memory sections remain unsupported, as do extraction from temporary
-containers and moves out of borrowed owners. Recursive layouts, owning `Option`
-payloads, and owning array elements are also excluded. Shared ownership needs
+containers and direct moves out of borrowed owners. Supported collection operations
+can extract children from borrowed containers. Recursive layouts and owning array
+elements remain excluded. Shared ownership needs
 last-owner release rules.
 
 ## Runtime collections of owners
@@ -246,16 +248,23 @@ borrows directly to an operation or helper; allocation effects through a stored
 reference alias are not tracked. Bind allocation-changing replacement expressions
 to a local first. See [indexed owners](../../examples/resource/memory/vectors/indexed_owners.rs).
 
-This is conservative accounting: each indexed borrow leaves the collection's
-existing child sum charged and adds allocations retained by that operation.
-It does not recover an individual element's existing spare capacity, and replacing
-an element gives no credit for its old storage until the collection is dropped.
-Discarding `v.pop()` is supported with the same retained-charge rule; keeping its
-owning `Option<T>` result and transferring extracted elements remain unsupported.
-Removal disables length-based append invariants, including across helper calls.
-Loops that grow existing elements may fail verification because the model does
-not yet track how many distinct elements have been updated. Slice views of owning
-vectors remain unsupported; owning boxed slices support direct indexing. An
+Locally modeled children retain individual allocation metadata. An indexed borrow
+temporarily separates the selected footprint, uses its reservation facts, and
+returns the updated footprint to the collection. Replacement releases the displaced
+child's charge. `pop` and `remove` transfer the selected footprint to their result;
+dropping the container leaves an extracted child's allocations charged independently.
+`remove` also shifts the surviving metadata indices. Owning `Option` values support
+construction, unwrap, matching, calls, and drop. See
+[element transfers](../../examples/resource/memory/vectors/element_transfers.rs).
+
+Helper summaries that expose only aggregate byte bounds remain conservative.
+Extracting from such a collection carries a copy of its storage upper bound and
+incoming lifetime dependencies; it does not invent an individual release credit
+or spare-capacity guarantee. This can require a larger budget than direct local
+operations. Loop entry bounds, forest sums, and uniform child reservation facts
+are checked at entry and on back edges. Algorithms that need stronger bounds can
+still fail verification. Slice views of owning vectors remain unsupported; owning
+boxed slices support direct indexing. An
 enclosing collection cannot gain child allocations inside a separately budgeted
 memory section.
 
@@ -275,8 +284,8 @@ For an incoming owning collection, its opaque input provenance is retained with
 the children, conservatively keeping the caller's old backing charge too.
 The length is captured before the vector is consumed, so later accounting cannot
 read a moved value. Moves, helper calls, explicit drop, and scope exit reuse the
-ordinary ownership rules. Indexed owning elements use the conservative borrowed
-child rules above. See [boxed slices](../../examples/resource/memory/heap/boxed_slices.rs).
+ordinary ownership rules. Indexed owning elements use the same child metadata
+rules above. See [boxed slices](../../examples/resource/memory/heap/boxed_slices.rs).
 
 A returned local runtime extent that cannot be expressed using immutable scalar
 inputs is conservatively bounded by the producing function's checked memory bound.
@@ -474,7 +483,7 @@ the proofs that select it; an unselected larger allowance does not inflate the p
 
 Checked functions must be safe, nongeneric, and have a verified body.
 The supported subset includes `bool`, all native integers, fixed integer arrays,
-concrete structs, non-owning `Option` values, fixed-size boxes, boxed slices,
+concrete structs, `Option` values with supported payloads, fixed-size boxes, boxed slices,
 vectors with supported growth, and references/slices of supported non-owning values,
 indexing, branches, while loops, and calls to checked functions in the same crate. Integer addition,
 subtraction, multiplication, and signed negation retain Verus's overflow checks.

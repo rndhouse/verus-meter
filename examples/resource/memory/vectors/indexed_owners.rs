@@ -40,13 +40,13 @@ fn main()
     add(&mut rows[0]);
     rows[1].cells.push(9);
 
-    // Bind the replacement before assigning it. The old child's allocation
-    // stays in the conservative sum, even though Rust drops it here.
+    // Bind the replacement before assigning it. Its footprint replaces the
+    // old child's footprint when Rust drops that child.
     let replacement = Row { cells: Vec::with_capacity(2) };
     rows[0] = replacement;
     rows.pop();
 
-    // Boxed slices use the same indexed child rules and retain the same sum.
+    // Boxed slices use the same indexed child metadata and allocation sums.
     let frozen = rows.into_boxed_slice();
     let count = frozen[0].cells.len();
     assert(count == 0);

@@ -16,6 +16,7 @@ pub mod fmt;
 pub mod iter;
 pub mod manually_drop;
 pub mod maybe_uninit;
+pub mod memory;
 pub mod ops;
 pub mod pin;
 pub mod ptr;

@@ -1,11 +1,9 @@
 //! Operation-local borrows into runtime collections.
 //!
-//! The aggregate retains all existing child charges. A projection mirrors the
-//! selected child's ownership shape with zero original charges, just like a
-//! borrowed function input. Operations use the ordinary owner machinery; their
-//! newly retained allocations are then added to the aggregate. This deliberately
-//! gives no credit for the selected child's old storage: aggregate summaries do
-//! not yet describe an individual element's allocations or spare capacity.
+//! A precise projection partitions the selected allocation subtree out of the
+//! parent forest and restores its ordinary ownership shape. Finishing the loan
+//! returns its updated descriptors and charge. Opaque summaries retain their
+//! aggregate charge and add new allocations conservatively.
 
 use super::analysis::Analysis;
 use super::heap::Owner;
@@ -13,6 +11,13 @@ use super::model::unsupported;
 use super::paths::LocalPath;
 use crate::ast::*;
 use crate::messages::Span;
+
+pub(super) struct Projection {
+    location: LocalPath,
+    /// A precise loan has already removed this subtree from the parent sum.
+    path: Option<Expr>,
+    original: Option<Expr>,
+}
 
 /// Read an executable projection as a pure value. In particular, do not repeat
 /// an executable indexing call or its bounds assertion inside a memory formula.
@@ -24,7 +29,7 @@ pub(super) fn spec_value(value: &Expr) -> Result<Expr, VirErr> {
         };
         return Ok(SpannedTyped::new(
             &value.span,
-            super::paths::referent(&value.typ),
+            &types[0],
             ExprX::Call {
                 target: CallTarget::Fun(
                     CallTargetKind::Static,
@@ -100,28 +105,71 @@ impl Analysis<'_> {
         &mut self,
         args: &Exprs,
         span: &Span,
-    ) -> Result<Vec<LocalPath>, VirErr> {
+    ) -> Result<Vec<Projection>, VirErr> {
         let mut focused = Vec::new();
         for arg in args.iter() {
             self.focus_expression(arg, span, &mut focused)?;
         }
+        if focused.iter().any(|projection| projection.path.is_some()) {
+            for arg in args.iter() {
+                self.check_projection_effects(arg)?;
+            }
+        }
         Ok(focused)
+    }
+
+    /// Metadata is selected before argument evaluation. Fail closed when a
+    /// sibling expression could change the runtime index in that interval.
+    pub(super) fn check_projection_effects(&self, value: &Expr) -> Result<(), VirErr> {
+        crate::ast_visitor::expr_visitor_check(value, &mut |_, expression| {
+            let effectful = match &expression.x {
+                ExprX::Assign { .. } => true,
+                ExprX::Call { target: CallTarget::Fun(_, fun, _, _, attrs), .. } => {
+                    matches!(
+                        attrs.resource_intrinsic,
+                        Some(
+                            ResourceIntrinsic::VecPush
+                                | ResourceIntrinsic::VecPop
+                                | ResourceIntrinsic::VecRemove
+                        )
+                    ) || self.functions.get(fun).is_some_and(|f| {
+                        f.x.params.iter().any(|p| matches!(&*p.x.typ, TypX::MutRef(_)))
+                    })
+                }
+                _ => false,
+            };
+            if effectful {
+                Err(unsupported(
+                    &expression.span,
+                    "effects inside indexed operation arguments; bind the arguments first",
+                ))
+            } else {
+                Ok(())
+            }
+        })
     }
 
     fn focus_expression(
         &mut self,
         value: &Expr,
         span: &Span,
-        focused: &mut Vec<LocalPath>,
+        focused: &mut Vec<Projection>,
     ) -> Result<(), VirErr> {
         if let Some(args) = super::paths::vector_index(value) {
             self.focus_expression(&args[0], span, focused)?;
-            let typ = super::paths::referent(&value.typ);
+            let typ = super::paths::indexed_type(value).expect("validated indexing adapter");
             if self.layouts.owner(typ) {
                 let location = super::paths::expr(value, typ).ok_or_else(|| {
                     unsupported(&value.span, "indexing an untracked collection owner")
                 })?;
-                self.focus_owner(location, typ, span, focused)?;
+                self.focus_owner(
+                    location,
+                    typ,
+                    args[1].clone(),
+                    spec_value(value)?,
+                    span,
+                    focused,
+                )?;
             }
         } else {
             match &value.x {
@@ -138,19 +186,26 @@ impl Analysis<'_> {
         &mut self,
         place: &Place,
         span: &Span,
-        focused: &mut Vec<LocalPath>,
+        focused: &mut Vec<Projection>,
     ) -> Result<(), VirErr> {
         match &place.x {
             PlaceX::DerefMut(base) | PlaceX::Field(_, base) => {
                 self.focus_place(base, span, focused)?;
             }
-            PlaceX::Index(base, _, _, BoundsCheck::Error) => {
+            PlaceX::Index(base, index, _, BoundsCheck::Error) => {
                 self.focus_place(base, span, focused)?;
                 if self.layouts.owner(&place.typ) {
                     let location = super::paths::place(place, &place.typ).ok_or_else(|| {
                         unsupported(&place.span, "indexing an untracked collection owner")
                     })?;
-                    self.focus_owner(location, &place.typ, span, focused)?;
+                    self.focus_owner(
+                        location,
+                        &place.typ,
+                        index.clone(),
+                        spec_place(place)?,
+                        span,
+                        focused,
+                    )?;
                 }
             }
             PlaceX::Temporary(value) => self.focus_expression(value, span, focused)?,
@@ -163,8 +218,10 @@ impl Analysis<'_> {
         &mut self,
         location: LocalPath,
         typ: &Typ,
+        index: Expr,
+        value: Expr,
         span: &Span,
-        focused: &mut Vec<LocalPath>,
+        focused: &mut Vec<Projection>,
     ) -> Result<(), VirErr> {
         let (name, path) = &location;
         if self.heap.root(name).and_then(|root| root.at(path)).is_some() {
@@ -181,9 +238,51 @@ impl Analysis<'_> {
             return Err(unsupported(span, "indexing an untracked collection owner"));
         }
         self.layouts.size(typ, span)?;
-        let child = self.input_owner(typ, span, 0, name, &mut vec![], &Default::default())?;
+        let elements =
+            self.heap.root(name).unwrap().at(parent).unwrap().elements.as_ref().unwrap().clone();
+        let precise = elements.precise
+            && elements.states.values().all(|id| !self.growth.protected_elements.contains(id));
+        let mut original = None;
+        let (child, selected_path) = if precise {
+            original = Some(self.metadata_local(span, "loan_parent", elements.records.clone()));
+            let selected_path = self.metadata_path(span, spec_value(&index)?)?;
+            let selected = super::metadata::expr::subtree(
+                span,
+                elements.records.clone(),
+                selected_path.clone(),
+            );
+            let selected = self.metadata_local(span, "element_loan", selected);
+            self.assert_owner_minima(span, typ, value.clone(), selected.clone(), &elements.minima)?;
+            self.metadata_partition(span, elements.records.clone(), selected_path.clone());
+            let remaining = super::metadata::expr::without(
+                span,
+                elements.records.clone(),
+                selected_path.clone(),
+            );
+            self.growth.before.entry(span.id).or_default().push(super::metadata::expr::assign(
+                span,
+                &elements.records,
+                remaining,
+            ));
+            self.set_element_records(span, &elements, false);
+            let mut child = self.owner_from_metadata(span, typ, selected)?;
+            self.install_owner_minima(&mut child, &elements.minima);
+            self.bind_collection_sources(span, &mut child, typ, value)?;
+            let mut collections = Vec::new();
+            child.visit(&mut |node| {
+                if let Some(elements) = &node.elements {
+                    collections.push(elements.clone());
+                }
+            });
+            for elements in collections {
+                self.assert_element_minima(span, &elements, false)?;
+            }
+            (child, Some(selected_path))
+        } else {
+            (self.input_owner(typ, span, 0, name, &mut vec![], &Default::default())?, None)
+        };
         self.heap.root_mut(name).unwrap().replace_child(path, child);
-        focused.push(location);
+        focused.push(Projection { location, path: selected_path, original });
         Ok(())
     }
 
@@ -193,18 +292,19 @@ impl Analysis<'_> {
     pub(super) fn finish_projections(
         &mut self,
         span: &Span,
-        focused: Vec<LocalPath>,
+        focused: Vec<Projection>,
     ) -> Result<(), VirErr> {
         if focused.is_empty() {
             return Ok(());
         }
-        for (name, path) in focused.into_iter().rev() {
+        for projection in focused.into_iter().rev() {
+            let (name, path) = projection.location;
             let child = self
                 .heap
                 .root_mut(&name)
                 .and_then(|root| root.take_child(&path))
                 .ok_or_else(|| unsupported(span, "an indexed borrow lost its owner"))?;
-            if !self.projection_changed(&child) {
+            if projection.path.is_none() && !self.projection_changed(&child) {
                 self.release_owner_storage(child, span, false);
                 continue;
             }
@@ -218,7 +318,17 @@ impl Analysis<'_> {
                 .elements
                 .take()
                 .expect("collection state");
-            self.merge_projected_child(span, &mut elements, child)?;
+            if let Some(selected_path) = projection.path {
+                self.return_element_loan(
+                    span,
+                    &mut elements,
+                    projection.original.unwrap(),
+                    selected_path,
+                    child,
+                )?;
+            } else {
+                self.merge_projected_child(span, &mut elements, child)?;
+            }
             self.heap.root_mut(&name).unwrap().at_mut(parent).unwrap().elements = Some(elements);
         }
         self.record_element_updates(span)

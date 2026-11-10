@@ -30,6 +30,7 @@ impl Analysis<'_> {
             return Err(unsupported(&expr.span, "this call signature"));
         }
         self.check_vector_call(expr, callee, args)?;
+        self.prepare_capture_call(expr, callee, args)?;
         let result_size = self.layouts.return_size(&expr.typ, &expr.span)?;
         let bound = super::contracts::instantiate(
             callee,
@@ -173,6 +174,7 @@ impl Analysis<'_> {
         self.apply_child_call_effects(expr, callee, args, &mut transferred)?;
         self.result_owner = self.complete_ownership_call(expr, callee, args, &mut transferred)?;
         self.record_element_updates(c)?;
+        self.check_committed_memory(c);
         self.produced = result;
         let retained = if destination { 0 } else { result_size };
         self.calls.push((target.clone(), expr.span.clone()));

@@ -38,6 +38,8 @@ pub(super) type OwnerPath = Vec<OwnerSlot>;
 /// its inline storage belongs to the enclosing value or allocation layout.
 #[derive(Clone)]
 pub(super) struct Owner {
+    /// Conservative dependencies acquired by extraction from opaque inputs.
+    pub(super) captures: HashSet<super::allocations::Capture>,
     /// Separately owned allocations beneath fields or a box payload. Their inline
     /// handles are already included in the containing value/allocation layout.
     pub(super) children: BTreeMap<OwnerSlot, Owner>,
@@ -63,6 +65,7 @@ pub(super) struct Owner {
 impl Default for Owner {
     fn default() -> Self {
         Self {
+            captures: HashSet::new(),
             children: BTreeMap::new(),
             elements: None,
             kind: MemoryKind::host_heap(),
@@ -132,18 +135,55 @@ impl Owner {
         }
     }
 
+    pub(super) fn visit_mut(&mut self, f: &mut impl FnMut(&mut Self)) {
+        f(self);
+        for child in self.children.values_mut() {
+            child.visit_mut(f);
+        }
+    }
+
     /// Every incoming allocation node whose lifetime follows this owner.
     pub(super) fn inputs(&self) -> HashSet<usize> {
         let mut inputs = HashSet::new();
         self.visit(&mut |node| {
+            inputs.extend(node.captures.iter().filter_map(|capture| match capture {
+                super::allocations::Capture::Owned(index) => Some(*index),
+                super::allocations::Capture::Borrowed(_) => None,
+            }));
             if let Some(input) = node.input {
                 inputs.insert(input);
             }
             if let Some(elements) = &node.elements {
                 inputs.extend(elements.inputs.iter().copied());
+                inputs.extend(elements.captures.iter().filter_map(|capture| match capture {
+                    super::allocations::Capture::Owned(index) => Some(*index),
+                    super::allocations::Capture::Borrowed(_) => None,
+                }));
             }
         });
         inputs
+    }
+
+    pub(super) fn owned_inputs(&self) -> HashSet<usize> {
+        let mut inputs = HashSet::new();
+        self.visit(&mut |node| {
+            inputs.extend(node.input);
+            if let Some(elements) = &node.elements {
+                inputs.extend(elements.inputs.iter().copied());
+            }
+        });
+        inputs
+    }
+
+    pub(super) fn captured_inputs(&self) -> HashSet<super::allocations::Capture> {
+        let mut captures = HashSet::new();
+        self.visit(&mut |node| {
+            captures.extend(node.captures.iter().cloned());
+            if let Some(elements) = &node.elements {
+                captures.extend(elements.captures.iter().cloned());
+            }
+        });
+        captures
     }
 }
 
@@ -272,6 +312,7 @@ impl Analysis<'_> {
         let mut owner = Owner::default();
         if self.layouts.owning_elements(typ) {
             owner.elements = Some(self.new_elements(span));
+            owner.elements.as_mut().unwrap().precise = false;
         }
         if self.layouts.vector(typ) {
             let capacity = capacities.get(&(name.clone(), path.clone()));
@@ -343,6 +384,9 @@ impl Analysis<'_> {
     /// Evaluate into an existing handle destination and retain its allocation.
     pub(super) fn owner_expr(&mut self, expr: &Expr) -> Result<Owner, VirErr> {
         self.layouts.size(&expr.typ, &expr.span)?;
+        if let Some(owner) = self.extracted_owner(expr, false)? {
+            return Ok(owner);
+        }
         if let Some(owner) = self.allocate_box(expr)? {
             return Ok(owner);
         }
@@ -402,7 +446,9 @@ impl Analysis<'_> {
     pub(super) fn release_owner_storage(&mut self, owner: Owner, span: &Span, inputs: bool) {
         if inputs {
             for input in owner.inputs() {
-                self.storage.release_input(input);
+                if !self.pinned_inputs.contains(&input) {
+                    self.storage.release_input(input);
+                }
             }
         }
         for child in owner.children.into_values() {

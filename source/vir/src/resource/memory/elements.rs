@@ -1,9 +1,9 @@
 //! Runtime collections of owning children, independent of container layout.
 //!
-//! A collection keeps one byte sum per memory kind, not an enumerated owner for
-//! every element. Insertion transfers a complete child footprint into these sums.
-//! Original input allocations remain caller-charged and retain their provenance.
-//! Indexed borrows retain the old sum and add newly retained child allocations.
+//! A collection keeps one byte sum per memory kind and an erased allocation
+//! forest for individually modeled children. Insertion, indexed loans and
+//! extraction transfer complete subtrees. Opaque input allocations remain
+//! caller-charged and retain their provenance.
 
 use super::analysis::Analysis;
 use super::contracts;
@@ -18,6 +18,19 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub(super) struct Elements {
+    /// Uniform reservation candidates, indexed by ownership class.
+    pub(super) minima: super::metadata::reservations::Minima,
+    /// Current collection value; a move rebinds this to its destination.
+    pub(super) source: Option<(Typ, Expr)>,
+    /// Dependencies from opaque extracted children, independent of true moves.
+    pub(super) captures: HashSet<super::allocations::Capture>,
+    /// Allocation data for individually modeled children. Opaque call effects
+    /// retain their conservative sums until they acquire a richer summary.
+    pub(super) records: Expr,
+    /// Pending forest snapshot committed after the executable operation.
+    pub(super) next_records: Expr,
+    /// Every live child has modeled descriptors; opaque additions disable this.
+    pub(super) precise: bool,
     /// Stable counter identities; the containing owner controls their lifetime.
     pub(super) states: BTreeMap<MemoryKind, usize>,
     /// Disjoint input nodes captured by element insertion.
@@ -26,6 +39,8 @@ pub(super) struct Elements {
 
 #[derive(Clone)]
 pub(super) struct ElementSummary {
+    /// Opaque dependencies whose charges must survive independently of moves.
+    pub(super) captures: HashSet<super::allocations::Capture>,
     /// Newly retained child bytes, excluding original input allocations.
     pub(super) bytes: BTreeMap<MemoryKind, Expr>,
     /// Inputs transferred into this collection, consumed exactly once at calls.
@@ -79,6 +94,7 @@ pub(super) fn summarize(
     function: &Function,
 ) -> ElementSummary {
     ElementSummary {
+        captures: elements.captures.clone(),
         bytes: elements
             .states
             .iter()
@@ -126,11 +142,149 @@ pub(super) fn addition(
     function: &Function,
 ) -> Option<ElementSummary> {
     let elements = owner.elements.as_ref()?;
-    (!elements.inputs.is_empty() || elements.states.values().any(|id| growth.elements[*id].changed))
-        .then(|| summarize(elements, growth, bound, function))
+    (!elements.inputs.is_empty()
+        || !elements.captures.is_empty()
+        || elements.states.values().any(|id| growth.elements[*id].changed))
+    .then(|| summarize(elements, growth, bound, function))
 }
 
 impl Analysis<'_> {
+    /// Commit the byte counters corresponding to a precise forest. Snapshot
+    /// substitutions keep the peak check at the operation's original location.
+    pub(super) fn set_element_records(&mut self, span: &Span, elements: &Elements, after: bool) {
+        let proof = super::metadata::expr::lemma(
+            span,
+            "inspect",
+            vec![elements.records.clone(), super::metadata::expr::path(span, [])],
+        );
+        if after {
+            self.growth.after.entry(span.id).or_default().push(proof);
+        } else {
+            self.growth.before.entry(span.id).or_default().push(proof);
+        }
+        for (kind, id) in &elements.states {
+            let amount = self.metadata_cost(span, elements.records.clone(), kind);
+            let state = &self.growth.elements[*id];
+            let assignment = super::symbolic::assign(span, &state.bytes, amount);
+            if after {
+                self.growth.after.entry(span.id).or_default().push(assignment);
+            } else {
+                self.growth.before.entry(span.id).or_default().push(assignment);
+            }
+        }
+    }
+
+    pub(super) fn return_element_loan(
+        &mut self,
+        span: &Span,
+        elements: &mut Elements,
+        original: Expr,
+        path: Expr,
+        child: Owner,
+    ) -> Result<(), VirErr> {
+        self.merge_element_minima(span, elements, &child);
+        let mut proofs = Vec::new();
+        let child_records = self.owner_metadata(span, &child, &mut proofs);
+        // Peak checks precede the executable operation. Instantiate the cost
+        // algebra on its pending values; validity is checked after committing.
+        let mut pending_proofs = Vec::new();
+        for proof in &proofs {
+            if let StmtX::Expr(value) = &proof.x {
+                if let ExprX::Call { target: CallTarget::Fun(_, fun, _, _, _), .. } = &value.x {
+                    if matches!(fun.path.segments.last(), Some(Segment::V(name, _)) if name.starts_with("cost_"))
+                    {
+                        pending_proofs.push(crate::def::Spanned::new(
+                            span.clone(),
+                            StmtX::Expr(self.growth.after_value(span, value)),
+                        ));
+                    }
+                }
+            }
+        }
+        let nested = super::metadata::expr::prefix(span, child_records.clone(), path.clone());
+        pending_proofs.extend([
+            super::metadata::expr::lemma(
+                span,
+                "cost_prefix",
+                vec![
+                    self.growth.after_value(span, &child_records),
+                    path.clone(),
+                    contracts::literal(span, 0),
+                ],
+            ),
+            super::metadata::expr::lemma(
+                span,
+                "cost_add",
+                vec![
+                    elements.records.clone(),
+                    self.growth.after_value(span, &nested),
+                    contracts::literal(span, 0),
+                ],
+            ),
+        ]);
+        self.growth.before.entry(span.id).or_default().extend(pending_proofs);
+        proofs.extend([
+            super::metadata::expr::lemma(
+                span,
+                "well_formed_prefix",
+                vec![child_records.clone(), path.clone()],
+            ),
+            super::metadata::expr::lemma(
+                span,
+                "well_formed_add",
+                vec![elements.records.clone(), nested.clone()],
+            ),
+            super::metadata::expr::lemma(
+                span,
+                "cost_prefix",
+                vec![child_records.clone(), path.clone(), contracts::literal(span, 0)],
+            ),
+            super::metadata::expr::lemma(
+                span,
+                "cost_add",
+                vec![elements.records.clone(), nested.clone(), contracts::literal(span, 0)],
+            ),
+            super::metadata::expr::assign(
+                span,
+                &elements.records,
+                super::metadata::expr::add(span, elements.records.clone(), nested),
+            ),
+        ]);
+        self.growth.after.entry(span.id).or_default().extend(proofs);
+        self.prove_element_frame(span, elements, original, path, child_records);
+        child.visit(&mut |node| {
+            if let Some(elements) = &node.elements {
+                for id in elements.states.values() {
+                    if let Some(updates) = self.growth.element_updates.get_mut(&span.id) {
+                        updates.remove(id);
+                    }
+                }
+            }
+        });
+        elements.inputs.extend(child.owned_inputs());
+        elements.captures.extend(child.captured_inputs());
+        elements.precise &= elements.captures.is_empty();
+        child.visit(&mut |node| {
+            if !node.inputs().is_empty() || node.elements.as_ref().is_some_and(|e| !e.precise) {
+                elements.precise = false;
+            }
+        });
+        self.release_owner_storage(child, span, false);
+        self.set_element_records(span, elements, true);
+        self.assert_element_minima(span, elements, true)?;
+        for id in elements.states.values() {
+            let state = &mut self.growth.elements[*id];
+            state.changed = true;
+            state.counted = false;
+            state.length = None;
+            state.extent = None;
+            let bytes = state.bytes.clone();
+            let next = self.growth.after_value(span, &bytes);
+            self.growth.element_updates.entry(span.id).or_default().insert(*id, next);
+        }
+        Ok(())
+    }
+
     pub(super) fn new_elements(&mut self, span: &Span) -> Elements {
         // The currently supported allocation adapters all allocate host heap
         // storage. Adoption uses the summary's kinds; the sum machinery is generic.
@@ -145,6 +299,17 @@ impl Analysis<'_> {
         span: &Span,
         charges: BTreeMap<MemoryKind, Expr>,
     ) -> Elements {
+        let precise = charges.values().all(|amount| contracts::constant(amount) == Some(0));
+        let records = self.metadata_local(
+            span,
+            "elements",
+            super::metadata::expr::empty(span, super::metadata::expr::record_type()),
+        );
+        let next_records = self.metadata_local(
+            span,
+            "next_elements",
+            super::metadata::expr::empty(span, super::metadata::expr::record_type()),
+        );
         let mut states = BTreeMap::new();
         for (kind, initial) in charges {
             let allocation = super::accounting::Accounting::fresh_allocation();
@@ -184,7 +349,16 @@ impl Analysis<'_> {
             });
             states.insert(kind, id);
         }
-        Elements { states, inputs: HashSet::new() }
+        Elements {
+            minima: Default::default(),
+            source: None,
+            captures: HashSet::new(),
+            records,
+            next_records,
+            precise,
+            states,
+            inputs: HashSet::new(),
+        }
     }
 
     /// All owned allocation charges, including nested runtime sums. Inline
@@ -301,11 +475,56 @@ impl Analysis<'_> {
         child: Owner,
         length: Expr,
     ) -> Result<(), VirErr> {
+        self.merge_element_minima(span, elements, &child);
+        let mut complete = child.inputs().is_empty() && child.captured_inputs().is_empty();
+        child.visit(&mut |node| {
+            complete &= node.elements.as_ref().is_none_or(|e| e.precise);
+        });
+        elements.precise &= complete;
+        if elements.precise {
+            let records = self.snapshot_owner_metadata(span, &child);
+            let path = self.metadata_path(span, length.clone())?;
+            let nested = super::metadata::expr::prefix(span, records.clone(), path.clone());
+            self.growth.before.entry(span.id).or_default().extend([
+                super::metadata::expr::lemma(
+                    span,
+                    "well_formed_prefix",
+                    vec![records.clone(), path.clone()],
+                ),
+                super::metadata::expr::lemma(
+                    span,
+                    "well_formed_add",
+                    vec![elements.records.clone(), nested.clone()],
+                ),
+                super::metadata::expr::lemma(
+                    span,
+                    "cost_prefix",
+                    vec![records.clone(), path.clone(), contracts::literal(span, 0)],
+                ),
+                super::metadata::expr::lemma(
+                    span,
+                    "cost_add",
+                    vec![elements.records.clone(), nested.clone(), contracts::literal(span, 0)],
+                ),
+            ]);
+            self.growth.updates.entry(span.id).or_default().push(super::metadata::expr::assign(
+                span,
+                &elements.next_records,
+                super::metadata::expr::add(span, elements.records.clone(), nested),
+            ));
+            self.growth.after.entry(span.id).or_default().push(super::metadata::expr::assign(
+                span,
+                &elements.records,
+                elements.next_records.clone(),
+            ));
+        }
         let charges = self.owner_charges(span, &child);
         let upper = self.owner_upper(span, &child);
-        elements.inputs.extend(child.inputs());
+        elements.inputs.extend(child.owned_inputs());
+        elements.captures.extend(child.captured_inputs());
         self.release_owner_storage(child, span, false);
-        self.add_element_bytes(span, elements, charges, &upper, Some(length))
+        self.add_element_bytes(span, elements, charges, &upper, Some(length))?;
+        self.assert_element_minima(span, elements, true)
     }
 
     /// Original allocations remain in the enclosing sum. Only allocations
@@ -318,7 +537,8 @@ impl Analysis<'_> {
     ) -> Result<(), VirErr> {
         let charges = self.owner_charges(span, &child);
         let upper = self.owner_upper(span, &child);
-        elements.inputs.extend(child.inputs());
+        elements.inputs.extend(child.owned_inputs());
+        elements.captures.extend(child.captured_inputs());
         // These states move into the parent's sum. Pending peak checks must
         // not reintroduce their retired allocation identities as extra charges.
         child.visit(&mut |node| {
@@ -427,10 +647,12 @@ impl Analysis<'_> {
         args: &Exprs,
         transferred: &mut [Option<Owner>],
     ) -> Result<Elements, VirErr> {
-        let (charges, inputs) =
+        let (charges, inputs, captures) =
             self.element_summary_bytes(span, summary, callee, args, transferred)?;
         let mut elements = self.elements_from_bytes(span, charges);
+        elements.precise = false;
         elements.inputs = inputs;
+        elements.captures = captures;
         Ok(elements)
     }
 
@@ -441,11 +663,20 @@ impl Analysis<'_> {
         callee: &Function,
         args: &Exprs,
         transferred: &mut [Option<Owner>],
-    ) -> Result<(BTreeMap<MemoryKind, Expr>, HashSet<usize>), VirErr> {
+    ) -> Result<
+        (BTreeMap<MemoryKind, Expr>, HashSet<usize>, HashSet<super::allocations::Capture>),
+        VirErr,
+    > {
         let mut charges = BTreeMap::new();
         let mut inputs = HashSet::new();
+        let (captured_bytes, mut captures) = self.captured_sources(span, &summary.captures);
+        if !summary.captures.is_empty() {
+            add(span, &mut charges, MemoryKind::host_heap(), captured_bytes);
+        }
         for (kind, amount) in &summary.bytes {
-            charges.insert(
+            add(
+                span,
+                &mut charges,
                 kind.clone(),
                 contracts::substitute(amount, callee, args, &self.stable_scalars)?,
             );
@@ -457,10 +688,11 @@ impl Analysis<'_> {
             for (kind, amount) in self.owner_charges(span, &child) {
                 add(span, &mut charges, kind, amount);
             }
-            inputs.extend(child.inputs());
+            inputs.extend(child.owned_inputs());
+            captures.extend(child.captured_inputs());
             self.release_owner_storage(child, span, false);
         }
-        Ok((charges, inputs))
+        Ok((charges, inputs, captures))
     }
 
     /// Instantiate one checked addition and absorb all transferred input owners
@@ -474,12 +706,17 @@ impl Analysis<'_> {
         args: &Exprs,
         transferred: &mut [Option<Owner>],
     ) -> Result<(), VirErr> {
-        let (charges, inputs) =
+        let (charges, inputs, captures) =
             self.element_summary_bytes(span, summary, callee, args, transferred)?;
         elements.inputs.extend(inputs);
+        elements.captures.extend(captures);
+        if !summary.inputs.is_empty() || !summary.captures.is_empty() {
+            elements.precise = false;
+        }
         if charges.values().all(|amount| contracts::constant(amount) == Some(0)) {
             return Ok(());
         }
+        elements.precise = false;
         let upper = charges.clone();
         self.add_element_bytes(span, elements, charges, &upper, None)
     }
@@ -493,6 +730,21 @@ fn add(span: &Span, charges: &mut BTreeMap<MemoryKind, Expr>, kind: MemoryKind, 
 }
 
 impl super::growth::Growth {
+    pub(super) fn capture_elements(&mut self, span: &Span, id: usize, amount: Expr, after: bool) {
+        let state = &mut self.elements[id];
+        let assignment = super::symbolic::assign(
+            span,
+            &state.bytes,
+            contracts::add(span, state.bytes.clone(), amount.clone()),
+        );
+        state.initial = contracts::add(span, state.initial.clone(), amount.clone());
+        state.extent = state.extent.take().map(|extent| contracts::add(span, extent, amount));
+        if after {
+            self.after.entry(span.id).or_default().push(assignment);
+        } else {
+            self.before.entry(span.id).or_default().push(assignment);
+        }
+    }
     pub(super) fn repeat_elements(&mut self, ids: &[usize]) {
         for id in ids {
             self.elements[*id].extent = None;

@@ -225,11 +225,10 @@ fn section_cannot_hide_new_children_of_enclosing_collection() {
 }
 
 #[test]
-fn owning_pop_still_requires_conditional_ownership() {
-    rejects(
+fn owning_pop_from_an_input_uses_conservative_dependencies() {
+    verifies(
         "element_pop",
         "fn f(mut v: Vec<Box<u32>>) resources peak(memory) <= 100 { let removed = v.pop(); }",
-        "owning or reference-valued Option payloads",
     );
 }
 

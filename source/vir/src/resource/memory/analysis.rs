@@ -39,6 +39,11 @@ pub(super) struct Checkpoint {
 
 /// One function's evolving ownership state and already checked callee facts.
 pub(super) struct Analysis<'a> {
+    /// Opaque captures may share a provenance dependency. Keep those original
+    /// input lifetimes through this frame, independently of local charge IDs.
+    pub(super) pinned_inputs: HashSet<usize>,
+    pub(super) parameters: HashMap<VarIdent, usize>,
+    pub(super) capture_calls: HashMap<u64, super::captures::CallSources>,
     /// Live named values, including their identities across moves.
     pub(super) slots: HashMap<VarIdent, super::lifetime::Value>,
     /// An expression result waiting to become a destination or return value.
@@ -180,10 +185,16 @@ impl Analysis<'_> {
                     };
                     self.slots.insert(binding.name.clone(), value);
                     if self.layouts.owner(&binding.typ) {
-                        let owner = self
+                        let mut owner = self
                             .result_owner
                             .take()
                             .ok_or_else(|| unsupported(&stmt.span, "uninitialized heap owners"))?;
+                        let value = SpannedTyped::new(
+                            &stmt.span,
+                            &binding.typ,
+                            ExprX::Var(binding.name.clone()),
+                        );
+                        self.bind_collection_sources(&stmt.span, &mut owner, &binding.typ, value)?;
                         self.heap.owners.insert(binding.name.clone(), owner);
                     }
                 }
@@ -211,6 +222,10 @@ impl Analysis<'_> {
     /// Evaluate source expressions. Only a standalone aggregate leaves a storage
     /// charge; scalar/reference operations introduce no implicit objects.
     pub(super) fn expr(&mut self, expr: &Expr) -> Result<u64, VirErr> {
+        if let Some(owner) = self.extracted_owner(expr, true)? {
+            self.release_owner(owner, &expr.span);
+            return Ok(0);
+        }
         if self.layouts.owner(&expr.typ) {
             let value = self.produce(expr)?;
             let owner = self.result_owner.take().expect("produced owner");
@@ -386,16 +401,68 @@ impl Analysis<'_> {
                 atomic_call: false,
                 ..
             } if unit(&expr.typ) => {
+                self.prepare_element_loop(body)?;
+                let forest_bounds = self.element_loop_bounds(&expr.span, body)?;
                 let loop_scalars = self.stable_scalars.clone();
                 let entry = self.storage.live();
                 let ids = self.heap.vectors();
+                let metadata_facts = self.element_metadata_invariants(&expr.span);
+                let precise_forests = !metadata_facts.is_empty();
+                if precise_forests {
+                    self.enable_loop_metadata(&expr.span);
+                }
+                let vector_entry: Vec<_> = ids
+                    .iter()
+                    .filter(|_| precise_forests)
+                    .map(|id| {
+                        (
+                            *id,
+                            self.growth.vectors[*id].pushes,
+                            self.growth.vectors[*id].backing.floor.clone(),
+                        )
+                    })
+                    .collect();
                 let elements = self.heap.element_states();
+                let mut entry_facts = Vec::new();
+                if precise_forests {
+                    entry_facts.extend(self.growth.invariants(
+                        &expr.span,
+                        &ids,
+                        &loop_scalars,
+                        &self.bound,
+                    ));
+                    entry_facts.extend(self.growth.element_invariants(
+                        &expr.span,
+                        &elements,
+                        &loop_scalars,
+                        &self.bound,
+                    ));
+                    entry_facts.extend(metadata_facts);
+                    entry_facts
+                        .extend(self.element_reservation_invariants(&expr.span, &loop_scalars)?);
+                }
+                let ExprX::Loop { invs, .. } = &expr.x else { unreachable!() };
+                entry_facts.extend(
+                    invs.iter()
+                        .filter(|inv| {
+                            precise_forests
+                                && matches!(
+                                    inv.kind,
+                                    LoopInvariantKind::InvariantAndEnsures
+                                        | LoopInvariantKind::InvariantExceptBreak
+                                )
+                        })
+                        .map(|inv| inv.inv.clone()),
+                );
+                let entry_facts = self.freeze_loop_facts(&expr.span, entry_facts)?;
                 let live = self.storage.live_expression(&expr.span).total();
                 let protection = self.heap.protect();
                 let first_checkpoint = self.checkpoints.len();
                 self.storage.event(&expr.span, "analyze reusable while iteration".into());
+                self.growth.loop_depth += 1;
                 self.discard(cond)?;
                 self.discard(body)?;
+                self.growth.loop_depth -= 1;
                 assert_eq!(self.storage.live(), entry);
                 // Every checkpoint may be reached after a previous complete
                 // iteration. With reusable storage, one iteration's maximum is
@@ -405,8 +472,26 @@ impl Analysis<'_> {
                     checkpoint.peak.merge(&iteration_peak);
                 }
                 self.heap.unprotect(protection);
+                let mut frame_invariants = Vec::new();
+                for (id, pushes, floor) in vector_entry {
+                    let state = self.growth.vectors[id].clone();
+                    if state.pushes == pushes
+                        && std::sync::Arc::ptr_eq(&floor, &state.backing.floor)
+                    {
+                        for value in [state.capacity, state.backing.bytes] {
+                            let snapshot = self.loop_snapshot(&expr.span, &value);
+                            frame_invariants
+                                .push(crate::ast_util::mk_eq(&expr.span, &value, &snapshot));
+                        }
+                    }
+                }
                 let mut invariants =
                     self.growth.invariants(&expr.span, &ids, &loop_scalars, &self.bound);
+                invariants.extend(self.element_metadata_invariants(&expr.span));
+                invariants.extend(self.element_reservation_invariants(&expr.span, &loop_scalars)?);
+                invariants.extend(forest_bounds);
+                invariants.extend(frame_invariants);
+                invariants.extend(entry_facts);
                 invariants.extend(self.growth.element_invariants(
                     &expr.span,
                     &elements,
@@ -503,6 +588,9 @@ pub(super) fn check(
         unsupported(&function.span, "functions without execution-mode information")
     })?;
     let mut analysis = Analysis {
+        pinned_inputs: HashSet::new(),
+        parameters: f.params.iter().enumerate().map(|(i, p)| (p.x.name.clone(), i)).collect(),
+        capture_calls: HashMap::new(),
         slots: HashMap::new(),
         produced: None,
         summaries,
@@ -560,6 +648,9 @@ pub(super) fn check(
                         input_vectors.insert((index, path.clone()), id);
                     }
                 });
+                let value =
+                    SpannedTyped::new(&param.span, &param.x.typ, ExprX::Var(param.x.name.clone()));
+                analysis.bind_collection_sources(&param.span, &mut owner, typ, value)?;
                 if borrowed.is_some() {
                     analysis.heap.borrowed.insert(param.x.name.clone(), owner);
                 } else {

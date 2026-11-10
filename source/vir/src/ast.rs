@@ -1041,6 +1041,7 @@ pub enum ResourceIntrinsic {
     VecWithCapacity,
     VecPush,
     VecPop,
+    VecRemove,
     VecLen,
     VecAsSlice,
     VecAsMutSlice,

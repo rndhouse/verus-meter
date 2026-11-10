@@ -19,6 +19,7 @@ pub(super) struct Layouts {
     global_allocator: Option<Dt>,
     vector: Option<Dt>,
     option: Option<Dt>,
+    field_slots: HashMap<Ident, i128>,
 }
 
 impl Layouts {
@@ -28,11 +29,26 @@ impl Layouts {
         vector: Option<Dt>,
         option: Option<Dt>,
     ) -> Self {
+        let fields: std::collections::BTreeSet<_> = datatypes
+            .iter()
+            .flat_map(|d| d.x.variants.iter().flat_map(|v| v.fields.iter().map(|f| f.name.clone())))
+            .collect();
+        let field_slots =
+            fields.into_iter().enumerate().map(|(i, name)| (name, -2 - i as i128)).collect();
         Self {
             datatypes: datatypes.iter().map(|d| (d.x.name.clone(), d.clone())).collect(),
             global_allocator,
             vector,
             option,
+            field_slots,
+        }
+    }
+
+    pub(super) fn metadata_slot(&self, slot: &super::heap::OwnerSlot) -> i128 {
+        match slot {
+            super::heap::OwnerSlot::Contents => -1,
+            super::heap::OwnerSlot::Field(name) => self.field_slots[name],
+            super::heap::OwnerSlot::Element(_) => unreachable!("runtime indices are expressions"),
         }
     }
 
@@ -58,8 +74,10 @@ impl Layouts {
         if !self.option(typ) || args.len() != 1 {
             return Err(unsupported(span, "this Option type"));
         }
-        if self.owner(&args[0]) || matches!(&*args[0], TypX::Decorate(..) | TypX::MutRef(_)) {
-            return Err(unsupported(span, "owning or reference-valued Option payloads"));
+        if matches!(&*args[0], TypX::MutRef(_))
+            || matches!(&*args[0], TypX::Decorate(d, _, _) if *d != TypDecoration::Box)
+        {
+            return Err(unsupported(span, "reference-valued Option payloads"));
         }
         Ok(&args[0])
     }
@@ -78,6 +96,10 @@ impl Layouts {
     fn owner_inner(&self, typ: &Typ, visiting: &mut HashSet<Dt>) -> bool {
         if super::heap::boxed(typ) || self.vector(typ) {
             return true;
+        }
+        if self.option(typ) {
+            let TypX::Datatype(_, args, _) = &**typ else { unreachable!() };
+            return args.first().is_some_and(|typ| self.owner_inner(typ, visiting));
         }
         let TypX::Datatype(name, _, _) = &**typ else { return false };
         let Some(datatype) = self.datatypes.get(name) else { return false };
@@ -137,7 +159,12 @@ impl Layouts {
     ) -> Result<std::collections::BTreeMap<super::heap::OwnerSlot, Typ>, VirErr> {
         use super::heap::OwnerSlot;
         let mut children = std::collections::BTreeMap::new();
-        if let TypX::Decorate(TypDecoration::Box, _, inner) = &**typ {
+        if self.option(typ) {
+            let payload = self.option_payload(typ, span)?;
+            if self.owner(payload) {
+                children.insert(OwnerSlot::Contents, payload.clone());
+            }
+        } else if let TypX::Decorate(TypDecoration::Box, _, inner) = &**typ {
             if self.owner(inner) {
                 children.insert(OwnerSlot::Contents, inner.clone());
             }

@@ -85,21 +85,37 @@ operation used for replacement buffers. Loop sums and append-only buffer bounds
 are ordinary proof-checked invariants, not assumptions. Post-operation checks
 must include all pending child sums before their erased states commit.
 
-[Indexed projections](../../source/vir/src/resource/memory/projections.rs) borrow
-an element's shape for one operation while retaining its original aggregate charge.
-They reuse the ordinary owner operations and add newly retained allocations back
-to the parent sum. Finish nested projections from the inside out; temporary element
-paths must never escape into summaries. Commit transfers after the child's own
-state updates, and check their combined post-operation charge using pre-operation
-expressions. Pure projection expressions and `spec_vec_index` avoid re-executing
-indexing or its bounds check in a memory formula. The executable operation still
-checks bounds normally. Removal effects invalidate append-only invariants at callers
-even when they retain no new allocations.
+[Allocation metadata](../../source/vir/src/resource/memory/metadata.rs) records
+charged byte upper bounds and reservation lower bounds independently. Negative
+path components name fixed children; nonnegative components name runtime indices.
+Verified [forest algebra](../../source/vstd/std_specs/memory.rs) justifies selection,
+partition, composition, and removal with reindexing. Structural serialization and
+restoration recurse over supported types, independently of nesting combinations.
 
-Precise element release, spare-capacity recovery, and extracted owning results
-still need individual element metadata. Shared ownership needs separate last-owner
-release rules. Extend the common ownership model rather than adding rules for
-individual nesting combinations.
+[Indexed projections](../../source/vir/src/resource/memory/projections.rs) loan a
+selected footprint from a precise collection and return its final descriptors.
+Finish nested loans from the inside out, after child updates commit. Pending
+cost proofs precede peak checks; validity proofs follow the operation. Indices
+must remain stable across argument evaluation. Pure projections and `spec_vec_index`
+avoid repeating executable indexing or its bounds checks.
+
+[Extraction](../../source/vir/src/resource/memory/extraction.rs) transfers storage
+into an independently owned result, including conditional Option payloads.
+[Opaque captures](../../source/vir/src/resource/memory/captures.rs) duplicate
+conservative bounds when a helper exposes no individual metadata. Preserve owned
+and borrowed input dependencies across calls, branches, nested children, and
+collection insertion. These dependencies may extend an original input lifetime;
+ending a copied charge must never end another owner's charge.
+
+Loop proofs preserve forest validity and sums, immutable entry facts, and inferred
+reservation candidates indexed by fixed and repeated ownership steps. Every
+candidate is checked at loop entry and on back edges. Opaque mutations invalidate
+precision before analyzing a reusable iteration. Shared ownership still needs
+separate last-owner release rules.
+
+Activate finite transfer laws at operation sites and broader sibling-view rules
+in loop scopes. Isolated loop queries must receive their own algebra activation;
+unneeded structural rewrites can make failing budget queries expensive.
 
 Compiler upgrades need a review of borrow/coercion lowering, move/copy provenance,
 and the identities used for supported standard operations.

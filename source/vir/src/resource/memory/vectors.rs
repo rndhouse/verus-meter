@@ -35,8 +35,8 @@ pub(super) fn length(span: &crate::messages::Span, types: Typs, vector: Expr) ->
 }
 
 impl Analysis<'_> {
-    /// Retained sums include discarded children, so neither insertion counts
-    /// nor historical buffer sizes can subsequently be bounded by current length.
+    /// Removal invalidates insertion-count and append-only buffer bounds for
+    /// both precise forests and opaque retained sums.
     pub(super) fn forget_collection_length(
         &mut self,
         name: &VarIdent,
@@ -213,6 +213,7 @@ impl Analysis<'_> {
                 Some(
                     ResourceIntrinsic::VecPush
                         | ResourceIntrinsic::VecPop
+                        | ResourceIntrinsic::VecRemove
                         | ResourceIntrinsic::VecLen
                         | ResourceIntrinsic::VecAsSlice
                         | ResourceIntrinsic::VecAsMutSlice
@@ -357,12 +358,20 @@ impl Analysis<'_> {
                 self.heap.root_mut(&name).unwrap().at_mut(&path).unwrap().elements = Some(elements);
                 self.record_element_updates(&expr.span)?;
             }
-        } else if intrinsic == Some(ResourceIntrinsic::VecPop) && self.layouts.owning_elements(&typ)
+        } else if matches!(
+            intrinsic,
+            Some(ResourceIntrinsic::VecPop | ResourceIntrinsic::VecRemove)
+        ) && self.layouts.owning_elements(&typ)
         {
-            // A discarded result cannot outlive its collection. Retain the old
-            // child sum conservatively, but stop using logical length to bound
-            // historic insertions or buffer growth. Owning Option destinations
-            // remain rejected by layout validation.
+            // Ownership-producing paths use extraction. A receiver-only effect
+            // retains the aggregate conservatively and invalidates length bounds.
+            let (name, path) = super::paths::expr(receiver, &typ).unwrap();
+            self.forget_collection_length(&name, &path);
+        } else if intrinsic == Some(ResourceIntrinsic::VecRemove) {
+            let [_, index] = args.as_slice() else {
+                return Err(unsupported(&expr.span, "this vector removal"));
+            };
+            self.discard(index)?;
             let (name, path) = super::paths::expr(receiver, &typ).unwrap();
             self.forget_collection_length(&name, &path);
         } else if index {

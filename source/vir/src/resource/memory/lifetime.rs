@@ -211,6 +211,29 @@ impl Analysis<'_> {
         let mut peak = self.storage.peak();
         peak.merge(&state.storage.peak());
         self.storage.set_peak(peak);
+        for (name, old) in state.heap.owners.iter().chain(state.heap.borrowed.iter()) {
+            if let Some(current) = self.heap.root_mut(name) {
+                old.visit_paths(&mut vec![], &mut |path, node| {
+                    if let Some(owner) = current.at_mut(path) {
+                        owner.captures.extend(node.captures.iter().cloned());
+                    }
+                    if let Some(elements) =
+                        current.at_mut(path).and_then(|owner| owner.elements.as_mut())
+                    {
+                        elements.precise &= node.elements.as_ref().is_some_and(|old| old.precise);
+                        if let Some(old) = &node.elements {
+                            super::metadata::reservations::join_minima(
+                                &old.records.span,
+                                &mut elements.minima,
+                                &old.minima,
+                            );
+                            elements.inputs.extend(old.inputs.iter().copied());
+                            elements.captures.extend(old.captures.iter().cloned());
+                        }
+                    }
+                });
+            }
+        }
         for (name, value) in &state.slots {
             self.slots
                 .entry(name.clone())

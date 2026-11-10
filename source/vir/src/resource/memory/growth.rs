@@ -18,6 +18,9 @@ pub(super) struct VectorState {
     pub(super) capacity: Expr,
     /// Initial reservation remains a lower bound because supported operations never shrink.
     pub(super) minimum: Expr,
+    /// A uniform reservation candidate inherited from a runtime ownership class.
+    /// Kept separate from this allocation's actual reservation state.
+    pub(super) uniform_minimum: Option<Expr>,
     /// Direct pushes require length-dependent loop bounds; helper effects have stable bounds.
     pub(super) pushes: usize,
     /// Scratch snapshot prevents a transition from reading its own updated state.
@@ -38,6 +41,13 @@ pub(super) struct VectorState {
 
 #[derive(Default)]
 pub(super) struct Growth {
+    /// Universal sibling and reservation facts are needed only by reusable bodies.
+    pub(super) loop_depth: usize,
+    /// Activate proof algebra at each operation, including inside isolated loop queries.
+    pub(super) metadata_scopes: std::collections::HashSet<u64>,
+    /// Shared entry snapshots let loop frame and sum bounds refer to the same
+    /// immutable proof values, including in isolated loop verification queries.
+    pub(super) loop_entry: HashMap<u64, HashMap<VarIdent, Expr>>,
     /// All states have function-wide proof scope; executable ownership controls charges.
     pub(super) vectors: Vec<VectorState>,
     /// Independent sums of runtime child allocations, grouped by memory kind.
@@ -158,6 +168,7 @@ impl Growth {
         self.vectors.push(VectorState {
             capacity: lower,
             minimum: capacity,
+            uniform_minimum: None,
             pushes: 0,
             next_capacity,
             element,

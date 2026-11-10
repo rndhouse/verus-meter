@@ -24,7 +24,7 @@ fn direct_indexed_growth_retains_new_allocations() {
 }
 
 #[test]
-fn indexed_helper_growth_is_additive_across_operations() {
+fn indexed_helper_growth_replaces_the_selected_child_charge() {
     let code = "fn grow(v: &mut Vec<u32>)
         requires old(v).len() <= 1, ensures final(v).len() == old(v).len() + 1,
         resources peak(memory) <= 24 { v.push(1); }
@@ -33,8 +33,8 @@ fn indexed_helper_growth_is_additive_across_operations() {
             let child = Vec::<u32>::new(); outer.push(child);
             grow(&mut outer[0]); grow(&mut outer[0]); let scratch = [0u8;64];
         }";
-    verifies("indexed_helpers", &code.replace("BOUND", "160"));
-    rejects("indexed_helpers_short", &code.replace("BOUND", "159"), "memory budget exceeded");
+    verifies("indexed_helpers", &code.replace("BOUND", "136"));
+    rejects("indexed_helpers_short", &code.replace("BOUND", "135"), "memory budget exceeded");
 }
 
 #[test]
@@ -108,7 +108,7 @@ fn indexed_captures_keep_input_lifetimes_until_collection_drop() {
 }
 
 #[test]
-fn helper_replacement_of_an_element_field_preserves_captures() {
+fn helper_replacement_of_an_element_field_releases_displaced_storage() {
     let code = "struct Item { data: Box<[u8;16]> }
         fn replace(p: &mut Item, data: Box<[u8;16]>) resources peak(memory) <= 16 { p.data = data; }
         fn f() resources peak(memory) <= BOUND {
@@ -117,8 +117,8 @@ fn helper_replacement_of_an_element_field_preserves_captures() {
             let replacement = Box::new([0u8;16]); replace(&mut v[0], replacement);
             let scratch = [0u8;64];
         }";
-    verifies("indexed_replacement", &code.replace("BOUND", "128"));
-    rejects("indexed_replacement_short", &code.replace("BOUND", "127"), "memory budget exceeded");
+    verifies("indexed_replacement", &code.replace("BOUND", "112"));
+    rejects("indexed_replacement_short", &code.replace("BOUND", "111"), "memory budget exceeded");
 }
 
 #[test]
@@ -135,7 +135,7 @@ fn indexed_boxed_slice_children_use_the_same_projection() {
 }
 
 #[test]
-fn indexed_assignments_keep_displaced_bytes_conservatively() {
+fn indexed_assignments_release_displaced_bytes() {
     verifies(
         "indexed_assignment",
         "fn f() resources peak(memory) <= 200 {
@@ -179,15 +179,15 @@ fn borrowed_collection_effects_survive_call_boundaries() {
 }
 
 #[test]
-fn discarding_a_removed_child_keeps_a_conservative_sum() {
+fn discarding_a_removed_child_releases_its_footprint() {
     let code = "fn f() resources peak(memory) <= BOUND {
         let mut v = Vec::<Box<[u8;16]>>::with_capacity(1);
         let first = Box::new([0u8;16]); v.push(first); v.pop();
         let second = Box::new([0u8;16]); v.push(second);
         let scratch = [0u8;64];
     }";
-    verifies("discarded_child", &code.replace("BOUND", "128"));
-    rejects("discarded_child_short", &code.replace("BOUND", "127"), "memory budget exceeded");
+    verifies("discarded_child", &code.replace("BOUND", "112"));
+    rejects("discarded_child_short", &code.replace("BOUND", "111"), "memory budget exceeded");
 }
 
 #[test]

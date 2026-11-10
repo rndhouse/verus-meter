@@ -48,6 +48,9 @@ impl Analysis<'_> {
     ) -> Result<(), VirErr> {
         let mut focused = Vec::new();
         self.focus_place(place, &rhs.span, &mut focused)?;
+        if !focused.is_empty() {
+            self.check_projection_effects(rhs)?;
+        }
         self.assign_owner_inner(place, typ, rhs)?;
         self.finish_projections(&rhs.span, focused)
     }
@@ -70,10 +73,16 @@ impl Analysis<'_> {
                 "allocation changes inside an indexed replacement; bind the replacement first",
             ));
         }
-        let child = self
+        let mut child = self
             .result_owner
             .take()
             .ok_or_else(|| unsupported(&rhs.span, "a replacement without ownership"))?;
+        self.bind_collection_sources(
+            &rhs.span,
+            &mut child,
+            typ,
+            crate::ast_util::place_to_spec_expr(place),
+        )?;
         self.heap.mark_replaced(&name, &path);
         let owner = self
             .heap

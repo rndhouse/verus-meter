@@ -68,6 +68,14 @@ pub(super) fn summarize(
         path: &mut super::heap::OwnerPath,
         capacities: &mut std::collections::BTreeMap<super::heap::OwnerPath, Expr>,
     ) -> Result<ReturnedOwner, VirErr> {
+        if !owner.captures.is_empty() {
+            let mut plain = owner.clone();
+            let sources = std::mem::take(&mut plain.captures);
+            return Ok(ReturnedOwner::Captured {
+                sources,
+                owner: Box::new(node(function, &plain, growth, bound, path, capacities)?),
+            });
+        }
         let mut children = std::collections::BTreeMap::new();
         for (slot, child) in &owner.children {
             path.push(slot.clone());
@@ -125,6 +133,13 @@ impl ReturnedOwner {
     /// Inputs can survive anywhere in the result, including under newly allocated boxes.
     fn inputs(&self, inputs: &mut std::collections::HashSet<usize>) {
         match self {
+            Self::Captured { sources, owner } => {
+                owner.inputs(inputs);
+                inputs.extend(sources.iter().filter_map(|source| match source {
+                    allocations::Capture::Owned(index) => Some(*index),
+                    allocations::Capture::Borrowed(_) => None,
+                }));
+            }
             Self::Input { index, addition, children, .. } => {
                 for child in children.values() {
                     child.inputs(inputs);
@@ -239,8 +254,14 @@ impl Analysis<'_> {
                 )
             })
             .transpose()?;
-        if transferred.iter().any(Option::is_some) {
-            return Err(unsupported(&expr.span, "unconsumed ownership summary inputs"));
+        let captured = self.capture_calls.remove(&expr.span.id).unwrap_or_default();
+        for (index, owner) in transferred.iter_mut().enumerate() {
+            if let Some(owner) = owner.take() {
+                if !captured.contains_key(&allocations::Capture::Owned(index)) {
+                    return Err(unsupported(&expr.span, "unconsumed ownership summary inputs"));
+                }
+                self.release_owner(owner, &expr.span);
+            }
         }
         Ok(result)
     }
@@ -296,8 +317,15 @@ impl Analysis<'_> {
         path: &mut super::heap::OwnerPath,
     ) -> Result<Owner, VirErr> {
         let OwnerCall { expr, callee, args, .. } = *call;
+        if let ReturnedOwner::Captured { sources, owner } = summary {
+            let mut result = self.adopt_owner_tree(call, typ, owner, path)?;
+            let (amount, dependencies) = self.captured_sources(&expr.span, sources);
+            self.add_capture_charge(&expr.span, &mut result, amount, dependencies, true);
+            return Ok(result);
+        }
         let mut replacement = None;
         let mut owner = match summary {
+            ReturnedOwner::Captured { .. } => unreachable!(),
             ReturnedOwner::Input { index, replacement, addition, .. } => {
                 let mut owner = call.transferred[*index].take().ok_or_else(|| {
                     unsupported(&expr.span, "a returned input without transferred ownership")

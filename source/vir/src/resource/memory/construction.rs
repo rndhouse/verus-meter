@@ -173,10 +173,31 @@ impl Analysis<'_> {
                     .result_owner
                     .take()
                     .ok_or_else(|| unsupported(&field.span, "an owning field without ownership"))?;
-                owner.children.insert(super::heap::OwnerSlot::Field(name), child);
+                let slot = if self.layouts.option(&expr.typ) {
+                    super::heap::OwnerSlot::Contents
+                } else {
+                    super::heap::OwnerSlot::Field(name)
+                };
+                owner.children.insert(slot, child);
             }
         }
         if self.layouts.owner(&expr.typ) {
+            if self.layouts.option(&expr.typ) && owner.children.is_empty() {
+                let payload = self.layouts.option_payload(&expr.typ, &expr.span)?.clone();
+                let name = VarIdent(
+                    std::sync::Arc::new("$memory_none".into()),
+                    VarIdentDisambiguate::VirTemp(super::accounting::Accounting::fresh_allocation()),
+                );
+                let child = self.input_owner(
+                    &payload,
+                    &expr.span,
+                    0,
+                    &name,
+                    &mut vec![],
+                    &Default::default(),
+                )?;
+                owner.children.insert(super::heap::OwnerSlot::Contents, child);
+            }
             self.result_owner = Some(owner);
         }
         Ok(Some(if destination { 0 } else { bytes }))

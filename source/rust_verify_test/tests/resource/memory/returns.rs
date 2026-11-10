@@ -103,12 +103,8 @@ fn option_predicates() {
 }
 
 #[test]
-fn owning_option_payload_remains_rejected() {
-    rejects(
-        "option_owner",
-        "fn f() resources peak(memory) <= 100 { let v: Option<Box<u32>> = None; }",
-        "owning or reference-valued Option payloads",
-    );
+fn owning_option_payload_is_supported() {
+    verifies("option_owner", "fn f() resources peak(memory) <= 100 { let v: Option<Box<u32>> = None; }");
 }
 
 #[test]

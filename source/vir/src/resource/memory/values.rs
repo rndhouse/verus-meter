@@ -92,18 +92,27 @@ impl Analysis<'_> {
         pattern: &Pattern,
         typ: &Typ,
         slots: &mut Vec<(VarIdent, u64)>,
+        mut owner: Option<super::heap::Owner>,
     ) -> Result<(), VirErr> {
         if !crate::ast_util::types_equal(&pattern.typ, typ) {
             return Err(unsupported(&pattern.span, "this Option pattern coercion"));
         }
         match &pattern.x {
-            PatternX::Wildcard => Ok(()),
+            PatternX::Wildcard => {
+                if let Some(owner) = owner {
+                    self.release_owner(owner, &pattern.span);
+                }
+                Ok(())
+            }
             PatternX::Var(binding) if matches!(binding.by_ref, ByRef::No) => {
                 if self.var_modes.get(&binding.name) != Some(&Mode::Exec) {
                     return Err(unsupported(&pattern.span, "non-executable Option bindings"));
                 }
                 let bytes = self.layouts.return_size(&binding.typ, &pattern.span)?;
                 slots.push((binding.name.clone(), bytes));
+                if let Some(owner) = owner {
+                    self.heap.owners.insert(binding.name.clone(), owner);
+                }
                 if binding.user_mut == Some(false) && super::contracts::scalar(&binding.typ) {
                     self.stable_scalars.insert(binding.name.clone());
                 }
@@ -115,10 +124,21 @@ impl Analysis<'_> {
                     return Err(unsupported(&pattern.span, "this Option pattern type"));
                 }
                 match (variant.as_str(), fields.as_slice()) {
-                    ("None", []) => Ok(()),
+                    ("None", []) => {
+                        if let Some(owner) = owner {
+                            self.release_owner(owner, &pattern.span);
+                        }
+                        Ok(())
+                    }
                     ("Some", [field]) => {
                         let payload = self.layouts.option_payload(typ, &pattern.span)?.clone();
-                        self.option_pattern(&field.a, &payload, slots)
+                        let child = owner.as_mut().and_then(|owner| {
+                            owner.children.remove(&super::heap::OwnerSlot::Contents)
+                        });
+                        if let Some(owner) = owner {
+                            self.release_owner(owner, &pattern.span);
+                        }
+                        self.option_pattern(&field.a, &payload, slots, child)
                     }
                     _ => Err(unsupported(&pattern.span, "this Option pattern")),
                 }
@@ -141,7 +161,10 @@ impl Analysis<'_> {
             return Err(unsupported(&expr.span, "matches other than by-value Option matches"));
         }
         self.layouts.return_size(&expr.typ, &expr.span)?;
-        let protection = self.heap.protect();
+        if self.layouts.owner(&expr.typ) {
+            return Err(unsupported(&expr.span, "conditional heap ownership results"));
+        }
+        let mut option_owner = None;
         let scratch = if let PlaceX::Temporary(value) = &scrutinee.x {
             let bytes = self.layouts.size(&scrutinee.typ, &scrutinee.span)?;
             self.storage.reserve(
@@ -151,11 +174,18 @@ impl Analysis<'_> {
                 "match input destination",
             )?;
             self.initialize_expr(value)?;
+            option_owner = self.result_owner.take();
             bytes
         } else {
             self.access(scrutinee, &scrutinee.typ)?;
+            if self.layouts.owner(&scrutinee.typ) {
+                option_owner = Some(self.move_owner(scrutinee)?);
+                let value = self.take_value(scrutinee)?;
+                self.release_value(value, &expr.span);
+            }
             0
         };
+        let protection = self.heap.protect();
         let entry = self.branch_state();
         let mut joined = None;
         let mut result: Option<super::lifetime::Value> = None;
@@ -165,7 +195,7 @@ impl Analysis<'_> {
             }
             self.restore_branch(&entry);
             let mut slots = Vec::new();
-            self.option_pattern(&arm.x.pattern, &scrutinee.typ, &mut slots)?;
+            self.option_pattern(&arm.x.pattern, &scrutinee.typ, &mut slots, option_owner.clone())?;
             // Bindings exist throughout the arm, including its guard/body.
             for (name, bytes) in &slots {
                 let id = self.storage.reserve_value(
@@ -194,6 +224,7 @@ impl Analysis<'_> {
                 self.initialize_expr(&arm.x.body)?;
             }
             for (name, _) in slots.iter().rev() {
+                self.drop_owner(name, &arm.span)?;
                 if let Some(value) = self.slots.remove(name) {
                     self.release_value(value, &arm.span);
                 }

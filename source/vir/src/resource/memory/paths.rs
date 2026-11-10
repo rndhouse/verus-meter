@@ -35,6 +35,16 @@ pub(super) fn vector_index(value: &Expr) -> Option<&Exprs> {
         .then_some(args)
 }
 
+/// Index lowering can erase implicit Box dereferences from the result type.
+/// The adapter's element argument retains the complete owning shape.
+pub(super) fn indexed_type(value: &Expr) -> Option<&Typ> {
+    vector_index(value)?;
+    let ExprX::Call { target: CallTarget::Fun(_, _, types, _, _), .. } = &value.x else {
+        unreachable!()
+    };
+    types.first()
+}
+
 pub(super) fn referent(mut typ: &Typ) -> &Typ {
     while let TypX::MutRef(inner) | TypX::Decorate(TypDecoration::Ref, None, inner) = &**typ {
         typ = inner;
@@ -86,7 +96,7 @@ pub(super) fn expr(value: &Expr, target: &Typ) -> Option<LocalPath> {
     if let Some(args) = vector_index(value) {
         let mut location = expr(&args[0], &args[0].typ)?;
         location.1.push(OwnerSlot::Element(value.span.id));
-        return project(location, &value.typ, target);
+        return project(location, indexed_type(value)?, target);
     }
     match &value.x {
         ExprX::Old(base) | ExprX::Unary(UnaryOp::MutRefCurrent, base) => expr(base, target),
