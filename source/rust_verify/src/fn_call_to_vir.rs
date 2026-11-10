@@ -638,9 +638,9 @@ fn verus_item_to_vir<'tcx, 'a>(
                     | SpecItem::ResourceSpecBudget
                     | SpecItem::ResourceQuantity
                     | SpecItem::ResourceRefSizeValue
-                    | SpecItem::ResourceOwnedSizeValue
+                    | SpecItem::ResourceValueSizeValue
                     | SpecItem::ResourceRefSizeType
-                    | SpecItem::ResourceOwnedSizeType
+                    | SpecItem::ResourceValueSizeType
                     | SpecItem::ResourcePeak
                     | SpecItem::ResourcePeakCall
                     | SpecItem::ResourceAssertCurrentMemory
@@ -948,10 +948,10 @@ fn verus_item_to_vir<'tcx, 'a>(
                         mk_expr(ExprX::ResourceAssert(budget))
                     }
                 }
-                SpecItem::ResourceOwnedSizeValue
+                SpecItem::ResourceValueSizeValue
                 | SpecItem::ResourceRefSizeValue
                 | SpecItem::ResourceRefSizeType
-                | SpecItem::ResourceOwnedSizeType => {
+                | SpecItem::ResourceValueSizeType => {
                     record_spec_fn_pure_args_only(bctx, expr);
                     let typ = bctx.mid_ty_to_vir(expr.span, &node_substs.type_at(0))?;
                     let target = CallTarget::Fun(
@@ -970,7 +970,7 @@ fn verus_item_to_vir<'tcx, 'a>(
                                 ) {
                                     vir::ast::ResourceIntrinsic::RefSize
                                 } else {
-                                    vir::ast::ResourceIntrinsic::OwnedSize
+                                    vir::ast::ResourceIntrinsic::ValueSize
                                 },
                             ),
                         },

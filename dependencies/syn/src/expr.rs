@@ -1807,7 +1807,7 @@ pub(crate) mod parsing {
                 let paren_token = parenthesized!(content in input);
                 // Size queries take a type, which need not be a Rust expression
                 // (for example Vec<u32>). Preserve its tokens for macro lowering.
-                let args = if matches!(&e, Expr::Path(p) if (p.path.is_ident("owned_size") || p.path.is_ident("ref_size")))
+                let args = if matches!(&e, Expr::Path(p) if (p.path.is_ident("value_size") || p.path.is_ident("ref_size")))
                 {
                     let begin = content.fork();
                     let _: crate::Type = content.parse()?;

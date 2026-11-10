@@ -101,10 +101,10 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
                     ));
                 }
                 Some(VerusItem::Spec(
-                    SpecItem::ResourceOwnedSizeType | SpecItem::ResourceRefSizeType,
+                    SpecItem::ResourceValueSizeType | SpecItem::ResourceRefSizeType,
                 )) if args.is_empty() => substitutions.type_at(0),
                 Some(VerusItem::Spec(
-                    SpecItem::ResourceOwnedSizeValue
+                    SpecItem::ResourceValueSizeValue
                     | SpecItem::ResourceRefSizeValue
                     | SpecItem::ResourcePeak,
                 )) if args.len() == 1 => {
@@ -142,7 +142,7 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
                 _ => {
                     return err_span(
                         expr.span,
-                        "only owned_size, ref_size, and peak queries are allowed in resource budgets",
+                        "only value_size, ref_size, and peak queries are allowed in resource budgets",
                     );
                 }
             };
@@ -154,7 +154,7 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
             ) {
                 BudgetExprX::RefSize(bctx.mid_ty_to_vir(expr.span, &typ)?)
             } else {
-                BudgetExprX::OwnedSize(bctx.mid_ty_to_vir(expr.span, &typ)?)
+                BudgetExprX::ValueSize(bctx.mid_ty_to_vir(expr.span, &typ)?)
             }
         }
         _ => return err_span(expr.span, "unsupported resource budget expression"),

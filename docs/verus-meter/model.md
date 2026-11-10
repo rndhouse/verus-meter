@@ -14,8 +14,8 @@ clause receive ordinary Verus verification only.
 | Expression | Meaning |
 | --- | --- |
 | `ref_size(reference)` | Storage occupied by a reference, excluding its borrowed data. |
-| `owned_size(value)` | Storage occupied by a non-reference value, excluding separate allocations. |
-| `ref_size(&Type)`, `owned_size(Type)` | The same measurements using a type instead of a binding. |
+| `value_size(value)` | Storage occupied by a non-reference value, excluding separate allocations. |
+| `ref_size(&Type)`, `value_size(Type)` | The same measurements using a type instead of a binding. |
 | `peak(helper)` | A helper's declared budget, taking the maximum at each conditional. |
 | `peak(helper(false))` | Its declared budget for these arguments, without executing the helper. |
 | `assert(peak(memory) <= bound)` | A check on the peak reached so far. |
@@ -40,11 +40,11 @@ constants are not yet supported as budget operands.
 A function budget can call a local `spec fn` returning `nat` or `u64`:
 
 ```rust
-spec fn element_bytes(capacity: nat) -> nat { owned_size(u32) * capacity }
+spec fn element_bytes(capacity: nat) -> nat { value_size(u32) * capacity }
 
 fn collect(capacity: usize)
     requires capacity <= 1024,
-    resources peak(memory) <= owned_size(capacity) + owned_size(Vec<u32>)
+    resources peak(memory) <= value_size(capacity) + value_size(Vec<u32>)
         + element_bytes(capacity as nat),
 {
     let values = Vec::<u32>::with_capacity(capacity);
@@ -68,7 +68,7 @@ Sections and checkpoints still require fixed bounds.
 
 Inside specifications, both size queries return a `nat` using the same model as
 memory clauses. They inspect types without evaluating or copying the argument.
-Use `ref_size` for references and `owned_size` for other values; using the wrong
+Use `ref_size` for references and `value_size` for other values; using the wrong
 query is an error. Arrays include their elements and structs include their inline
 fields. Boxes and vectors include only their handles: the checker accounts for
 their allocations separately. Generic layouts remain unsupported.
@@ -77,7 +77,7 @@ A spec function may return a formula that captures its parameters:
 
 ```rust
 spec fn budget_for(element_bytes: nat) -> spec_fn(nat) -> nat {
-    |count: nat| owned_size(Vec<u32>) + element_bytes * count
+    |count: nat| value_size(Vec<u32>) + element_bytes * count
 }
 ```
 
@@ -90,7 +90,7 @@ See [named budget formulas](../../examples/resource/memory/contracts/spec_budget
 ## What counts
 
 The model counts live values and owned allocations using a fixed 64-bit policy.
-Struct sizes add their fields without padding. `owned_size` follows these rules;
+Struct sizes add their fields without padding. `value_size` follows these rules;
 it does not report Rust's physical type layout. Native integers use their width
 in bytes (`u8`/`i8`: 1, through `u128`/`i128`: 16); `usize` and `isize` both use 8.
 Integer arrays multiply that size by their length.
@@ -123,7 +123,7 @@ Using `peak(helper)` lets a caller follow changes to the helper's contract.
 It uses the declared allowance even when the helper currently needs less, so the
 helper can change within that allowance. Both functions are checked independently.
 For conditional helpers, actual calls use the allowance selected by their
-arguments. A caller can write `owned_size(flag) + peak(helper(flag))` to forward
+arguments. A caller can write `value_size(flag) + peak(helper(flag))` to forward
 that promise, or use a precondition to justify a smaller fixed bound.
 See [calls](../../examples/resource/memory/algorithms/calls.rs) and
 [argument-specific budgets](../../examples/resource/memory/contracts/call_budgets.rs).
@@ -143,7 +143,7 @@ compiler optimizations.
 See [returned buffers](../../examples/resource/memory/basics/returns.rs)
 and [retaining too many results](../../examples/resource/memory/expected-failures/returned_buffers.rs).
 
-`Option<T>` costs one tag byte plus `owned_size(T)` in either variant, regardless
+`Option<T>` costs one tag byte plus `value_size(T)` in either variant, regardless
 of Rust's physical representation. `Some`, `None`, by-value
 `match`/`if let`, `is_some`, `is_none`, and `unwrap` are supported. Each named
 match binding gets its own slot for that arm. Verus still requires proof that
@@ -154,8 +154,8 @@ and explicit early `return` remain unsupported.
 
 ## Fixed-size heap objects
 
-`Box<T>` can own one fixed-size value. `owned_size(Box<T>)` counts the owning handle
-(8 model bytes); the live heap object adds `owned_size(T)` to live memory. A
+`Box<T>` can own one fixed-size value. `value_size(Box<T>)` counts the owning handle
+(8 model bytes); the live heap object adds `value_size(T)` to live memory. A
 `Box::new` initializer uses that object's storage, following the same destination
 rule as local initialization. Allocator metadata, padding, and physical allocation
 strategies are outside the model.
@@ -262,8 +262,8 @@ memory section.
 ## Runtime-sized boxed slices
 
 `Box<[T]>` has a 16-byte owning handle and a backing extent of
-`length * owned_size(T)` bytes. Elements must have supported fixed inline layouts;
-their owned allocations are separate child-footprint sums. `owned_size(Box<[T]>)`
+`length * value_size(T)` bytes. Elements must have supported fixed inline layouts;
+their owned allocations are separate child-footprint sums. `value_size(Box<[T]>)`
 measures the handle; it does not include backing storage or child allocations.
 Zero-sized elements require no backing bytes.
 
@@ -292,7 +292,7 @@ result before passing it to a helper.
 ## Vector allocations and growth
 
 A `Vec<T>` handle costs 24 model bytes. `Vec::new()` begins without backing
-storage; `Vec::with_capacity(n)` initially charges `n * owned_size(T)` bytes,
+storage; `Vec::with_capacity(n)` initially charges `n * value_size(T)` bytes,
 even when empty. Capacity information is tracked by the verifier.
 
 A push that fits uses the existing buffer. Otherwise the model allows growth
@@ -319,7 +319,7 @@ allocations. A memory section can grow its own vectors; an enclosing vector
 must still fit its existing reservation inside that section.
 
 Constructor capacities can be literals or immutable unsigned variables.
-Budgets can scale with inputs, using `owned_size` to express storage costs
+Budgets can scale with inputs, using `value_size` to express storage costs
 for the handles and elements rather than unexplained byte totals. See
 [growing vectors](../../examples/resource/memory/vectors/vector_growth.rs),
 [preallocated vectors](../../examples/resource/memory/vectors/vectors.rs), and
@@ -336,7 +336,7 @@ There is no capacity annotation.
 fn append(values: &mut Vec<u32>, capacity: usize, value: u32)
     requires old(values).len() < capacity,
     ensures final(values)@ == old(values)@.push(value),
-    resources peak(memory) <= ref_size(values) + owned_size(capacity) + owned_size(value),
+    resources peak(memory) <= ref_size(values) + value_size(capacity) + value_size(value),
 {
     values.push(value);
 }
@@ -405,12 +405,12 @@ A section gives one part of an operation its own workspace allowance:
 
 ```rust
 fn work()
-    resources peak(memory) <= 2 * owned_size([u32; 4]),
+    resources peak(memory) <= 2 * value_size([u32; 4]),
 {
     let original = [1u32, 2, 3, 4];
-    resources peak(memory) <= owned_size(original) {
+    resources peak(memory) <= value_size(original) {
         let copy = original;
-        assert(peak(memory) <= owned_size(copy));
+        assert(peak(memory) <= value_size(copy));
     }
 }
 ```
@@ -446,8 +446,8 @@ See [checkpoints](../../examples/resource/memory/contracts/checkpoints.rs) and a
 A conditional function budget can select its allowance from the inputs:
 
 ```rust
-resources peak(memory) <= owned_size(large)
-    + if large { owned_size([u32; 8]) } else { owned_size([u32; 4]) },
+resources peak(memory) <= value_size(large)
+    + if large { value_size([u32; 8]) } else { value_size([u32; 4]) },
 ```
 
 Verus proves that the executed branch fits the selected allowance. Preconditions,

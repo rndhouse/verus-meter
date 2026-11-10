@@ -21,10 +21,10 @@ A simple example:
 // The caller keeps paying for the borrowed array. The `if` lets us specify
 // a different memory bound for each reversal strategy.
 fn reverse(values: &mut [u32; 4], use_scratch: bool)
-    resources peak(memory) <= ref_size(values) + owned_size(use_scratch) + if use_scratch {
-        owned_size([u32; 4])
+    resources peak(memory) <= ref_size(values) + value_size(use_scratch) + if use_scratch {
+        value_size([u32; 4])
     } else {
-        owned_size(u32)
+        value_size(u32)
     },
 {
     if use_scratch {
@@ -45,7 +45,7 @@ fn reverse(values: &mut [u32; 4], use_scratch: bool)
 
 // Reverse two buffers using the memory needed for just one reversal.
 fn main()
-    resources peak(memory) <= owned_size([u32; 4]) + peak(reverse),
+    resources peak(memory) <= value_size([u32; 4]) + peak(reverse),
 {
     {
         let mut first = [1u32, 2, 3, 4];

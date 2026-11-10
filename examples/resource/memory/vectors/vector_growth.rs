@@ -11,8 +11,8 @@ verus! {
 // replacement overlap and conservative loop accounting.
 fn build(n: usize)
     requires n <= 8,
-    resources peak(memory) <= owned_size(n) + owned_size(Vec<u32>)
-        + 2 * owned_size([u32; 4]) + n * owned_size([u32; 4]),
+    resources peak(memory) <= value_size(n) + value_size(Vec<u32>)
+        + 2 * value_size([u32; 4]) + n * value_size([u32; 4]),
 {
     let mut values = Vec::<u32>::new();
     while values.len() < n
@@ -31,7 +31,7 @@ fn build(n: usize)
 fn append_to_empty(values: &mut Vec<u32>)
     requires old(values).len() == 0,
     ensures final(values).len() == 1 && final(values)[0] == 7,
-    resources peak(memory) <= ref_size(values) + owned_size([u32; 4]),
+    resources peak(memory) <= ref_size(values) + value_size([u32; 4]),
 {
     values.push(7);
 }
@@ -41,7 +41,7 @@ fn append_to_empty(values: &mut Vec<u32>)
 // Allow for the vector handle, the helper's budget, and another minimum buffer
 // of growth headroom for subsequent work.
 fn use_helper()
-    resources peak(memory) <= owned_size(Vec<u32>) + peak(append_to_empty) + owned_size([u32; 4]),
+    resources peak(memory) <= value_size(Vec<u32>) + peak(append_to_empty) + value_size([u32; 4]),
 {
     let mut values = Vec::<u32>::new();
     append_to_empty(&mut values);

@@ -208,11 +208,11 @@ impl Layouts {
 
     /// Select the existing inline layout for a non-reference value. Allocations
     /// behind owning handles remain separate charges in the accounting model.
-    pub(super) fn owned_size(&self, typ: &Typ, span: &Span) -> Result<u64, VirErr> {
+    pub(super) fn value_size(&self, typ: &Typ, span: &Span) -> Result<u64, VirErr> {
         if matches!(&**typ, TypX::MutRef(_) | TypX::Decorate(TypDecoration::Ref, None, _)) {
             return Err(crate::messages::error(
                 span,
-                "owned_size requires a non-reference type or binding; use ref_size for references",
+                "value_size requires a non-reference type or binding; use ref_size for references",
             ));
         }
         self.size(typ, span)

@@ -19,7 +19,7 @@ fn append(buffers: &mut Buffers)
     ensures
         final(buffers).values@ == seq![7u32],
         final(buffers).spare@ == old(buffers).spare@,
-    resources peak(memory) <= ref_size(buffers) + owned_size([u32; 4]),
+    resources peak(memory) <= ref_size(buffers) + value_size([u32; 4]),
 {
     buffers.values.push(7);
 }
@@ -28,7 +28,7 @@ fn append(buffers: &mut Buffers)
 //
 // The later byte workspace sets the allowance for the complete operation.
 fn main()
-    resources peak(memory) <= owned_size([u8; 160]),
+    resources peak(memory) <= value_size([u8; 160]),
 {
     let mut buffers = Box::new(Buffers {
         values: Vec::new(),

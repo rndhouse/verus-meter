@@ -14,7 +14,7 @@ type Buffer = [u32; 4];
 //
 // Its result becomes the caller's buffer without an extra copy.
 fn make_buffer() -> Buffer
-    resources peak(memory) <= owned_size(Buffer),
+    resources peak(memory) <= value_size(Buffer),
 {
     [0u32; 4]
 }

@@ -10,9 +10,9 @@ verus! {
 // Give each task a reusable allowance for its temporary data.
 spec fn scratch_budget(large: bool) -> nat {
     if large {
-        owned_size([u32; 8])
+        value_size([u32; 8])
     } else {
-        owned_size([u32; 4])
+        value_size([u32; 4])
     }
 }
 
@@ -22,7 +22,7 @@ spec fn scratch_budget(large: bool) -> nat {
 // its selected allowance causes verification to fail at that declaration.
 // The callers compose this named formula through the helper contracts.
 fn workspace(large: bool)
-    resources peak(memory) <= owned_size(large) + scratch_budget(large),
+    resources peak(memory) <= value_size(large) + scratch_budget(large),
 {
     if large {
         let scratch = [0u32; 8];
@@ -36,7 +36,7 @@ fn workspace(large: bool)
 // The query reads workspace's declared allowance for this input; it does not
 // execute workspace. This function also needs room for its own live input.
 fn delegate(large: bool)
-    resources peak(memory) <= owned_size(large) + peak(workspace(large)),
+    resources peak(memory) <= value_size(large) + peak(workspace(large)),
 {
     workspace(large);
 }
@@ -50,7 +50,7 @@ fn main()
 {
     delegate(false);
     // Checkpoints need a fixed bound: two flags and the small task's array.
-    assert(peak(memory) <= 2 * owned_size(bool) + owned_size([u32; 4]));
+    assert(peak(memory) <= 2 * value_size(bool) + value_size([u32; 4]));
 }
 
 }

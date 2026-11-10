@@ -12,8 +12,8 @@ verus! {
 // the two elements copied into the boxed slice before the old buffer is released.
 fn pack() -> (b: Box<[u32]>)
     ensures b.len() == 2, b[0] == 7, b[1] == 9,
-    resources peak(memory) <= owned_size(Vec<u32>) + owned_size(Box<[u32]>)
-        + owned_size([u32; 4]) + owned_size([u32; 2]),
+    resources peak(memory) <= value_size(Vec<u32>) + value_size(Box<[u32]>)
+        + value_size([u32; 4]) + value_size([u32; 2]),
 {
     let mut v = Vec::<u32>::with_capacity(4);
     v.push(7);
@@ -24,7 +24,7 @@ fn pack() -> (b: Box<[u32]>)
 // Pass the buffer to another owner without creating a copy.
 fn forward(b: Box<[u32]>) -> (r: Box<[u32]>)
     ensures r == b,
-    resources peak(memory) <= owned_size(Box<[u32]>),
+    resources peak(memory) <= value_size(Box<[u32]>),
 {
     b
 }
@@ -33,7 +33,7 @@ fn forward(b: Box<[u32]>) -> (r: Box<[u32]>)
 //
 // The later byte workspace sets the allowance for the complete operation.
 fn main()
-    resources peak(memory) <= owned_size([u8; 96]),
+    resources peak(memory) <= value_size([u8; 96]),
 {
     let b = pack();
     let c = forward(b);

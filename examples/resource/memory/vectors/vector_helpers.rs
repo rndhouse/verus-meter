@@ -12,7 +12,7 @@ fn append(values: &mut Vec<u32>, capacity: usize, value: u32)
         old(values).len() < capacity,
     ensures
         final(values)@ == old(values)@.push(value),
-    resources peak(memory) <= ref_size(values) + owned_size(capacity) + owned_size(value),
+    resources peak(memory) <= ref_size(values) + value_size(capacity) + value_size(value),
 {
     values.push(value);
 }
@@ -21,7 +21,7 @@ fn append(values: &mut Vec<u32>, capacity: usize, value: u32)
 fn count(values: &Vec<u32>) -> (n: usize)
     ensures
         n == values.len(),
-    resources peak(memory) <= ref_size(values) + owned_size(usize),
+    resources peak(memory) <= ref_size(values) + value_size(usize),
 {
     values.len()
 }
@@ -30,7 +30,7 @@ fn count(values: &Vec<u32>) -> (n: usize)
 //
 // The caller reserves space for two elements; helpers add their declared needs.
 fn build()
-    resources peak(memory) <= owned_size(Vec<u32>) + 2 * owned_size(u32) + peak(append),
+    resources peak(memory) <= value_size(Vec<u32>) + 2 * value_size(u32) + peak(append),
 {
     let mut values = Vec::<u32>::with_capacity(2);
     append(&mut values, 2, 10);

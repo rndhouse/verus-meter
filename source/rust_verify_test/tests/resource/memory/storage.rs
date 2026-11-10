@@ -348,7 +348,7 @@ test_verify_one_file! {
         fn example(n: u32)
             requires resources(n),
             ensures resources(n),
-            resources peak(memory) <= owned_size(n),
+            resources peak(memory) <= value_size(n),
         {
             assert(resources(n));
         }

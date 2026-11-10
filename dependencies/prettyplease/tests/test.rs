@@ -56,7 +56,7 @@ fn test_parenthesize_match_guard() {
 #[test]
 fn spec_budget_calls_round_trip() {
     let parsed: syn::Expr =
-        syn::parse_str("resources peak(memory) <= owned_size(n) + budgets::bytes(n as nat) {}")
+        syn::parse_str("resources peak(memory) <= value_size(n) + budgets::bytes(n as nat) {}")
             .unwrap();
     let printed = prettyplease::unparse_expr(&parsed);
     let reparsed: syn::Expr = syn::parse_str(&printed).unwrap();
@@ -65,7 +65,7 @@ fn spec_budget_calls_round_trip() {
 
 #[test]
 fn memory_query_type_round_trip() {
-    for query in ["owned_size(Box<[u32; 4]>)", "ref_size(&mut [u32])"] {
+    for query in ["value_size(Box<[u32; 4]>)", "ref_size(&mut [u32])"] {
         let parsed: syn::Expr = syn::parse_str(query).unwrap();
         let printed = prettyplease::unparse_expr(&parsed);
         let reparsed: syn::Expr = syn::parse_str(&printed).unwrap();

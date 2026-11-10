@@ -14,7 +14,7 @@ struct Row {
 fn add(row: &mut Row)
     requires old(row).cells.len() <= 1,
     ensures final(row).cells.len() == old(row).cells.len() + 1,
-    resources peak(memory) <= ref_size(row) + owned_size([u32; 4]),
+    resources peak(memory) <= ref_size(row) + value_size([u32; 4]),
 {
     row.cells.push(7);
 }
@@ -23,7 +23,7 @@ fn add(row: &mut Row)
 //
 // Only the saved length remains live alongside the later byte workspace.
 fn main()
-    resources peak(memory) <= owned_size(usize) + owned_size([u8; 248]),
+    resources peak(memory) <= value_size(usize) + value_size([u8; 248]),
 {
     let mut rows = Vec::<Row>::with_capacity(2);
     let first = Row { cells: Vec::new() };

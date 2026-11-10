@@ -256,7 +256,7 @@ ast_enum! {
         Paren(token::Paren, Box<ResourceExpr>),
         Add(Box<ResourceExpr>, Token![+], Box<ResourceExpr>),
         Mul(Box<ResourceExpr>, Token![*], Box<ResourceExpr>),
-        /// An `owned_size` or `ref_size` query, preserving its written name.
+        /// An `value_size` or `ref_size` query, preserving its written name.
         Size(Ident, token::Paren, Type),
         Peak(Ident, token::Paren, ExprPath),
         PeakCall(Ident, token::Paren, ExprCall),
@@ -1532,7 +1532,7 @@ pub mod parsing {
         let query = path.path.segments.len() == 1
             && matches!(
                 path.path.segments[0].ident.to_string().as_str(),
-                "owned_size" | "ref_size" | "peak"
+                "value_size" | "ref_size" | "peak"
             );
         if !query && ahead.peek(token::Paren) {
             let function: ExprPath = input.parse()?;
@@ -1554,18 +1554,18 @@ pub mod parsing {
             }
         }
         let name: Ident = input.parse()?;
-        if name != "owned_size" && name != "ref_size" && name != "peak" {
+        if name != "value_size" && name != "ref_size" && name != "peak" {
             if input.peek(token::Paren) {
                 return Err(Error::new(
                     name.span(),
-                    "expected owned_size(type/parameter), ref_size(reference), or peak(function)",
+                    "expected value_size(type/parameter), ref_size(reference), or peak(function)",
                 ));
             }
             return Ok(ResourceExpr::Quantity(name));
         }
         let content;
         let paren = parenthesized!(content in input);
-        let expr = if name == "owned_size" || name == "ref_size" {
+        let expr = if name == "value_size" || name == "ref_size" {
             ResourceExpr::Size(name, paren, content.parse()?)
         } else {
             match content.parse::<Expr>()? {

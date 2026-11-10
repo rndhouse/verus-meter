@@ -51,12 +51,12 @@ fn malformed_resource_clauses_are_rejected() {
         "fn f() resources peak(memory) <= peak(object.make()) {}",
         "fn f() resources peak(memory) <= peak() {}",
         "fn f() resources peak_memory_bytes <= 8 {}",
-        "fn f() resources peak(memory) <= owned_size::<u32>() {}",
-        "fn f() resources peak(memory) <= owned_size() {}",
-        "fn f() resources peak(memory) <= owned_size(x.field) {}",
-        "fn f() resources peak(memory) <= owned_size(make()) {}",
-        "fn f() resources peak(memory) <= owned_size(4) {}",
-        "fn f() resources peak(memory) <= owned_size(x, y) {}",
+        "fn f() resources peak(memory) <= value_size::<u32>() {}",
+        "fn f() resources peak(memory) <= value_size() {}",
+        "fn f() resources peak(memory) <= value_size(x.field) {}",
+        "fn f() resources peak(memory) <= value_size(make()) {}",
+        "fn f() resources peak(memory) <= value_size(4) {}",
+        "fn f() resources peak(memory) <= value_size(x, y) {}",
         "fn f() resources peak(memory) <= peak(x, y) {}",
         "fn f() resources peak(memory) <= peak([u32; 4]) {}",
         "fn f() resources peak(memory) <= 8 resources peak(memory) <= 9 {}",
@@ -81,18 +81,18 @@ fn expressive_budgets_round_trip() {
         "BUDGET",
         "budgets::workspace(flag, n as nat)",
         "budgets::formula(4)(n as nat)",
-        "owned_size(n) + workspace(n) * 2",
+        "value_size(n) + workspace(n) * 2",
         "workspace::<u32>()",
-        "owned_size(n) + n * owned_size(u32)",
+        "value_size(n) + n * value_size(u32)",
         "4 + 4",
-        "owned_size(x) + peak(module::f)",
-        "2 * (owned_size([u32; 8]) + 4u64)",
-        "owned_size(crate::Buffer) + owned_size(&mut [u32]) + owned_size(())",
-        "owned_size([[u32; 4]; 2]) + owned_size(&'a Buffer)",
-        "owned_size(module::Alias<u32>) + peak(module::f::<u32>)",
+        "value_size(x) + peak(module::f)",
+        "2 * (value_size([u32; 8]) + 4u64)",
+        "value_size(crate::Buffer) + value_size(&mut [u32]) + value_size(())",
+        "value_size([[u32; 4]; 2]) + value_size(&'a Buffer)",
+        "value_size(module::Alias<u32>) + peak(module::f::<u32>)",
         "1 + 2 * 3 + (4 + 5) * 6",
-        "owned_size((x))",
-        "ref_size(buffer) + owned_size(Buffer)",
+        "value_size((x))",
+        "ref_size(buffer) + value_size(Buffer)",
         "ref_size(&mut [u32]) + ref_size(&'a Buffer)",
         "peak(helper(false))",
         "peak(module::helper(count <= 4, !flag)) + peak(empty())",
@@ -118,8 +118,8 @@ fn bare_budget_names_are_quantities() {
 #[test]
 fn peak_clause_is_distinct_from_calls_in_other_clauses() {
     for text in [
-        "fn f(x: u32) requires peak(x), ensures peak(x), resources peak(memory) <= owned_size(x), {}",
-        "fn f(x: u32) requires peak(x) ensures peak(x) resources peak(memory) <= owned_size(x) {}",
+        "fn f(x: u32) requires peak(x), ensures peak(x), resources peak(memory) <= value_size(x), {}",
+        "fn f(x: u32) requires peak(x) ensures peak(x) resources peak(memory) <= value_size(x) {}",
         "fn f<T>() where T: peak, resources peak(memory) <= 0 {}",
     ] {
         let parsed: ItemFn = parse_str(text).unwrap();
@@ -133,10 +133,10 @@ fn peak_clause_is_distinct_from_calls_in_other_clauses() {
 #[test]
 fn memory_checkpoints_round_trip_alongside_logical_assertions() {
     for statement in [
-        "assert(peak(memory) <= owned_size(local) + peak(helper));",
-        "assert(peak(memory) <= 2 * owned_size([u32; 4]));",
+        "assert(peak(memory) <= value_size(local) + peak(helper));",
+        "assert(peak(memory) <= 2 * value_size([u32; 4]));",
         "assert(peak(memory) <= x);",
-        "assert(current(memory) <= owned_size(local));",
+        "assert(current(memory) <= value_size(local));",
         "assert(current(local) <= 10);",
         "assert(peak(local) <= 10);",
         "assert(peak <= 10);",
@@ -166,9 +166,9 @@ fn checkpoints_reject_proof_overrides_and_malformed_budgets() {
         "assert(current(memory) < 0);",
         "assert(current(memory) <= 0) by { }",
         "assert(peak(memory) == 0);",
-        "assert(peak(memory) <= owned_size(x)) by { }",
+        "assert(peak(memory) <= value_size(x)) by { }",
         "assert(peak(memory) <= 0) by(compute)",
-        "assert(peak(memory) <= owned_size(make()));",
+        "assert(peak(memory) <= value_size(make()));",
         "assert(peak(memory) <= 4 - 1);",
     ] {
         assert!(parse_str::<ItemFn>(&format!("fn f() {{ {statement} }}")).is_err());
@@ -180,8 +180,8 @@ fn memory_sections_round_trip_and_end_statements() {
     for body in [
         "resources peak(memory) <= 0 {} let x = 1;",
         "resources peak(memory) <= unknown {}",
-        "resources peak(memory) <= owned_size(x) { resources peak(memory) <= 0 {} } resources peak(memory) <= 0 {};",
-        "#[allow(unused)] resources peak(memory) <= 2 * (owned_size([u32; 4]) + peak(helper)) { let x = 1; }",
+        "resources peak(memory) <= value_size(x) { resources peak(memory) <= 0 {} } resources peak(memory) <= 0 {};",
+        "#[allow(unused)] resources peak(memory) <= 2 * (value_size([u32; 4]) + peak(helper)) { let x = 1; }",
         "let x = resources peak(memory) <= 0 {};",
         "if true { resources peak(memory) <= 0 {} } else { resources peak(memory) <= 0 {} }",
     ] {
@@ -200,7 +200,7 @@ fn memory_sections_round_trip_and_end_statements() {
 #[test]
 fn memory_sections_reject_invalid_budgets() {
     for body in [
-        "resources peak(memory) <= owned_size(make()) {}",
+        "resources peak(memory) <= value_size(make()) {}",
         "resources peak(memory) <= 4 - 1 {}",
         "resources peak(memory) <= 4;",
         "peak <= 4 {}",
@@ -214,7 +214,7 @@ fn memory_sections_reject_invalid_budgets() {
 #[test]
 fn conditional_resource_budgets_round_trip() {
     for budget in [
-        "owned_size(flag) + if flag { owned_size([u32; 8]) } else { owned_size([u32; 4]) }",
+        "value_size(flag) + if flag { value_size([u32; 8]) } else { value_size([u32; 4]) }",
         "if count <= 4 { 16 } else { 32 }",
         "if flag { 4 } else { runtime_value }",
         "2 * (if a && !b { 32 } else { if b { 16 } else { 0 } })",

@@ -166,7 +166,7 @@ fn retained_slice_bytes_remain_charged() {
 fn boxed_slice_handle_layout_is_independent_of_payload() {
     verifies(
         "boxed_slice_handle",
-        "fn f(b: Box<[u32]>) resources peak(memory) <= owned_size(Box<[u32]>) { }",
+        "fn f(b: Box<[u32]>) resources peak(memory) <= value_size(Box<[u32]>) { }",
     );
     rejects(
         "boxed_slice_handle_short",

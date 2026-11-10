@@ -16,7 +16,7 @@ pub type BudgetExpr = Arc<Spanned<BudgetExprX>>;
 pub enum BudgetExprX {
     Literal(u64),
     /// Inline size of a non-reference value, excluding separately owned allocations.
-    OwnedSize(Typ),
+    ValueSize(Typ),
     /// Storage occupied by a reference, excluding its referent.
     RefSize(Typ),
     Function(Fun),
@@ -67,7 +67,7 @@ impl Resolver<'_> {
             }
             BudgetExprX::Quantity(_) | BudgetExprX::SpecCall(_) => Ok(u64::MAX),
             BudgetExprX::Literal(n) => Ok(*n),
-            BudgetExprX::OwnedSize(typ) => self.layouts.owned_size(typ, &expr.span),
+            BudgetExprX::ValueSize(typ) => self.layouts.value_size(typ, &expr.span),
             BudgetExprX::RefSize(typ) => self.layouts.ref_size(typ, &expr.span),
             BudgetExprX::Function(name) => {
                 let n = self.function(name, &expr.span)?;

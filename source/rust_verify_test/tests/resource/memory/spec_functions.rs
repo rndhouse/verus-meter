@@ -8,7 +8,7 @@ fn conditional_spec_budget() {
         "conditional",
         r#"
         spec fn bytes(large: bool) -> nat { if large { 32 } else { 16 } }
-        fn f(large: bool) resources peak(memory) <= owned_size(large) + bytes(large) {
+        fn f(large: bool) resources peak(memory) <= value_size(large) + bytes(large) {
             if large { let a = [0u32; 8]; } else { let b = [0u32; 4]; }
         }
     "#,
@@ -21,7 +21,7 @@ fn insufficient_spec_budget() {
         "insufficient",
         r#"
         spec fn bytes(large: bool) -> nat { if large { 31 } else { 16 } }
-        fn f(large: bool) resources peak(memory) <= owned_size(large) + bytes(large) {
+        fn f(large: bool) resources peak(memory) <= value_size(large) + bytes(large) {
             if large { let a = [0u32; 8]; } else { let b = [0u32; 4]; }
         }
     "#,
@@ -37,11 +37,11 @@ fn symbolic_arguments_and_call_composition() {
         spec fn bytes(n: nat) -> nat { 24 + 4 * n }
         fn allocate(n: usize)
             requires n <= 100,
-            resources peak(memory) <= owned_size(n) + bytes(n as nat),
+            resources peak(memory) <= value_size(n) + bytes(n as nat),
         { let v = Vec::<u32>::with_capacity(n); }
         fn delegate(n: usize)
             requires n <= 100,
-            resources peak(memory) <= owned_size(n) + peak(allocate(n)),
+            resources peak(memory) <= value_size(n) + peak(allocate(n)),
         { allocate(n); }
         fn caller() resources peak(memory) <= 48 { delegate(2); }
     "#,
@@ -244,7 +244,7 @@ fn model_sizes_inside_spec_bodies() {
         "sizes",
         r#"
         struct Buffer { words: [u32; 4], ready: bool }
-        spec fn bytes() -> nat { owned_size(Buffer) }
+        spec fn bytes() -> nat { value_size(Buffer) }
         fn f() resources peak(memory) <= bytes() { let b = Buffer { words: [0u32;4], ready: false }; }
     "#,
     );
@@ -255,7 +255,7 @@ fn parameter_size_inside_spec_body() {
     verifies(
         "param_size",
         r#"
-        spec fn bytes(n: u32) -> nat { owned_size(n) }
+        spec fn bytes(n: u32) -> nat { value_size(n) }
         fn f() resources peak(memory) <= bytes(0) { let n = 0u32; }
     "#,
     );
@@ -267,11 +267,11 @@ fn returned_formula_captures_parameters() {
         "formula",
         r#"
         spec fn formula(per_item: nat) -> spec_fn(nat) -> nat {
-            |n: nat| owned_size(Vec<u32>) + per_item * n
+            |n: nat| value_size(Vec<u32>) + per_item * n
         }
         fn f(n: usize)
             requires n <= 100,
-            resources peak(memory) <= owned_size(n) + formula(4)(n as nat),
+            resources peak(memory) <= value_size(n) + formula(4)(n as nat),
         { let values = Vec::<u32>::with_capacity(n); }
         fn caller() resources peak(memory) <= 40 { f(2); }
     "#,
@@ -296,7 +296,7 @@ fn size_query_in_formula_argument() {
         "size_argument",
         r#"
         spec fn bytes(n: nat) -> nat { n }
-        fn f() resources peak(memory) <= bytes(owned_size([u32;4])) { let a = [0u32;4]; }
+        fn f() resources peak(memory) <= bytes(value_size([u32;4])) { let a = [0u32;4]; }
     "#,
     );
 }
@@ -307,7 +307,7 @@ fn size_query_does_not_evaluate_argument() {
         "unevaluated",
         r#"
         fn make() -> u32 { 1 }
-        spec fn bytes() -> nat { owned_size(make()) }
+        spec fn bytes() -> nat { value_size(make()) }
         fn f() resources peak(memory) <= bytes() {}
     "#,
         "expected",

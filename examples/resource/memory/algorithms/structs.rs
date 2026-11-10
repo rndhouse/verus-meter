@@ -48,7 +48,7 @@ pub fn sort_buffer(buffer: &mut SortBuffer)
 // both together. The type-based query follows changes to the buffer's fields
 // and can be used before its local variable is in scope.
 pub fn sort_local_struct()
-    resources peak(memory) <= owned_size(SortBuffer) + peak(sort_buffer),
+    resources peak(memory) <= value_size(SortBuffer) + peak(sort_buffer),
 {
     let mut buffer = SortBuffer {
         values: [9u32, 3, 7, 3, 0, 8, 1, 5],

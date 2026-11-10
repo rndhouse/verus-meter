@@ -5,7 +5,7 @@ use crate::verify_one_file;
 test_verify_one_file! {
     #[test] fixed_capacity verus_code! {
         use vstd::prelude::*;
-        fn f() resources peak(memory) <= owned_size(Vec<u32>) + 2 * owned_size(u32) {
+        fn f() resources peak(memory) <= value_size(Vec<u32>) + 2 * value_size(u32) {
             let mut values = Vec::<u32>::with_capacity(2);
             values.push(1); values.push(2);
             assert(values[0] == 1 && values[1] == 2);
@@ -16,7 +16,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] push_over_capacity verus_code! {
         use vstd::prelude::*;
-        fn f() resources peak(memory) <= owned_size(Vec<u32>) + owned_size(u32) {
+        fn f() resources peak(memory) <= value_size(Vec<u32>) + value_size(u32) {
             let mut values = Vec::<u32>::with_capacity(1);
             values.push(1); values.push(2);
         }
@@ -95,7 +95,7 @@ test_verify_one_file! {
         use vstd::prelude::*;
         fn f(capacity: usize)
             requires capacity > 0, capacity <= 16,
-            resources peak(memory) <= owned_size(capacity) + owned_size(Vec<u32>) + capacity * owned_size(u32),
+            resources peak(memory) <= value_size(capacity) + value_size(Vec<u32>) + capacity * value_size(u32),
         {
             let mut values = Vec::<u32>::with_capacity(capacity);
             values.push(7);
@@ -125,7 +125,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] runtime_budget_must_fit_u64 verus_code! {
         use vstd::prelude::*;
-        fn f(capacity: usize) resources peak(memory) <= owned_size(capacity) + capacity * owned_size(u64) {}
+        fn f(capacity: usize) resources peak(memory) <= value_size(capacity) + capacity * value_size(u64) {}
     } => Err(err) => assert!(!err.errors.is_empty() && err.errors.iter().all(|e| e.message.contains("memory budget arithmetic exceeds u64")))
 }
 
@@ -133,10 +133,10 @@ test_verify_one_file! {
     #[test] runtime_budget_call verus_code! {
         use vstd::prelude::*;
         fn helper(capacity: usize) requires capacity <= 4,
-            resources peak(memory) <= owned_size(capacity) + owned_size(Vec<u32>) + capacity * owned_size(u32),
+            resources peak(memory) <= value_size(capacity) + value_size(Vec<u32>) + capacity * value_size(u32),
         { let values = Vec::<u32>::with_capacity(capacity); }
         fn caller(capacity: usize) requires capacity <= 4,
-            resources peak(memory) <= owned_size(capacity) + peak(helper(capacity)),
+            resources peak(memory) <= value_size(capacity) + peak(helper(capacity)),
         { helper(capacity); }
     } => Ok(())
 }
@@ -186,7 +186,7 @@ fn pop_does_not_release_backing() {
 fn runtime_moves_and_drop() {
     verifies(
         "runtime_moves_and_drop",
-        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= owned_size(cap) + 3 * owned_size(Vec<u32>) + cap * owned_size(u32) { let v = Vec::<u32>::with_capacity(cap); let moved = v; drop(moved); let second = Vec::<u32>::with_capacity(cap); }",
+        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= value_size(cap) + 3 * value_size(Vec<u32>) + cap * value_size(u32) { let v = Vec::<u32>::with_capacity(cap); let moved = v; drop(moved); let second = Vec::<u32>::with_capacity(cap); }",
     );
 }
 
@@ -194,7 +194,7 @@ fn runtime_moves_and_drop() {
 fn runtime_scopes_reuse() {
     verifies(
         "runtime_scopes_reuse",
-        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= owned_size(cap) + owned_size(Vec<u32>) + cap * owned_size(u32) { { let v = Vec::<u32>::with_capacity(cap); } { let v = Vec::<u32>::with_capacity(cap); } }",
+        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= value_size(cap) + value_size(Vec<u32>) + cap * value_size(u32) { { let v = Vec::<u32>::with_capacity(cap); } { let v = Vec::<u32>::with_capacity(cap); } }",
     );
 }
 
@@ -202,7 +202,7 @@ fn runtime_scopes_reuse() {
 fn runtime_overlap_rejected() {
     rejects(
         "runtime_overlap",
-        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= owned_size(cap) + 2 * owned_size(Vec<u32>) + cap * owned_size(u32) { let a = Vec::<u32>::with_capacity(cap); let b = Vec::<u32>::with_capacity(cap); }",
+        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= value_size(cap) + 2 * value_size(Vec<u32>) + cap * value_size(u32) { let a = Vec::<u32>::with_capacity(cap); let b = Vec::<u32>::with_capacity(cap); }",
         "conditional memory budget exceeded",
     );
 }
@@ -224,7 +224,7 @@ fn runtime_backing_retained_across_call() {
 fn dynamic_parent_and_section() {
     verifies(
         "dynamic_parent_and_section",
-        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= owned_size(cap) + owned_size(Vec<u32>) + cap * owned_size(u32) + 40 { let parent = Vec::<u32>::with_capacity(cap); resources peak(memory) <= 40 { let child = Vec::<u32>::with_capacity(cap); } }",
+        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= value_size(cap) + value_size(Vec<u32>) + cap * value_size(u32) + 40 { let parent = Vec::<u32>::with_capacity(cap); resources peak(memory) <= 40 { let child = Vec::<u32>::with_capacity(cap); } }",
     );
     rejects(
         "dynamic_section_short",
@@ -311,7 +311,7 @@ fn reject_unsupported_vector_operations() {
 fn runtime_queries_require_arguments() {
     rejects(
         "query_runtime_envelope",
-        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= owned_size(cap) + cap {} fn g() resources peak(memory) <= peak(f) {}",
+        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= value_size(cap) + cap {} fn g() resources peak(memory) <= peak(f) {}",
         "runtime memory budgets require peak(helper(arguments))",
     );
 }
@@ -325,12 +325,12 @@ fn quantities_require_stable_unsigned_inputs() {
     );
     rejects(
         "signed_quantity",
-        "fn f(n: i32) resources peak(memory) <= owned_size(n) + n {}",
+        "fn f(n: i32) resources peak(memory) <= value_size(n) + n {}",
         "memory quantities require immutable unsigned integers",
     );
     rejects(
         "mutable_quantity",
-        "fn f(mut n: usize) resources peak(memory) <= owned_size(n) + n {}",
+        "fn f(mut n: usize) resources peak(memory) <= value_size(n) + n {}",
         "immutable Boolean or native integer input parameters",
     );
     rejects(
@@ -375,7 +375,7 @@ fn direct_index_mutation_and_slice_local() {
 fn runtime_constant_call_has_a_fixed_envelope() {
     verifies(
         "constant_call_envelope",
-        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= owned_size(cap) + cap {} fn g() resources peak(memory) <= peak(f(4)) { f(4); } fn h() resources peak(memory) <= peak(g) { g(); }",
+        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= value_size(cap) + cap {} fn g() resources peak(memory) <= peak(f(4)) { f(4); } fn h() resources peak(memory) <= peak(g) { g(); }",
     );
 }
 
@@ -383,7 +383,7 @@ fn runtime_constant_call_has_a_fixed_envelope() {
 fn hidden_runtime_overflow_is_rejected() {
     rejects(
         "hidden_runtime_overflow",
-        "fn f(n: usize) resources peak(memory) <= owned_size(n) + (n + 18446744073709551615) * 0 {}",
+        "fn f(n: usize) resources peak(memory) <= value_size(n) + (n + 18446744073709551615) * 0 {}",
         "memory budget arithmetic exceeds u64",
     );
 }
@@ -392,7 +392,7 @@ fn hidden_runtime_overflow_is_rejected() {
 fn conditional_arithmetic_is_guarded() {
     verifies(
         "guarded_runtime_arithmetic",
-        "fn f(n: usize) resources peak(memory) <= owned_size(n) + if n <= 4 { n * 4 } else { 0 } {}",
+        "fn f(n: usize) resources peak(memory) <= value_size(n) + if n <= 4 { n * 4 } else { 0 } {}",
     );
 }
 
@@ -416,7 +416,7 @@ fn local_capacity_is_stable() {
 fn checkpoint_includes_retained_dynamic_backing_and_call() {
     rejects(
         "dynamic_call_checkpoint",
-        "fn helper(flag: bool) resources peak(memory) <= owned_size(flag) + if flag { 8 } else { 0 } { if flag { let a = [0u8; 8]; } } fn f(cap: usize, flag: bool) requires cap <= 4, resources peak(memory) <= 100 { let v = Vec::<u32>::with_capacity(cap); helper(flag); assert(peak(memory) <= 57); }",
+        "fn helper(flag: bool) resources peak(memory) <= value_size(flag) + if flag { 8 } else { 0 } { if flag { let a = [0u8; 8]; } } fn f(cap: usize, flag: bool) requires cap <= 4, resources peak(memory) <= 100 { let v = Vec::<u32>::with_capacity(cap); helper(flag); assert(peak(memory) <= 57); }",
         "conditional memory budget exceeded",
     );
 }

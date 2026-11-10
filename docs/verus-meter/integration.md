@@ -11,7 +11,7 @@ A clean Git merge still needs verification of these boundaries.
 | Verification pipeline | [query.rs](../../source/rust_verify/src/query.rs) collects execution modes and invokes [pipeline.rs](../../source/rust_verify/src/resource/memory/pipeline.rs). |
 | Analysis | [VIR memory support](../../source/vir/src/resource/memory) checks accounting and produces ordinary proof obligations. Shared VIR types and visitors carry its metadata. |
 
-Type-only `owned_size` and `ref_size` queries in specifications are resolved before each
+Type-only `value_size` and `ref_size` queries in specifications are resolved before each
 function's well-formedness and mode checks, using the shared model layouts.
 Both select the existing inline size calculation after checking whether the
 argument is a reference; neither follows pointers or includes separate allocations.

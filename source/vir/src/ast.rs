@@ -1050,7 +1050,7 @@ pub enum ResourceIntrinsic {
     OptionIsNone,
     OptionUnwrap,
     /// Type-only memory query, resolved before ordinary function checking.
-    OwnedSize,
+    ValueSize,
     /// Size of the reference itself, excluding its referent.
     RefSize,
 }
