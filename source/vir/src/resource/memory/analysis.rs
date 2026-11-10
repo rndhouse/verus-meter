@@ -237,6 +237,25 @@ impl Analysis<'_> {
                     "section metadata outside the start of a block",
                 ));
             }
+            ExprX::ResourceAssertCurrent(budget) => {
+                let budget = super::budget::evaluate_body_budget(
+                    budget,
+                    self.budgets,
+                    self.functions,
+                    self.layouts,
+                )?;
+                // Snapshot live charges here. Earlier peaks and later loop iterations
+                // must not inflate a query about this execution point.
+                self.obligations.push(Obligation {
+                    span: expr.span.clone(),
+                    cost: self.storage.live_expression(&expr.span),
+                    bound: super::footprint::MemoryBudget::total(super::contracts::literal(
+                        &expr.span, budget,
+                    )),
+                    kind: CheckKind::CurrentCheckpoint,
+                });
+                return Ok(0);
+            }
             ExprX::ResourceAssert(budget) => {
                 let budget = super::budget::evaluate_body_budget(
                     budget,
@@ -457,12 +476,15 @@ pub(super) fn check(
                 if matches!(expr.x, ExprX::ResourceSection(_)) {
                     Err(error(
                         &expr.span,
-                        "mem_peak sections require a function-level mem_peak contract",
+                        "memory sections require a function-level memory contract",
                     ))
-                } else if matches!(expr.x, ExprX::ResourceAssert(_)) {
+                } else if matches!(
+                    expr.x,
+                    ExprX::ResourceAssert(_) | ExprX::ResourceAssertCurrent(_)
+                ) {
                     Err(error(
                         &expr.span,
-                        "mem_peak checkpoints require a function-level mem_peak contract",
+                        "memory checkpoints require a function-level memory contract",
                     ))
                 } else {
                     Ok(())

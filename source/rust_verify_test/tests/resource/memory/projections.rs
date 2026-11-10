@@ -6,15 +6,15 @@ use super::support::{rejects, verifies};
 fn indexed_read_borrows_preserve_the_collection_charge() {
     verifies(
         "indexed_read",
-        "fn read(b: &Box<u32>) -> u32 resources mem_peak <= 12 { **b }
+        "fn read(b: &Box<u32>) -> u32 resources memory <= 12 { **b }
         fn f(v: &Vec<Box<u32>>, i: usize) -> u32
-            requires i < v.len(), resources mem_peak <= 40 { read(&v[i]) }",
+            requires i < v.len(), resources memory <= 40 { read(&v[i]) }",
     );
 }
 
 #[test]
 fn direct_indexed_growth_retains_new_allocations() {
-    let code = "fn f() resources mem_peak <= BOUND {
+    let code = "fn f() resources memory <= BOUND {
         let mut outer = Vec::<Vec<u32>>::with_capacity(1);
         let child = Vec::<u32>::new(); outer.push(child);
         outer[0].push(1); let scratch = [0u8;64];
@@ -27,8 +27,8 @@ fn direct_indexed_growth_retains_new_allocations() {
 fn indexed_helper_growth_is_additive_across_operations() {
     let code = "fn grow(v: &mut Vec<u32>)
         requires old(v).len() <= 1, ensures final(v).len() == old(v).len() + 1,
-        resources mem_peak <= 24 { v.push(1); }
-        fn f() resources mem_peak <= BOUND {
+        resources memory <= 24 { v.push(1); }
+        fn f() resources memory <= BOUND {
             let mut outer = Vec::<Vec<u32>>::with_capacity(1);
             let child = Vec::<u32>::new(); outer.push(child);
             grow(&mut outer[0]); grow(&mut outer[0]); let scratch = [0u8;64];
@@ -42,7 +42,7 @@ fn fixed_and_runtime_paths_compose_recursively() {
     verifies(
         "nested_indexed_paths",
         "struct Item { data: Box<Vec<u32>>, spare: Box<u32> }
-        fn f() resources mem_peak <= 1000 {
+        fn f() resources memory <= 1000 {
             let mut outer = Vec::<Vec<Item>>::with_capacity(1);
             let mut middle = Vec::<Item>::with_capacity(1);
             let item = Item { data: Box::new(Vec::<u32>::new()), spare: Box::new(7) };
@@ -56,7 +56,7 @@ fn fixed_and_runtime_paths_compose_recursively() {
 
 #[test]
 fn nested_projection_updates_are_counted_once() {
-    let code = "fn f() resources mem_peak <= BOUND {
+    let code = "fn f() resources memory <= BOUND {
         let mut outer = Vec::<Vec<Vec<u32>>>::with_capacity(1);
         let mut middle = Vec::<Vec<u32>>::with_capacity(1);
         let child = Vec::<u32>::new(); middle.push(child); outer.push(middle);
@@ -68,7 +68,7 @@ fn nested_projection_updates_are_counted_once() {
 
 #[test]
 fn selection_uses_a_runtime_index() {
-    let code = "fn f(i: usize) requires i < 2, resources mem_peak <= BOUND {
+    let code = "fn f(i: usize) requires i < 2, resources memory <= BOUND {
         let mut outer = Vec::<Vec<u32>>::with_capacity(2);
         let a = Vec::<u32>::new(); outer.push(a);
         let b = Vec::<u32>::new(); outer.push(b);
@@ -80,7 +80,7 @@ fn selection_uses_a_runtime_index() {
 
 #[test]
 fn branch_local_projection_effects_remain_path_sensitive() {
-    let code = "fn f(flag: bool) resources mem_peak <= BOUND {
+    let code = "fn f(flag: bool) resources memory <= BOUND {
         let mut outer = Vec::<Vec<u32>>::with_capacity(1);
         let child = Vec::<u32>::new(); outer.push(child);
         if flag { outer[0].push(1); }
@@ -95,13 +95,13 @@ fn indexed_captures_keep_input_lifetimes_until_collection_drop() {
     verifies(
         "indexed_input_lifetime",
         "struct Item { data: Box<[u8;80]> }
-        fn replace(p: &mut Item, data: Box<[u8;80]>) resources mem_peak <= 16 { p.data = data; }
-        fn consume(b: Box<[u8;80]>) resources mem_peak <= 200 {
+        fn replace(p: &mut Item, data: Box<[u8;80]>) resources memory <= 16 { p.data = data; }
+        fn consume(b: Box<[u8;80]>) resources memory <= 200 {
             let mut v = Vec::<Item>::with_capacity(1);
             let first = Item { data: Box::new([0u8;80]) }; v.push(first);
             replace(&mut v[0], b); drop(v);
         }
-        fn f() resources mem_peak <= 1000 {
+        fn f() resources memory <= 1000 {
             let b = Box::new([0u8;80]); consume(b); let scratch = [0u8;1000];
         }",
     );
@@ -110,8 +110,8 @@ fn indexed_captures_keep_input_lifetimes_until_collection_drop() {
 #[test]
 fn helper_replacement_of_an_element_field_preserves_captures() {
     let code = "struct Item { data: Box<[u8;16]> }
-        fn replace(p: &mut Item, data: Box<[u8;16]>) resources mem_peak <= 16 { p.data = data; }
-        fn f() resources mem_peak <= BOUND {
+        fn replace(p: &mut Item, data: Box<[u8;16]>) resources memory <= 16 { p.data = data; }
+        fn f() resources memory <= BOUND {
             let mut v = Vec::<Item>::with_capacity(1);
             let item = Item { data: Box::new([0u8;16]) }; v.push(item);
             let replacement = Box::new([0u8;16]); replace(&mut v[0], replacement);
@@ -125,7 +125,7 @@ fn helper_replacement_of_an_element_field_preserves_captures() {
 fn indexed_boxed_slice_children_use_the_same_projection() {
     verifies(
         "indexed_boxed_slice",
-        "fn f() resources mem_peak <= 256 {
+        "fn f() resources memory <= 256 {
         let mut v = Vec::<Vec<u32>>::with_capacity(1);
         let child = Vec::<u32>::new(); v.push(child);
         let mut slice = v.into_boxed_slice(); slice[0].push(1);
@@ -138,7 +138,7 @@ fn indexed_boxed_slice_children_use_the_same_projection() {
 fn indexed_assignments_keep_displaced_bytes_conservatively() {
     verifies(
         "indexed_assignment",
-        "fn f() resources mem_peak <= 200 {
+        "fn f() resources memory <= 200 {
         let mut v = Vec::<Box<u32>>::with_capacity(1);
         let first = Box::new(1u32); v.push(first);
         let replacement = Box::new(2u32); v[0] = replacement;
@@ -151,10 +151,10 @@ fn indexed_assignments_keep_displaced_bytes_conservatively() {
 fn projections_cannot_hide_section_retention() {
     rejects(
         "indexed_section",
-        "fn f() resources mem_peak <= 256 {
+        "fn f() resources memory <= 256 {
         let mut v = Vec::<Vec<u32>>::with_capacity(1);
         let child = Vec::<u32>::new(); v.push(child);
-        resources mem_peak <= 64 { v[0].push(1); }
+        resources memory <= 64 { v[0].push(1); }
     }",
         "changing owning children of an enclosing collection inside a memory section",
     );
@@ -166,11 +166,11 @@ fn borrowed_collection_effects_survive_call_boundaries() {
         "indexed_borrowed_effect",
         "fn grow(v: &mut Vec<Vec<u32>>)
         requires old(v).len() == 1, old(v)[0].len() == 0,
-        resources mem_peak <= 24 { v[0].push(1); }
+        resources memory <= 24 { v[0].push(1); }
         fn relay(v: &mut Vec<Vec<u32>>)
         requires old(v).len() == 1, old(v)[0].len() == 0,
-        resources mem_peak <= 32 { grow(v); }
-        fn f() resources mem_peak <= 200 {
+        resources memory <= 32 { grow(v); }
+        fn f() resources memory <= 200 {
             let mut v = Vec::<Vec<u32>>::with_capacity(1);
             let child = Vec::<u32>::new(); v.push(child);
             relay(&mut v); drop(v); let scratch = [0u8;200];
@@ -180,7 +180,7 @@ fn borrowed_collection_effects_survive_call_boundaries() {
 
 #[test]
 fn discarding_a_removed_child_keeps_a_conservative_sum() {
-    let code = "fn f() resources mem_peak <= BOUND {
+    let code = "fn f() resources memory <= BOUND {
         let mut v = Vec::<Box<[u8;16]>>::with_capacity(1);
         let first = Box::new([0u8;16]); v.push(first); v.pop();
         let second = Box::new([0u8;16]); v.push(second);
@@ -195,11 +195,11 @@ fn read_only_indexing_in_a_section_does_not_transfer_ownership() {
     verifies(
         "indexed_section_read",
         "fn read(v: &Vec<u32>) -> (r: usize)
-        ensures r == v.len(), resources mem_peak <= 16 { v.len() }
-        fn f() resources mem_peak <= 128 {
+        ensures r == v.len(), resources memory <= 16 { v.len() }
+        fn f() resources memory <= 128 {
             let mut v = Vec::<Vec<u32>>::with_capacity(1);
             let child = Vec::<u32>::new(); v.push(child);
-            resources mem_peak <= 24 { let n = read(&v[0]); assert(n == 0); }
+            resources memory <= 24 { let n = read(&v[0]); assert(n == 0); }
         }",
     );
 }
@@ -210,11 +210,11 @@ fn removing_through_helpers_invalidates_length_based_invariants() {
         "indexed_removal_effect",
         "fn remove(v: &mut Vec<Box<u32>>)
         ensures final(v).len() == if old(v).len() == 0 { 0 } else { old(v).len() - 1 },
-        resources mem_peak <= 8 { v.pop(); }
+        resources memory <= 8 { v.pop(); }
         fn relay(v: &mut Vec<Box<u32>>)
         ensures final(v).len() == if old(v).len() == 0 { 0 } else { old(v).len() - 1 },
-        resources mem_peak <= 16 { remove(v); }
-        fn f() resources mem_peak <= 128 {
+        resources memory <= 16 { remove(v); }
+        fn f() resources memory <= 128 {
             let mut v = Vec::<Box<u32>>::with_capacity(1);
             let b = Box::new(1u32); v.push(b); relay(&mut v);
             let mut i = 0usize;
@@ -227,7 +227,7 @@ fn removing_through_helpers_invalidates_length_based_invariants() {
 fn indexed_boxes_preserve_implicit_dereference_paths() {
     verifies(
         "indexed_boxed_vector",
-        "fn f() resources mem_peak <= 256 {
+        "fn f() resources memory <= 256 {
         let mut v = Vec::<Box<Box<Vec<u32>>>>::with_capacity(1);
         let b = Box::new(Box::new(Vec::<u32>::new())); v.push(b);
         v[0].push(1); assert(v[0].len() == 1);
@@ -240,7 +240,7 @@ fn indexed_boxes_preserve_implicit_dereference_paths() {
 fn scalar_mutation_through_indexed_owners_needs_no_new_heap_charge() {
     verifies(
         "indexed_scalar_update",
-        "fn f() resources mem_peak <= 100 {
+        "fn f() resources memory <= 100 {
         let mut v = Vec::<Box<u32>>::with_capacity(1);
         let b = Box::new(1u32); v.push(b); *v[0] = 2;
         assert(*v[0] == 2);
@@ -262,7 +262,7 @@ fn indexed_owners_example_verifies_and_compiles() {
 fn computed_indices_are_read_as_pure_values() {
     verifies(
         "computed_projection",
-        "fn f(i: usize) requires i == 0, resources mem_peak <= 200 {
+        "fn f(i: usize) requires i == 0, resources memory <= 200 {
         let mut outer = Vec::<Vec<u32>>::with_capacity(2);
         let a = Vec::<u32>::new(); outer.push(a);
         let b = Vec::<u32>::new(); outer.push(b);
@@ -275,7 +275,7 @@ fn computed_indices_are_read_as_pure_values() {
 fn original_index_bounds_are_still_checked() {
     rejects(
         "projection_bounds",
-        "fn f() resources mem_peak <= 128 {
+        "fn f() resources memory <= 128 {
         let mut v = Vec::<Box<u32>>::with_capacity(1);
         let b = Box::new(1u32); v.push(b); let borrowed = &v[1];
     }",

@@ -4,18 +4,18 @@ use super::support::{exact_peak, rejects, verifies};
 fn fixed_children_count_inline_storage_once() {
     exact_peak(
         "nested_boxes",
-        "fn f() resources mem_peak <= BUDGET {
+        "fn f() resources memory <= BUDGET {
         let b = Box::new(Box::new(7u32));
     }",
         20,
     );
     exact_peak("owning_fields", "struct Pair { flag: bool, a: Box<[u8;16]>, b: Box<u32> }
-        fn f() resources mem_peak <= BUDGET { let p = Pair { flag: true, a: Box::new([0u8;16]), b: Box::new(7) }; }", 37);
+        fn f() resources memory <= BUDGET { let p = Pair { flag: true, a: Box::new([0u8;16]), b: Box::new(7) }; }", 37);
 }
 
 #[test]
 fn boxed_vector_retains_its_handle_and_backing_allocation() {
-    let code = "fn f() resources mem_peak <= BOUND {
+    let code = "fn f() resources memory <= BOUND {
         let b = Box::new(Vec::<u32>::with_capacity(4));
         assert(b.len() == 0);
         let scratch = [0u8;32];
@@ -28,7 +28,7 @@ fn boxed_vector_retains_its_handle_and_backing_allocation() {
 fn nested_drop_releases_every_child() {
     verifies("nested_drop", "struct Inner { data: Vec<u32>, other: Box<[u8;16]> }
         struct Outer { inner: Box<Inner> }
-        fn f() resources mem_peak <= 120 {
+        fn f() resources memory <= 120 {
             let p = Outer { inner: Box::new(Inner { data: Vec::with_capacity(4), other: Box::new([0u8;16]) }) };
             let q = p; drop(q);
             let scratch = [0u8;120];
@@ -38,11 +38,11 @@ fn nested_drop_releases_every_child() {
 #[test]
 fn factories_and_forwarding_preserve_recursive_extents() {
     let code = "struct Pair { a: Box<[u8;16]>, b: Vec<u32> }
-        fn make(n: usize) -> Pair requires n <= 4, resources mem_peak <= 56 + 4*n {
+        fn make(n: usize) -> Pair requires n <= 4, resources memory <= 56 + 4*n {
             Pair { a: Box::new([0u8;16]), b: Vec::with_capacity(n) }
         }
-        fn forward(p: Pair) -> Pair resources mem_peak <= 32 { p }
-        fn f() resources mem_peak <= BOUND {
+        fn forward(p: Pair) -> Pair resources memory <= 32 { p }
+        fn f() resources memory <= BOUND {
             let p = make(2); let q = forward(p); let r = make(2);
         }";
     verifies("nested_factory", &code.replace("BOUND", "120"));
@@ -52,10 +52,10 @@ fn factories_and_forwarding_preserve_recursive_extents() {
 #[test]
 fn sibling_runtime_allocations_have_distinct_identities() {
     let code = "struct Buffers { a: Vec<u8>, b: Vec<u16> }
-        fn make(n: usize) -> Buffers requires n <= 4, resources mem_peak <= 56 + 3*n {
+        fn make(n: usize) -> Buffers requires n <= 4, resources memory <= 56 + 3*n {
             Buffers { a: Vec::with_capacity(n), b: Vec::with_capacity(n) }
         }
-        fn f(n: usize) requires n <= 4, resources mem_peak <= BOUND + 3*n {
+        fn f(n: usize) requires n <= 4, resources memory <= BOUND + 3*n {
             let p = make(n); let scratch = [0u8;47];
         }";
     verifies("nested_dynamic", &code.replace("BOUND", "103"));
@@ -67,12 +67,12 @@ fn helpers_can_wrap_inputs_under_new_allocations() {
     verifies(
         "nested_wrap",
         "struct Pair { a: Box<[u8;16]>, b: Vec<u32> }
-        fn wrap(a: Box<[u8;16]>, b: Vec<u32>) -> Box<Pair> resources mem_peak <= 72 {
+        fn wrap(a: Box<[u8;16]>, b: Vec<u32>) -> Box<Pair> resources memory <= 72 {
             Box::new(Pair { a, b })
         }
-        fn forward(p: Box<Pair>) -> Box<Pair> resources mem_peak <= 8 { p }
-        fn consume(p: Box<Pair>) resources mem_peak <= 8 { }
-        fn f() resources mem_peak <= 160 {
+        fn forward(p: Box<Pair>) -> Box<Pair> resources memory <= 8 { p }
+        fn consume(p: Box<Pair>) resources memory <= 8 { }
+        fn f() resources memory <= 160 {
             let a = Box::new([0u8;16]); let b = Vec::<u32>::with_capacity(4);
             let p = wrap(a,b); let q = forward(p); consume(q);
             let scratch = [0u8;160];
@@ -83,8 +83,8 @@ fn helpers_can_wrap_inputs_under_new_allocations() {
 #[test]
 fn forwarded_composite_input_remains_live_during_helper_work() {
     let code = "struct Pair { a: Box<[u8;16]>, b: Box<[u8;32]> }
-        fn inspect(p: Pair) -> Pair resources mem_peak <= 48 { let scratch = [0u8;32]; p }
-        fn f() resources mem_peak <= BOUND {
+        fn inspect(p: Pair) -> Pair resources memory <= 48 { let scratch = [0u8;32]; p }
+        fn f() resources memory <= BOUND {
             let p = Pair { a: Box::new([0u8;16]), b: Box::new([0u8;32]) };
             let q = inspect(p);
         }";
@@ -97,8 +97,8 @@ fn consuming_composite_input_ends_child_lifetimes_in_callee() {
     verifies(
         "nested_input_drop",
         "struct Pair { a: Box<[u8;16]>, b: Box<[u8;32]> }
-        fn consume(p: Pair) resources mem_peak <= 80 { drop(p); let scratch = [0u8;80]; }
-        fn f() resources mem_peak <= 80 {
+        fn consume(p: Pair) resources memory <= 80 { drop(p); let scratch = [0u8;80]; }
+        fn f() resources memory <= 80 {
             let p = Pair { a: Box::new([0u8;16]), b: Box::new([0u8;32]) };
             consume(p);
         }",
@@ -110,8 +110,8 @@ fn nested_contents_can_be_borrowed_and_updated() {
     verifies(
         "nested_borrow",
         "struct Data { number: Box<u32>, vector: Vec<u32> }
-        fn update(x: &mut u32) ensures *final(x) == 9, resources mem_peak <= 8 { *x = 9; }
-        fn f() resources mem_peak <= 160 {
+        fn update(x: &mut u32) ensures *final(x) == 9, resources memory <= 8 { *x = 9; }
+        fn f() resources memory <= 160 {
             let mut v = Vec::<u32>::with_capacity(2); v.push(1);
             let mut p = Data { number: Box::new(7), vector: v };
             update(&mut *p.number);
@@ -129,10 +129,10 @@ fn boxes_and_structs_compose_at_more_than_one_level() {
         "nested_depth",
         "struct A { data: Box<Vec<u8>> }
         struct B { a: Box<A>, flag: bool }
-        fn make() -> Box<B> resources mem_peak <= 100 {
+        fn make() -> Box<B> resources memory <= 100 {
             Box::new(B { a: Box::new(A { data: Box::new(Vec::with_capacity(4)) }), flag: true })
         }
-        fn f() resources mem_peak <= 160 { let b = make(); drop(b); let scratch = [0u8;160]; }",
+        fn f() resources memory <= 160 { let b = make(); drop(b); let scratch = [0u8;160]; }",
     );
 }
 
@@ -141,7 +141,7 @@ fn recursive_layout_is_rejected_without_recursing_forever() {
     rejects(
         "recursive_ownership",
         "struct Node { next: Box<Node> }
-        fn f(n: Node) resources mem_peak <= 100 {}",
+        fn f(n: Node) resources memory <= 100 {}",
         "recursive struct layouts",
     );
 }
@@ -149,13 +149,13 @@ fn recursive_layout_is_rejected_without_recursing_forever() {
 #[test]
 fn sibling_boxed_slice_summaries_keep_independent_dynamic_charges() {
     let code = "struct Pair { a: Box<[u8]>, b: Box<[u8]> }
-        fn slice(n: usize) -> Box<[u8]> requires n <= 4, resources mem_peak <= 48 + n {
+        fn slice(n: usize) -> Box<[u8]> requires n <= 4, resources memory <= 48 + n {
             let v = Vec::<u8>::with_capacity(n); v.into_boxed_slice()
         }
-        fn make(n: usize) -> Pair requires n <= 4, resources mem_peak <= 200 + 2*n {
+        fn make(n: usize) -> Pair requires n <= 4, resources memory <= 200 + 2*n {
             Pair { a: slice(n), b: slice(n) }
         }
-        fn f(n: usize) requires n <= 4, resources mem_peak <= BOUND + 2*n {
+        fn f(n: usize) requires n <= 4, resources memory <= BOUND + 2*n {
             let p = make(n); let scratch = [0u8;100];
         }";
     verifies("nested_slices", &code.replace("BOUND", "236"));
@@ -165,11 +165,11 @@ fn sibling_boxed_slice_summaries_keep_independent_dynamic_charges() {
 #[test]
 fn regrouped_input_provenance_survives_another_call() {
     let code = "struct Pair { a: Box<[u8;16]>, b: Box<[u8;32]> }
-        fn inspect(p: Pair) -> Pair resources mem_peak <= 48 { let scratch = [0u8;32]; p }
-        fn group(a: Box<[u8;16]>, b: Box<[u8;32]>) -> Pair resources mem_peak <= 64 {
+        fn inspect(p: Pair) -> Pair resources memory <= 48 { let scratch = [0u8;32]; p }
+        fn group(a: Box<[u8;16]>, b: Box<[u8;32]>) -> Pair resources memory <= 64 {
             let p = Pair { a, b }; inspect(p)
         }
-        fn f() resources mem_peak <= BOUND {
+        fn f() resources memory <= BOUND {
             let a = Box::new([0u8;16]); let b = Box::new([0u8;32]);
             let p = group(a, b);
         }";
@@ -180,8 +180,8 @@ fn regrouped_input_provenance_survives_another_call() {
 #[test]
 fn owned_children_remain_live_during_later_initializers() {
     let code = "struct Pair { a: Box<[u8;16]>, b: Box<u8> }
-        fn later() -> Box<u8> resources mem_peak <= 72 { let scratch = [0u8;63]; Box::new(1) }
-        fn f() resources mem_peak <= BOUND { let p = Pair { a: Box::new([0u8;16]), b: later() }; }";
+        fn later() -> Box<u8> resources memory <= 72 { let scratch = [0u8;63]; Box::new(1) }
+        fn f() resources memory <= BOUND { let p = Pair { a: Box::new([0u8;16]), b: later() }; }";
     verifies("nested_initializer_order", &code.replace("BOUND", "96"));
     rejects(
         "nested_initializer_order_short",
@@ -195,16 +195,16 @@ fn nested_regions_release_local_trees_and_protect_enclosing_trees() {
     verifies(
         "nested_regions",
         "struct P { b: Box<Vec<u32>> }
-        fn f(flag: bool) resources mem_peak <= 200 {
+        fn f(flag: bool) resources memory <= 200 {
             if flag { let p = P { b: Box::new(Vec::with_capacity(4)) }; }
-            resources mem_peak <= 80 { let p = P { b: Box::new(Vec::with_capacity(4)) }; }
+            resources memory <= 80 { let p = P { b: Box::new(Vec::with_capacity(4)) }; }
             let scratch = [0u8;199];
         }",
     );
     rejects(
         "nested_protected",
         "struct P { b: Box<u32> }
-        fn f(flag: bool) resources mem_peak <= 100 { let p = P { b: Box::new(1) }; if flag { drop(p); } }",
+        fn f(flag: bool) resources memory <= 100 { let p = P { b: Box::new(1) }; if flag { drop(p); } }",
         "moving or dropping an enclosing heap owner",
     );
 }
@@ -214,8 +214,8 @@ fn borrowed_structs_and_multiple_box_dereferences_preserve_owners() {
     verifies(
         "nested_projection",
         "struct P { b: Box<u32>, v: Vec<u8> }
-        fn inspect(p: &P) resources mem_peak <= 16 { let n = p.v.len(); }
-        fn f() resources mem_peak <= 120 {
+        fn inspect(p: &P) resources memory <= 16 { let n = p.v.len(); }
+        fn f() resources memory <= 120 {
             let p = P { b: Box::new(1), v: Vec::with_capacity(4) }; inspect(&p);
             let b = Box::new(Box::new(p)); let n = b.v.len(); let x = *b.b;
             assert(x == 1);
@@ -235,7 +235,7 @@ fn nested_ownership_example_verifies_and_compiles() {
 
 #[test]
 fn popping_a_nested_vector_preserves_its_backing_charge() {
-    let code = "fn f() resources mem_peak <= BOUND {
+    let code = "fn f() resources memory <= BOUND {
         let mut v = Vec::<u32>::with_capacity(1); v.push(7);
         let mut b = Box::new(v);
         let value = b.pop(); assert(value == Some(7)); assert(b.len() == 0);
@@ -250,10 +250,10 @@ fn replacement_effects_follow_vectors_into_new_parent_owners() {
     verifies(
         "nested_grown_input",
         "fn wrap(mut v: Vec<u8>) -> (b: Box<Vec<u8>>)
-            requires v.len() == 0, ensures b.len() == 1, b[0] == 7, resources mem_peak <= 100 {
+            requires v.len() == 0, ensures b.len() == 1, b[0] == 7, resources memory <= 100 {
             v.push(7); Box::new(v)
         }
-        fn f() resources mem_peak <= 200 {
+        fn f() resources memory <= 200 {
             let v = Vec::<u8>::new(); let b = wrap(v);
             assert(b[0] == 7); drop(b);
             let scratch = [0u8;200];

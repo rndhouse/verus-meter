@@ -1279,7 +1279,7 @@ where
         crate::AssertExpr::Logical(_binding_0) => {
             v.visit_expr(&**_binding_0);
         }
-        crate::AssertExpr::MemPeak(_binding_0, _binding_1, _binding_2) => {
+        crate::AssertExpr::Memory(_binding_0, _binding_1, _binding_2) => {
             v.visit_ident(_binding_0);
             skip!(_binding_1);
             v.visit_signature_resources(&**_binding_2);

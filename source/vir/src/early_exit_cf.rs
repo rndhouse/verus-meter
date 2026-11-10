@@ -95,6 +95,7 @@ fn expr_get_early_exits_rec(
             | ExprX::Choose { .. }
             | ExprX::WithTriggers { .. }
             | ExprX::ResourceAssert(_)
+            | ExprX::ResourceAssertCurrent(_)
             | ExprX::ResourceSection(_)
             | ExprX::AssertCompute(..)
             | ExprX::Fuel(..)

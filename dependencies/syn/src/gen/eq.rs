@@ -56,8 +56,8 @@ impl PartialEq for crate::AssertExpr {
                 self0 == other0
             }
             (
-                crate::AssertExpr::MemPeak(self0, _, self2),
-                crate::AssertExpr::MemPeak(other0, _, other2),
+                crate::AssertExpr::Memory(self0, _, self2),
+                crate::AssertExpr::Memory(other0, _, other2),
             ) => self0 == other0 && self2 == other2,
             _ => false,
         }

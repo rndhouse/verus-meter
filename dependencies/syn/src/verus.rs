@@ -228,7 +228,7 @@ ast_struct! {
     pub struct SignatureResources {
         /// Present for function and section clauses; absent in checkpoint queries.
         pub resources_token: Option<Token![resources]>,
-        pub token: Token![mem_peak],
+        pub token: Token![memory],
         pub le_token: Token![<=],
         pub budget: ResourceExpr,
         pub comma: Option<Token![,]>,
@@ -389,7 +389,7 @@ ast_enum! {
     /// Logical assertions and memory checkpoints use different expression languages.
     pub enum AssertExpr {
         Logical(Box<Expr>),
-        MemPeak(Ident, token::Paren, Box<SignatureResources>),
+        Memory(Ident, token::Paren, Box<SignatureResources>),
     }
 }
 
@@ -964,7 +964,7 @@ pub mod parsing {
                 || input.peek(Token![decreases])
                 || input.peek(Token![via])
                 || input.peek(Token![when])
-                || (input.peek(Token![resources]) && input.peek2(Token![mem_peak]))
+                || (input.peek(Token![resources]) && input.peek2(Token![memory]))
                 || input.peek(Token![no_unwind])
                 || input.peek(Token![opens_invariants])
                 || input.peek(Token![outer_mask])
@@ -981,7 +981,7 @@ pub mod parsing {
                 || input.peek2(Token![decreases])
                 || input.peek2(Token![via])
                 || input.peek2(Token![when])
-                || (input.peek2(Token![resources]) && input.peek3(Token![mem_peak]))
+                || (input.peek2(Token![resources]) && input.peek3(Token![memory]))
                 || input.peek2(Token![no_unwind])
                 || input.peek2(Token![opens_invariants])
                 || input.peek2(Token![outer_mask])
@@ -1704,18 +1704,18 @@ pub mod parsing {
             // Only the exact contextual query is reserved. Ordinary calls such
             // as current(x) remain logical expressions.
             let lookahead = content.fork();
-            let current_mem_peak = (|| -> Result<bool> {
+            let memory_query = (|| -> Result<bool> {
                 let name: Ident = lookahead.parse()?;
-                if name != "current" {
+                if name != "current" && name != "peak" {
                     return Ok(false);
                 }
                 let metric;
                 parenthesized!(metric in lookahead);
-                metric.parse::<Token![mem_peak]>()?;
+                metric.parse::<Token![memory]>()?;
                 Ok(metric.is_empty())
             })()
             .unwrap_or(false);
-            let expr = if current_mem_peak {
+            let expr = if memory_query {
                 let current = content.parse()?;
                 let metric;
                 let current_paren = parenthesized!(metric in content);
@@ -1726,10 +1726,10 @@ pub mod parsing {
                     budget: content.parse()?,
                     comma: content.parse()?,
                 };
-                AssertExpr::MemPeak(current, current_paren, Box::new(resource))
+                AssertExpr::Memory(current, current_paren, Box::new(resource))
             } else if content.peek(Token![mem_peak]) && content.peek2(Token![<=]) {
                 return Err(
-                    content.error("use assert(current(mem_peak) <= bound) for a memory checkpoint")
+                    content.error("use assert(peak(memory) <= bound) for a memory checkpoint")
                 );
             } else {
                 AssertExpr::Logical(content.parse()?)
@@ -1738,8 +1738,8 @@ pub mod parsing {
                 return Err(content.error("expected `)`"));
             }
             if input.peek(Token![by]) {
-                if matches!(expr, AssertExpr::MemPeak(..)) {
-                    return Err(input.error("mem_peak checkpoints do not support by proofs"));
+                if matches!(expr, AssertExpr::Memory(..)) {
+                    return Err(input.error("memory checkpoints do not support by proofs"));
                 }
                 let by_token = input.parse()?;
                 let prover = if input.peek(token::Paren) {
@@ -2737,7 +2737,7 @@ mod printing {
         fn to_tokens(&self, tokens: &mut TokenStream) {
             match self {
                 AssertExpr::Logical(expr) => expr.to_tokens(tokens),
-                AssertExpr::MemPeak(current, paren, resource) => {
+                AssertExpr::Memory(current, paren, resource) => {
                     current.to_tokens(tokens);
                     paren.surround(tokens, |tokens| resource.token.to_tokens(tokens));
                     resource.le_token.to_tokens(tokens);
@@ -3508,7 +3508,7 @@ impl parse::Parse for WithSpecOnFn {
                 || input.peek(Token![decreases])
                 || input.peek(Token![via])
                 || input.peek(Token![when])
-                || (input.peek(Token![resources]) && input.peek2(Token![mem_peak]))
+                || (input.peek(Token![resources]) && input.peek2(Token![memory]))
                 || input.peek(Token![no_unwind])
                 || input.peek(Token![opens_invariants])
         };

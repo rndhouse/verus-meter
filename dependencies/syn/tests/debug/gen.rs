@@ -131,8 +131,8 @@ impl Debug for Lite<syn::AssertExpr> {
                 formatter.write_str(")")?;
                 Ok(())
             }
-            syn::AssertExpr::MemPeak(_v0, _v1, _v2) => {
-                let mut formatter = formatter.debug_tuple("AssertExpr::MemPeak");
+            syn::AssertExpr::Memory(_v0, _v1, _v2) => {
+                let mut formatter = formatter.debug_tuple("AssertExpr::Memory");
                 formatter.field(Lite(_v0));
                 formatter.field(Lite(_v2));
                 formatter.finish()
@@ -8152,6 +8152,11 @@ impl Debug for Lite<syn::token::Matches> {
 impl Debug for Lite<syn::token::MemPeak> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("Token![mem_peak]")
+    }
+}
+impl Debug for Lite<syn::token::Memory> {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("Token![memory]")
     }
 }
 impl Debug for Lite<syn::token::Minus> {

@@ -19,7 +19,7 @@ spec fn element_bytes(capacity: nat) -> nat {
 // parameter and vector handle. The precondition bounds every permitted input.
 fn collect(capacity: usize)
     requires 2 <= capacity <= 1024,
-    resources mem_peak <= mem_size(capacity) + mem_size(Vec<u32>)
+    resources memory <= mem_size(capacity) + mem_size(Vec<u32>)
         + element_bytes(capacity as nat),
 {
     let mut values = Vec::<u32>::with_capacity(capacity);
@@ -30,7 +30,7 @@ fn collect(capacity: usize)
 
 // Carry the helper's input-specific guarantee through to the complete operation.
 fn main()
-    resources mem_peak <= mem_peak(collect(2)),
+    resources memory <= mem_peak(collect(2)),
 {
     collect(2);
 }

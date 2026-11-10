@@ -10,7 +10,7 @@ verus! {
 fn build(n: usize) -> (buffers: Vec<Vec<u32>>)
     requires n <= 4,
     ensures buffers.len() == n,
-    resources mem_peak <= 64 + 36*n,
+    resources memory <= 64 + 36*n,
 {
     let mut buffers = Vec::<Vec<u32>>::with_capacity(n);
     let mut i = 0usize;
@@ -27,7 +27,7 @@ fn build(n: usize) -> (buffers: Vec<Vec<u32>>)
 
 // Release the whole collection before reusing its memory allowance.
 fn main()
-    resources mem_peak <= 512,
+    resources memory <= 512,
 {
     let buffers = build(3);
     // Making the collection fixed-length preserves the buffers it owns.

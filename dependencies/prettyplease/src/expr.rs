@@ -92,7 +92,7 @@ impl Printer {
 
             Expr::ResourceBlock(section) => {
                 self.outer_attrs(&section.attrs);
-                self.word("resources mem_peak <= ");
+                self.word("resources memory <= ");
                 self.resource_budget(&section.contract.budget);
                 self.nbsp();
                 self.cbox(INDENT);
@@ -1735,7 +1735,7 @@ mod resource_tests {
     #[test]
     fn argument_specific_budget_round_trip() {
         let file = verus_syn::parse_file(
-            "fn f(flag: bool) { resources mem_peak <= mem_size(flag) + mem_peak(module::helper(!flag, 4u32,)) { resources mem_peak <= mem_peak(helper(false)) {} } }",
+            "fn f(flag: bool) { resources memory <= mem_size(flag) + mem_peak(module::helper(!flag, 4u32,)) { resources memory <= mem_peak(helper(false)) {} } }",
         ).unwrap();
         let pretty = crate::unparse(&file);
         let reparsed = verus_syn::parse_file(&pretty).unwrap();
@@ -1745,7 +1745,7 @@ mod resource_tests {
     #[test]
     fn conditional_budget_round_trip() {
         let file = verus_syn::parse_file(
-            "fn f() { resources mem_peak <= mem_size(flag) + if flag { 32 } else { 16 } { let x = 1; } }",
+            "fn f() { resources memory <= mem_size(flag) + if flag { 32 } else { 16 } { let x = 1; } }",
         )
         .unwrap();
         let pretty = crate::unparse(&file);
@@ -1756,7 +1756,7 @@ mod resource_tests {
     #[test]
     fn memory_sections_keep_executable_contents() {
         let file = verus_syn::parse_file(
-            "fn f() { resources mem_peak <= 2 * (mem_size([u32; 4]) + mem_peak(helper)) { let x = 1; resources mem_peak <= 0 { consume(x); } } }",
+            "fn f() { resources memory <= 2 * (mem_size([u32; 4]) + mem_peak(helper)) { let x = 1; resources memory <= 0 { consume(x); } } }",
         ).unwrap();
         let pretty = crate::unparse(&file);
         let reparsed = verus_syn::parse_file(&pretty).unwrap();

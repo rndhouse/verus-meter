@@ -2,7 +2,7 @@ use super::support::{rejects, verifies};
 
 #[test]
 fn insertion_transfers_child_storage_once() {
-    let code = "fn f() resources mem_peak <= BOUND {
+    let code = "fn f() resources memory <= BOUND {
         let mut v = Vec::<Box<[u8;16]>>::with_capacity(2);
         let a = Box::new([0u8;16]); v.push(a);
         let b = Box::new([0u8;16]); v.push(b);
@@ -15,7 +15,7 @@ fn insertion_transfers_child_storage_once() {
 
 #[test]
 fn outer_growth_replaces_handles_not_child_allocations() {
-    let code = "fn f() resources mem_peak <= BOUND {
+    let code = "fn f() resources memory <= BOUND {
         let mut v = Vec::<Box<[u8;16]>>::with_capacity(1);
         let a = Box::new([0u8;16]); v.push(a);
         let b = Box::new([0u8;16]); v.push(b);
@@ -31,7 +31,7 @@ fn runtime_count_uses_inductive_child_sums() {
     verifies(
         "element_loop",
         "fn f(n: usize) requires n <= 4,
-        resources mem_peak <= 48 + 24*n {
+        resources memory <= 48 + 24*n {
         let mut v = Vec::<Box<[u8;16]>>::with_capacity(n);
         let mut i = 0usize;
         while i < n invariant i <= n, v.len() == i, decreases n-i, {
@@ -46,7 +46,7 @@ fn runtime_count_accepts_owning_sequence_elements() {
     verifies(
         "nested_sequence_loop",
         "fn f(n: usize) requires n <= 4,
-        resources mem_peak <= 64 + 36*n {
+        resources memory <= 64 + 36*n {
         let mut v = Vec::<Vec<u32>>::with_capacity(n);
         let mut i = 0usize;
         while i < n invariant i <= n, v.len() == i, decreases n-i, {
@@ -62,7 +62,7 @@ fn arbitrary_fixed_and_runtime_children_compose() {
         "element_composition",
         "struct Element { a: Box<[u8;16]>, b: Vec<u32> }
         struct Container { data: Box<Vec<Element>> }
-        fn f() resources mem_peak <= 256 {
+        fn f() resources memory <= 256 {
             let mut p = Container { data: Box::new(Vec::with_capacity(2)) };
             let a = Element { a: Box::new([0u8;16]), b: Vec::with_capacity(4) }; p.data.push(a);
             let b = Element { a: Box::new([0u8;16]), b: Vec::with_capacity(1) }; p.data.push(b);
@@ -73,7 +73,7 @@ fn arbitrary_fixed_and_runtime_children_compose() {
 
 #[test]
 fn deeper_collections_transfer_their_complete_footprint() {
-    let code = "fn f() resources mem_peak <= BOUND {
+    let code = "fn f() resources memory <= BOUND {
         let mut inner = Vec::<Box<[u8;16]>>::with_capacity(1);
         let item = Box::new([0u8;16]); inner.push(item);
         let mut middle = Vec::<Vec<Box<[u8;16]>>>::with_capacity(1); middle.push(inner);
@@ -89,11 +89,11 @@ fn deeper_collections_transfer_their_complete_footprint() {
 
 #[test]
 fn populated_collection_returns_and_forwarding_preserve_children() {
-    let code = "fn make() -> Vec<Box<[u8;16]>> resources mem_peak <= 56 {
+    let code = "fn make() -> Vec<Box<[u8;16]>> resources memory <= 56 {
         let mut v = Vec::with_capacity(1); let b = Box::new([0u8;16]); v.push(b); v
     }
-    fn forward(v: Vec<Box<[u8;16]>>) -> Vec<Box<[u8;16]>> resources mem_peak <= 24 { v }
-    fn f() resources mem_peak <= BOUND {
+    fn forward(v: Vec<Box<[u8;16]>>) -> Vec<Box<[u8;16]>> resources memory <= 24 { v }
+    fn f() resources memory <= BOUND {
         let v = make(); let w = forward(v); let scratch = [0u8;32];
     }";
     // The existing replacement summary bounds the outer buffer by make's
@@ -104,10 +104,10 @@ fn populated_collection_returns_and_forwarding_preserve_children() {
 
 #[test]
 fn input_ownership_can_be_collected_and_returned() {
-    let code = "fn collect(b: Box<[u8;16]>) -> Vec<Box<[u8;16]>> resources mem_peak <= 40 {
+    let code = "fn collect(b: Box<[u8;16]>) -> Vec<Box<[u8;16]>> resources memory <= 40 {
         let mut v = Vec::with_capacity(1); v.push(b); v
     }
-    fn f() resources mem_peak <= BOUND {
+    fn f() resources memory <= BOUND {
         let b = Box::new([0u8;16]); let v = collect(b); let scratch = [0u8;32];
     }";
     // Handle 24 + conservative buffer bound 40 + captured child 16 + scratch 32.
@@ -119,8 +119,8 @@ fn input_ownership_can_be_collected_and_returned() {
 fn borrowed_collection_captures_transferred_inputs() {
     let code = "fn append(v: &mut Vec<Box<[u8;16]>>, b: Box<[u8;16]>)
         requires old(v).len() < 2, ensures final(v).len() == old(v).len()+1,
-        resources mem_peak <= 16 { v.push(b); }
-    fn f() resources mem_peak <= BOUND {
+        resources memory <= 16 { v.push(b); }
+    fn f() resources memory <= BOUND {
         let mut v = Vec::with_capacity(2);
         let a = Box::new([0u8;16]); append(&mut v, a);
         let b = Box::new([0u8;16]); append(&mut v, b);
@@ -138,8 +138,8 @@ fn borrowed_collection_captures_transferred_inputs() {
 fn one_collection_captures_multiple_input_owners() {
     let code = "fn append(v: &mut Vec<Box<[u8;16]>>, a: Box<[u8;16]>, b: Box<[u8;16]>)
         requires old(v).len() == 0, ensures final(v).len() == 2,
-        resources mem_peak <= 24 { v.push(a); v.push(b); }
-    fn f() resources mem_peak <= BOUND {
+        resources memory <= 24 { v.push(a); v.push(b); }
+    fn f() resources memory <= BOUND {
         let mut v = Vec::with_capacity(2);
         let a = Box::new([0u8;16]); let b = Box::new([0u8;16]); append(&mut v, a, b);
         let scratch = [0u8;32];
@@ -152,8 +152,8 @@ fn one_collection_captures_multiple_input_owners() {
 fn borrowed_helper_additions_accumulate() {
     let code = "fn append(v: &mut Vec<Box<[u8;16]>>)
         requires old(v).len() < 2, ensures final(v).len() == old(v).len()+1,
-        resources mem_peak <= 32 { let b = Box::new([0u8;16]); v.push(b); }
-    fn f() resources mem_peak <= BOUND {
+        resources memory <= 32 { let b = Box::new([0u8;16]); v.push(b); }
+    fn f() resources memory <= BOUND {
         let mut v = Vec::with_capacity(2); append(&mut v); append(&mut v);
         let scratch = [0u8;32];
     }";
@@ -168,8 +168,8 @@ fn borrowed_helper_additions_accumulate() {
 #[test]
 fn owning_input_collection_retains_additions_and_other_inputs() {
     let code = "fn append(mut v: Vec<Box<[u8;16]>>, b: Box<[u8;16]>) -> Vec<Box<[u8;16]>>
-        requires v.len() < 2, resources mem_peak <= 32 { v.push(b); v }
-    fn f() resources mem_peak <= BOUND {
+        requires v.len() < 2, resources memory <= 32 { v.push(b); v }
+    fn f() resources memory <= BOUND {
         let mut v = Vec::with_capacity(2); let a = Box::new([0u8;16]); v.push(a);
         let b = Box::new([0u8;16]); let w = append(v,b); let scratch = [0u8;32];
     }";
@@ -183,7 +183,7 @@ fn owning_input_collection_retains_additions_and_other_inputs() {
 
 #[test]
 fn boxed_slice_conversion_keeps_child_allocations() {
-    let code = "fn f() resources mem_peak <= BOUND {
+    let code = "fn f() resources memory <= BOUND {
         let mut v = Vec::<Box<[u8;16]>>::with_capacity(2);
         let a = Box::new([0u8;16]); v.push(a);
         let b = v.into_boxed_slice(); let scratch = [0u8;64];
@@ -194,16 +194,16 @@ fn boxed_slice_conversion_keeps_child_allocations() {
 
 #[test]
 fn owning_slice_helpers_transfer_whole_collections() {
-    verifies("owning_slice_helpers", "fn make() -> Box<[Box<[u8;16]>]> resources mem_peak <= 100 {
+    verifies("owning_slice_helpers", "fn make() -> Box<[Box<[u8;16]>]> resources memory <= 100 {
         let mut v = Vec::with_capacity(2); let a = Box::new([0u8;16]); v.push(a); v.into_boxed_slice()
     }
-    fn forward(v: Box<[Box<[u8;16]>]>) -> Box<[Box<[u8;16]>]> resources mem_peak <= 16 { v }
-    fn f() resources mem_peak <= 200 { let a = make(); let b = forward(a); drop(b); let scratch = [0u8;200]; }");
+    fn forward(v: Box<[Box<[u8;16]>]>) -> Box<[Box<[u8;16]>]> resources memory <= 16 { v }
+    fn f() resources memory <= 200 { let a = make(); let b = forward(a); drop(b); let scratch = [0u8;200]; }");
 }
 
 #[test]
 fn branch_insertions_keep_the_selected_child_footprint() {
-    let code = "fn f(flag: bool) resources mem_peak <= BOUND {
+    let code = "fn f(flag: bool) resources memory <= BOUND {
         let mut v = Vec::<Box<[u8;16]>>::with_capacity(1);
         if flag { let b = Box::new([0u8;16]); v.push(b); }
         let scratch = [0u8;32];
@@ -216,9 +216,9 @@ fn branch_insertions_keep_the_selected_child_footprint() {
 fn section_cannot_hide_new_children_of_enclosing_collection() {
     rejects(
         "section_elements",
-        "fn f() resources mem_peak <= 100 {
+        "fn f() resources memory <= 100 {
         let mut v = Vec::<Box<u32>>::with_capacity(1);
-        resources mem_peak <= 16 { let b = Box::new(1u32); v.push(b); }
+        resources memory <= 16 { let b = Box::new(1u32); v.push(b); }
     }",
         "adding owning children to an enclosing collection inside a memory section",
     );
@@ -228,7 +228,7 @@ fn section_cannot_hide_new_children_of_enclosing_collection() {
 fn owning_pop_still_requires_conditional_ownership() {
     rejects(
         "element_pop",
-        "fn f(mut v: Vec<Box<u32>>) resources mem_peak <= 100 { let removed = v.pop(); }",
+        "fn f(mut v: Vec<Box<u32>>) resources memory <= 100 { let removed = v.pop(); }",
         "owning or reference-valued Option payloads",
     );
 }
@@ -238,7 +238,7 @@ fn recursive_collection_layouts_are_rejected() {
     rejects(
         "recursive_elements",
         "struct Node { children: Vec<Node> }
-        fn f(v: Node) resources mem_peak <= 100 {}",
+        fn f(v: Node) resources memory <= 100 {}",
         "recursive struct layouts",
     );
 }
@@ -248,7 +248,7 @@ fn runtime_child_bytes_cannot_be_omitted_from_the_budget() {
     rejects(
         "element_loop_short",
         "fn f(n: usize) requires n <= 4,
-        resources mem_peak <= 48 + 8*n {
+        resources memory <= 48 + 8*n {
         let mut v = Vec::<Box<[u8;16]>>::with_capacity(n); let mut i = 0usize;
         while i < n invariant i <= n, v.len() == i, decreases n-i, {
             let b = Box::new([0u8;16]); v.push(b); i += 1;
@@ -263,11 +263,11 @@ fn captures_survive_nested_borrowed_helper_calls() {
     let code = "struct C { data: Box<Vec<Box<[u8;16]>>> }
         fn append(v: &mut Vec<Box<[u8;16]>>, b: Box<[u8;16]>)
             requires old(v).len() == 0, ensures final(v).len() == 1,
-            resources mem_peak <= 16 { v.push(b); }
+            resources memory <= 16 { v.push(b); }
         fn relay(p: &mut C, b: Box<[u8;16]>)
             requires old(p).data.len() == 0, ensures final(p).data.len() == 1,
-            resources mem_peak <= 32 { append(&mut *p.data, b); }
-        fn f() resources mem_peak <= BOUND {
+            resources memory <= 32 { append(&mut *p.data, b); }
+        fn f() resources memory <= BOUND {
             let mut p = C { data: Box::new(Vec::with_capacity(1)) };
             let b = Box::new([0u8;16]); relay(&mut p, b); let scratch = [0u8;64];
         }";
@@ -277,10 +277,10 @@ fn captures_survive_nested_borrowed_helper_calls() {
 
 #[test]
 fn collection_drop_releases_captured_input_allocations() {
-    let code = "fn consume(b: Box<[u8;80]>) resources mem_peak <= 40 {
+    let code = "fn consume(b: Box<[u8;80]>) resources memory <= 40 {
         let mut v = Vec::with_capacity(1); v.push(b); drop(v);
     }
-    fn f() resources mem_peak <= BOUND {
+    fn f() resources memory <= BOUND {
         let b = Box::new([0u8;80]); consume(b); let scratch = [0u8;120];
     }";
     verifies("captured_drop", &code.replace("BOUND", "120"));
@@ -290,8 +290,8 @@ fn collection_drop_releases_captured_input_allocations() {
 #[test]
 fn incoming_owning_slice_conversion_retains_opaque_input_provenance() {
     let code = "fn freeze(v: Vec<Box<[u8;16]>>) -> Box<[Box<[u8;16]>]>
-        requires v.len() == 1, resources mem_peak <= 48 { v.into_boxed_slice() }
-    fn f() resources mem_peak <= BOUND {
+        requires v.len() == 1, resources memory <= 48 { v.into_boxed_slice() }
+    fn f() resources memory <= BOUND {
         let mut v = Vec::with_capacity(4); let b = Box::new([0u8;16]); v.push(b);
         let fixed = freeze(v); let scratch = [0u8;64];
     }";
@@ -305,7 +305,7 @@ fn incoming_owning_slice_conversion_retains_opaque_input_provenance() {
 fn zero_byte_children_do_not_create_payload_charges() {
     verifies(
         "zero_children",
-        "fn f() resources mem_peak <= 40 {
+        "fn f() resources memory <= 40 {
         let mut v = Vec::<Box<[u8;0]>>::with_capacity(1);
         let b = Box::new([]); v.push(b); drop(v); let scratch = [0u8;40];
     }",
@@ -314,7 +314,7 @@ fn zero_byte_children_do_not_create_payload_charges() {
 
 #[test]
 fn growing_children_are_charged_before_insertion() {
-    let code = "fn f() resources mem_peak <= BOUND {
+    let code = "fn f() resources memory <= BOUND {
         let mut outer = Vec::<Vec<u32>>::with_capacity(1);
         let mut child = Vec::<u32>::new(); child.push(1); outer.push(child);
         let scratch = [0u8;32];

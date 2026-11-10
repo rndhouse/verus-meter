@@ -2292,7 +2292,7 @@ pub(crate) fn expr_to_stm_opt(
             let stm = Spanned::new(expr.span.clone(), StmX::RevealString(path.clone()));
             Ok((vec![stm], Maybe::Some(Value::ImplicitUnit(expr.span.clone()))))
         }
-        ExprX::ResourceAssert(_) | ExprX::ResourceSection(_) => {
+        ExprX::ResourceAssert(_) | ExprX::ResourceAssertCurrent(_) | ExprX::ResourceSection(_) => {
             panic!("unchecked resource checkpoint reached SST lowering")
         }
         ExprX::RevealByteString(bytes) => {

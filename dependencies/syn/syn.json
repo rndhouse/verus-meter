@@ -159,7 +159,7 @@
             }
           }
         ],
-        "MemPeak": [
+        "Memory": [
           {
             "proc_macro2": "Ident"
           },
@@ -6788,7 +6788,7 @@
           }
         },
         "token": {
-          "token": "MemPeak"
+          "token": "Memory"
         },
         "le_token": {
           "token": "Le"
@@ -8339,6 +8339,7 @@
     "Match": "match",
     "Matches": "matches",
     "MemPeak": "mem_peak",
+    "Memory": "memory",
     "Minus": "-",
     "MinusEq": "-=",
     "Mod": "mod",

@@ -853,6 +853,7 @@ impl<'a> Builder<'a> {
             | ExprX::AirStmt(..)
             | ExprX::Old(..)
             | ExprX::ResourceAssert(_)
+            | ExprX::ResourceAssertCurrent(_)
             | ExprX::ResourceSection(_)
             | ExprX::Nondeterministic => Maybe::Some(bb),
 

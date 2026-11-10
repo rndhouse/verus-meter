@@ -136,7 +136,12 @@ pub fn erase_annotations(functions: &mut [Function]) -> Result<(), VirErr> {
         }
         if let Some(body) = &function.x.body {
             let body = crate::ast_visitor::map_expr_visitor(body, &|expr| {
-                if matches!(expr.x, ExprX::ResourceAssert(_) | ExprX::ResourceSection(_)) {
+                if matches!(
+                    expr.x,
+                    ExprX::ResourceAssert(_)
+                        | ExprX::ResourceAssertCurrent(_)
+                        | ExprX::ResourceSection(_)
+                ) {
                     Ok(SpannedTyped::new(
                         &expr.span,
                         &expr.typ,

@@ -22,7 +22,7 @@ spec fn scratch_budget(large: bool) -> nat {
 // its selected allowance causes verification to fail at that declaration.
 // The callers compose this named formula through the helper contracts.
 fn workspace(large: bool)
-    resources mem_peak <= mem_size(large) + scratch_budget(large),
+    resources memory <= mem_size(large) + scratch_budget(large),
 {
     if large {
         let scratch = [0u32; 8];
@@ -36,7 +36,7 @@ fn workspace(large: bool)
 // The query reads workspace's declared allowance for this input; it does not
 // execute workspace. This function also needs room for its own live input.
 fn delegate(large: bool)
-    resources mem_peak <= mem_size(large) + mem_peak(workspace(large)),
+    resources memory <= mem_size(large) + mem_peak(workspace(large)),
 {
     workspace(large);
 }
@@ -46,11 +46,11 @@ fn delegate(large: bool)
 // Changing the argument in the executable call below to true makes verification
 // fail: the declared budget still allows only the small task.
 fn main()
-    resources mem_peak <= mem_peak(delegate(false)),
+    resources memory <= mem_peak(delegate(false)),
 {
     delegate(false);
     // Checkpoints need a fixed bound: two flags and the small task's array.
-    assert(current(mem_peak) <= 2 * mem_size(bool) + mem_size([u32; 4]));
+    assert(peak(memory) <= 2 * mem_size(bool) + mem_size([u32; 4]));
 }
 
 }

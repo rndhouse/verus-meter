@@ -70,8 +70,8 @@ impl Debug for crate::AssertExpr {
                 formatter.field(v0);
                 formatter.finish()
             }
-            crate::AssertExpr::MemPeak(v0, v1, v2) => {
-                let mut formatter = formatter.debug_tuple("MemPeak");
+            crate::AssertExpr::Memory(v0, v1, v2) => {
+                let mut formatter = formatter.debug_tuple("Memory");
                 formatter.field(v0);
                 formatter.field(v1);
                 formatter.field(v2);

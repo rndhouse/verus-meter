@@ -22,7 +22,7 @@ A simple example:
 // only the reference. The `if` lets us specify a different memory bound for
 // each reversal strategy.
 fn reverse(values: &mut [u32; 4], use_scratch: bool)
-    resources mem_peak <= mem_size(values) + mem_size(use_scratch) + if use_scratch {
+    resources memory <= mem_size(values) + mem_size(use_scratch) + if use_scratch {
         mem_size([u32; 4])
     } else {
         mem_size(u32)
@@ -46,7 +46,7 @@ fn reverse(values: &mut [u32; 4], use_scratch: bool)
 
 // Reverse two buffers using the memory needed for just one reversal.
 fn main()
-    resources mem_peak <= mem_size([u32; 4]) + mem_peak(reverse),
+    resources memory <= mem_size([u32; 4]) + mem_peak(reverse),
 {
     {
         let mut first = [1u32, 2, 3, 4];

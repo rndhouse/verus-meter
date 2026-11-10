@@ -1,7 +1,7 @@
 // Shows how to check memory limits at individual stages of an operation.
 //
-// Each checkpoint inspects the peak reached at its position. Finishing a stage
-// releases its workspace, but does not erase the peak it already reached.
+// Compare memory still in use with the highest usage reached so far. Finishing
+// a stage releases its workspace, but does not erase its earlier peak.
 
 use vstd::prelude::*;
 
@@ -12,20 +12,21 @@ verus! {
 // The whole-function contract allows both arrays. The checkpoints show when
 // that allowance becomes necessary and why the peak remains after scope exit.
 fn main()
-    resources mem_peak <= 2 * mem_size([u32; 4]),
+    resources memory <= 2 * mem_size([u32; 4]),
 {
     let original = [1u32, 2, 3, 4];
-    assert(current(mem_peak) <= mem_size(original));
+    assert(peak(memory) <= mem_size(original));
 
     {
         let mut copy = original;
         copy[0] = 9;
-        assert(current(mem_peak) <= mem_size(original) + mem_size(copy));
+        assert(peak(memory) <= mem_size(original) + mem_size(copy));
         assert(copy[0] == 9);
     }
 
-    // The copy's storage has been released, but the earlier peak still counts.
-    assert(current(mem_peak) <= 2 * mem_size(original));
+    // Only the original remains live; the earlier peak still includes the copy.
+    assert(current(memory) <= mem_size(original));
+    assert(peak(memory) <= 2 * mem_size(original));
     assert(original[0] == 1);
 }
 

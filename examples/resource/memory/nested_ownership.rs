@@ -16,7 +16,7 @@ struct Buffer {
 fn make(n: usize) -> (b: Box<Buffer>)
     requires n <= 4,
     ensures b.values.len() == 0, *b.marker == 42,
-    resources mem_peak <= 52 + 4 * n,
+    resources memory <= 52 + 4 * n,
 {
     Box::new(Buffer { values: Vec::with_capacity(n), marker: Box::new(42) })
 }
@@ -24,14 +24,14 @@ fn make(n: usize) -> (b: Box<Buffer>)
 // Transfer ownership while preserving the data and its memory cost.
 fn forward(b: Box<Buffer>) -> (r: Box<Buffer>)
     ensures r == b,
-    resources mem_peak <= 8,
+    resources memory <= 8,
 {
     b
 }
 
 // Use the data after a handoff, then free it before the next task.
 fn main()
-    resources mem_peak <= 96,
+    resources memory <= 96,
 {
     let first = make(4);
     let second = forward(first);

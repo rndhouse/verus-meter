@@ -310,9 +310,9 @@ pub(crate) trait AstVisitor<R: Returner, Err, Scope: Scoper> {
         let typ = self.visit_typ(&expr.typ)?;
         let expr_new = |e: ExprX| SpannedTyped::new(&expr.span, &R::get(typ), e);
         match &expr.x {
-            ExprX::ResourceAssert(_) | ExprX::ResourceSection(_) => {
-                R::ret(|| expr_new(expr.x.clone()))
-            }
+            ExprX::ResourceAssert(_)
+            | ExprX::ResourceAssertCurrent(_)
+            | ExprX::ResourceSection(_) => R::ret(|| expr_new(expr.x.clone())),
             ExprX::Const(_) => R::ret(|| expr_new(expr.x.clone())),
             ExprX::Var(_) => R::ret(|| expr_new(expr.x.clone())),
             ExprX::VarAt(_, _) => R::ret(|| expr_new(expr.x.clone())),

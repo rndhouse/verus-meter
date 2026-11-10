@@ -86,6 +86,7 @@ a.struct[title="struct syn::token::Macro"],
 a.struct[title="struct syn::token::Match"],
 a.struct[title="struct syn::token::Matches"],
 a.struct[title="struct syn::token::MemPeak"],
+a.struct[title="struct syn::token::Memory"],
 a.struct[title="struct syn::token::Minus"],
 a.struct[title="struct syn::token::MinusEq"],
 a.struct[title="struct syn::token::Mod"],
@@ -256,6 +257,7 @@ a.struct[title="struct syn::token::Macro"]::before,
 a.struct[title="struct syn::token::Match"]::before,
 a.struct[title="struct syn::token::Matches"]::before,
 a.struct[title="struct syn::token::MemPeak"]::before,
+a.struct[title="struct syn::token::Memory"]::before,
 a.struct[title="struct syn::token::Minus"]::before,
 a.struct[title="struct syn::token::MinusEq"]::before,
 a.struct[title="struct syn::token::Mod"]::before,
@@ -689,6 +691,10 @@ a.struct[title="struct syn::token::Matches"]::before {
 
 a.struct[title="struct syn::token::MemPeak"]::before {
 	content: "Token![mem_peak]";
+}
+
+a.struct[title="struct syn::token::Memory"]::before {
+	content: "Token![memory]";
 }
 
 a.struct[title="struct syn::token::Minus"]::before {
@@ -1144,6 +1150,7 @@ a.struct[title="struct syn::token::Loop"]::after,
 a.struct[title="struct syn::token::Macro"]::after,
 a.struct[title="struct syn::token::Match"]::after,
 a.struct[title="struct syn::token::Matches"]::after,
+a.struct[title="struct syn::token::Memory"]::after,
 a.struct[title="struct syn::token::Mod"]::after,
 a.struct[title="struct syn::token::Move"]::after,
 a.struct[title="struct syn::token::Mut"]::after,

@@ -66,7 +66,7 @@ impl Hash for crate::AssertExpr {
                 state.write_u8(0u8);
                 v0.hash(state);
             }
-            crate::AssertExpr::MemPeak(v0, _, v2) => {
+            crate::AssertExpr::Memory(v0, _, v2) => {
                 state.write_u8(1u8);
                 v0.hash(state);
                 v2.hash(state);

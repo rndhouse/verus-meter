@@ -5,16 +5,16 @@ use crate::common::*;
 fn growth_policy_covers_element_sizes() {
     verifies(
         "byte_growth",
-        "fn f() resources mem_peak <= 32 { let mut v = Vec::<u8>::new(); v.push(1); }",
+        "fn f() resources memory <= 32 { let mut v = Vec::<u8>::new(); v.push(1); }",
     );
     rejects(
         "byte_growth_short",
-        "fn f() resources mem_peak <= 31 { let mut v = Vec::<u8>::new(); v.push(1); }",
+        "fn f() resources memory <= 31 { let mut v = Vec::<u8>::new(); v.push(1); }",
         "memory budget exceeded",
     );
     verifies(
         "large_element_growth",
-        "fn f() resources mem_peak <= 2072 { let mut v = Vec::<[u8; 2048]>::new(); v.push([0u8; 2048]); }",
+        "fn f() resources memory <= 2072 { let mut v = Vec::<[u8; 2048]>::new(); v.push([0u8; 2048]); }",
     );
 }
 
@@ -24,9 +24,9 @@ test_verify_one_file! {
         fn side(v: &mut Vec<u32>) -> (result: u32)
             requires old(v).len() == 0,
             ensures final(v).len() == 1,
-            resources mem_peak <= 28,
+            resources memory <= 28,
         { v.push(1); 0 }
-        fn f() resources mem_peak <= 128 {
+        fn f() resources memory <= 128 {
             let mut a = Vec::<u32>::new();
             let mut b = Vec::<u32>::new();
             a.push(side(&mut b));
@@ -37,8 +37,8 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] section_growth_is_local verus_code! {
         use vstd::prelude::*;
-        fn f() resources mem_peak <= 40 {
-            resources mem_peak <= 40 {
+        fn f() resources memory <= 40 {
+            resources memory <= 40 {
                 let mut v = Vec::<u32>::new();
                 v.push(1);
             }
@@ -49,9 +49,9 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] section_cannot_hide_growth_of_enclosing_owner verus_code! {
         use vstd::prelude::*;
-        fn f() resources mem_peak <= 64 {
+        fn f() resources memory <= 64 {
             let mut v = Vec::<u32>::new();
-            resources mem_peak <= 40 { v.push(1); }
+            resources memory <= 40 { v.push(1); }
         }
     } => Err(err) => assert_vir_error_msg(err, "vector capacity exceeded")
 }
@@ -69,10 +69,10 @@ fn growth_example_compiles() {
 #[test]
 fn branch_growth_retains_the_larger_buffer() {
     let body = "{ let mut v = Vec::<u32>::with_capacity(1); v.push(1); if flag { v.push(2); } let scratch = [0u8; 20]; }";
-    verifies("branch_growth_fits", &format!("fn f(flag: bool) resources mem_peak <= 61 {body}"));
+    verifies("branch_growth_fits", &format!("fn f(flag: bool) resources memory <= 61 {body}"));
     rejects(
         "branch_growth_exceeds",
-        &format!("fn f(flag: bool) resources mem_peak <= 60 {body}"),
+        &format!("fn f(flag: bool) resources memory <= 60 {body}"),
         "memory budget exceeded",
     );
 }
@@ -81,11 +81,11 @@ fn branch_growth_retains_the_larger_buffer() {
 fn grown_buffer_releases_on_drop_and_retains_on_pop() {
     verifies(
         "grown_drop",
-        "fn f() resources mem_peak <= 64 { let mut v = Vec::<u32>::new(); v.push(1); drop(v); let scratch = [0u8; 64]; }",
+        "fn f() resources memory <= 64 { let mut v = Vec::<u32>::new(); v.push(1); drop(v); let scratch = [0u8; 64]; }",
     );
     rejects(
         "grown_pop",
-        "fn f() resources mem_peak <= 64 { let mut v = Vec::<u32>::new(); v.push(1); v.pop(); let scratch = [0u8; 32]; }",
+        "fn f() resources memory <= 64 { let mut v = Vec::<u32>::new(); v.push(1); v.pop(); let scratch = [0u8; 32]; }",
         "memory budget exceeded",
     );
 }
@@ -93,7 +93,7 @@ fn grown_buffer_releases_on_drop_and_retains_on_pop() {
 test_verify_one_file! {
     #[test] new_spare_capacity_is_reused verus_code! {
         use vstd::prelude::*;
-        fn f() resources mem_peak <= 40 {
+        fn f() resources memory <= 40 {
             let mut v = Vec::<u32>::new();
             v.push(1); v.push(2); v.push(3); v.push(4);
             assert(v.len() == 4);
@@ -107,9 +107,9 @@ test_verify_one_file! {
         fn append(v: &mut Vec<u32>)
             requires old(v).len() == 0,
             ensures final(v).len() == 1,
-            resources mem_peak <= 24,
+            resources memory <= 24,
         { v.push(1); }
-        fn f() resources mem_peak <= 55 {
+        fn f() resources memory <= 55 {
             let mut v = Vec::<u32>::new();
             append(&mut v);
             let scratch = [0u8; 8];
@@ -123,14 +123,14 @@ test_verify_one_file! {
         fn append(v: &mut Vec<u32>)
             requires old(v).len() < 2,
             ensures final(v).len() == old(v).len() + 1,
-            resources mem_peak <= 24,
+            resources memory <= 24,
         { v.push(1); }
         fn forward(v: &mut Vec<u32>)
             requires old(v).len() < 2,
             ensures final(v).len() == old(v).len() + 1,
-            resources mem_peak <= 32,
+            resources memory <= 32,
         { append(v); }
-        fn f() resources mem_peak <= 96 {
+        fn f() resources memory <= 96 {
             let mut v = Vec::<u32>::new();
             forward(&mut v); forward(&mut v);
             assert(v.len() == 2);
@@ -141,15 +141,15 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] growing_owned_input_and_fresh_return verus_code! {
         use vstd::prelude::*;
-        fn make() -> (v: Vec<u32>) ensures v.len() == 1, resources mem_peak <= 40 {
+        fn make() -> (v: Vec<u32>) ensures v.len() == 1, resources memory <= 40 {
             let mut v = Vec::<u32>::new(); v.push(1); v
         }
         fn append(mut v: Vec<u32>) -> (result: Vec<u32>)
             requires v.len() == 1,
             ensures result.len() == 2,
-            resources mem_peak <= 40,
+            resources memory <= 40,
         { v.push(2); v }
-        fn f() resources mem_peak <= 128 {
+        fn f() resources memory <= 128 {
             let v = make();
             let mut v = append(v);
             v.push(3);
@@ -166,9 +166,9 @@ test_verify_one_file! {
         fn append(v: &mut Vec<u32>)
             requires old(v).len() < 4,
             ensures final(v).len() == old(v).len() + 1,
-            resources mem_peak <= 40,
+            resources memory <= 40,
         { v.push(1); }
-        fn f() resources mem_peak <= 112 {
+        fn f() resources memory <= 112 {
             let mut v = Vec::<u32>::new();
             while v.len() < 4
                 invariant v.len() <= 4,
@@ -182,7 +182,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] empty_vector_can_grow verus_code! {
         use vstd::prelude::*;
-        fn f() resources mem_peak <= 40 {
+        fn f() resources memory <= 40 {
             let mut v = Vec::<u32>::new();
             v.push(7);
             assert(v.len() == 1 && v[0] == 7);
@@ -193,7 +193,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] growth_counts_both_buffers verus_code! {
         use vstd::prelude::*;
-        fn f() resources mem_peak <= 44 {
+        fn f() resources memory <= 44 {
             let mut v = Vec::<u32>::with_capacity(1);
             v.push(1); v.push(2);
         }
@@ -203,7 +203,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] growth_overlap_exceeds_budget verus_code! {
         use vstd::prelude::*;
-        fn f() resources mem_peak <= 43 {
+        fn f() resources memory <= 43 {
             let mut v = Vec::<u32>::with_capacity(1);
             v.push(1); v.push(2);
         }
@@ -214,7 +214,7 @@ test_verify_one_file! {
     #[test] loop_growth verus_code! {
         use vstd::prelude::*;
         fn f(n: usize) requires n <= 8,
-            resources mem_peak <= 32 + 32 + 16 * n,
+            resources memory <= 32 + 32 + 16 * n,
         {
             let mut v = Vec::<u32>::new();
             while v.len() < n
@@ -232,9 +232,9 @@ test_verify_one_file! {
         fn append(v: &mut Vec<u32>)
             requires old(v).len() == 0,
             ensures final(v).len() == 1,
-            resources mem_peak <= 24,
+            resources memory <= 24,
         { v.push(1); }
-        fn f() resources mem_peak <= 64 {
+        fn f() resources memory <= 64 {
             let mut v = Vec::<u32>::new();
             append(&mut v);
             v.push(2);

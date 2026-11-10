@@ -6,7 +6,7 @@ space, while overlapping storage adds together.
 
 ## Writing a budget
 
-Put `resources mem_peak <= bound` after the function's other specification clauses.
+Put `resources memory <= bound` after the function's other specification clauses.
 The `resources` clause currently supports one memory bound. Functions without
 this clause receive ordinary Verus verification only.
 
@@ -16,7 +16,8 @@ this clause receive ordinary Verus verification only.
 | `mem_size(value)` | The size of a named parameter or local's type, without copying or evaluating its value. |
 | `mem_peak(helper)` | A helper's declared budget, taking the maximum at each conditional. |
 | `mem_peak(helper(false))` | Its declared budget for these arguments, without executing the helper. |
-| `assert(current(mem_peak) <= bound)` | A check on the peak reached so far. |
+| `assert(peak(memory) <= bound)` | A check on the peak reached so far. |
+| `assert(current(memory) <= bound)` | A check on memory still live at this point. |
 
 Bounds support nonnegative integer literals, immutable unsigned input parameters
 (up to 64 bits), these queries, addition,
@@ -37,7 +38,7 @@ spec fn element_bytes(capacity: nat) -> nat { mem_size(u32) * capacity }
 
 fn collect(capacity: usize)
     requires capacity <= 1024,
-    resources mem_peak <= mem_size(capacity) + mem_size(Vec<u32>)
+    resources memory <= mem_size(capacity) + mem_size(Vec<u32>)
         + element_bytes(capacity as nat),
 {
     let values = Vec::<u32>::with_capacity(capacity);
@@ -146,7 +147,7 @@ and explicit early `return` remain unsupported.
 ## Fixed-size heap objects
 
 `Box<T>` can own one fixed-size value. `mem_size(Box<T>)` counts the owning handle
-(8 model bytes); the live heap object adds `mem_size(T)` to `mem_peak`. A
+(8 model bytes); the live heap object adds `mem_size(T)` to live memory. A
 `Box::new` initializer uses that object's storage, following the same destination
 rule as local initialization. Allocator metadata, padding, and physical allocation
 strategies are outside the model.
@@ -270,7 +271,7 @@ ordinary ownership rules. Indexed owning elements use the conservative borrowed
 child rules above. See [boxed slices](../../examples/resource/memory/boxed_slices.rs).
 
 A returned local runtime extent that cannot be expressed using immutable scalar
-inputs is conservatively bounded by the producing function's checked `mem_peak`.
+inputs is conservatively bounded by the producing function's checked memory bound.
 That bound follows the result through callers until drop; forwarding an input
 preserves its existing allocation charge. Local accounting uses the captured
 extent. This can make callers require more allowance than the exact payload size.
@@ -327,7 +328,7 @@ There is no capacity annotation.
 fn append(values: &mut Vec<u32>, capacity: usize, value: u32)
     requires old(values).len() < capacity,
     ensures final(values)@ == old(values)@.push(value),
-    resources mem_peak <= mem_size(values) + mem_size(capacity) + mem_size(value),
+    resources memory <= mem_size(values) + mem_size(capacity) + mem_size(value),
 {
     values.push(value);
 }
@@ -396,12 +397,12 @@ A section gives one part of an operation its own workspace allowance:
 
 ```rust
 fn work()
-    resources mem_peak <= 2 * mem_size([u32; 4]),
+    resources memory <= 2 * mem_size([u32; 4]),
 {
     let original = [1u32, 2, 3, 4];
-    resources mem_peak <= mem_size(original) {
+    resources memory <= mem_size(original) {
         let copy = original;
-        assert(current(mem_peak) <= mem_size(copy));
+        assert(peak(memory) <= mem_size(copy));
     }
 }
 ```
@@ -415,13 +416,19 @@ See [nested sections](../../examples/resource/memory/sections.rs).
 
 ## Checking progress
 
-`current(mem_peak)` refers to the peak since entry to the nearest budgeted
+`peak(memory)` refers to the peak since entry to the nearest budgeted
 section, or the function when outside a section. Ordinary blocks do not reset it.
 Storage that has gone out of scope still contributes to that earlier peak.
 
-A checkpoint inside a loop must cover previous iterations within its accounting
-scope. A budgeted section inside a loop starts fresh each time it is entered.
-Checkpoints check the budget independently of ordinary proof assertions.
+`current(memory)` measures memory still live at the assertion. Releasing storage
+can lower this value without lowering `peak(memory)`. Both queries use the nearest
+budgeted section or function; a section excludes its parent's live storage.
+
+A `peak(memory)` checkpoint inside a loop must cover previous iterations within
+its accounting scope. A budgeted section inside a loop starts fresh each time it is entered.
+Current-memory checkpoints inspect only their execution point, without adding
+earlier iterations' peaks. Checkpoints check bounds independently of ordinary
+proof assertions.
 
 See [checkpoints](../../examples/resource/memory/checkpoints.rs) and a
 [checkpoint that fails](../../examples/resource/memory/expected-failures/checkpoint.rs).
@@ -431,7 +438,7 @@ See [checkpoints](../../examples/resource/memory/checkpoints.rs) and a
 A conditional function budget can select its allowance from the inputs:
 
 ```rust
-resources mem_peak <= mem_size(large)
+resources memory <= mem_size(large)
     + if large { mem_size([u32; 8]) } else { mem_size([u32; 4]) },
 ```
 
@@ -502,7 +509,7 @@ its peak is computed by selecting usage at each point and then taking the maximu
 For example, successive phases using 100 local bytes and 100 heap bytes have a
 combined peak of 100, even though each individual kind peaks at 100.
 
-Existing `mem_peak` clauses continue to bound total usage. Internally, budgets
+`resources memory` clauses bound total usage. Internally, budgets
 pair a memory selection with a byte expression, and proof obligations project the
 footprint onto that selection. Reports expose the same selection mechanism.
 Source syntax for kind-specific clauses and device allocator models are not yet

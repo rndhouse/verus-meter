@@ -1368,6 +1368,8 @@ pub enum ExprX {
     ShrRefStructWrap(Expr, Expr, Typ, Typ, Ident, Ident),
     /// Checked and erased before export; never a logical assumption.
     ResourceAssert(crate::resource::memory::BudgetExpr),
+    /// Live-memory checkpoint, checked and erased before export.
+    ResourceAssertCurrent(crate::resource::memory::BudgetExpr),
     /// First statement of an independently budgeted lexical block.
     ResourceSection(crate::resource::memory::BudgetExpr),
 }

@@ -92,7 +92,8 @@ fn obligation(check: &Obligation) -> Option<Stmt> {
         (Some(cost), Some(bound)) => match kind {
             CheckKind::Function => format!("memory budget exceeded: peak {cost} bytes exceeds budget {bound} bytes"),
             CheckKind::Section => format!("section memory budget exceeded: peak {cost} bytes exceeds budget {bound} bytes"),
-            CheckKind::Checkpoint => format!("mem_peak assertion failed: peak {cost} bytes exceeds bound {bound} bytes"),
+            CheckKind::CurrentCheckpoint => format!("current(memory) assertion failed: live {cost} bytes exceeds bound {bound} bytes"),
+            CheckKind::Checkpoint => format!("peak(memory) assertion failed: peak {cost} bytes exceeds bound {bound} bytes"),
         },
         _ => "conditional memory budget exceeded: cannot prove the required model bytes fit the declared bound".into(),
     };
@@ -102,7 +103,7 @@ fn obligation(check: &Obligation) -> Option<Stmt> {
         ExprX::AssertAssume {
             is_assume: false,
             expr: mk_ineq(span, &cost, bound, InequalityOp::Le),
-            msg: Some(if matches!(kind, CheckKind::Checkpoint) {
+            msg: Some(if matches!(kind, CheckKind::Checkpoint | CheckKind::CurrentCheckpoint) {
                 error(&bound.span, message).secondary_span(span)
             } else {
                 error(span, message).secondary_span(&bound.span)

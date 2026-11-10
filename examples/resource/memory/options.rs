@@ -13,7 +13,7 @@ verus! {
 // result. Functional verification proves that this collection provides a number.
 fn last_number() -> (result: Option<u32>)
     ensures result == Some(20),
-    resources mem_peak <= mem_size(Vec<u32>) + 2 * mem_size(u32) + mem_size(Option<u32>),
+    resources memory <= mem_size(Vec<u32>) + 2 * mem_size(u32) + mem_size(Option<u32>),
 {
     let mut numbers = Vec::<u32>::with_capacity(2);
     numbers.push(10);
@@ -26,7 +26,7 @@ fn last_number() -> (result: Option<u32>)
 // The helper's guarantee proves that this call supplies a number. Its memory
 // allowance also covers using the result after the collection is gone.
 fn main()
-    resources mem_peak <= mem_peak(last_number),
+    resources memory <= mem_peak(last_number),
 {
     let result = last_number();
     match result {

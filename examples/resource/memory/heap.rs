@@ -15,7 +15,7 @@ type Buffer = [u8; 16];
 // charge. The functional promise lets the caller check the result as well.
 fn fill(buffer: &mut Buffer)
     ensures final(buffer)[0] == 7,
-    resources mem_peak <= mem_size(buffer),
+    resources memory <= mem_size(buffer),
 {
     buffer[0] = 7;
 }
@@ -25,7 +25,7 @@ fn fill(buffer: &mut Buffer)
 // Each scope drops its box before the next scope allocates. The bound includes
 // one owning handle, one heap buffer, and the borrowed helper's workspace.
 fn main()
-    resources mem_peak <= mem_size(Box<Buffer>) + mem_size(Buffer) + mem_peak(fill),
+    resources memory <= mem_size(Box<Buffer>) + mem_size(Buffer) + mem_peak(fill),
 {
     {
         let mut first = Box::new([0u8; 16]);
@@ -37,7 +37,7 @@ fn main()
         fill(&mut *second);
         assert(second[0] == 7);
     }
-    assert(current(mem_peak) <= mem_size(Box<Buffer>) + mem_size(Buffer) + mem_peak(fill));
+    assert(peak(memory) <= mem_size(Box<Buffer>) + mem_size(Buffer) + mem_peak(fill));
 }
 
 }

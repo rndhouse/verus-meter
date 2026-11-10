@@ -17,7 +17,7 @@ spec fn reservation(bytes_per_item: nat) -> spec_fn(nat) -> nat {
 // also counts the capacity parameter; the precondition bounds every input.
 fn collect(capacity: usize)
     requires 2 <= capacity <= 1024,
-    resources mem_peak <= mem_size(capacity) + reservation(mem_size(u32))(capacity as nat),
+    resources memory <= mem_size(capacity) + reservation(mem_size(u32))(capacity as nat),
 {
     let mut values = Vec::<u32>::with_capacity(capacity);
     values.push(10);
@@ -27,7 +27,7 @@ fn collect(capacity: usize)
 
 // Carry the helper's input-specific guarantee through to the complete operation.
 fn main()
-    resources mem_peak <= mem_peak(collect(2)),
+    resources memory <= mem_peak(collect(2)),
 {
     collect(2);
 }

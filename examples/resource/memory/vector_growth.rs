@@ -7,7 +7,7 @@ verus! {
 // Build the requested number of values within a growing memory allowance.
 fn build(n: usize)
     requires n <= 8,
-    resources mem_peak <= 64 + 16 * n,
+    resources memory <= 64 + 16 * n,
 {
     let mut values = Vec::<u32>::new();
     while values.len() < n
@@ -25,14 +25,14 @@ fn build(n: usize)
 fn append_to_empty(values: &mut Vec<u32>)
     requires old(values).len() == 0,
     ensures final(values).len() == 1 && final(values)[0] == 7,
-    resources mem_peak <= 24,
+    resources memory <= 24,
 {
     values.push(7);
 }
 
 // Continue adding values after a helper has grown the vector.
 fn use_helper()
-    resources mem_peak <= 64,
+    resources memory <= 64,
 {
     let mut values = Vec::<u32>::new();
     append_to_empty(&mut values);

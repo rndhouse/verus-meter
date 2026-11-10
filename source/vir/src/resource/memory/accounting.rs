@@ -13,6 +13,7 @@ pub(super) enum CheckKind {
     Function,
     Section,
     Checkpoint,
+    CurrentCheckpoint,
 }
 
 pub(super) struct Obligation {

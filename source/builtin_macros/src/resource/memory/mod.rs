@@ -111,7 +111,7 @@ impl Visitor {
         let span = section.contract.token.span;
         let attrs = section.attrs;
         if self.inside_ghost > 0 || self.inside_external_code > 0 || self.inside_const {
-            *expr = quote_verbatim!(span, attrs => ::core::compile_error!("mem_peak sections require a verified exec function body"));
+            *expr = quote_verbatim!(span, attrs => ::core::compile_error!("memory sections require a verified exec function body"));
             return true;
         }
         // Resolve mem_size names before visiting declarations in the section.
@@ -129,22 +129,25 @@ impl Visitor {
     }
 
     pub(in crate::syntax) fn handle_memory_checkpoint(&mut self, expr: &mut Expr) -> bool {
-        if !matches!(expr, Expr::Assert(a) if matches!(a.expr, verus_syn::AssertExpr::MemPeak(..)))
-        {
+        if !matches!(expr, Expr::Assert(a) if matches!(a.expr, verus_syn::AssertExpr::Memory(..))) {
             return false;
         }
         let Expr::Assert(assert) = take_expr(expr) else { unreachable!() };
-        let verus_syn::AssertExpr::MemPeak(_, _, resource) = assert.expr else { unreachable!() };
+        let verus_syn::AssertExpr::Memory(query, _, resource) = assert.expr else { unreachable!() };
         let span = assert.assert_token.span;
         let attrs = assert.attrs;
         *expr = if self.inside_ghost > 0 || self.inside_external_code > 0 || self.inside_const {
-            quote_verbatim!(span, attrs => ::core::compile_error!("mem_peak checkpoints require a verified exec function body"))
+            quote_verbatim!(span, attrs => ::core::compile_error!("memory checkpoints require a verified exec function body"))
         } else if self.erase_ghost.erase() {
             quote_verbatim!(span, attrs => ())
         } else {
             let bindings = self.resource_bindings.clone();
             let budget = lower_budget(self, &resource.budget, &bindings);
-            quote_verbatim!(builtin, span, attrs => #builtin::resource_assert_mem_peak(#budget))
+            if query == "current" {
+                quote_verbatim!(builtin, span, attrs => #builtin::resource_assert_current_memory(#budget))
+            } else {
+                quote_verbatim!(builtin, span, attrs => #builtin::resource_assert_mem_peak(#budget))
+            }
         };
         true
     }

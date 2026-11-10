@@ -69,7 +69,7 @@ pub(super) struct Charge<T> {
 }
 
 /// Shared expression tree preserves correlations between kinds and branches.
-/// `total` caches the existing scalar formula for ordinary mem_peak contracts.
+/// `total` caches the existing scalar formula for ordinary memory contracts.
 #[derive(Clone)]
 pub struct Footprint {
     total: Expr,
