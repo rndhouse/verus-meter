@@ -36,7 +36,13 @@ impl Analysis<'_> {
         let record = expr::operation(
             span,
             "allocated",
-            vec![expr::path(span, []), expr::integer(span, 0), bytes, capacity],
+            vec![
+                expr::path(span, []),
+                expr::integer(span, 0),
+                bytes,
+                capacity,
+                self.owner_length(span, owner),
+            ],
             expr::record_type(),
         );
         let empty = expr::empty(span, expr::record_type());
@@ -107,6 +113,7 @@ impl Analysis<'_> {
                         expr::integer(span, 0),
                         amount,
                         expr::integer(span, 0),
+                        expr::integer(span, 0),
                     ],
                     expr::record_type(),
                 );
@@ -131,6 +138,51 @@ impl Analysis<'_> {
             memory = expr::add(span, memory, records);
         }
         memory
+    }
+
+    pub(in super::super) fn owner_length(&self, span: &Span, owner: &Owner) -> Expr {
+        let Some((typ, value)) = &owner.source else {
+            return owner.geometry.clone().unwrap_or_else(|| expr::integer(span, 0));
+        };
+        let length = if self.layouts.vector(typ) {
+            let TypX::Datatype(_, types, _) = &**typ else { unreachable!() };
+            super::super::vectors::length(span, types.clone(), value.clone())
+        } else if self.layouts.option(typ) {
+            let TypX::Datatype(datatype, _, _) = &**typ else { unreachable!() };
+            let some = SpannedTyped::new(
+                span,
+                &crate::ast_util::bool_typ(),
+                ExprX::UnaryOpr(
+                    UnaryOpr::IsVariant {
+                        datatype: datatype.clone(),
+                        variant: std::sync::Arc::new("Some".into()),
+                    },
+                    value.clone(),
+                ),
+            );
+            return super::super::growth::select(
+                span,
+                some,
+                expr::integer(span, 1),
+                expr::integer(span, 0),
+            );
+        } else if let TypX::Decorate(TypDecoration::Box, _, inner) = &**typ {
+            if matches!(&**inner, TypX::Primitive(Primitive::Slice, _)) {
+                SpannedTyped::new(
+                    span,
+                    &crate::ast_util::int_typ(),
+                    ExprX::Unary(
+                        UnaryOp::Length(ArrayKind::Slice),
+                        SpannedTyped::new(span, inner, value.x.clone()),
+                    ),
+                )
+            } else {
+                return expr::integer(span, 0);
+            }
+        } else {
+            return expr::integer(span, 0);
+        };
+        SpannedTyped::new(span, &crate::ast_util::int_typ(), length.x.clone())
     }
 
     pub(in super::super) fn snapshot_owner_metadata(&mut self, span: &Span, owner: &Owner) -> Expr {
@@ -166,7 +218,14 @@ impl Analysis<'_> {
             vec![memory.clone(), expr::path(span, [])],
         ));
         let mut rest = memory.clone();
-        let mut owner = Owner::default();
+        let mut owner = Owner {
+            geometry: Some(expr::record_field(
+                span,
+                expr::lookup(span, memory.clone(), expr::path(span, [])),
+                "length",
+            )),
+            ..Default::default()
+        };
         for (slot, child_type) in self.layouts.owned_children(typ, span)? {
             let path = expr::path(span, [self.layouts.metadata_slot(&slot)]);
             self.metadata_partition(span, rest.clone(), path.clone());

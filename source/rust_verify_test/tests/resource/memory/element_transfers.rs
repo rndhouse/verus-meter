@@ -73,7 +73,10 @@ fn matching_an_extracted_owner_transfers_the_payload() {
 #[test]
 fn opaque_borrowed_extraction_keeps_original_storage_alive() {
     let code = "fn take(v: &mut Vec<Box<[u8;32]>>) -> (r: Option<Box<[u8;32]>>)
-        requires old(v).len() == 1, ensures r.is_some(), resources peak(memory) <= 17 { v.pop() }
+        requires old(v).len() == 1, ensures r.is_some(), resources peak(memory) <= 17 {
+            while v.len() > 1 invariant v.len() >= 1, decreases v.len(), { v.pop(); }
+            v.pop()
+        }
         fn f() resources peak(memory) <= BOUND {
             let mut v = Vec::<Box<[u8;32]>>::with_capacity(1);
             let b = Box::new([0u8;32]); v.push(b);
@@ -87,7 +90,10 @@ fn opaque_borrowed_extraction_keeps_original_storage_alive() {
 #[test]
 fn opaque_owned_extraction_transfers_input_dependencies() {
     let code = "fn take(mut v: Vec<Box<[u8;32]>>) -> (r: Box<[u8;32]>)
-        requires v.len() == 1, resources peak(memory) <= 40 { v.pop().unwrap() }
+        requires v.len() == 1, resources peak(memory) <= 40 {
+            while v.len() > 1 invariant v.len() >= 1, decreases v.len(), { v.pop(); }
+            v.pop().unwrap()
+        }
         fn f() resources peak(memory) <= BOUND {
             let mut v = Vec::<Box<[u8;32]>>::with_capacity(1);
             let b = Box::new([0u8;32]); v.push(b);
@@ -187,7 +193,10 @@ fn a_fill_loop_and_a_drain_loop_share_the_same_footprints() {
 #[test]
 fn opaque_dependencies_survive_branches_and_reinsertion() {
     let code = "fn take(v: &mut Vec<Box<[u8;32]>>) -> (r: Option<Box<[u8;32]>>)
-        requires old(v).len() == 1, ensures r.is_some(), resources peak(memory) <= 17 { v.pop() }
+        requires old(v).len() == 1, ensures r.is_some(), resources peak(memory) <= 17 {
+            while v.len() > 1 invariant v.len() >= 1, decreases v.len(), { v.pop(); }
+            v.pop()
+        }
         fn relay(flag: bool, v: &mut Vec<Box<[u8;32]>>) -> Box<[u8;32]>
             requires flag, old(v).len() == 1, resources peak(memory) <= 96 {
             let mut stash = Vec::<Box<[u8;32]>>::with_capacity(1);

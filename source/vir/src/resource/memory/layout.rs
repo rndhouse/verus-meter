@@ -23,6 +23,13 @@ pub(super) struct Layouts {
 }
 
 impl Layouts {
+    /// Whether a node's logical cardinality participates in owning transfers.
+    pub(super) fn cardinality(&self, typ: &Typ) -> bool {
+        self.vector(typ)
+            || self.option(typ)
+            || matches!(&**typ,
+            TypX::Decorate(TypDecoration::Box, _, inner) if matches!(&**inner, TypX::Primitive(Primitive::Slice, _)))
+    }
     pub(super) fn new(
         datatypes: &[Datatype],
         global_allocator: Option<Dt>,

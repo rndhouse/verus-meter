@@ -96,10 +96,10 @@ fn populated_collection_returns_and_forwarding_preserve_children() {
     fn f() resources peak(memory) <= BOUND {
         let v = make(); let w = forward(v); let scratch = [0u8;32];
     }";
-    // The existing replacement summary bounds the outer buffer by make's
-    // budget: handle 24 + buffer bound 56 + children 16 + scratch 32.
-    verifies("returned_elements", &code.replace("BOUND", "128"));
-    rejects("returned_elements_short", &code.replace("BOUND", "127"), "memory budget exceeded");
+    // The returned forest retains the actual eight-byte buffer and child:
+    // handle 24 + buffer 8 + child 16 + scratch 32.
+    verifies("returned_elements", &code.replace("BOUND", "80"));
+    rejects("returned_elements_short", &code.replace("BOUND", "79"), "memory budget exceeded");
 }
 
 #[test]
@@ -110,9 +110,9 @@ fn input_ownership_can_be_collected_and_returned() {
     fn f() resources peak(memory) <= BOUND {
         let b = Box::new([0u8;16]); let v = collect(b); let scratch = [0u8;32];
     }";
-    // Handle 24 + conservative buffer bound 40 + captured child 16 + scratch 32.
-    verifies("collected_input", &code.replace("BOUND", "112"));
-    rejects("collected_input_short", &code.replace("BOUND", "111"), "memory budget exceeded");
+    // Input ownership becomes an individual child of the returned forest.
+    verifies("collected_input", &code.replace("BOUND", "80"));
+    rejects("collected_input_short", &code.replace("BOUND", "79"), "memory budget exceeded");
 }
 
 #[test]
@@ -287,17 +287,16 @@ fn collection_drop_releases_captured_input_allocations() {
 }
 
 #[test]
-fn incoming_owning_slice_conversion_retains_opaque_input_provenance() {
+fn owning_slice_conversion_preserves_children_and_releases_the_input_buffer() {
     let code = "fn freeze(v: Vec<Box<[u8;16]>>) -> Box<[Box<[u8;16]>]>
         requires v.len() == 1, resources peak(memory) <= 48 { v.into_boxed_slice() }
     fn f() resources peak(memory) <= BOUND {
         let mut v = Vec::with_capacity(4); let b = Box::new([0u8;16]); v.push(b);
         let fixed = freeze(v); let scratch = [0u8;64];
     }";
-    // 16-byte boxed-slice handle, conservative 48-byte new backing bound,
-    // old incoming buffer 32 and its child 16, then 64-byte scratch.
-    verifies("incoming_owning_slice", &code.replace("BOUND", "176"));
-    rejects("incoming_owning_slice_short", &code.replace("BOUND", "175"), "memory budget exceeded");
+    // The old buffer is released: handle 16 + backing 8 + child 16 + scratch 64.
+    verifies("incoming_owning_slice", &code.replace("BOUND", "104"));
+    rejects("incoming_owning_slice_short", &code.replace("BOUND", "103"), "memory budget exceeded");
 }
 
 #[test]

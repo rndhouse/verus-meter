@@ -43,6 +43,11 @@ pub(super) struct VectorState {
 pub(super) struct Growth {
     /// Universal sibling and reservation facts are needed only by reusable bodies.
     pub(super) loop_depth: usize,
+    /// Only loops composing helper templates need the additional descriptor
+    /// classification invariant; direct projections use the existing algebra.
+    pub(super) transfer_loops: std::collections::HashSet<u64>,
+    /// Owners paid by an enclosing section cannot supply local release credits.
+    pub(super) section_owners: std::collections::HashSet<VarIdent>,
     /// Activate proof algebra at each operation, including inside isolated loop queries.
     pub(super) metadata_scopes: std::collections::HashSet<u64>,
     /// Shared entry snapshots let loop frame and sum bounds refer to the same
@@ -93,6 +98,42 @@ pub(super) fn grown_capacity(span: &Span, length: Expr, element: u64) -> Expr {
             contracts::add(span, length, contracts::literal(span, 1)),
         ),
     )
+}
+
+/// The shared source-model transition for one append. Byte bounds and reserved
+/// slots stay distinct; exact allocation bounds can expose additional spare room.
+pub(super) fn push_transition(
+    span: &Span,
+    capacity: Expr,
+    bytes: Expr,
+    length: Expr,
+    element: u64,
+    exact_allowed: bool,
+) -> (Expr, Expr, Expr) {
+    let room = mk_ineq(span, &length, &capacity, InequalityOp::Lt);
+    let grown = grown_capacity(span, length.clone(), element);
+    let extra = select(
+        span,
+        room.clone(),
+        contracts::literal(span, 0),
+        contracts::multiply(span, contracts::literal(span, element), grown.clone()),
+    );
+    let retained = super::allocations::retained_bytes(span, bytes.clone(), extra.clone());
+    let mut lower = contracts::maximum(
+        span,
+        capacity.clone(),
+        contracts::add(span, length, contracts::literal(span, 1)),
+    );
+    if exact_allowed && element != 0 {
+        let exact = mk_eq(
+            span,
+            &bytes,
+            &contracts::multiply(span, capacity.clone(), contracts::literal(span, element)),
+        );
+        let exact_lower = select(span, room, capacity, grown);
+        lower = select(span, exact, exact_lower, lower);
+    }
+    (lower, retained, extra)
 }
 
 impl Growth {

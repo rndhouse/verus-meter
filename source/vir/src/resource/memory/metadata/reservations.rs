@@ -24,8 +24,10 @@ pub(in super::super) enum Step {
 
 #[derive(Clone)]
 pub(in super::super) struct Floor {
-    capacity: Expr,
-    element: u64,
+    /// Guaranteed reserved slots for every owner in this class.
+    pub(in super::super) capacity: Expr,
+    /// Inline bytes per element, independent of its separately owned children.
+    pub(in super::super) element: u64,
 }
 
 pub(in super::super) type Minima = BTreeMap<Vec<Step>, Floor>;
@@ -54,7 +56,12 @@ pub(in super::super) fn join_minima(span: &Span, left: &mut Minima, right: &Mini
 }
 
 impl Analysis<'_> {
-    fn owner_minima(&self, owner: &Owner, path: &mut Vec<Step>, result: &mut Minima) {
+    pub(in super::super) fn owner_minima(
+        &self,
+        owner: &Owner,
+        path: &mut Vec<Step>,
+        result: &mut Minima,
+    ) {
         if let Some(id) = owner.vector {
             let state = &self.growth.vectors[id];
             result.insert(
@@ -216,6 +223,7 @@ impl Analysis<'_> {
         value: Expr,
     ) -> Result<(), VirErr> {
         let value = as_value(span, value);
+        owner.source = Some((typ.clone(), value.clone()));
         if let Some(elements) = &mut owner.elements {
             elements.source = Some((typ.clone(), value.clone()));
         }

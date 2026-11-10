@@ -79,6 +79,24 @@ impl Analysis<'_> {
                 }
                 let focused = self.focus_arguments(args, &source.span)?;
                 let (state, typ, value) = self.vector_receiver(receiver)?;
+                let tag = if optional {
+                    let TypX::Datatype(_, types, _) = &*typ else { unreachable!() };
+                    let len = super::vectors::length(&source.span, types.clone(), value.clone());
+                    let len = self.allocation_snapshot(&source.span, len);
+                    Some(super::growth::select(
+                        &source.span,
+                        crate::ast_util::mk_ineq(
+                            &source.span,
+                            &contracts::literal(&source.span, 0),
+                            &len,
+                            InequalityOp::Lt,
+                        ),
+                        contracts::literal(&source.span, 1),
+                        contracts::literal(&source.span, 0),
+                    ))
+                } else {
+                    None
+                };
                 let (name, path) = super::paths::expr(receiver, &typ).unwrap();
                 let elements = self
                     .heap
@@ -91,7 +109,7 @@ impl Analysis<'_> {
                     .unwrap()
                     .clone();
                 if !elements.precise {
-                    let mut option = Owner::default();
+                    let mut option = Owner { geometry: tag.clone(), ..Default::default() };
                     if !discard {
                         if elements
                             .states
@@ -192,7 +210,7 @@ impl Analysis<'_> {
                     source.typ.clone()
                 };
                 let child = self.owner_from_metadata(&source.span, &payload, selected)?;
-                let mut option = Owner::default();
+                let mut option = Owner { geometry: tag, ..Default::default() };
                 if optional {
                     option.children.insert(OwnerSlot::Contents, child);
                 } else {

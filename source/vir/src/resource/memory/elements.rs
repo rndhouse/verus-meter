@@ -149,6 +149,37 @@ pub(super) fn addition(
 }
 
 impl Analysis<'_> {
+    /// A helper's predicted forest updates the existing counters, so branch
+    /// joins and reusable iterations continue to refer to the same states.
+    pub(super) fn commit_transferred_elements(
+        &mut self,
+        span: &Span,
+        old: &mut Elements,
+        new: &Elements,
+    ) {
+        self.growth.after.entry(span.id).or_default().push(super::metadata::expr::assign(
+            span,
+            &old.records,
+            new.records.clone(),
+        ));
+        for (kind, id) in &old.states {
+            let next = self.growth.elements[new.states[kind]].bytes.clone();
+            let state = &mut self.growth.elements[*id];
+            self.growth.after.entry(span.id).or_default().push(super::symbolic::assign(
+                span,
+                &state.bytes,
+                next.clone(),
+            ));
+            self.growth.element_updates.entry(span.id).or_default().insert(*id, next);
+            state.changed = true;
+            state.counted = false;
+            state.length = None;
+            state.extent = None;
+        }
+        old.precise = true;
+        old.minima = new.minima.clone();
+    }
+
     /// Commit the byte counters corresponding to a precise forest. Snapshot
     /// substitutions keep the peak check at the operation's original location.
     pub(super) fn set_element_records(&mut self, span: &Span, elements: &Elements, after: bool) {
@@ -265,7 +296,10 @@ impl Analysis<'_> {
         elements.captures.extend(child.captured_inputs());
         elements.precise &= elements.captures.is_empty();
         child.visit(&mut |node| {
-            if !node.inputs().is_empty() || node.elements.as_ref().is_some_and(|e| !e.precise) {
+            if !node.inputs().is_empty()
+                || node.elements.as_ref().is_some_and(|e| !e.precise)
+                || (!node.geometry_known && node.source.is_none())
+            {
                 elements.precise = false;
             }
         });
@@ -479,6 +513,7 @@ impl Analysis<'_> {
         let mut complete = child.inputs().is_empty() && child.captured_inputs().is_empty();
         child.visit(&mut |node| {
             complete &= node.elements.as_ref().is_none_or(|e| e.precise);
+            complete &= node.geometry_known || node.source.is_some();
         });
         elements.precise &= complete;
         if elements.precise {

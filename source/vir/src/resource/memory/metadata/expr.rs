@@ -36,6 +36,11 @@ fn function(name: &str) -> Fun {
     Arc::new(FunX { path: Arc::new(path) })
 }
 
+/// Match generated operations using their complete, encoded VIR identity.
+pub(in super::super) fn is_operation(value: &Fun, name: &str) -> bool {
+    *value == function(name)
+}
+
 fn call(span: &Span, name: Fun, types: Vec<Typ>, args: Vec<Expr>, result: Typ) -> Expr {
     SpannedTyped::new(
         span,
@@ -79,10 +84,14 @@ pub(in super::super) fn empty(span: &Span, element: Typ) -> Expr {
 }
 
 pub(in super::super) fn push(span: &Span, sequence: Expr, element: Expr) -> Expr {
+    // Metadata indices are mathematical integers even when the executable
+    // index is a usize. Instantiate Seq::push from its receiver, preserving
+    // that type across the generated call.
+    let TypX::Datatype(_, types, _) = &*sequence.typ else { unreachable!() };
     call(
         span,
         crate::fun!(CrateId::Vstd => "seq", "Seq"; "push"),
-        vec![element.typ.clone()],
+        types.as_ref().clone(),
         vec![sequence.clone(), element],
         sequence.typ.clone(),
     )

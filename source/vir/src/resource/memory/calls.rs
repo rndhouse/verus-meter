@@ -29,8 +29,11 @@ impl Analysis<'_> {
         {
             return Err(unsupported(&expr.span, "this call signature"));
         }
+        let transfer = self.prepare_transfer_call(expr, callee, args)?;
         self.check_vector_call(expr, callee, args)?;
-        self.prepare_capture_call(expr, callee, args)?;
+        if transfer.is_none() {
+            self.prepare_capture_call(expr, callee, args)?;
+        }
         let result_size = self.layouts.return_size(&expr.typ, &expr.span)?;
         let bound = super::contracts::instantiate(
             callee,
@@ -169,10 +172,16 @@ impl Analysis<'_> {
             }
             self.storage.call_cost(c, base.add(c, cost), &excluded, &result_ids, point.result);
         }
-        self.apply_vector_call_effects(expr, callee, args)?;
-        self.apply_collection_call_effects(expr, callee, args, &mut transferred)?;
-        self.apply_child_call_effects(expr, callee, args, &mut transferred)?;
-        self.result_owner = self.complete_ownership_call(expr, callee, args, &mut transferred)?;
+        if let Some(transfer) = transfer {
+            self.result_owner =
+                self.apply_transfer_call(expr, callee, args, transfer, &mut transferred)?;
+        } else {
+            self.apply_vector_call_effects(expr, callee, args)?;
+            self.apply_collection_call_effects(expr, callee, args, &mut transferred)?;
+            self.apply_child_call_effects(expr, callee, args, &mut transferred)?;
+            self.result_owner =
+                self.complete_ownership_call(expr, callee, args, &mut transferred)?;
+        }
         self.record_element_updates(c)?;
         self.check_committed_memory(c);
         self.produced = result;

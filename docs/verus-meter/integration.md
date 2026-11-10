@@ -92,6 +92,18 @@ Verified [forest algebra](../../source/vstd/std_specs/memory.rs) justifies selec
 partition, composition, and removal with reindexing. Structural serialization and
 restoration recurse over supported types, independently of nesting combinations.
 
+[Ownership templates](../../source/vir/src/resource/memory/transfer/mod.rs) describe
+finite physical-forest transformations separately from frame-local charges.
+Infer them from checked executable bodies and compose them bottom-up through
+helpers. Instantiate against snapshots of eligible local owners; ordinary callee
+peak profiles still keep incoming storage charged throughout the call. Fixed
+descriptor properties and runtime forests are separate template inputs. Logical
+counts describe occupied elements independently of byte bounds and reservation
+minima; snapshot a count before its source becomes inaccessible, such as when
+moving beneath an optional payload. Unsupported effects retain the aggregate
+fallback. Commit borrowed effects into existing proof-state IDs so
+branch joins and loop invariants observe the updated allocations.
+
 [Indexed projections](../../source/vir/src/resource/memory/projections.rs) loan a
 selected footprint from a precise collection and return its final descriptors.
 Finish nested loans from the inside out, after child updates commit. Pending

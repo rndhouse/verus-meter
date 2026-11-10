@@ -399,6 +399,9 @@ impl Analysis<'_> {
             .map(|capacity| contracts::substitute(capacity, callee, args, &self.stable_scalars))
             .transpose()?;
         self.attach_vector_result(&expr.span, typ, &mut owner, capacity, replacement)?;
+        if self.layouts.cardinality(typ) && owner.source.is_none() && owner.geometry.is_none() {
+            owner.geometry_known = false;
+        }
         Ok(owner)
     }
 }

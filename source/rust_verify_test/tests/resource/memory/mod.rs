@@ -4,6 +4,7 @@ mod array_copy;
 mod borrowed_vectors;
 mod boxed_slices;
 mod call_budgets;
+mod call_forests;
 mod call_graph;
 mod checkpoints;
 mod children;

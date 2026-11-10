@@ -178,17 +178,27 @@ impl Analysis<'_> {
                 } else {
                     super::heap::OwnerSlot::Field(name)
                 };
+                let mut child = child;
+                if self.layouts.option(&expr.typ) {
+                    self.freeze_owner_geometry(field, &mut child);
+                }
                 owner.children.insert(slot, child);
             }
         }
         if self.layouts.owner(&expr.typ) {
+            if self.layouts.option(&expr.typ) {
+                owner.geometry = Some(super::contracts::literal(
+                    &expr.span,
+                    u64::from(!owner.children.is_empty()),
+                ));
+            }
             if self.layouts.option(&expr.typ) && owner.children.is_empty() {
                 let payload = self.layouts.option_payload(&expr.typ, &expr.span)?.clone();
                 let name = VarIdent(
                     std::sync::Arc::new("$memory_none".into()),
                     VarIdentDisambiguate::VirTemp(super::accounting::Accounting::fresh_allocation()),
                 );
-                let child = self.input_owner(
+                let mut child = self.input_owner(
                     &payload,
                     &expr.span,
                     0,
@@ -196,6 +206,15 @@ impl Analysis<'_> {
                     &mut vec![],
                     &Default::default(),
                 )?;
+                // The payload is absent, so all of its logical counts and
+                // storage are zero regardless of its nested container types.
+                child.visit_mut(&mut |node| {
+                    node.geometry = Some(super::contracts::literal(&expr.span, 0));
+                    node.geometry_known = true;
+                    if let Some(elements) = &mut node.elements {
+                        elements.precise = true;
+                    }
+                });
                 owner.children.insert(super::heap::OwnerSlot::Contents, child);
             }
             self.result_owner = Some(owner);

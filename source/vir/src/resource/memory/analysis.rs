@@ -401,7 +401,7 @@ impl Analysis<'_> {
                 atomic_call: false,
                 ..
             } if unit(&expr.typ) => {
-                self.prepare_element_loop(body)?;
+                self.prepare_element_loop(&expr.span, body)?;
                 let forest_bounds = self.element_loop_bounds(&expr.span, body)?;
                 let loop_scalars = self.stable_scalars.clone();
                 let entry = self.storage.live();
@@ -685,6 +685,11 @@ pub(super) fn check(
     )?;
     let mut child_replacements = HashMap::new();
     for (name, path) in &analysis.heap.replaced {
+        // Runtime positions belong to the collection effect, never to the
+        // fixed-path ownership interface (their operation-local loans are gone).
+        if super::paths::indexed(path) {
+            continue;
+        }
         let index = f.params.iter().position(|p| p.x.name == *name).unwrap();
         let child = analysis.heap.borrowed[name].at(path).unwrap();
         let (owner, capacities) =
@@ -711,6 +716,13 @@ pub(super) fn check(
     Ok(Some(FunctionAnalysis {
         report,
         summary: super::summary::FunctionSummary {
+            transfer: super::transfer::summarize(
+                function,
+                layouts,
+                functions,
+                summaries,
+                &modes.var_modes,
+            ),
             vectors: super::vector_calls::VectorSummary {
                 removals: input_vectors
                     .into_iter()

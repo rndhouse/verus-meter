@@ -77,7 +77,7 @@ pub(super) fn add(span: &Span, a: Expr, b: Expr) -> Expr {
 
 // Folding is deliberately limited to pure constants. Unknown predicates remain
 // proof expressions; no executable branch is removed from structural accounting.
-fn simplify(expr: &Expr) -> Expr {
+pub(super) fn simplify(expr: &Expr) -> Expr {
     if let Some(value) = negative_literal(expr) {
         return SpannedTyped::new(&expr.span, &expr.typ, ExprX::Const(value));
     }

@@ -90,6 +90,7 @@ impl Analysis<'_> {
         );
         let mut owner =
             Owner { capacity: Some(capacity), extent: Some(cost.clone()), ..Default::default() };
+        owner.geometry = Some(contracts::literal(&expr.span, 0));
         if let Some(n) = contracts::constant(&cost) {
             self.storage.reserve(
                 &expr.span,
@@ -282,18 +283,13 @@ impl Analysis<'_> {
                 self.checks.push((expr.span.clone(), room));
                 self.storage.record_live(&expr.span)?;
             } else {
-                let new_capacity =
-                    super::growth::grown_capacity(&expr.span, len.clone(), state.element);
-                let new_bytes = contracts::multiply(
+                let (lower, retained, extra) = super::growth::push_transition(
                     &expr.span,
-                    contracts::literal(&expr.span, state.element),
-                    new_capacity.clone(),
-                );
-                let extra = super::growth::select(
-                    &expr.span,
-                    room.clone(),
-                    contracts::literal(&expr.span, 0),
-                    new_bytes,
+                    capacity,
+                    state.backing.bytes.clone(),
+                    len,
+                    state.element,
+                    state.backing.input_bytes.is_none(),
                 );
                 // Reserve the replacement before releasing the old buffer. A lower
                 // bound may underestimate real capacity, so this can overcount growth.
@@ -301,32 +297,6 @@ impl Analysis<'_> {
                     &expr.span,
                     &Charge { kind: state.backing.kind.clone(), amount: extra.clone() },
                 )?;
-                let retained = super::allocations::retained_bytes(
-                    &expr.span,
-                    state.backing.bytes.clone(),
-                    extra,
-                );
-                let mut lower = contracts::maximum(
-                    &expr.span,
-                    capacity.clone(),
-                    contracts::add(&expr.span, len, contracts::literal(&expr.span, 1)),
-                );
-                if state.backing.input_bytes.is_none() && state.element != 0 {
-                    // Equality of a sound lower and upper bound establishes exact
-                    // capacity, so local vectors can retain all their new spare room.
-                    let exact = mk_eq(
-                        &expr.span,
-                        &state.backing.bytes,
-                        &contracts::multiply(
-                            &expr.span,
-                            capacity.clone(),
-                            contracts::literal(&expr.span, state.element),
-                        ),
-                    );
-                    let exact_lower =
-                        super::growth::select(&expr.span, room, capacity, new_capacity);
-                    lower = super::growth::select(&expr.span, exact, exact_lower, lower);
-                }
                 self.growth.updates.entry(expr.span.id).or_default().extend([
                     super::symbolic::assign(&expr.span, &state.next_capacity, lower),
                     super::symbolic::assign(&expr.span, &state.backing.next_bytes, retained),

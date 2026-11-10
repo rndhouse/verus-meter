@@ -104,7 +104,10 @@ fn option_predicates() {
 
 #[test]
 fn owning_option_payload_is_supported() {
-    verifies("option_owner", "fn f() resources peak(memory) <= 100 { let v: Option<Box<u32>> = None; }");
+    verifies(
+        "option_owner",
+        "fn f() resources peak(memory) <= 100 { let v: Option<Box<u32>> = None; }",
+    );
 }
 
 #[test]

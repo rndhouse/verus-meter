@@ -43,7 +43,9 @@ impl Analysis<'_> {
         };
         let TypX::Datatype(_, types, _) = &*place.typ else { unreachable!() };
         let len = super::vectors::length(&expr.span, types.clone(), place_to_spec_expr(place));
-        let amount = contracts::multiply(&expr.span, contracts::literal(&expr.span, element), len);
+        let len = self.allocation_snapshot(&expr.span, len);
+        let amount =
+            contracts::multiply(&expr.span, contracts::literal(&expr.span, element), len.clone());
         let amount = if element == 0 {
             contracts::literal(&expr.span, 0)
         } else {
@@ -69,6 +71,7 @@ impl Analysis<'_> {
         self.storage.set_allocation(id, allocation.kind.clone(), amount.clone());
         self.storage.record_live(&expr.span)?;
         Ok(Some(Owner {
+            geometry: Some(len),
             kind: allocation.kind,
             elements,
             dynamic: Some(id),

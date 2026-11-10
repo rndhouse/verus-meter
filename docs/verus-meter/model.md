@@ -257,7 +257,15 @@ dropping the container leaves an extracted child's allocations charged independe
 construction, unwrap, matching, calls, and drop. See
 [element transfers](../../examples/resource/memory/vectors/element_transfers.rs).
 
-Helper summaries that expose only aggregate byte bounds remain conservative.
+Checked helpers can describe how their input allocation forests become their
+results and modified arguments. Calls instantiate these descriptions with the
+caller's individual allocations, preserving child reservations and extraction
+credits through nested helpers. This requires no additional contract syntax.
+The structural traversal handles fixed children and runtime children separately,
+so supported ownership shapes compose without rules for each nesting combination.
+
+Helpers whose control flow or value dependencies cannot be represented by a
+finite ownership description still expose conservative aggregate byte bounds.
 Extracting from such a collection carries a copy of its storage upper bound and
 incoming lifetime dependencies; it does not invent an individual release credit
 or spare-capacity guarantee. This can require a larger budget than direct local

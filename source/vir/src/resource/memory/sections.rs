@@ -26,6 +26,10 @@ impl Analysis<'_> {
         let protection = self.heap.protect();
         let protected = self.growth.section_protected.clone();
         let protected_elements = self.growth.protected_elements.clone();
+        let section_owners = self.growth.section_owners.clone();
+        self.growth
+            .section_owners
+            .extend(self.heap.owners.keys().chain(self.heap.borrowed.keys()).cloned());
         self.growth.protected_elements.extend(self.heap.element_states());
         self.growth.section_protected.extend(self.heap.vectors());
         let outer_bound =
@@ -35,6 +39,7 @@ impl Analysis<'_> {
         self.bound = outer_bound;
         self.growth.section_protected = protected;
         self.growth.protected_elements = protected_elements;
+        self.growth.section_owners = section_owners;
         self.check_checkpoints()?;
         let section = std::mem::replace(&mut self.storage, parent);
         self.checkpoints = parent_checkpoints;

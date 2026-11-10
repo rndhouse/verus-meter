@@ -38,6 +38,12 @@ pub(super) type OwnerPath = Vec<OwnerSlot>;
 /// its inline storage belongs to the enclosing value or allocation layout.
 #[derive(Clone)]
 pub(super) struct Owner {
+    /// Current logical value, used to serialize collection geometry before a call.
+    pub(super) source: Option<(Typ, Expr)>,
+    /// Frozen logical count when an owner moves beneath an optional payload.
+    pub(super) geometry: Option<Expr>,
+    /// False for aggregate-only summaries that expose no logical child count.
+    pub(super) geometry_known: bool,
     /// Conservative dependencies acquired by extraction from opaque inputs.
     pub(super) captures: HashSet<super::allocations::Capture>,
     /// Separately owned allocations beneath fields or a box payload. Their inline
@@ -65,6 +71,9 @@ pub(super) struct Owner {
 impl Default for Owner {
     fn default() -> Self {
         Self {
+            source: None,
+            geometry: None,
+            geometry_known: true,
             captures: HashSet::new(),
             children: BTreeMap::new(),
             elements: None,
@@ -309,7 +318,8 @@ impl Analysis<'_> {
         path: &mut OwnerPath,
         capacities: &HashMap<super::paths::LocalPath, Expr>,
     ) -> Result<Owner, VirErr> {
-        let mut owner = Owner::default();
+        let mut owner =
+            Owner { geometry_known: !self.layouts.cardinality(typ), ..Default::default() };
         if self.layouts.owning_elements(typ) {
             owner.elements = Some(self.new_elements(span));
             owner.elements.as_mut().unwrap().precise = false;

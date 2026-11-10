@@ -81,7 +81,7 @@ impl Analysis<'_> {
             &rhs.span,
             &mut child,
             typ,
-            crate::ast_util::place_to_spec_expr(place),
+            super::projections::spec_value(&crate::ast_util::place_to_spec_expr(place))?,
         )?;
         self.heap.mark_replaced(&name, &path);
         let owner = self

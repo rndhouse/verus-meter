@@ -10,7 +10,60 @@ use super::footprint::MemoryKind;
 use crate::ast::*;
 use crate::messages::Span;
 
+/// Prove descriptor classification in a local proof scope. Keeping these
+/// structural rewrites out of budget queries avoids unbounded matching on
+/// composed forests when the requested budget is too small.
+pub(super) fn runtime_shape_proof(span: &Span, records: Expr) -> Stmt {
+    let group = crate::fun!(CrateId::Vstd => "std_specs", "memory"; "group_runtime_shape");
+    let proofs = vec![crate::def::Spanned::new(
+        span.clone(),
+        StmtX::Expr(SpannedTyped::new(
+            span,
+            &crate::ast_util::unit_typ(),
+            ExprX::Fuel(group, 1, true),
+        )),
+    )];
+    let runtime = expr::operation(span, "runtime", vec![records.clone()], expr::memory_type());
+    crate::def::Spanned::new(
+        span.clone(),
+        StmtX::Expr(SpannedTyped::new(
+            span,
+            &crate::ast_util::unit_typ(),
+            ExprX::AssertBy {
+                vars: std::sync::Arc::new(vec![]),
+                require: crate::ast_util::mk_bool(span, true),
+                ensure: crate::ast_util::mk_eq(span, &runtime, &records),
+                proof: crate::ast_util::mk_block(span, proofs, None),
+            },
+        )),
+    )
+}
+
 impl Analysis<'_> {
+    /// Freeze before the payload expression moves its source. Caller-only
+    /// aggregate geometry remains unknown rather than becoming a zero count.
+    pub(super) fn freeze_owner_geometry(&mut self, value: &Expr, owner: &mut super::heap::Owner) {
+        let span = &value.span;
+        if let Some((typ, _)) = &owner.source {
+            if self.layouts.cardinality(typ) {
+                if super::projections::spec_value(value).is_ok() {
+                    owner.geometry =
+                        Some(self.allocation_snapshot(span, self.owner_length(span, owner)));
+                    owner.geometry_known = true;
+                } else {
+                    // Evaluation may establish this source after the snapshot
+                    // site. Retain its bytes and decline the logical count.
+                    owner.geometry = None;
+                    owner.geometry_known = false;
+                }
+            }
+        }
+        owner.source = None;
+        for child in owner.children.values_mut() {
+            self.freeze_owner_geometry(value, child);
+        }
+    }
+
     pub(super) fn prove_element_frame(
         &mut self,
         span: &Span,
@@ -243,14 +296,18 @@ impl Analysis<'_> {
         ));
     }
 
-    pub(super) fn prepare_element_loop(&mut self, body: &Expr) -> Result<(), VirErr> {
+    pub(super) fn prepare_element_loop(&mut self, span: &Span, body: &Expr) -> Result<(), VirErr> {
         let mut opaque = false;
+        let mut transfers = false;
         crate::ast_visitor::expr_visitor_check(body, &mut |_, expression| {
             if let ExprX::Call { target: CallTarget::Fun(_, fun, _, _, _), .. } = &expression.x {
                 if let Some(summary) = self.summaries.get(fun) {
-                    opaque |= !summary.allocations.collections.is_empty()
+                    transfers |= summary.transfer.is_some();
+                    let effects = !summary.allocations.collections.is_empty()
                         || !summary.allocations.children.is_empty()
                         || !summary.vectors.removals.is_empty();
+                    opaque |= effects
+                        && summary.transfer.as_ref().is_none_or(|template| template.appends);
                 }
             }
             Ok::<(), VirErr>(())
@@ -264,6 +321,28 @@ impl Analysis<'_> {
                 });
             }
         }
+        if !transfers {
+            return Ok(());
+        }
+        self.growth.transfer_loops.insert(span.id);
+        for owner in self.heap.owners.values().chain(self.heap.borrowed.values()) {
+            owner.visit(&mut |node| {
+                if let Some(elements) = &node.elements {
+                    if elements.precise {
+                        self.growth
+                            .before
+                            .entry(span.id)
+                            .or_default()
+                            .push(runtime_shape_proof(span, elements.records.clone()));
+                        self.growth
+                            .after
+                            .entry(body.span.id)
+                            .or_default()
+                            .push(runtime_shape_proof(&body.span, elements.records.clone()));
+                    }
+                }
+            });
+        }
         Ok(())
     }
 
@@ -273,6 +352,18 @@ impl Analysis<'_> {
             owner.visit(&mut |node| {
                 if let Some(elements) = &node.elements {
                     if elements.precise {
+                        if self.growth.transfer_loops.contains(&span.id) {
+                            invariants.push(crate::ast_util::mk_eq(
+                                span,
+                                &expr::operation(
+                                    span,
+                                    "runtime",
+                                    vec![elements.records.clone()],
+                                    expr::memory_type(),
+                                ),
+                                &elements.records,
+                            ));
+                        }
                         invariants.push(expr::operation(
                             span,
                             "well_formed",

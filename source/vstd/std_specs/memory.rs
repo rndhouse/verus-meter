@@ -21,11 +21,13 @@ pub struct Record {
     pub bytes: int,
     /// Reserved inline element slots, when the node is a sequence.
     pub capacity: int,
+    /// Logical child count, independent of the allocation's reserved storage.
+    pub length: int,
 }
 
 /// A missing allocation has no storage or reservation.
 pub open spec fn empty_record(path: Seq<int>) -> Record {
-    Record { path, kind: 0, bytes: 0, capacity: 0 }
+    Record { path, kind: 0, bytes: 0, capacity: 0, length: 0 }
 }
 
 /// Resource metadata uses nonnegative byte bounds and reservation minima.
@@ -34,17 +36,27 @@ pub open spec fn well_formed(memory: Seq<Record>) -> bool
     decreases memory.len(),
 {
     memory.len() == 0 || (well_formed(memory.drop_last())
-        && memory.last().bytes >= 0 && memory.last().capacity >= 0)
+        && memory.last().bytes >= 0 && memory.last().capacity >= 0
+        && memory.last().length >= 0)
 }
 
 /// One nonnegative allocation is a valid forest.
 pub proof fn well_formed_record(value: Record)
-    requires value.bytes >= 0, value.capacity >= 0,
+    requires value.bytes >= 0, value.capacity >= 0, value.length >= 0,
     ensures well_formed(Seq::empty().push(value)),
         contains(Seq::empty().push(value), value.path),
 {
     reveal_with_fuel(well_formed, 2);
     assert(Seq::<Record>::empty().push(value).drop_last() =~= Seq::empty());
+}
+
+/// A nonnegative descriptor extends any valid allocation forest.
+pub proof fn well_formed_push(memory: Seq<Record>, value: Record)
+    requires well_formed(memory), value.bytes >= 0, value.capacity >= 0, value.length >= 0,
+    ensures well_formed(memory.push(value)),
+{
+    reveal_with_fuel(well_formed, 2);
+    assert(memory.push(value).drop_last() =~= memory);
 }
 
 /// An empty forest contributes no charge in any memory kind.
@@ -209,6 +221,7 @@ pub proof fn inspect(memory: Seq<Record>, path: Seq<int>)
     ensures well_formed(subtree(memory, path)), well_formed(without(memory, path)),
         well_formed(runtime(memory)), well_formed(nonruntime(memory)),
         lookup(memory, path).capacity >= 0,
+        lookup(memory, path).length >= 0,
         cost(memory, 0) >= 0,
         cost(runtime(memory), 0) >= 0,
         cost(nonruntime(memory), 0) >= 0,
@@ -724,8 +737,253 @@ pub broadcast proof fn remove_prefix(memory: Seq<Record>, slot: int, index: int)
 }
 
 /// Construct an allocation descriptor without introducing executable storage.
-pub open spec fn allocated(path: Seq<int>, kind: int, bytes: int, capacity: int) -> Record {
-    Record { path, kind, bytes, capacity }
+pub open spec fn allocated(path: Seq<int>, kind: int, bytes: int, capacity: int, length: int) -> Record {
+    Record { path, kind, bytes, capacity, length }
+}
+
+/// All allocations below an owner, excluding its own root descriptor.
+pub open spec fn descendants(memory: Seq<Record>) -> Seq<Record>
+    decreases memory.len(),
+{
+    if memory.len() == 0 { Seq::empty() } else {
+        let before = descendants(memory.drop_last());
+        if memory.last().path.len() == 0 { before } else { before.push(memory.last()) }
+    }
+}
+
+/// Update an owner's allocation and geometry while preserving its children.
+pub open spec fn with_root(memory: Seq<Record>, root: Record) -> Seq<Record> {
+    descendants(memory).push(root)
+}
+
+/// Root updates preserve valid child descriptors and expose the new root.
+pub proof fn with_root_facts(memory: Seq<Record>, root: Record)
+    requires well_formed(memory), root.path == Seq::<int>::empty(),
+        root.bytes >= 0, root.capacity >= 0, root.length >= 0,
+    ensures well_formed(with_root(memory, root)),
+        lookup(with_root(memory, root), Seq::empty()) == root,
+        cost(with_root(memory, root), 0) == cost(descendants(memory), 0)
+            + if root.kind == 0 { root.bytes } else { 0 },
+{
+    descendants_facts(memory);
+    reveal_with_fuel(well_formed, 2);
+    assert(descendants(memory).push(root).drop_last() =~= descendants(memory));
+    lookup_push(descendants(memory), root, Seq::empty());
+    cost_push(descendants(memory), root, 0);
+}
+
+/// Removing a root preserves validity and every nonempty child view.
+pub proof fn descendants_facts(memory: Seq<Record>)
+    requires well_formed(memory),
+    ensures well_formed(descendants(memory)),
+        !contains(descendants(memory), Seq::empty()),
+        cost(descendants(memory), 0) >= 0,
+    decreases memory.len(),
+{
+    reveal_with_fuel(descendants, 2);
+    reveal_with_fuel(well_formed, 2);
+    reveal_with_fuel(contains, 2);
+    reveal_with_fuel(cost, 2);
+    if memory.len() > 0 {
+        descendants_facts(memory.drop_last());
+        if memory.last().path.len() != 0 {
+            assert(descendants(memory.drop_last()).push(memory.last()).drop_last() =~= descendants(memory.drop_last()));
+        }
+    }
+}
+
+/// Descriptor-class rewrites for local shape proofs. Keep these scoped to
+/// shape assertions rather than activating them throughout budget queries.
+pub broadcast group group_runtime_shape {
+    runtime_add,
+    runtime_push,
+    runtime_prefix,
+    runtime_class,
+    partition_without,
+    partition_remove,
+}
+
+/// Cutting a subtree commutes with each independent descriptor class.
+pub broadcast proof fn partition_without(memory: Seq<Record>, path: Seq<int>)
+    ensures #[trigger] runtime(without(memory, path)) == without(runtime(memory), path),
+        nonruntime(without(memory, path)) == without(nonruntime(memory), path),
+        descendants(without(memory, path)) == without(descendants(memory), path),
+    decreases memory.len(),
+{
+    reveal_with_fuel(runtime, 2);
+    reveal_with_fuel(nonruntime, 2);
+    reveal_with_fuel(descendants, 2);
+    reveal_with_fuel(without, 2);
+    if memory.len() > 0 {
+        partition_without(memory.drop_last(), path);
+        let before = without(memory.drop_last(), path);
+        let value = memory.last();
+        assert(runtime(memory.drop_last()).push(value).drop_last() =~= runtime(memory.drop_last()));
+        assert(nonruntime(memory.drop_last()).push(value).drop_last() =~= nonruntime(memory.drop_last()));
+        assert(descendants(memory.drop_last()).push(value).drop_last() =~= descendants(memory.drop_last()));
+        if !path.is_prefix_of(memory.last().path) {
+            assert(before.push(memory.last()).drop_last() =~= before);
+        }
+    }
+}
+
+/// Removing a runtime index preserves the descriptor classes of survivors.
+pub broadcast proof fn partition_remove(memory: Seq<Record>, index: int)
+    requires index >= 0,
+    ensures #[trigger] runtime(remove_index(memory, index)) == remove_index(runtime(memory), index),
+        nonruntime(remove_index(memory, index)) == nonruntime(memory),
+        descendants(remove_index(memory, index)) == remove_index(descendants(memory), index),
+    decreases memory.len(),
+{
+    reveal_with_fuel(runtime, 2);
+    reveal_with_fuel(nonruntime, 2);
+    reveal_with_fuel(descendants, 2);
+    reveal_with_fuel(remove_index, 2);
+    if memory.len() > 0 {
+        partition_remove(memory.drop_last(), index);
+        let value = memory.last();
+        let before = remove_index(memory.drop_last(), index);
+        assert(runtime(memory.drop_last()).push(value).drop_last() =~= runtime(memory.drop_last()));
+        assert(nonruntime(memory.drop_last()).push(value).drop_last() =~= nonruntime(memory.drop_last()));
+        assert(descendants(memory.drop_last()).push(value).drop_last() =~= descendants(memory.drop_last()));
+        if value.path.len() == 0 || value.path[0] != index {
+            let next = if value.path.len() > 0 && value.path[0] > index {
+                Record { path: value.path.update(0, value.path[0] - 1), ..value }
+            } else { value };
+            assert(before.push(next).drop_last() =~= before);
+            assert(next.path.len() == value.path.len());
+            assert((next.path.len() > 0 && next.path[0] >= 0) == (value.path.len() > 0 && value.path[0] >= 0));
+        }
+    }
+}
+
+/// Updating a root descriptor leaves every nonempty ownership view unchanged.
+pub broadcast proof fn select_root(memory: Seq<Record>, root: Record, path: Seq<int>)
+    requires root.path == Seq::<int>::empty(), path.len() > 0,
+    ensures #[trigger] subtree(memory.push(root), path) == subtree(memory, path),
+{
+    select_push(memory, root, path);
+}
+
+/// Runtime and fixed partitions distribute over composition.
+pub broadcast proof fn runtime_add(left: Seq<Record>, right: Seq<Record>)
+    ensures #[trigger] runtime(left + right) == runtime(left) + runtime(right),
+        nonruntime(left + right) == nonruntime(left) + nonruntime(right),
+    decreases right.len(),
+{
+    reveal_with_fuel(runtime, 2);
+    reveal_with_fuel(nonruntime, 2);
+    if right.len() == 0 { assert(left + right =~= left); }
+    else {
+        runtime_add(left, right.drop_last());
+        assert((left + right).drop_last() =~= left + right.drop_last());
+    }
+}
+
+/// A descriptor belongs to exactly one structural partition.
+pub broadcast proof fn runtime_push(memory: Seq<Record>, value: Record)
+    ensures #[trigger] runtime(memory.push(value)) ==
+        if value.path.len() > 0 && value.path[0] >= 0 { runtime(memory).push(value) } else { runtime(memory) },
+        nonruntime(memory.push(value)) ==
+        if value.path.len() > 0 && value.path[0] >= 0 { nonruntime(memory) } else { nonruntime(memory).push(value) },
+{
+    reveal_with_fuel(runtime, 2);
+    reveal_with_fuel(nonruntime, 2);
+    assert(memory.push(value).drop_last() =~= memory);
+}
+
+/// Prefixing an owner places its complete footprint in one structural class.
+pub broadcast proof fn runtime_prefix(memory: Seq<Record>, path: Seq<int>)
+    requires path.len() > 0,
+    ensures #[trigger] runtime(prefix(memory, path)) ==
+        if path[0] >= 0 { prefix(memory, path) } else { Seq::<Record>::empty() },
+        nonruntime(prefix(memory, path)) ==
+        if path[0] >= 0 { Seq::<Record>::empty() } else { prefix(memory, path) },
+    decreases memory.len(),
+{
+    reveal_with_fuel(runtime, 2);
+    reveal_with_fuel(nonruntime, 2);
+    reveal_with_fuel(prefix, 2);
+    if memory.len() > 0 {
+        runtime_prefix(memory.drop_last(), path);
+        let before = prefix(memory.drop_last(), path);
+        let value = Record { path: path + memory.last().path, ..memory.last() };
+        assert(before.push(value).drop_last() =~= before);
+    }
+}
+
+/// An already partitioned runtime forest has no root or fixed descriptors.
+pub broadcast proof fn runtime_class(memory: Seq<Record>)
+    ensures #[trigger] runtime(runtime(memory)) == runtime(memory),
+        nonruntime(runtime(memory)) == Seq::<Record>::empty(),
+        descendants(runtime(memory)) == runtime(memory),
+    decreases memory.len(),
+{
+    reveal_with_fuel(runtime, 2);
+    reveal_with_fuel(nonruntime, 2);
+    reveal_with_fuel(descendants, 2);
+    if memory.len() > 0 {
+        runtime_class(memory.drop_last());
+        if memory.last().path.len() > 0 && memory.last().path[0] >= 0 {
+            let before = runtime(memory.drop_last());
+            assert(before.push(memory.last()).drop_last() =~= before);
+        }
+    }
+}
+
+/// Descendant selection distributes over finite forest composition.
+pub broadcast proof fn descendants_add(left: Seq<Record>, right: Seq<Record>)
+    ensures #[trigger] descendants(left + right) == descendants(left) + descendants(right),
+    decreases right.len(),
+{
+    reveal_with_fuel(descendants, 2);
+    if right.len() == 0 { assert(left + right =~= left); }
+    else {
+        descendants_add(left, right.drop_last());
+        assert((left + right).drop_last() =~= left + right.drop_last());
+    }
+}
+
+/// Expose one descriptor's membership in the descendant forest.
+pub broadcast proof fn descendants_push(memory: Seq<Record>, value: Record)
+    ensures #[trigger] descendants(memory.push(value)) ==
+        if value.path.len() == 0 { descendants(memory) } else { descendants(memory).push(value) },
+{
+    reveal_with_fuel(descendants, 2);
+    assert(memory.push(value).drop_last() =~= memory);
+}
+
+/// Every allocation below a nonempty prefix is a descendant.
+pub broadcast proof fn descendants_prefix(memory: Seq<Record>, path: Seq<int>)
+    requires path.len() > 0,
+    ensures #[trigger] descendants(prefix(memory, path)) == prefix(memory, path),
+    decreases memory.len(),
+{
+    reveal_with_fuel(descendants, 2);
+    reveal_with_fuel(prefix, 2);
+    if memory.len() > 0 {
+        descendants_prefix(memory.drop_last(), path);
+        let before = prefix(memory.drop_last(), path);
+        let value = Record { path: path + memory.last().path, ..memory.last() };
+        assert(before.push(value).drop_last() =~= before);
+    }
+}
+
+/// Removing a root preserves all child ownership views.
+pub broadcast proof fn select_descendants(memory: Seq<Record>, path: Seq<int>)
+    requires path.len() > 0,
+    ensures #[trigger] subtree(descendants(memory), path) == subtree(memory, path),
+    decreases memory.len(),
+{
+    reveal_with_fuel(descendants, 2);
+    reveal_with_fuel(subtree, 2);
+    if memory.len() > 0 {
+        select_descendants(memory.drop_last(), path);
+        let value = memory.last();
+        if value.path.len() > 0 {
+            assert(descendants(memory.drop_last()).push(value).drop_last() =~= descendants(memory.drop_last()));
+        }
+    }
 }
 
 
