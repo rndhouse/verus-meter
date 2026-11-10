@@ -110,7 +110,7 @@ test_verify_one_file! {
     #[test] borrowed_call_arguments_remain_valid verus_code! {
         use vstd::prelude::*;
         fn helper(data: &mut [u32; 4]) resources peak(memory) <= ref_size(data) { data[0] = 9; }
-        fn f(flag: bool) resources peak(memory) <= owned_size(flag) + owned_size([u32; 4]) + if flag { mem_peak(helper) } else { mem_peak(helper) } {
+        fn f(flag: bool) resources peak(memory) <= owned_size(flag) + owned_size([u32; 4]) + if flag { peak(helper) } else { peak(helper) } {
             let mut data = [0u32; 4];
             helper(&mut data);
         }
@@ -239,8 +239,8 @@ test_verify_one_file! {
 
 test_verify_one_file! {
     #[test] cycle_in_either_budget_branch_is_rejected verus_code! {
-        fn f(flag: bool) resources peak(memory) <= if flag { 1 } else { 0 * mem_peak(f) } {}
-    } => Err(err) => assert_vir_error_msg(err, "circular mem_peak reference")
+        fn f(flag: bool) resources peak(memory) <= if flag { 1 } else { 0 * peak(f) } {}
+    } => Err(err) => assert_vir_error_msg(err, "circular peak reference")
 }
 
 test_verify_one_file! {

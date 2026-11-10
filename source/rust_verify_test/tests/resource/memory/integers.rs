@@ -50,9 +50,9 @@ fn integer_cases(typ: &str, bytes: u64) {
             if value < 3{typ} {{ let data = [0{typ}; 2]; }}
             else {{ let data = [0{typ}; 4]; }}
         }}
-        fn forward(value: {typ}) resources peak(memory) <= owned_size(value) + mem_peak(helper(value)) {{ helper(value); }}
+        fn forward(value: {typ}) resources peak(memory) <= owned_size(value) + peak(helper(value)) {{ helper(value); }}
         fn narrowed(value: {typ}) requires value == 2{typ},
-            resources peak(memory) <= owned_size(value) + mem_peak(helper(2{typ})),
+            resources peak(memory) <= owned_size(value) + peak(helper(2{typ})),
         {{ helper(value); }}
         fn f() resources peak(memory) <= BUDGET {{ forward(2{typ}); narrowed(2{typ}); }}
     "#
@@ -103,8 +103,8 @@ test_verify_one_file! {
             if n < -1i16 { let scratch = [-1i16; 2]; }
             else { let scratch = [-1i16; 4]; }
         }
-        fn forward(n: i16) resources peak(memory) <= owned_size(n) + mem_peak(helper(n)) { helper(n); }
-        fn f() resources peak(memory) <= mem_peak(forward(-2i16)) {
+        fn forward(n: i16) resources peak(memory) <= owned_size(n) + peak(helper(n)) { helper(n); }
+        fn f() resources peak(memory) <= peak(forward(-2i16)) {
             forward(-2i16);
             assert(peak(memory) <= 8);
         }
@@ -114,7 +114,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] negative_selector_wrong_branch_rejected verus_code! {
         fn helper(n: i64) resources peak(memory) <= owned_size(n) + if n < -1i64 { 1 } else { 2 } {}
-        fn f() resources peak(memory) <= mem_peak(helper(-2i64)) { helper(0i64); }
+        fn f() resources peak(memory) <= peak(helper(-2i64)) { helper(0i64); }
     } => Err(err) => assert_vir_error_msg(err, "peak 10 bytes exceeds budget 9 bytes")
 }
 
@@ -192,7 +192,7 @@ test_verify_one_file! {
         fn helper(n: u128)
             resources peak(memory) <= owned_size(n) + if n > 18446744073709551615u128 { 1 } else { 2 },
         {}
-        fn f() resources peak(memory) <= mem_peak(helper(18446744073709551616u128)) {
+        fn f() resources peak(memory) <= peak(helper(18446744073709551616u128)) {
             helper(18446744073709551616u128);
             assert(peak(memory) <= 17);
         }

@@ -3203,12 +3203,12 @@ impl Hash for crate::ResourceExpr {
                 v0.hash(state);
                 v2.hash(state);
             }
-            crate::ResourceExpr::MemPeak(v0, _, v2) => {
+            crate::ResourceExpr::Peak(v0, _, v2) => {
                 state.write_u8(7u8);
                 v0.hash(state);
                 v2.hash(state);
             }
-            crate::ResourceExpr::MemPeakCall(v0, _, v2) => {
+            crate::ResourceExpr::PeakCall(v0, _, v2) => {
                 state.write_u8(8u8);
                 v0.hash(state);
                 v2.hash(state);

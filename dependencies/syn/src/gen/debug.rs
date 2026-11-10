@@ -3596,15 +3596,15 @@ impl Debug for crate::ResourceExpr {
                 formatter.field(v2);
                 formatter.finish()
             }
-            crate::ResourceExpr::MemPeak(v0, v1, v2) => {
-                let mut formatter = formatter.debug_tuple("MemPeak");
+            crate::ResourceExpr::Peak(v0, v1, v2) => {
+                let mut formatter = formatter.debug_tuple("Peak");
                 formatter.field(v0);
                 formatter.field(v1);
                 formatter.field(v2);
                 formatter.finish()
             }
-            crate::ResourceExpr::MemPeakCall(v0, v1, v2) => {
-                let mut formatter = formatter.debug_tuple("MemPeakCall");
+            crate::ResourceExpr::PeakCall(v0, v1, v2) => {
+                let mut formatter = formatter.debug_tuple("PeakCall");
                 formatter.field(v0);
                 formatter.field(v1);
                 formatter.field(v2);

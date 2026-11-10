@@ -45,7 +45,7 @@ fn reverse(values: &mut [u32; 4], use_scratch: bool)
 
 // Reverse two buffers using the memory needed for just one reversal.
 fn main()
-    resources peak(memory) <= owned_size([u32; 4]) + mem_peak(reverse),
+    resources peak(memory) <= owned_size([u32; 4]) + peak(reverse),
 {
     {
         let mut first = [1u32, 2, 3, 4];
@@ -59,7 +59,7 @@ fn main()
 ```
 
 Each strategy must fit its own allowance in the conditional budget. The caller
-uses `mem_peak(reverse)` to allow for either strategy. Separate scopes let both
+uses `peak(reverse)` to allow for either strategy. Separate scopes let both
 reversals share one overall budget; keeping both buffers alive would exceed it
 and fail verification.
 

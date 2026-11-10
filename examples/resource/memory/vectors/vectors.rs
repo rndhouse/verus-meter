@@ -47,7 +47,7 @@ fn collect_positive(capacity: usize)
 //
 // The call query substitutes the argument into the helper's memory formula.
 fn main()
-    resources peak(memory) <= mem_peak(collect_positive(4)),
+    resources peak(memory) <= peak(collect_positive(4)),
 {
     collect_positive(4);
 }

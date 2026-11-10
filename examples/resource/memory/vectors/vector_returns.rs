@@ -43,7 +43,7 @@ fn count(buffer: Vec<u32>) -> (length: usize)
 // The allocation remains live through both calls and the intervening pushes.
 fn use_buffer(capacity: usize)
     requires 2 <= capacity <= 16,
-    resources peak(memory) <= owned_size(capacity) + vector_storage(capacity as nat) + mem_peak(count),
+    resources peak(memory) <= owned_size(capacity) + vector_storage(capacity as nat) + peak(count),
 {
     let mut buffer = make_buffer(capacity);
     buffer.push(3);
@@ -54,7 +54,7 @@ fn use_buffer(capacity: usize)
 
 // Run the whole operation within the allowance for two values.
 fn main()
-    resources peak(memory) <= mem_peak(use_buffer(2)),
+    resources peak(memory) <= peak(use_buffer(2)),
 {
     use_buffer(2);
 }

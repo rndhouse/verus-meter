@@ -41,7 +41,7 @@ fn append_to_empty(values: &mut Vec<u32>)
 // Allow for the vector handle, the helper's budget, and another minimum buffer
 // of growth headroom for subsequent work.
 fn use_helper()
-    resources peak(memory) <= owned_size(Vec<u32>) + mem_peak(append_to_empty) + owned_size([u32; 4]),
+    resources peak(memory) <= owned_size(Vec<u32>) + peak(append_to_empty) + owned_size([u32; 4]),
 {
     let mut values = Vec::<u32>::new();
     append_to_empty(&mut values);

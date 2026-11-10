@@ -27,8 +27,8 @@ fn body_budget_queries_are_not_executable_edges() {
         code_str! {
             use vstd::prelude::*;
             verus! {
-                fn first() resources peak(memory) <= 0 { assert(peak(memory) <= mem_peak(second)); }
-                fn second() resources peak(memory) <= 0 { assert(peak(memory) <= mem_peak(first)); }
+                fn first() resources peak(memory) <= 0 { assert(peak(memory) <= peak(second)); }
+                fn second() resources peak(memory) <= 0 { assert(peak(memory) <= peak(first)); }
             }
         }
         .to_string(),

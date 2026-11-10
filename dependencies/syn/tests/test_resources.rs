@@ -22,7 +22,7 @@ fn resource_clause_survives_clone_and_printing() {
 fn resource_clause_is_erased_for_rust() {
     let mut function: ItemFn = parse_str("fn f() resources peak(memory) <= 0 {}").unwrap();
     function.sig.spec.erase_spec_fields();
-    assert!(!function.to_token_stream().to_string().contains("mem_peak"));
+    assert!(!function.to_token_stream().to_string().contains("peak"));
 }
 
 #[test]
@@ -30,8 +30,8 @@ fn malformed_resource_clauses_are_rejected() {
     for text in [
         "fn f() peakmem <= 0 {}",
         "fn f() resources heap_bytes <= 8 {}",
-        "fn f() mem_peak <= 8 {}",
-        "fn f() resources mem_peak <= 8 {}",
+        "fn f() peak <= 8 {}",
+        "fn f() resources peak <= 8 {}",
         "fn f() resources memory <= 8 {}",
         "fn f() resources peak memory <= 8 {}",
         "fn f() resources peak() <= 8 {}",
@@ -40,16 +40,16 @@ fn malformed_resource_clauses_are_rejected() {
         "fn f() resources current(memory) <= 8 {}",
         "fn f() resources {}",
         "fn f() resources work <= 8 {}",
-        "fn f() resources peak(memory) <= 8, mem_peak <= 9 {}",
+        "fn f() resources peak(memory) <= 8, peak <= 9 {}",
         "fn f() resources peak(memory) < 8 {}",
         "fn f() resources peak(memory) <= -1 {}",
         "fn f() resources peak(memory) <= 18446744073709551616 {}",
         "fn f() resources peak(memory) <= 8u32 {}",
         "fn f() resources peak(memory) <= 4 - 4 {}",
         "fn f() resources peak_local_storage_bytes <= 8 {}",
-        "fn f() resources peak(memory) <= mem_peak(x.field) {}",
-        "fn f() resources peak(memory) <= mem_peak(object.make()) {}",
-        "fn f() resources peak(memory) <= mem_peak() {}",
+        "fn f() resources peak(memory) <= peak(x.field) {}",
+        "fn f() resources peak(memory) <= peak(object.make()) {}",
+        "fn f() resources peak(memory) <= peak() {}",
         "fn f() resources peak_memory_bytes <= 8 {}",
         "fn f() resources peak(memory) <= owned_size::<u32>() {}",
         "fn f() resources peak(memory) <= owned_size() {}",
@@ -57,8 +57,8 @@ fn malformed_resource_clauses_are_rejected() {
         "fn f() resources peak(memory) <= owned_size(make()) {}",
         "fn f() resources peak(memory) <= owned_size(4) {}",
         "fn f() resources peak(memory) <= owned_size(x, y) {}",
-        "fn f() resources peak(memory) <= mem_peak(x, y) {}",
-        "fn f() resources peak(memory) <= mem_peak([u32; 4]) {}",
+        "fn f() resources peak(memory) <= peak(x, y) {}",
+        "fn f() resources peak(memory) <= peak([u32; 4]) {}",
         "fn f() resources peak(memory) <= 8 resources peak(memory) <= 9 {}",
     ] {
         assert!(
@@ -85,17 +85,17 @@ fn expressive_budgets_round_trip() {
         "workspace::<u32>()",
         "owned_size(n) + n * owned_size(u32)",
         "4 + 4",
-        "owned_size(x) + mem_peak(module::f)",
+        "owned_size(x) + peak(module::f)",
         "2 * (owned_size([u32; 8]) + 4u64)",
         "owned_size(crate::Buffer) + owned_size(&mut [u32]) + owned_size(())",
         "owned_size([[u32; 4]; 2]) + owned_size(&'a Buffer)",
-        "owned_size(module::Alias<u32>) + mem_peak(module::f::<u32>)",
+        "owned_size(module::Alias<u32>) + peak(module::f::<u32>)",
         "1 + 2 * 3 + (4 + 5) * 6",
         "owned_size((x))",
         "ref_size(buffer) + owned_size(Buffer)",
         "ref_size(&mut [u32]) + ref_size(&'a Buffer)",
-        "mem_peak(helper(false))",
-        "mem_peak(module::helper(count <= 4, !flag)) + mem_peak(empty())",
+        "peak(helper(false))",
+        "peak(module::helper(count <= 4, !flag)) + peak(empty())",
     ] {
         let code = format!("fn f(x: u32) resources peak(memory) <= {budget}, {{}}");
         let parsed: ItemFn = parse_str(&code).unwrap();
@@ -116,11 +116,11 @@ fn bare_budget_names_are_quantities() {
 }
 
 #[test]
-fn mem_peak_clause_is_distinct_from_calls_in_other_clauses() {
+fn peak_clause_is_distinct_from_calls_in_other_clauses() {
     for text in [
-        "fn f(x: u32) requires mem_peak(x), ensures mem_peak(x), resources peak(memory) <= owned_size(x), {}",
-        "fn f(x: u32) requires mem_peak(x) ensures mem_peak(x) resources peak(memory) <= owned_size(x) {}",
-        "fn f<T>() where T: mem_peak, resources peak(memory) <= 0 {}",
+        "fn f(x: u32) requires peak(x), ensures peak(x), resources peak(memory) <= owned_size(x), {}",
+        "fn f(x: u32) requires peak(x) ensures peak(x) resources peak(memory) <= owned_size(x) {}",
+        "fn f<T>() where T: peak, resources peak(memory) <= 0 {}",
     ] {
         let parsed: ItemFn = parse_str(text).unwrap();
         assert!(parsed.sig.spec.resources.is_some());
@@ -133,13 +133,13 @@ fn mem_peak_clause_is_distinct_from_calls_in_other_clauses() {
 #[test]
 fn memory_checkpoints_round_trip_alongside_logical_assertions() {
     for statement in [
-        "assert(peak(memory) <= owned_size(local) + mem_peak(helper));",
+        "assert(peak(memory) <= owned_size(local) + peak(helper));",
         "assert(peak(memory) <= 2 * owned_size([u32; 4]));",
         "assert(peak(memory) <= x);",
         "assert(current(memory) <= owned_size(local));",
-        "assert(mem_peak(local) <= 10);",
         "assert(current(local) <= 10);",
         "assert(peak(local) <= 10);",
+        "assert(peak <= 10);",
         "assert(module::peak(memory) <= 10);",
         "assert(true) by { }",
     ] {
@@ -162,7 +162,6 @@ fn memory_checkpoints_round_trip_alongside_logical_assertions() {
 #[test]
 fn checkpoints_reject_proof_overrides_and_malformed_budgets() {
     for statement in [
-        "assert(mem_peak <= 0);",
         "assert(peak(memory) < 0);",
         "assert(current(memory) < 0);",
         "assert(current(memory) <= 0) by { }",
@@ -182,7 +181,7 @@ fn memory_sections_round_trip_and_end_statements() {
         "resources peak(memory) <= 0 {} let x = 1;",
         "resources peak(memory) <= unknown {}",
         "resources peak(memory) <= owned_size(x) { resources peak(memory) <= 0 {} } resources peak(memory) <= 0 {};",
-        "#[allow(unused)] resources peak(memory) <= 2 * (owned_size([u32; 4]) + mem_peak(helper)) { let x = 1; }",
+        "#[allow(unused)] resources peak(memory) <= 2 * (owned_size([u32; 4]) + peak(helper)) { let x = 1; }",
         "let x = resources peak(memory) <= 0 {};",
         "if true { resources peak(memory) <= 0 {} } else { resources peak(memory) <= 0 {} }",
     ] {
@@ -191,7 +190,7 @@ fn memory_sections_round_trip_and_end_statements() {
         let reparsed: ItemFn = parse_str(&printed).unwrap();
         assert_eq!(printed, reparsed.to_token_stream().to_string());
     }
-    let parsed: ItemFn = parse_str("fn f() { mem_peak(helper); }").unwrap();
+    let parsed: ItemFn = parse_str("fn f() { peak(helper); }").unwrap();
     assert!(matches!(
         parsed.block.stmts[0],
         verus_syn::Stmt::Expr(verus_syn::Expr::Call(_), _)
@@ -204,7 +203,7 @@ fn memory_sections_reject_invalid_budgets() {
         "resources peak(memory) <= owned_size(make()) {}",
         "resources peak(memory) <= 4 - 1 {}",
         "resources peak(memory) <= 4;",
-        "mem_peak <= 4 {}",
+        "peak <= 4 {}",
         "resources memory <= 4 {}",
         "resources current(memory) <= 4 {}",
     ] {

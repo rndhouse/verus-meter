@@ -4388,12 +4388,12 @@ where
             skip!(_binding_1);
             v.visit_type_mut(_binding_2);
         }
-        crate::ResourceExpr::MemPeak(_binding_0, _binding_1, _binding_2) => {
+        crate::ResourceExpr::Peak(_binding_0, _binding_1, _binding_2) => {
             v.visit_ident_mut(_binding_0);
             skip!(_binding_1);
             v.visit_expr_path_mut(_binding_2);
         }
-        crate::ResourceExpr::MemPeakCall(_binding_0, _binding_1, _binding_2) => {
+        crate::ResourceExpr::PeakCall(_binding_0, _binding_1, _binding_2) => {
             v.visit_ident_mut(_binding_0);
             skip!(_binding_1);
             v.visit_expr_call_mut(_binding_2);

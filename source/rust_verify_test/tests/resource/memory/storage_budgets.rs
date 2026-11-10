@@ -2,6 +2,25 @@ use crate::common::*;
 use crate::verify_one_file;
 
 test_verify_one_file! {
+    #[test] former_helper_budget_query_has_no_builtin_alias verus_code! {
+        fn helper() resources peak(memory) <= 0 {}
+        fn caller() resources peak(memory) <= mem_peak(helper) {}
+    } => Err(err) => assert_rust_error_msg(err, "cannot find function `mem_peak`")
+}
+
+test_verify_one_file! {
+    #[test] ordinary_peak_names_remain_logical_outside_resource_queries verus_code! {
+        spec fn peak(value: u32) -> u32 { value }
+        fn f() resources peak(memory) <= owned_size(u32) {
+            assert(peak(7) == 7);
+            let peak = 0u32;
+            assert(peak <= 0);
+            assert(peak(memory) <= owned_size(u32));
+        }
+    } => Ok(())
+}
+
+test_verify_one_file! {
     #[test] value_type_and_arithmetic verus_code! {
         use vstd::prelude::*;
         fn f(x: u32, flag: bool)
@@ -39,7 +58,7 @@ test_verify_one_file! {
 
 test_verify_one_file! {
     #[test] qualified_forward_function_reference verus_code! {
-        fn caller() resources peak(memory) <= mem_peak(helpers::leaf) {
+        fn caller() resources peak(memory) <= peak(helpers::leaf) {
             helpers::leaf();
         }
         mod helpers {
@@ -51,7 +70,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] alias_uses_resolved_function_identity verus_code! {
         use helpers::leaf as renamed;
-        fn caller() resources peak(memory) <= mem_peak(renamed) { renamed(); }
+        fn caller() resources peak(memory) <= peak(renamed) { renamed(); }
         mod helpers {
             pub fn leaf() resources peak(memory) <= 10 {}
         }
@@ -60,7 +79,7 @@ test_verify_one_file! {
 
 test_verify_one_file! {
     #[test] declared_slack_not_measured_peak verus_code! {
-        fn caller() resources peak(memory) <= mem_peak(leaf) {
+        fn caller() resources peak(memory) <= peak(leaf) {
             let local = 0u32;
             leaf();
         }
@@ -79,7 +98,7 @@ test_verify_one_file! {
 
 test_verify_one_file! {
     #[test] referenced_body_is_still_checked verus_code! {
-        fn f() resources peak(memory) <= mem_peak(leaf) {}
+        fn f() resources peak(memory) <= peak(leaf) {}
         fn leaf() resources peak(memory) <= 0 { let x = 0u32; }
     } => Err(err) => assert_vir_error_msg(err, "peak 4 bytes exceeds budget 0 bytes")
 }
@@ -87,27 +106,27 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] missing_contract_is_rejected verus_code! {
         fn leaf() {}
-        fn f() resources peak(memory) <= mem_peak(leaf) {}
-    } => Err(err) => assert_vir_error_msg(err, "mem_peak requires a declared resource contract")
+        fn f() resources peak(memory) <= peak(leaf) {}
+    } => Err(err) => assert_vir_error_msg(err, "peak requires a declared resource contract")
 }
 
 test_verify_one_file! {
     #[test] self_budget_cycle verus_code! {
-        fn f() resources peak(memory) <= mem_peak(f) {}
-    } => Err(err) => assert_vir_error_msg(err, "circular mem_peak reference")
+        fn f() resources peak(memory) <= peak(f) {}
+    } => Err(err) => assert_vir_error_msg(err, "circular peak reference")
 }
 
 test_verify_one_file! {
     #[test] mutual_budget_cycle_without_calls verus_code! {
-        fn f() resources peak(memory) <= mem_peak(g) {}
-        fn g() resources peak(memory) <= mem_peak(f) {}
-    } => Err(err) => assert_vir_error_msg(err, "circular mem_peak reference")
+        fn f() resources peak(memory) <= peak(g) {}
+        fn g() resources peak(memory) <= peak(f) {}
+    } => Err(err) => assert_vir_error_msg(err, "circular peak reference")
 }
 
 test_verify_one_file! {
     #[test] zero_does_not_hide_budget_cycle verus_code! {
-        fn f() resources peak(memory) <= 0 * mem_peak(f) {}
-    } => Err(err) => assert_vir_error_msg(err, "circular mem_peak reference")
+        fn f() resources peak(memory) <= 0 * peak(f) {}
+    } => Err(err) => assert_vir_error_msg(err, "circular peak reference")
 }
 
 test_verify_one_file! {
@@ -125,14 +144,14 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] maximum_literal_and_zero_product verus_code! {
         fn f() resources peak(memory) <= 18446744073709551615u64 + 0 {}
-        fn g() resources peak(memory) <= 0 * mem_peak(f) {}
+        fn g() resources peak(memory) <= 0 * peak(f) {}
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] generic_function_query_rejected verus_code! {
         fn generic<T>() {}
-        fn f() resources peak(memory) <= mem_peak(generic::<u32>) {}
+        fn f() resources peak(memory) <= peak(generic::<u32>) {}
     } => Err(err) => assert_vir_error_msg(err, "generic function memory budgets are not supported")
 }
 
@@ -140,7 +159,7 @@ test_verify_one_file! {
     #[test] external_body_budget_rejected verus_code! {
         #[verifier::external_body]
         fn leaf() resources peak(memory) <= 8 {}
-        fn f() resources peak(memory) <= mem_peak(leaf) {}
+        fn f() resources peak(memory) <= peak(leaf) {}
     } => Err(err) => assert_vir_error_msg(err, "expected a safe, nongeneric exec function")
 }
 
@@ -154,9 +173,9 @@ test_verify_one_file! {
     #[test] peak_query_outside_header_rejected verus_code! {
         fn helper() resources peak(memory) <= 0 {}
         proof fn f() {
-            let n = verus_builtin::resource_mem_peak(&helper);
+            let n = verus_builtin::resource_peak(&helper);
         }
-    } => Err(err) => assert_vir_error_msg(err, "mem_peak is only allowed inside a memory clause or checkpoint")
+    } => Err(err) => assert_vir_error_msg(err, "peak is only allowed inside a memory clause or checkpoint")
 }
 
 test_verify_one_file! {
@@ -207,10 +226,10 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] mem_peak_cannot_query_value_storage verus_code! {
+    #[test] peak_cannot_query_value_storage verus_code! {
         fn leaf() resources peak(memory) <= 100 {}
-        fn f(leaf: u32) resources peak(memory) <= mem_peak(leaf) {}
-    } => Err(err) => assert_vir_error_msg(err, "mem_peak expects a function with a declared resource contract")
+        fn f(leaf: u32) resources peak(memory) <= peak(leaf) {}
+    } => Err(err) => assert_vir_error_msg(err, "peak expects a function with a declared resource contract")
 }
 
 test_verify_one_file! {
@@ -221,20 +240,20 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] mem_peak_builtin_outside_header_rejected verus_code! {
+    #[test] peak_builtin_outside_header_rejected verus_code! {
         fn leaf() resources peak(memory) <= 0 {}
         proof fn f() {
-            let n = verus_builtin::resource_mem_peak(&leaf);
+            let n = verus_builtin::resource_peak(&leaf);
         }
-    } => Err(err) => assert_vir_error_msg(err, "mem_peak is only allowed inside a memory clause or checkpoint")
+    } => Err(err) => assert_vir_error_msg(err, "peak is only allowed inside a memory clause or checkpoint")
 }
 
 test_verify_one_file! {
-    #[test] mem_peak_function_name_in_other_clauses verus_code! {
-        spec fn mem_peak(x: u32) -> bool { x == 0 }
+    #[test] peak_function_name_in_other_clauses verus_code! {
+        spec fn peak(x: u32) -> bool { x == 0 }
         fn f(x: u32)
-            requires mem_peak(x),
-            ensures mem_peak(x),
+            requires peak(x),
+            ensures peak(x),
             resources peak(memory) <= owned_size(x),
         {}
     } => Ok(())

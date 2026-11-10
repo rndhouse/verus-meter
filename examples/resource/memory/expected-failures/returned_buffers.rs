@@ -23,7 +23,7 @@ fn make_buffer() -> Buffer
 //
 // The first result stays live when the second destination is introduced.
 fn main()
-    resources peak(memory) <= mem_peak(make_buffer),
+    resources peak(memory) <= peak(make_buffer),
 {
     let first = make_buffer();
 

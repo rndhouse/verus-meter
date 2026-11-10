@@ -16,10 +16,14 @@ clause receive ordinary Verus verification only.
 | `ref_size(reference)` | Storage occupied by a reference, excluding its borrowed data. |
 | `owned_size(value)` | Storage occupied by a non-reference value, excluding separate allocations. |
 | `ref_size(&Type)`, `owned_size(Type)` | The same measurements using a type instead of a binding. |
-| `mem_peak(helper)` | A helper's declared budget, taking the maximum at each conditional. |
-| `mem_peak(helper(false))` | Its declared budget for these arguments, without executing the helper. |
+| `peak(helper)` | A helper's declared budget, taking the maximum at each conditional. |
+| `peak(helper(false))` | Its declared budget for these arguments, without executing the helper. |
 | `assert(peak(memory) <= bound)` | A check on the peak reached so far. |
 | `assert(current(memory) <= bound)` | A check on memory still live at this point. |
+
+A helper query uses its declared allowance, not a peak inferred from its body.
+It does not execute the helper. `peak(memory)` retains its role as the memory
+metric in contracts and checkpoints.
 
 Bounds support nonnegative integer literals, immutable unsigned input parameters
 (up to 64 bits), these queries, addition,
@@ -58,7 +62,7 @@ mathematical integers, and nested numeric spec calls. Executable calls and mutab
 inputs are rejected. Enum values used only inside the specification do not add
 support for executable enums in memory-checked code.
 
-Use `mem_peak(helper(arguments))` when referring to a helper whose budget calls
+Use `peak(helper(arguments))` when referring to a helper whose budget calls
 a spec function; no constant envelope is inferred from a spec function's body.
 Sections and checkpoints still require fixed bounds.
 
@@ -115,11 +119,11 @@ already includes its parameters and result. When the call initializes an existin
 destination, the result shares that charge once produced. Earlier callee work
 still overlaps the destination.
 
-Using `mem_peak(helper)` lets a caller follow changes to the helper's contract.
+Using `peak(helper)` lets a caller follow changes to the helper's contract.
 It uses the declared allowance even when the helper currently needs less, so the
 helper can change within that allowance. Both functions are checked independently.
 For conditional helpers, actual calls use the allowance selected by their
-arguments. A caller can write `owned_size(flag) + mem_peak(helper(flag))` to forward
+arguments. A caller can write `owned_size(flag) + peak(helper(flag))` to forward
 that promise, or use a precondition to justify a smaller fixed bound.
 See [calls](../../examples/resource/memory/algorithms/calls.rs) and
 [argument-specific budgets](../../examples/resource/memory/contracts/call_budgets.rs).
@@ -454,7 +458,7 @@ storage charges automatically. See the [conditional example](../../examples/reso
 Currently, conditions support comparisons and Boolean operators over immutable
 `bool` and all native integer inputs. Actual calls can also select allowances using
 immutable scalar locals. Mutable selectors and expressions outside this subset
-retain the conservative maximum. Argument-free `mem_peak(helper)` always uses
+retain the conservative maximum. Argument-free `peak(helper)` always uses
 that maximum.
 
 Fixed and conditional budgets both check costs on the paths that execute them.

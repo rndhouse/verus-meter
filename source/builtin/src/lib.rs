@@ -205,26 +205,27 @@ pub fn resource_ref_size_type<T: ?Sized>() -> u64 {
     unimplemented!()
 }
 
+/// Erased query for a helper's declared budget, without executing the helper.
 #[cfg(verus_keep_ghost)]
-#[rustc_diagnostic_item = "verus::verus_builtin::resource_mem_peak"]
+#[rustc_diagnostic_item = "verus::verus_builtin::resource_peak"]
 #[verifier::spec]
-pub fn resource_mem_peak<F>(_function: &F) -> u64 {
+pub fn resource_peak<F>(_function: &F) -> u64 {
     unimplemented!()
 }
 
-// Call-shaped metadata supplies argument types without executing the call.
+/// Call-shaped budget metadata supplies arguments without executing the call.
 #[cfg(verus_keep_ghost)]
-#[rustc_diagnostic_item = "verus::verus_builtin::resource_mem_peak_call"]
+#[rustc_diagnostic_item = "verus::verus_builtin::resource_peak_call"]
 #[verifier::spec]
-pub fn resource_mem_peak_call<T>(_call: T) -> u64 {
+pub fn resource_peak_call<T>(_call: T) -> u64 {
     unimplemented!()
 }
 
-// Erased checkpoint metadata; interpreted by the source storage checker.
+/// Erased peak-memory checkpoint, interpreted by the source memory checker.
 #[cfg(verus_keep_ghost)]
-#[rustc_diagnostic_item = "verus::verus_builtin::resource_assert_mem_peak"]
+#[rustc_diagnostic_item = "verus::verus_builtin::resource_assert_peak"]
 #[verifier::proof]
-pub fn resource_assert_mem_peak(_bytes: u64) {
+pub fn resource_assert_peak(_bytes: u64) {
     unimplemented!()
 }
 

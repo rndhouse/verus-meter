@@ -30,7 +30,7 @@ fn count(values: &Vec<u32>) -> (n: usize)
 //
 // The caller reserves space for two elements; helpers add their declared needs.
 fn build()
-    resources peak(memory) <= owned_size(Vec<u32>) + 2 * owned_size(u32) + mem_peak(append),
+    resources peak(memory) <= owned_size(Vec<u32>) + 2 * owned_size(u32) + peak(append),
 {
     let mut values = Vec::<u32>::with_capacity(2);
     append(&mut values, 2, 10);

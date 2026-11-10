@@ -215,7 +215,7 @@ fn helper(large: bool) resources peak(memory) <= owned_size(large) + if large { 
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() resources peak(memory) <= mem_peak(helper(false)) { helper(false); assert(peak(memory) <= mem_peak(helper(false))); }
+fn f() resources peak(memory) <= peak(helper(false)) { helper(false); assert(peak(memory) <= peak(helper(false))); }
     } => Ok(())
 }
 
@@ -226,7 +226,7 @@ fn helper(large: bool) resources peak(memory) <= owned_size(large) + if large { 
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() resources peak(memory) <= mem_peak(helper(true)) { helper(true); }
+fn f() resources peak(memory) <= peak(helper(true)) { helper(true); }
     } => Ok(())
 }
 
@@ -237,7 +237,7 @@ fn helper(large: bool) resources peak(memory) <= owned_size(large) + if large { 
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() resources peak(memory) <= mem_peak(helper(false)) { helper(true); }
+fn f() resources peak(memory) <= peak(helper(false)) { helper(true); }
     } => Err(err) => assert_vir_error_msg(err, "peak 33 bytes exceeds budget 17 bytes")
 }
 
@@ -259,7 +259,7 @@ fn helper(large: bool) resources peak(memory) <= owned_size(large) + if large { 
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() resources peak(memory) <= mem_peak(helper) { helper(true); }
+fn f() resources peak(memory) <= peak(helper) { helper(true); }
     } => Ok(())
 }
 
@@ -325,9 +325,9 @@ fn helper(large: bool) resources peak(memory) <= owned_size(large) + if large { 
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn middle(flag: bool) resources peak(memory) <= owned_size(flag) + mem_peak(helper(flag)) { helper(flag); }
-fn outer(flag: bool) resources peak(memory) <= owned_size(flag) + mem_peak(middle(flag)) { middle(flag); }
-fn f() resources peak(memory) <= mem_peak(outer(false)) { outer(false); }
+fn middle(flag: bool) resources peak(memory) <= owned_size(flag) + peak(helper(flag)) { helper(flag); }
+fn outer(flag: bool) resources peak(memory) <= owned_size(flag) + peak(middle(flag)) { middle(flag); }
+fn f() resources peak(memory) <= peak(outer(false)) { outer(false); }
     } => Ok(())
 }
 
@@ -338,7 +338,7 @@ fn helper(large: bool) resources peak(memory) <= owned_size(large) + if large { 
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f(flag: bool) resources peak(memory) <= owned_size(flag) + mem_peak(helper(!flag)) { helper(flag); }
+fn f(flag: bool) resources peak(memory) <= owned_size(flag) + peak(helper(!flag)) { helper(flag); }
     } => Err(err) => assert_memory_failure(err)
 }
 
@@ -349,7 +349,7 @@ fn helper(large: bool) resources peak(memory) <= owned_size(large) + if large { 
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() resources peak(memory) <= mem_peak(helper(false)) { let kept = [0u32; 4]; helper(false); }
+fn f() resources peak(memory) <= peak(helper(false)) { let kept = [0u32; 4]; helper(false); }
     } => Err(err) => assert_vir_error_msg(err, "peak 33 bytes exceeds budget 17 bytes")
 }
 
@@ -371,7 +371,7 @@ fn helper(large: bool) resources peak(memory) <= owned_size(large) + if large { 
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() resources peak(memory) <= 33 { let kept = [0u32; 4]; resources peak(memory) <= mem_peak(helper(false)) { helper(false); } }
+fn f() resources peak(memory) <= 33 { let kept = [0u32; 4]; resources peak(memory) <= peak(helper(false)) { helper(false); } }
     } => Ok(())
 }
 
@@ -448,7 +448,7 @@ fn helper(large: bool) resources peak(memory) <= owned_size(large) + if large { 
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f(mut flag: bool) resources peak(memory) <= owned_size(flag) + mem_peak(helper(flag)) { helper(flag); }
+fn f(mut flag: bool) resources peak(memory) <= owned_size(flag) + peak(helper(flag)) { helper(flag); }
     } => Err(err) => assert_vir_error_msg(err, "memory budget predicates currently require immutable")
 }
 
@@ -459,7 +459,7 @@ fn helper(large: bool) resources peak(memory) <= owned_size(large) + if large { 
     if large { let scratch = [0u32; 8]; }
     else { let scratch = [0u32; 4]; }
 }
-fn f() resources peak(memory) <= mem_peak(helper({ let flag = false; flag })) {}
+fn f() resources peak(memory) <= peak(helper({ let flag = false; flag })) {}
     } => Err(err) => assert_vir_error_msg(err, "memory budget predicates currently support")
 }
 
@@ -467,7 +467,7 @@ test_verify_one_file! {
     #[test] query_does_not_call_or_require_preconditions verus_code! {
 use vstd::prelude::*;
 fn unused(flag: bool) requires false, resources peak(memory) <= if flag { 33 } else { 17 } { assert(false); }
-fn f() resources peak(memory) <= mem_peak(unused(false)) { let data = [0u32; 4]; }
+fn f() resources peak(memory) <= peak(unused(false)) { let data = [0u32; 4]; }
     } => Ok(())
 }
 
@@ -475,7 +475,7 @@ test_verify_one_file! {
     #[test] actual_call_still_requires_precondition verus_code! {
 use vstd::prelude::*;
 fn unused(flag: bool) requires false, resources peak(memory) <= if flag { 33 } else { 17 } {}
-fn f() resources peak(memory) <= mem_peak(unused(false)) { unused(false); }
+fn f() resources peak(memory) <= peak(unused(false)) { unused(false); }
     } => Err(err) => assert_vir_error_msg(err, "precondition not satisfied")
 }
 
@@ -495,7 +495,7 @@ fn helper(large: bool) resources peak(memory) <= owned_size(large) + if large { 
     else { let scratch = [0u32; 4]; }
 }
 fn sink(data: [u32; 4], done: ()) resources peak(memory) <= 16 {}
-fn f() resources peak(memory) <= mem_peak(helper(false)) { sink([0u32; 4], helper(false)); }
+fn f() resources peak(memory) <= peak(helper(false)) { sink([0u32; 4], helper(false)); }
     } => Err(err) => assert_vir_error_msg(err, "peak 33 bytes exceeds budget 17 bytes")
 }
 
@@ -528,22 +528,22 @@ use vstd::prelude::*;
 fn work(count: u32, flag: bool) resources peak(memory) <= 5 + if count <= 4 && !flag { 16 } else { 32 } {
     if count > 4 || flag { let data = [0u32; 8]; } else { let data = [0u32; 4]; }
 }
-fn f() resources peak(memory) <= mem_peak(work(4u32, false)) { work(4u32, false); assert(peak(memory) <= 21); }
+fn f() resources peak(memory) <= peak(work(4u32, false)) { work(4u32, false); assert(peak(memory) <= 21); }
     } => Ok(())
 }
 
 test_verify_one_file! {
     #[test] specialized_cycles_still_rejected verus_code! {
 use vstd::prelude::*;
-fn f(flag: bool) resources peak(memory) <= 1 + 0 * mem_peak(f(false)) {}
-    } => Err(err) => assert_vir_error_msg(err, "circular mem_peak reference")
+fn f(flag: bool) resources peak(memory) <= 1 + 0 * peak(f(false)) {}
+    } => Err(err) => assert_vir_error_msg(err, "circular peak reference")
 }
 
 test_verify_one_file! {
     #[test] specialization_cannot_hide_invalid_branch verus_code! {
 use vstd::prelude::*;
 fn f(flag: bool) resources peak(memory) <= if flag { 18446744073709551615u64 + 1 } else { 1 } {}
-fn g() resources peak(memory) <= mem_peak(f(false)) {}
+fn g() resources peak(memory) <= peak(f(false)) {}
     } => Err(err) => assert_vir_error_msg(err, "memory budget arithmetic exceeds u64")
 }
 
@@ -569,7 +569,7 @@ test_verify_one_file! {
     #[test] invalid_query_even_when_unused verus_code! {
 use vstd::prelude::*;
 fn f(flag: bool) resources peak(memory) <= 1 {}
-fn g() resources peak(memory) <= 0 * mem_peak(f({ let b = false; b })) {}
+fn g() resources peak(memory) <= 0 * peak(f({ let b = false; b })) {}
     } => Err(err) => assert_vir_error_msg(err, "memory budget predicates currently support")
 }
 
@@ -587,8 +587,8 @@ test_verify_one_file! {
     #[test] aliases_and_zero_argument_queries verus_code! {
         mod inner { pub fn work(flag: bool) resources peak(memory) <= if flag { 33 } else { 17 } {} }
         use inner::work as renamed;
-        fn forward() resources peak(memory) <= mem_peak(renamed(false)) { renamed(false); }
-        fn f() resources peak(memory) <= mem_peak(forward()) { forward(); }
+        fn forward() resources peak(memory) <= peak(renamed(false)) { renamed(false); }
+        fn f() resources peak(memory) <= peak(forward()) { forward(); }
     } => Ok(())
 }
 
@@ -627,6 +627,6 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] direct_call_builtin_is_not_an_ordinary_spec_function verus_code! {
         fn helper() resources peak(memory) <= 0 {}
-        fn f() { let x = verus_builtin::resource_mem_peak_call(helper()); }
-    } => Err(err) => assert_vir_error_msg(err, "mem_peak is only allowed inside a memory clause or checkpoint")
+        fn f() { let x = verus_builtin::resource_peak_call(helper()); }
+    } => Err(err) => assert_vir_error_msg(err, "peak is only allowed inside a memory clause or checkpoint")
 }

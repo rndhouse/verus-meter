@@ -200,7 +200,7 @@ pub(super) fn function_bound(
     layouts: &Layouts,
 ) -> Result<Expr, VirErr> {
     let Some(ResourceContract { budget, .. }) = &function.x.attrs.resource_contract else {
-        return Err(error(&function.span, "mem_peak requires a declared resource contract"));
+        return Err(error(&function.span, "peak requires a declared resource contract"));
     };
     lower(budget, &inputs(function), budgets, functions, layouts)
 }
@@ -217,7 +217,7 @@ pub(super) fn instantiate(
     if args.len() != function.x.params.len() {
         return Err(error(
             &function.span,
-            "mem_peak call arguments must match the function parameters",
+            "peak call arguments must match the function parameters",
         ));
     }
     let bound = function_bound(function, budgets, functions, layouts)?;
@@ -231,7 +231,7 @@ pub(super) fn instantiate(
             {
                 return Err(error(
                     &arg.span,
-                    "mem_peak call queries currently require scalar executable arguments",
+                    "peak call queries currently require scalar executable arguments",
                 ));
             }
             predicate(arg, allowed)?;
@@ -284,14 +284,14 @@ pub(super) fn lower(
             return Ok(literal(
                 &expr.span,
                 *budgets.get(name).ok_or_else(|| {
-                    error(&expr.span, "mem_peak requires a declared resource contract")
+                    error(&expr.span, "peak requires a declared resource contract")
                 })?,
             ));
         }
         BudgetExprX::FunctionCall(name, args) => {
             let function = functions
                 .get(name)
-                .ok_or_else(|| error(&expr.span, "mem_peak references outside this crate"))?;
+                .ok_or_else(|| error(&expr.span, "peak references outside this crate"))?;
             return instantiate(function, args, allowed, budgets, functions, layouts, true);
         }
         BudgetExprX::If(cond, a, b) => ExprX::If(

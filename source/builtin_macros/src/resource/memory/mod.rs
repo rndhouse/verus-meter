@@ -66,11 +66,11 @@ pub(in crate::syntax) fn lower_budget(
             }
             quote_spanned_builtin!(builtin, expr.span() => #builtin::#type_marker::<#typ>())
         }
-        ResourceExpr::MemPeakCall(_, _, call) => {
-            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_mem_peak_call(#call))
+        ResourceExpr::PeakCall(_, _, call) => {
+            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_peak_call(#call))
         }
-        ResourceExpr::MemPeak(_, _, function) => {
-            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_mem_peak(&#function))
+        ResourceExpr::Peak(_, _, function) => {
+            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_peak(&#function))
         }
     }
 }
@@ -148,7 +148,7 @@ impl Visitor {
             if query == "current" {
                 quote_verbatim!(builtin, span, attrs => #builtin::resource_assert_current_memory(#budget))
             } else {
-                quote_verbatim!(builtin, span, attrs => #builtin::resource_assert_mem_peak(#budget))
+                quote_verbatim!(builtin, span, attrs => #builtin::resource_assert_peak(#budget))
             }
         };
         true

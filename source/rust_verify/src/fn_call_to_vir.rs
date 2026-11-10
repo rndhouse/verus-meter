@@ -641,10 +641,10 @@ fn verus_item_to_vir<'tcx, 'a>(
                     | SpecItem::ResourceOwnedSizeValue
                     | SpecItem::ResourceRefSizeType
                     | SpecItem::ResourceOwnedSizeType
-                    | SpecItem::ResourceMemPeak
-                    | SpecItem::ResourceMemPeakCall
+                    | SpecItem::ResourcePeak
+                    | SpecItem::ResourcePeakCall
                     | SpecItem::ResourceAssertCurrentMemory
-                    | SpecItem::ResourceAssertMemPeak
+                    | SpecItem::ResourceAssertPeak
                     | SpecItem::ResourceSection
                     | SpecItem::Recommends
                     | SpecItem::DecreasesWhen
@@ -928,7 +928,7 @@ fn verus_item_to_vir<'tcx, 'a>(
                     let budget = crate::resource::memory::budget::lower(bctx, args[0])?;
                     mk_expr(ExprX::ResourceSection(budget))
                 }
-                SpecItem::ResourceAssertMemPeak | SpecItem::ResourceAssertCurrentMemory => {
+                SpecItem::ResourceAssertPeak | SpecItem::ResourceAssertCurrentMemory => {
                     if bctx.in_ghost {
                         return err_span(
                             expr.span,
@@ -984,11 +984,10 @@ fn verus_item_to_vir<'tcx, 'a>(
                 }
                 SpecItem::ResourceSpecBudget
                 | SpecItem::ResourceQuantity
-                | SpecItem::ResourceMemPeak
-                | SpecItem::ResourceMemPeakCall => err_span(
-                    expr.span,
-                    "mem_peak is only allowed inside a memory clause or checkpoint",
-                ),
+                | SpecItem::ResourcePeak
+                | SpecItem::ResourcePeakCall => {
+                    err_span(expr.span, "peak is only allowed inside a memory clause or checkpoint")
+                }
                 SpecItem::NoUnwind => {
                     record_spec_fn_pure_args_only(bctx, expr);
                     let header = Arc::new(HeaderExprX::NoUnwind);

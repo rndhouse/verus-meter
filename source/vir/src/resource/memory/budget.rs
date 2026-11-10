@@ -44,14 +44,13 @@ impl Resolver<'_> {
         let function = self
             .functions
             .get(name)
-            .ok_or_else(|| unsupported(span, "mem_peak references outside this crate"))?;
+            .ok_or_else(|| unsupported(span, "peak references outside this crate"))?;
         let contract = function.x.attrs.resource_contract.as_ref().ok_or_else(|| {
-            error(span, "mem_peak requires a declared resource contract")
-                .secondary_span(&function.span)
+            error(span, "peak requires a declared resource contract").secondary_span(&function.span)
         })?;
         eligible(function)?;
         if !self.visiting.insert(name.clone()) {
-            return Err(error(span, "circular mem_peak reference").secondary_span(&function.span));
+            return Err(error(span, "circular peak reference").secondary_span(&function.span));
         }
         let budget = self.expr(&contract.budget)?;
         self.visiting.remove(name);
@@ -61,7 +60,7 @@ impl Resolver<'_> {
 
     fn expr(&mut self, expr: &BudgetExpr) -> Result<u64, VirErr> {
         match &expr.x {
-            // Retain a safe envelope for existing argument-free mem_peak queries
+            // Retain a safe envelope for existing argument-free peak queries
             // queries. Calls instantiate this formula with their actual arguments.
             BudgetExprX::If(_, then_budget, else_budget) => {
                 Ok(self.expr(then_budget)?.max(self.expr(else_budget)?))
@@ -81,7 +80,7 @@ impl Resolver<'_> {
                 if super::contracts::numeric_input(&formula) {
                     return Err(error(
                         &expr.span,
-                        "runtime memory budgets require mem_peak(helper(arguments))",
+                        "runtime memory budgets require peak(helper(arguments))",
                     ));
                 }
                 Ok(n)

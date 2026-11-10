@@ -122,7 +122,7 @@ test_verify_one_file! {
     #[test] completed_call_remains_in_peak verus_code! {
         use vstd::prelude::*;
         fn helper() resources peak(memory) <= 64 {}
-        fn f() resources peak(memory) <= mem_peak(helper) {
+        fn f() resources peak(memory) <= peak(helper) {
             helper();
             assert(peak(memory) <= 0);
         }
@@ -133,10 +133,10 @@ test_verify_one_file! {
     #[test] checkpoint_queries_declared_function_bound verus_code! {
         use vstd::prelude::*;
         fn helper() resources peak(memory) <= 64 {}
-        fn f() resources peak(memory) <= mem_peak(helper) {
+        fn f() resources peak(memory) <= peak(helper) {
             helper();
-            assert(peak(memory) <= mem_peak(helper));
-            assert(peak(memory) <= mem_peak(f));
+            assert(peak(memory) <= peak(helper));
+            assert(peak(memory) <= peak(f));
         }
     } => Ok(())
 }
@@ -325,8 +325,8 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] checkpoint_rejects_missing_callee_contract verus_code! {
         fn helper() {}
-        fn f() resources peak(memory) <= 0 { assert(peak(memory) <= 0 * mem_peak(helper)); }
-    } => Err(err) => assert_vir_error_msg(err, "mem_peak requires a declared resource contract")
+        fn f() resources peak(memory) <= 0 { assert(peak(memory) <= 0 * peak(helper)); }
+    } => Err(err) => assert_vir_error_msg(err, "peak requires a declared resource contract")
 }
 
 test_verify_one_file! {

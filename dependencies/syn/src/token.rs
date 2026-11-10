@@ -766,7 +766,6 @@ define_keywords! {
     "resources"    pub struct Resources
     "peak"         pub struct Peak
     "memory"       pub struct Memory
-    "mem_peak"     pub struct MemPeak
     "no_unwind"   pub struct NoUnwind
     "invariant"   pub struct Invariant
     "invariant_ensures"   pub struct InvariantEnsures
@@ -1064,7 +1063,6 @@ macro_rules! Token {
     [resources]    => { $crate::token::Resources };
     [peak]         => { $crate::token::Peak };
     [memory]       => { $crate::token::Memory };
-    [mem_peak]     => { $crate::token::MemPeak };
     [no_unwind]   => { $crate::token::NoUnwind };
     [invariant]   => { $crate::token::Invariant };
     [invariant_ensures] => { $crate::token::InvariantEnsures };

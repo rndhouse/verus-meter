@@ -33,7 +33,7 @@ fn hand_back(buffer: Buffer) -> Buffer
 // Each handoff transfers the existing handle and allocation. Renaming the owner
 // does not create another buffer or require another handle allowance.
 fn main()
-    resources peak(memory) <= mem_peak(make_buffer),
+    resources peak(memory) <= peak(make_buffer),
 {
     let original = make_buffer();
     let received = hand_back(original);

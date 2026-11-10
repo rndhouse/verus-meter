@@ -136,7 +136,7 @@ test_verify_one_file! {
             resources peak(memory) <= owned_size(capacity) + owned_size(Vec<u32>) + capacity * owned_size(u32),
         { let values = Vec::<u32>::with_capacity(capacity); }
         fn caller(capacity: usize) requires capacity <= 4,
-            resources peak(memory) <= owned_size(capacity) + mem_peak(helper(capacity)),
+            resources peak(memory) <= owned_size(capacity) + peak(helper(capacity)),
         { helper(capacity); }
     } => Ok(())
 }
@@ -311,8 +311,8 @@ fn reject_unsupported_vector_operations() {
 fn runtime_queries_require_arguments() {
     rejects(
         "query_runtime_envelope",
-        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= owned_size(cap) + cap {} fn g() resources peak(memory) <= mem_peak(f) {}",
-        "runtime memory budgets require mem_peak(helper(arguments))",
+        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= owned_size(cap) + cap {} fn g() resources peak(memory) <= peak(f) {}",
+        "runtime memory budgets require peak(helper(arguments))",
     );
 }
 
@@ -375,7 +375,7 @@ fn direct_index_mutation_and_slice_local() {
 fn runtime_constant_call_has_a_fixed_envelope() {
     verifies(
         "constant_call_envelope",
-        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= owned_size(cap) + cap {} fn g() resources peak(memory) <= mem_peak(f(4)) { f(4); } fn h() resources peak(memory) <= mem_peak(g) { g(); }",
+        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= owned_size(cap) + cap {} fn g() resources peak(memory) <= peak(f(4)) { f(4); } fn h() resources peak(memory) <= peak(g) { g(); }",
     );
 }
 

@@ -6431,7 +6431,7 @@
             "syn": "Type"
           }
         ],
-        "MemPeak": [
+        "Peak": [
           {
             "proc_macro2": "Ident"
           },
@@ -6442,7 +6442,7 @@
             "syn": "ExprPath"
           }
         ],
-        "MemPeakCall": [
+        "PeakCall": [
           {
             "proc_macro2": "Ident"
           },
@@ -8350,7 +8350,6 @@
     "Macro": "macro",
     "Match": "match",
     "Matches": "matches",
-    "MemPeak": "mem_peak",
     "Memory": "memory",
     "Minus": "-",
     "MinusEq": "-=",

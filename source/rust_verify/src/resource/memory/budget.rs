@@ -47,7 +47,7 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
         ExprKind::Call(callee, args) => {
             let callee_type = bctx.types.expr_ty(callee);
             let TyKind::FnDef(id, substitutions) = callee_type.kind() else {
-                return err_span(expr.span, "expected a size or mem_peak query in resource clause");
+                return err_span(expr.span, "expected a size or peak query in resource clause");
             };
             let substitutions = crate::rust_to_vir_base::fn_def_args(*substitutions, expr.span)?;
             let item = bctx.ctxt.get_verus_item(*id);
@@ -73,12 +73,12 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
                         BudgetExprX::Quantity(value),
                     ));
                 }
-                Some(VerusItem::Spec(SpecItem::ResourceMemPeakCall)) if args.len() == 1 => {
+                Some(VerusItem::Spec(SpecItem::ResourcePeakCall)) if args.len() == 1 => {
                     let ExprKind::Call(function, arguments) = args[0].kind else {
-                        return err_span(expr.span, "mem_peak expects a direct call");
+                        return err_span(expr.span, "peak expects a direct call");
                     };
                     let TyKind::FnDef(_, fn_args) = bctx.types.expr_ty(function).kind() else {
-                        return err_span(function.span, "mem_peak expects a named function");
+                        return err_span(function.span, "peak expects a named function");
                     };
                     if !crate::rust_to_vir_base::fn_def_args(*fn_args, function.span)?.is_empty() {
                         return err_span(
@@ -106,7 +106,7 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
                 Some(VerusItem::Spec(
                     SpecItem::ResourceOwnedSizeValue
                     | SpecItem::ResourceRefSizeValue
-                    | SpecItem::ResourceMemPeak,
+                    | SpecItem::ResourcePeak,
                 )) if args.len() == 1 => {
                     let ExprKind::AddrOf(_, _, value) = args[0].kind else {
                         return err_span(expr.span, "expected a borrowed resource query argument");
@@ -118,11 +118,11 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
                         );
                     }
                     let typ = substitutions.type_at(0);
-                    if matches!(item, Some(VerusItem::Spec(SpecItem::ResourceMemPeak))) {
+                    if matches!(item, Some(VerusItem::Spec(SpecItem::ResourcePeak))) {
                         let TyKind::FnDef(_, fn_args) = typ.kind() else {
                             return err_span(
                                 value.span,
-                                "mem_peak expects a function with a declared resource contract",
+                                "peak expects a function with a declared resource contract",
                             );
                         };
                         if !crate::rust_to_vir_base::fn_def_args(*fn_args, value.span)?.is_empty() {
@@ -142,7 +142,7 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
                 _ => {
                     return err_span(
                         expr.span,
-                        "only owned_size, ref_size, and mem_peak queries are allowed in resource budgets",
+                        "only owned_size, ref_size, and peak queries are allowed in resource budgets",
                     );
                 }
             };

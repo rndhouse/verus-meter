@@ -25,7 +25,7 @@ fn fill(buffer: &mut Buffer)
 // Each scope drops its box before the next scope allocates. The bound includes
 // one owning handle, one heap buffer, and the borrowed helper's workspace.
 fn main()
-    resources peak(memory) <= owned_size(Box<Buffer>) + owned_size(Buffer) + mem_peak(fill),
+    resources peak(memory) <= owned_size(Box<Buffer>) + owned_size(Buffer) + peak(fill),
 {
     {
         let mut first = Box::new([0u8; 16]);
@@ -37,7 +37,7 @@ fn main()
         fill(&mut *second);
         assert(second[0] == 7);
     }
-    assert(peak(memory) <= owned_size(Box<Buffer>) + owned_size(Buffer) + mem_peak(fill));
+    assert(peak(memory) <= owned_size(Box<Buffer>) + owned_size(Buffer) + peak(fill));
 }
 
 }

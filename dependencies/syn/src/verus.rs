@@ -258,8 +258,8 @@ ast_enum! {
         Mul(Box<ResourceExpr>, Token![*], Box<ResourceExpr>),
         /// An `owned_size` or `ref_size` query, preserving its written name.
         Size(Ident, token::Paren, Type),
-        MemPeak(Ident, token::Paren, ExprPath),
-        MemPeakCall(Ident, token::Paren, ExprCall),
+        Peak(Ident, token::Paren, ExprPath),
+        PeakCall(Ident, token::Paren, ExprCall),
         If(Token![if], Box<Expr>, token::Brace, Box<ResourceExpr>, Token![else], token::Brace, Box<ResourceExpr>),
     }
 }
@@ -1532,7 +1532,7 @@ pub mod parsing {
         let query = path.path.segments.len() == 1
             && matches!(
                 path.path.segments[0].ident.to_string().as_str(),
-                "owned_size" | "ref_size" | "mem_peak"
+                "owned_size" | "ref_size" | "peak"
             );
         if !query && ahead.peek(token::Paren) {
             let function: ExprPath = input.parse()?;
@@ -1554,11 +1554,11 @@ pub mod parsing {
             }
         }
         let name: Ident = input.parse()?;
-        if name != "owned_size" && name != "ref_size" && name != "mem_peak" {
+        if name != "owned_size" && name != "ref_size" && name != "peak" {
             if input.peek(token::Paren) {
                 return Err(Error::new(
                     name.span(),
-                    "expected owned_size(type/parameter), ref_size(reference), or mem_peak(function)",
+                    "expected owned_size(type/parameter), ref_size(reference), or peak(function)",
                 ));
             }
             return Ok(ResourceExpr::Quantity(name));
@@ -1569,17 +1569,15 @@ pub mod parsing {
             ResourceExpr::Size(name, paren, content.parse()?)
         } else {
             match content.parse::<Expr>()? {
-                Expr::Path(function) => ResourceExpr::MemPeak(name, paren, function),
+                Expr::Path(function) => ResourceExpr::Peak(name, paren, function),
                 Expr::Call(call) if matches!(*call.func, Expr::Path(_)) => {
-                    ResourceExpr::MemPeakCall(name, paren, call)
+                    ResourceExpr::PeakCall(name, paren, call)
                 }
-                _ => {
-                    return Err(content.error("expected a function name or direct call in mem_peak"))
-                }
+                _ => return Err(content.error("expected a function name or direct call in peak")),
             }
         };
         if !content.is_empty() {
-            return Err(content.error("expected a single size or mem_peak argument"));
+            return Err(content.error("expected a single size or peak argument"));
         }
         Ok(expr)
     }
@@ -1739,10 +1737,6 @@ pub mod parsing {
                     comma: content.parse()?,
                 };
                 AssertExpr::Memory(current, current_paren, Box::new(resource))
-            } else if content.peek(Token![mem_peak]) && content.peek2(Token![<=]) {
-                return Err(
-                    content.error("use assert(peak(memory) <= bound) for a memory checkpoint")
-                );
             } else {
                 AssertExpr::Logical(content.parse()?)
             };
@@ -2675,11 +2669,11 @@ mod printing {
                     name.to_tokens(tokens);
                     paren.surround(tokens, |tokens| typ.to_tokens(tokens));
                 }
-                ResourceExpr::MemPeakCall(name, paren, call) => {
+                ResourceExpr::PeakCall(name, paren, call) => {
                     name.to_tokens(tokens);
                     paren.surround(tokens, |tokens| call.to_tokens(tokens));
                 }
-                ResourceExpr::MemPeak(name, paren, function) => {
+                ResourceExpr::Peak(name, paren, function) => {
                     name.to_tokens(tokens);
                     paren.surround(tokens, |tokens| function.to_tokens(tokens));
                 }

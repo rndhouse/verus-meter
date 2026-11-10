@@ -41,7 +41,7 @@ fn symbolic_arguments_and_call_composition() {
         { let v = Vec::<u32>::with_capacity(n); }
         fn delegate(n: usize)
             requires n <= 100,
-            resources peak(memory) <= owned_size(n) + mem_peak(allocate(n)),
+            resources peak(memory) <= owned_size(n) + peak(allocate(n)),
         { allocate(n); }
         fn caller() resources peak(memory) <= 48 { delegate(2); }
     "#,
@@ -172,9 +172,9 @@ fn argument_free_query_needs_an_envelope() {
         r#"
         spec fn bytes() -> nat { 16 }
         fn helper() resources peak(memory) <= bytes() {}
-        fn f() resources peak(memory) <= mem_peak(helper) {}
+        fn f() resources peak(memory) <= peak(helper) {}
     "#,
-        "runtime memory budgets require mem_peak(helper(arguments))",
+        "runtime memory budgets require peak(helper(arguments))",
     );
 }
 

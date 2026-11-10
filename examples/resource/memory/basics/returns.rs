@@ -23,7 +23,7 @@ fn make_buffer() -> (buffer: Buffer)
 //
 // Receiving the buffer preserves the producer's memory guarantee.
 fn main()
-    resources peak(memory) <= mem_peak(make_buffer),
+    resources peak(memory) <= peak(make_buffer),
 {
     let buffer = make_buffer();
     assert(buffer[0] == 7);

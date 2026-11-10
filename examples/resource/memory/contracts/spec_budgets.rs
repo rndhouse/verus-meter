@@ -30,7 +30,7 @@ fn collect(capacity: usize)
 
 // Carry the helper's input-specific guarantee through to the complete operation.
 fn main()
-    resources peak(memory) <= mem_peak(collect(2)),
+    resources peak(memory) <= peak(collect(2)),
 {
     collect(2);
 }

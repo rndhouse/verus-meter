@@ -103,11 +103,11 @@ test_verify_one_file! {
     #[test] calls_use_section_accounting verus_code! {
         use vstd::prelude::*;
         fn helper() resources peak(memory) <= 64 {}
-        fn f() resources peak(memory) <= owned_size([u32; 4]) + mem_peak(helper) {
+        fn f() resources peak(memory) <= owned_size([u32; 4]) + peak(helper) {
             let original = [0u32; 4];
-            resources peak(memory) <= mem_peak(helper) {
+            resources peak(memory) <= peak(helper) {
                 helper();
-                assert(peak(memory) <= mem_peak(helper));
+                assert(peak(memory) <= peak(helper));
             }
         }
     } => Ok(())

@@ -34,13 +34,13 @@ fn adjust(counter: &mut Counter, change: i64)
 //
 // The budget follows the struct's field types and the helper's declared bound.
 fn main()
-    resources peak(memory) <= owned_size(Counter) + mem_peak(adjust),
+    resources peak(memory) <= owned_size(Counter) + peak(adjust),
 {
     let mut counter = Counter { value: 10i64, changes: 0u8 };
     adjust(&mut counter, -3i64);
     adjust(&mut counter, 5i64);
     assert(counter.value == 12 && counter.changes == 2);
-    assert(peak(memory) <= owned_size(Counter) + mem_peak(adjust));
+    assert(peak(memory) <= owned_size(Counter) + peak(adjust));
 }
 
 }

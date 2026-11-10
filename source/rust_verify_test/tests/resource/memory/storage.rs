@@ -358,7 +358,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] resources_name_in_executable_calls verus_code! {
         fn resources() resources peak(memory) <= 0 {}
-        fn example() resources peak(memory) <= mem_peak(resources) {
+        fn example() resources peak(memory) <= peak(resources) {
             resources();
             resources peak(memory) <= 0 {}
         }

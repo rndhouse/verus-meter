@@ -6047,14 +6047,14 @@ impl Debug for Lite<syn::ResourceExpr> {
                 formatter.field(Lite(_v2));
                 formatter.finish()
             }
-            syn::ResourceExpr::MemPeak(_v0, _v1, _v2) => {
-                let mut formatter = formatter.debug_tuple("ResourceExpr::MemPeak");
+            syn::ResourceExpr::Peak(_v0, _v1, _v2) => {
+                let mut formatter = formatter.debug_tuple("ResourceExpr::Peak");
                 formatter.field(Lite(_v0));
                 formatter.field(Lite(_v2));
                 formatter.finish()
             }
-            syn::ResourceExpr::MemPeakCall(_v0, _v1, _v2) => {
-                let mut formatter = formatter.debug_tuple("ResourceExpr::MemPeakCall");
+            syn::ResourceExpr::PeakCall(_v0, _v1, _v2) => {
+                let mut formatter = formatter.debug_tuple("ResourceExpr::PeakCall");
                 formatter.field(Lite(_v0));
                 formatter.field(Lite(_v2));
                 formatter.finish()
@@ -8150,11 +8150,6 @@ impl Debug for Lite<syn::token::Match> {
 impl Debug for Lite<syn::token::Matches> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("Token![matches]")
-    }
-}
-impl Debug for Lite<syn::token::MemPeak> {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("Token![mem_peak]")
     }
 }
 impl Debug for Lite<syn::token::Memory> {

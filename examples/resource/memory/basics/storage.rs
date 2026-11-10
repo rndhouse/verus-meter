@@ -4,7 +4,7 @@
 // is done in total. These small examples isolate that distinction and show why
 // proof-only data can be excluded from the runtime budget.
 // Budgets use abstract model bytes; they do not predict physical stack sizes.
-// owned_size names a type or parameter's storage; mem_peak names a function's bound.
+// owned_size names a type or parameter's storage; peak names a function's bound.
 
 use vstd::prelude::*;
 

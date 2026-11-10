@@ -373,7 +373,7 @@ test_verify_one_file! {
             else { let data = Box::new([0u8; 8]); }
         }
         fn caller(large: bool)
-            resources peak(memory) <= owned_size(large) + owned_size(Box<u8>) + owned_size(u8) + mem_peak(helper(large)),
+            resources peak(memory) <= owned_size(large) + owned_size(Box<u8>) + owned_size(u8) + peak(helper(large)),
         {
             let retained = Box::new(0u8);
             helper(large);
@@ -391,7 +391,7 @@ test_verify_one_file! {
             else { let data = Box::new([0u8; 8]); }
         }
         fn caller(large: bool)
-            resources peak(memory) <= owned_size(large) + mem_peak(helper(large)),
+            resources peak(memory) <= owned_size(large) + peak(helper(large)),
         {
             let retained = Box::new(0u8);
             helper(large);

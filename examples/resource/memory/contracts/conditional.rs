@@ -29,7 +29,7 @@ fn workspace(large: bool)
 // The argument-free query allows either input. Each actual call uses the
 // allowance selected by its argument; consecutive calls reuse that workspace.
 fn main()
-    resources peak(memory) <= mem_peak(workspace),
+    resources peak(memory) <= peak(workspace),
 {
     workspace(false);
     workspace(true);

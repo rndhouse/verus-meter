@@ -26,7 +26,7 @@ fn last_number() -> (result: Option<u32>)
 // The helper's guarantee proves that this call supplies a number. Its memory
 // allowance also covers using the result after the collection is gone.
 fn main()
-    resources peak(memory) <= mem_peak(last_number),
+    resources peak(memory) <= peak(last_number),
 {
     let result = last_number();
     match result {

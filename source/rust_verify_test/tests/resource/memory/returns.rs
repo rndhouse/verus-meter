@@ -123,7 +123,7 @@ fn result_storage_starts_when_produced() {
 fn struct_result() {
     verifies(
         "struct_result",
-        "struct Pair { n: u32, ready: bool } fn make() -> (p: Pair) ensures p.n == 7 && p.ready, resources peak(memory) <= owned_size(Pair) { Pair { n: 7, ready: true } } fn f() resources peak(memory) <= mem_peak(make) { let p = make(); assert(p.n == 7 && p.ready); }",
+        "struct Pair { n: u32, ready: bool } fn make() -> (p: Pair) ensures p.n == 7 && p.ready, resources peak(memory) <= owned_size(Pair) { Pair { n: 7, ready: true } } fn f() resources peak(memory) <= peak(make) { let p = make(); assert(p.n == 7 && p.ready); }",
     );
 }
 
@@ -131,7 +131,7 @@ fn struct_result() {
 fn tail_call_reuses_return_destination() {
     verifies(
         "tail_call",
-        "fn leaf() -> u32 resources peak(memory) <= 4 { 7 } fn middle() -> u32 resources peak(memory) <= mem_peak(leaf) { leaf() } fn f() resources peak(memory) <= mem_peak(middle()) { let n = middle(); }",
+        "fn leaf() -> u32 resources peak(memory) <= 4 { 7 } fn middle() -> u32 resources peak(memory) <= peak(leaf) { leaf() } fn f() resources peak(memory) <= peak(middle()) { let n = middle(); }",
     );
 }
 
@@ -194,7 +194,7 @@ fn unwrap_still_requires_some() {
 fn conditional_return_budget() {
     verifies(
         "conditional_return",
-        "fn f(flag: bool) -> u32 resources peak(memory) <= owned_size(flag) + owned_size(u32) + if flag { 4 } else { 0 } { if flag { let local = 7u32; local } else { 0 } } fn caller(flag: bool) resources peak(memory) <= owned_size(flag) + mem_peak(f(flag)) { let result = f(flag); }",
+        "fn f(flag: bool) -> u32 resources peak(memory) <= owned_size(flag) + owned_size(u32) + if flag { 4 } else { 0 } { if flag { let local = 7u32; local } else { 0 } } fn caller(flag: bool) resources peak(memory) <= owned_size(flag) + peak(f(flag)) { let result = f(flag); }",
     );
 }
 
@@ -210,7 +210,7 @@ fn conditional_option_match() {
 fn runtime_budget_return_credit() {
     verifies(
         "runtime_return",
-        "fn make(cap: usize) -> (r: u32) requires 1 <= cap <= 4, ensures r == 7, resources peak(memory) <= owned_size(cap) + owned_size(u32) + owned_size(Vec<u32>) + cap * owned_size(u32) { let mut v = Vec::<u32>::with_capacity(cap); v.push(7); v.pop().unwrap() } fn caller(cap: usize) requires 1 <= cap <= 4, resources peak(memory) <= owned_size(cap) + mem_peak(make(cap)) { let value = make(cap); assert(value == 7); }",
+        "fn make(cap: usize) -> (r: u32) requires 1 <= cap <= 4, ensures r == 7, resources peak(memory) <= owned_size(cap) + owned_size(u32) + owned_size(Vec<u32>) + cap * owned_size(u32) { let mut v = Vec::<u32>::with_capacity(cap); v.push(7); v.pop().unwrap() } fn caller(cap: usize) requires 1 <= cap <= 4, resources peak(memory) <= owned_size(cap) + peak(make(cap)) { let value = make(cap); assert(value == 7); }",
     );
 }
 

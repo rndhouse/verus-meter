@@ -144,13 +144,13 @@ impl Printer {
                 self.ty(typ);
                 self.word(")");
             }
-            ResourceExpr::MemPeakCall(_, _, call) => {
-                self.word("mem_peak(");
+            ResourceExpr::PeakCall(_, _, call) => {
+                self.word("peak(");
                 self.expr(&Expr::Call(call.clone()), FixupContext::NONE);
                 self.word(")");
             }
-            ResourceExpr::MemPeak(_, _, function) => {
-                self.word("mem_peak(");
+            ResourceExpr::Peak(_, _, function) => {
+                self.word("peak(");
                 self.expr_path(function);
                 self.word(")");
             }
@@ -1736,7 +1736,7 @@ mod resource_tests {
     #[test]
     fn argument_specific_budget_round_trip() {
         let file = verus_syn::parse_file(
-            "fn f(flag: bool) { resources peak(memory) <= owned_size(flag) + mem_peak(module::helper(!flag, 4u32,)) { resources peak(memory) <= mem_peak(helper(false)) {} } }",
+            "fn f(flag: bool) { resources peak(memory) <= owned_size(flag) + peak(module::helper(!flag, 4u32,)) { resources peak(memory) <= peak(helper(false)) {} } }",
         ).unwrap();
         let pretty = crate::unparse(&file);
         let reparsed = verus_syn::parse_file(&pretty).unwrap();
@@ -1757,7 +1757,7 @@ mod resource_tests {
     #[test]
     fn memory_sections_keep_executable_contents() {
         let file = verus_syn::parse_file(
-            "fn f() { resources peak(memory) <= 2 * (owned_size([u32; 4]) + mem_peak(helper)) { let x = 1; resources peak(memory) <= 0 { consume(x); } } }",
+            "fn f() { resources peak(memory) <= 2 * (owned_size([u32; 4]) + peak(helper)) { let x = 1; resources peak(memory) <= 0 { consume(x); } } }",
         ).unwrap();
         let pretty = crate::unparse(&file);
         let reparsed = verus_syn::parse_file(&pretty).unwrap();

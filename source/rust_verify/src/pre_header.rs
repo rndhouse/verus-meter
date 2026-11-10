@@ -171,10 +171,10 @@ fn is_header_verus_item(verus_item: &VerusItem) -> bool {
             | SpecItem::ResourceOwnedSizeValue
             | SpecItem::ResourceRefSizeType
             | SpecItem::ResourceOwnedSizeType
-            | SpecItem::ResourceMemPeak
-            | SpecItem::ResourceMemPeakCall
+            | SpecItem::ResourcePeak
+            | SpecItem::ResourcePeakCall
             | SpecItem::ResourceAssertCurrentMemory
-            | SpecItem::ResourceAssertMemPeak
+            | SpecItem::ResourceAssertPeak
             | SpecItem::ResourceSection => false,
 
             SpecItem::NoMethodBody
