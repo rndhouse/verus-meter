@@ -5,6 +5,11 @@ use rustc_middle::ty::{TyCtxt, TyKind};
 use rustc_span::def_id::DefId;
 use vir::ast::ResourceIntrinsic;
 
+/// Connect a standard library call to the memory rule that describes its effects.
+///
+/// Recognized calls receive a tag for the later accounting pass, which handles
+/// their effects without analyzing the library implementation. An unrecognized
+/// call is left to normal call handling; it is not assumed to be free.
 pub(crate) fn call(
     tcx: TyCtxt<'_>,
     id: DefId,
@@ -23,8 +28,11 @@ pub(crate) fn call(
     }
 }
 
-// Identify inherent Vec operations by the compiler's Vec identity, so aliases
-// work and unrelated methods with the same names cannot acquire resource rules.
+/// Recognize vector operations that the memory checker knows how to account for.
+///
+/// Confirm that the method belongs to the standard vector type before selecting
+/// its rule. Type aliases still work, while unrelated types and trait methods
+/// with matching names cannot accidentally receive vector accounting rules.
 fn vec_intrinsic(tcx: TyCtxt<'_>, id: DefId) -> Option<vir::ast::ResourceIntrinsic> {
     let imp = tcx.impl_of_assoc(id)?;
     if tcx.trait_impl_of_assoc(imp).is_some() {
@@ -50,6 +58,11 @@ fn vec_intrinsic(tcx: TyCtxt<'_>, id: DefId) -> Option<vir::ast::ResourceIntrins
     }
 }
 
+/// Recognize operations that inspect or extract an optional value.
+///
+/// These tags let the memory checker account for the result without analyzing
+/// the library method's body. Only methods on the standard `Option` type qualify;
+/// an unrelated method with the same name does not inherit these rules.
 fn option_intrinsic(tcx: TyCtxt<'_>, id: DefId) -> Option<vir::ast::ResourceIntrinsic> {
     let imp = tcx.impl_of_assoc(id)?;
     if tcx.trait_impl_of_assoc(imp).is_some() {

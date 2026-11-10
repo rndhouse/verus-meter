@@ -10,6 +10,12 @@ use vir::ast::VirErr;
 use vir::def::Spanned;
 use vir::resource::memory::{BudgetExpr, BudgetExprX};
 
+/// Translate a memory allowance into a formula the memory checker can reason about.
+///
+/// Preserve arithmetic, conditional choices, size queries, and helper budgets
+/// without running the code they describe. Specification expressions stay in the
+/// proof world. This step checks the formula's shape; calculating memory costs
+/// and proving that the program fits the allowance happen later.
 pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<BudgetExpr, VirErr> {
     let node = match expr.kind {
         ExprKind::If(condition, then_expr, Some(else_expr)) => {
