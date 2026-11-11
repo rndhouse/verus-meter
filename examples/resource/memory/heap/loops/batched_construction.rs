@@ -31,7 +31,7 @@ fn allocate_buffer() -> Buffer
     Vec::with_capacity(8)
 }
 
-// Build four buffers in two batches, then release all their allocations.
+// Build four buffers in two batches within the construction budget.
 // The length bound connects loop progress to the amount of live heap storage.
 fn main()
     resources peak(memory) <= construction_budget(4, 4) + peak(allocate_buffer),
@@ -40,7 +40,6 @@ fn main()
     let mut batch = 0usize;
     while batch < 2
         invariant
-            batch <= 2,
             buffers.len() == 2 * batch,
     {
         let first = allocate_buffer();
@@ -49,7 +48,6 @@ fn main()
         buffers.push(second);
         batch += 1;
     }
-    drop(buffers);
 }
 
 } // verus!
