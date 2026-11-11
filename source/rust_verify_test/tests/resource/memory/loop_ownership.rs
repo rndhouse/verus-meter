@@ -187,11 +187,6 @@ fn unsupported_iteration_dependencies_reject_generous_budgets() {
         ),
         ("indexed_remove", "source.remove(0);", "no precise helper summary can be inferred"),
         (
-            "overlapping_roles",
-            "let child = source.pop().unwrap(); source.push(child);",
-            "no precise helper summary can be inferred",
-        ),
-        (
             "dependent_construction",
             "source.pop(); let child = Vec::<u32>::with_capacity(i); destination.push(child);",
             "memory budget predicates currently require immutable Boolean or native integer input parameters",
@@ -231,6 +226,79 @@ fn unsupported_iteration_dependencies_reject_generous_budgets() {
             }
             source
         }",
+        "no precise helper summary can be inferred",
+    );
+}
+
+#[test]
+fn ordered_round_trips_preserve_complete_children_and_input_lifetimes() {
+    let code = "struct State { values: Vec<Vec<u32>>, sibling: Box<[u8;16]> }
+        fn round_trip(mut state: State, n: usize) -> (r: State)
+            requires state.values.len() == 2, n <= 2,
+            ensures r.values.len() == 2,
+            resources peak(memory) <= 512 {
+            let mut i = 0usize;
+            while i < n
+                invariant state.values.len() == 2, i <= n, n <= 2,
+                decreases n-i,
+            {
+                OPERATIONS
+                i += 1;
+            }
+            state
+        }
+        fn f() resources peak(memory) <= BOUND {
+            let mut values = Vec::<Vec<u32>>::with_capacity(2);
+            let first = Vec::<u32>::with_capacity(4); values.push(first);
+            let second = Vec::<u32>::with_capacity(8); values.push(second);
+            let state = State { values, sibling: Box::new([0u8;16]) };
+            let mut state = round_trip(state, COUNT);
+            let last = state.values.pop().unwrap(); drop(state);
+            let scratch = [0u8;1024];
+        }";
+    let operations = "let first = state.values.pop().unwrap();
+                let second = state.values.pop().unwrap();
+                let temporary = Box::new([0u8;128]); drop(temporary);
+                state.values.push(second); state.values.push(first);";
+    let nested = format!(
+        "let mut j = 0usize;
+        while j < 2 invariant j <= 2, state.values.len() == 2, decreases 2-j,
+        {{ {operations} j += 1; }}"
+    );
+    for (name, operations) in [("direct", operations), ("nested", nested.as_str())] {
+        let code = code.replace("OPERATIONS", operations);
+        for count in [0, 2] {
+            let code = code.replace("COUNT", &count.to_string());
+            verifies(name, &code.replace("BOUND", "1080"));
+            rejects(
+                &format!("{name}_short"),
+                &code.replace("BOUND", "1079"),
+                "memory budget exceeded",
+            );
+        }
+    }
+    rejects(
+        "round_trip_intermediate_peak",
+        &code
+            .split("fn f()")
+            .next()
+            .unwrap()
+            .replace("OPERATIONS", operations)
+            .replace("<= 512", "<= 128"),
+        "memory budget exceeded",
+    );
+    rejects(
+        "changed_child_order",
+        &code
+            .replace(
+                "OPERATIONS",
+                &operations.replace(
+                    "state.values.push(second); state.values.push(first);",
+                    "state.values.push(first); state.values.push(second);",
+                ),
+            )
+            .replace("COUNT", "2")
+            .replace("BOUND", "100000"),
         "no precise helper summary can be inferred",
     );
 }

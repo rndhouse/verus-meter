@@ -269,6 +269,12 @@ including different capacities; repeated last-element extraction reverses their
 order at the destination. Counted loops use a stable upper bound and unit increment;
 consuming loops test a popped collection's length against a stable lower bound.
 Zero and partial iteration ranges preserve the unconsumed children and backing.
+Ordered extraction followed by restoration of the same whole children can
+compose to an unchanged collection, including through nested counted loops.
+Restoration must preserve child order; changed payloads or permutations still
+require additional summary support. All intermediate allocation peaks remain
+checked. A pop preserves backing and supplies its previous length as a capacity
+lower bound, so restoring children can reuse those slots.
 Generated invariants prove local child-charge conservation across transfers.
 Callee peak budgets still cover temporary allocations and buffer replacement.
 See [helper collections](../../examples/resource/memory/vectors/helper_collections.rs).
@@ -305,8 +311,8 @@ whose control flow or value dependencies cannot be represented by a finite owner
 transformation is unsupported. The loop rules above support local collections and
 collections passed by value. Extraction from borrowed inputs and indexed replacement
 in owned inputs remain unsupported inside loops. Conditional effects, overlapping
-collection roles, and ownership changes to a transferred payload within an iteration
-are also unsupported.
+collection roles that cannot reduce to whole-child restoration, and ownership
+changes to a transferred payload within an iteration are also unsupported.
 Incoming extraction and replacement remain unsupported within protected branches
 and memory sections. Indexing incoming children inside
 loops and forwarding an incoming collection to another runtime-ownership helper

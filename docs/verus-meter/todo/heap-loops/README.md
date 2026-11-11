@@ -48,3 +48,5 @@ Follow [AGENTS.md](../../../../AGENTS.md) and the
 [memory model](../../model.md) as behavior changes. Mark task checkboxes complete
 only after implementation and relevant verification; keep investigation logs in
 Git history rather than these task documents.
+When a task is complete, move its numbered document into `complete/` and update
+all links to it, including relative references inside the moved document.

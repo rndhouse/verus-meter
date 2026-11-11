@@ -66,7 +66,7 @@ impl Analysis<'_> {
         let live = self.storage.live_expression(&expr.span).total();
         let loop_inputs = self.loop_inputs();
         let protection = self.heap.protect();
-        self.heap.permit_loop_partitions(&protection.0);
+        self.heap.permit_loop_partitions(&protection.0, &protection.1);
         let first_checkpoint = self.checkpoints.len();
         self.storage.event(&expr.span, "analyze reusable while iteration".into());
         self.growth.loop_depth += 1;
@@ -87,10 +87,21 @@ impl Analysis<'_> {
         for (id, pushes, floor) in vector_entry {
             let state = self.growth.vectors[id].clone();
             if state.pushes == pushes && std::sync::Arc::ptr_eq(&floor, &state.backing.floor) {
-                for value in [state.capacity, state.backing.bytes] {
-                    let snapshot = self.loop_snapshot(&expr.span, &value);
-                    frame_invariants.push(crate::ast_util::mk_eq(&expr.span, &value, &snapshot));
-                }
+                // Observing an occupied length can improve our capacity lower
+                // bound without changing physical backing or allocating bytes.
+                let snapshot = self.loop_snapshot(&expr.span, &state.capacity);
+                frame_invariants.push(crate::ast_util::mk_ineq(
+                    &expr.span,
+                    &snapshot,
+                    &state.capacity,
+                    InequalityOp::Le,
+                ));
+                let snapshot = self.loop_snapshot(&expr.span, &state.backing.bytes);
+                frame_invariants.push(crate::ast_util::mk_eq(
+                    &expr.span,
+                    &state.backing.bytes,
+                    &snapshot,
+                ));
             }
         }
         let mut invariants = self.growth.invariants(&expr.span, &ids, &loop_scalars, &self.bound);
@@ -137,6 +148,7 @@ impl Analysis<'_> {
                         roles.push((
                             (name.clone(), path.clone()),
                             elements.states.values().copied().collect::<Vec<_>>(),
+                            node.vector,
                         ));
                     }
                 }
@@ -144,7 +156,7 @@ impl Analysis<'_> {
         }
         let mut candidates = Vec::new();
         let mut charges = Vec::new();
-        for (location, states) in roles {
+        for (location, states, vector) in roles {
             let mut current = contracts::literal(span, 0);
             let mut entry = current.clone();
             for id in states {
@@ -170,7 +182,12 @@ impl Analysis<'_> {
                 current = contracts::add(span, current, bytes);
                 entry = contracts::add(span, entry, snapshot);
             }
-            charges.push(Charge { location, current, entry });
+            let backing = vector.map(|id| {
+                let bytes = self.growth.vectors[id].backing.bytes.clone();
+                let snapshot = self.loop_snapshot(span, &bytes);
+                (bytes, snapshot)
+            });
+            charges.push(Charge { location, current, entry, backing });
         }
         record.charges = charges;
         candidates
@@ -182,15 +199,26 @@ impl Loop {
     fn conservation(&self, transfers: &[Transfer]) -> Vec<Expr> {
         transfers
             .iter()
-            .map(|transfer| {
+            .flat_map(|transfer| {
                 let a = &self.charges[transfer.source];
                 let b = &self.charges[transfer.target];
-                crate::ast_util::mk_ineq(
+                let mut candidates = vec![crate::ast_util::mk_ineq(
                     &self.span,
                     &contracts::add(&self.span, a.current.clone(), b.current.clone()),
                     &contracts::add(&self.span, a.entry.clone(), b.entry.clone()),
                     InequalityOp::Le,
-                )
+                )];
+                if transfer.source == transfer.target {
+                    if let Some((bytes, entry)) = &a.backing {
+                        candidates.push(crate::ast_util::mk_ineq(
+                            &self.span,
+                            bytes,
+                            entry,
+                            InequalityOp::Le,
+                        ));
+                    }
+                }
+                candidates
             })
             .collect()
     }

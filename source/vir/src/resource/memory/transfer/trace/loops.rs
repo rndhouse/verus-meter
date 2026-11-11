@@ -5,11 +5,28 @@
 use super::*;
 use crate::resource::memory::loops::Loop;
 
+mod composition;
+
 pub(super) enum Effect {
     Mutation(VarIdent),
     Read(VarIdent),
-    Append { location: Location, typ: Typ, child: Value, element: u64, grow: bool },
-    Pop { location: Location, typ: Typ, token: Option<VarIdent> },
+    Append {
+        location: Location,
+        typ: Typ,
+        child: Value,
+        element: u64,
+        grow: bool,
+    },
+    Pop {
+        location: Location,
+        typ: Typ,
+        token: Option<VarIdent>,
+    },
+    /// Checked operations restore this role's complete entry forest.
+    Identity {
+        location: Location,
+        typ: Typ,
+    },
 }
 
 /// One iteration's disjoint roles and whole-child transfer edges. Applying this
@@ -26,7 +43,9 @@ struct Iteration {
 impl Effect {
     fn location(&self) -> Option<&Location> {
         match self {
-            Self::Append { location, .. } | Self::Pop { location, .. } => Some(location),
+            Self::Append { location, .. }
+            | Self::Pop { location, .. }
+            | Self::Identity { location, .. } => Some(location),
             _ => None,
         }
     }
@@ -34,7 +53,9 @@ impl Effect {
     fn root(&self) -> &VarIdent {
         match self {
             Self::Mutation(name) | Self::Read(name) => name,
-            Self::Append { location, .. } | Self::Pop { location, .. } => &location.0,
+            Self::Append { location, .. }
+            | Self::Pop { location, .. }
+            | Self::Identity { location, .. } => &location.0,
         }
     }
 }
@@ -134,11 +155,11 @@ impl Trace<'_> {
             .filter(|effect| before.values.contains_key(effect.root()))
             .collect();
         let mut roles = Vec::new();
-        for effect in persistent {
+        for effect in composition::compose(persistent) {
             let (location, typ) = match &effect {
-                Effect::Append { location, typ, .. } | Effect::Pop { location, typ, .. } => {
-                    (location, typ)
-                }
+                Effect::Append { location, typ, .. }
+                | Effect::Pop { location, typ, .. }
+                | Effect::Identity { location, typ } => (location, typ),
                 _ => return None,
             };
             if location.1.iter().any(|slot| matches!(slot, OwnerSlot::Element(_))) {
@@ -209,6 +230,17 @@ impl Trace<'_> {
             )?;
             self.loop_transfers.entry(span.id).or_default().push(transfer);
         }
+        // Restoring an entry forest conserves its local child charges as well
+        // as its physical descriptors. This remains a proved invariant, never
+        // an assumption justified solely by summary normalization.
+        for (effect, _) in roles {
+            if let Effect::Identity { location, .. } = effect {
+                let role = (location.0.clone(), location.1.clone());
+                if let Some(transfer) = record.transfer(&role, &role) {
+                    self.loop_transfers.entry(span.id).or_default().push(transfer);
+                }
+            }
+        }
         self.used.insert((checked::Kind::Loop, span.id));
         self.state = before;
         if let Some(counter) = counter {
@@ -221,6 +253,7 @@ impl Trace<'_> {
             let bytes = property(span, initial.memory.clone(), "bytes");
             let mut node = initial.clone();
             match effect {
+                Effect::Identity { .. } => {}
                 Effect::Pop { .. } => {
                     let final_length = contracts::maximum(
                         span,
@@ -303,6 +336,14 @@ impl Trace<'_> {
                 _ => return None,
             }
             self.set(span, location, node)?;
+            if depth == 0 && matches!(effect, Effect::Identity { .. }) {
+                // An enclosing iteration can compose this completed identity.
+                self.effects.pop();
+                self.effects.push(Effect::Identity {
+                    location: location.clone(),
+                    typ: initial.typ.clone(),
+                });
+            }
             if let Some(region) = regions
                 .iter()
                 .find(|region| region.location.0 == location.0 && region.location.1 == location.1)
@@ -334,6 +375,7 @@ impl Trace<'_> {
             .map(|id| self.regions.get(&id).cloned())
             .unwrap_or_else(|| Some(expr::empty(span, expr::record_type())))?;
         let remaining = match effect {
+            Effect::Identity { .. } => original,
             Effect::Pop { .. } => {
                 let length = contracts::maximum(
                     span,

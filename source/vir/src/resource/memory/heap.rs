@@ -217,7 +217,15 @@ impl Heap {
         (self.protected, self.partitions) = old;
     }
 
-    pub(super) fn permit_loop_partitions(&mut self, outer: &HashSet<VarIdent>) {
+    pub(super) fn permit_loop_partitions(
+        &mut self,
+        outer: &HashSet<VarIdent>,
+        partitions: &HashSet<VarIdent>,
+    ) {
+        // A directly nested loop may continue partitioning roles authorized by
+        // its enclosing loop. Branches and sections clear these permissions
+        // when entering their own protection scope.
+        self.partitions.extend(partitions.iter().cloned());
         self.partitions.extend(self.owners.keys().filter(|name| !outer.contains(*name)).cloned());
     }
 

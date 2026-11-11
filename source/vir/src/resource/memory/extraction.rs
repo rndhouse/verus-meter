@@ -92,6 +92,24 @@ impl Analysis<'_> {
                 } else {
                     None
                 };
+                if let Some(removal) = &pop {
+                    // Observed length is a sound capacity lower bound even for
+                    // incoming storage whose capacity was initially unknown.
+                    // Pop keeps the backing, so restoring removed children can
+                    // reuse those slots without inventing a replacement charge.
+                    let capacity = self.growth.vectors[state].capacity.clone();
+                    let length = super::contracts::add(
+                        &source.span,
+                        removal.index.clone(),
+                        metadata::integer(&source.span, 1),
+                    );
+                    let lower = super::contracts::maximum(&source.span, capacity.clone(), length);
+                    self.growth
+                        .after
+                        .entry(source.span.id)
+                        .or_default()
+                        .push(super::symbolic::assign(&source.span, &capacity, lower));
+                }
                 let tag = pop.as_ref().and_then(|removal| removal.tag.clone());
                 let (name, path) = super::paths::expr(receiver, &typ).unwrap();
                 let elements = self

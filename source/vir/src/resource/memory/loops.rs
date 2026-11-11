@@ -94,6 +94,8 @@ struct Charge {
     current: Expr,
     /// Immutable snapshot of the same sum before entering the loop.
     entry: Expr,
+    /// Collection backing and its entry snapshot for identity frame proofs.
+    backing: Option<(Expr, Expr)>,
 }
 
 impl Loop {
@@ -225,6 +227,7 @@ impl Loop {
 
 /// A whole-child transfer inferred from a fully accepted ownership summary.
 /// It contains role identities only; the proof consumer constructs inequalities.
+/// Equal endpoints denote restoration of one role, including unchanged backing.
 #[derive(Clone)]
 pub(super) struct Transfer {
     /// Index of the source role in the associated checked loop's charge table.

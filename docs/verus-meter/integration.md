@@ -131,6 +131,12 @@ operations remain authoritative for ownership effects.
 
 Collection loop summaries interpret a representative iteration as disjoint persistent roles,
 each with one unconditional append or pop. Temporary payload symbols identify
+whole-child restoration sequences before selecting those roles: ordered matching
+extractions and insertions reduce to an identity, which enclosing loops can
+consume. Identity summaries generate ordinary child-charge and backing frame
+proofs; they do not remove intermediate peak checks. Capacity observations from
+pop are monotonic lower bounds, so unchanged backing does not require equality
+of the modeled capacity across iterations. Temporary payload symbols also identify
 whole-child transfers; uniform construction, prefix retention, and reversed range
 transfer then describe completed forests independently of child layout. Counter
 or payload dependencies outside these rules are unsupported, and temporary symbols
