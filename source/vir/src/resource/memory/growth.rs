@@ -50,6 +50,9 @@ pub(super) struct Growth {
     pub(super) section_owners: std::collections::HashSet<VarIdent>,
     /// Activate proof algebra at each operation, including inside isolated loop queries.
     pub(super) metadata_scopes: std::collections::HashSet<u64>,
+    /// Helper-instantiated forests may need requested range or block views.
+    /// Direct finite forests use ordinary projection laws without extra seeds.
+    pub(super) transferred_views: bool,
     /// Shared entry snapshots let loop frame and sum bounds refer to the same
     /// immutable proof values, including in isolated loop verification queries.
     pub(super) loop_entry: HashMap<u64, HashMap<VarIdent, Expr>>,

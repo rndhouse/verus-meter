@@ -88,7 +88,7 @@ impl Trace<'_> {
                 );
                 let condition = self.pattern(
                     &pattern,
-                    Value::Owner(Node { typ: payload, memory, minima }),
+                    Value::Owner(Node { origin: None, typ: payload, memory, minima }),
                     locals,
                 )?;
                 Some(crate::ast_util::conjoin(

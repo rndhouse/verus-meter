@@ -1,6 +1,6 @@
 # 4. Indexed traversal and updates
 
-Builds on tasks [1](01-compose-iteration-operations.md) through
+Builds on tasks [1](complete/01-compose-iteration-operations.md) through
 [3](03-transform-children.md). Incoming ownership is completed in
 [task 5](05-borrowed-and-incoming-ownership.md).
 

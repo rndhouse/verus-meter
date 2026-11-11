@@ -605,7 +605,7 @@ pub(super) fn check(
         &analysis.transitions,
     )?;
     if let Some(inferred) = &inferred {
-        analysis.apply_loop_transfers(&inferred.loops);
+        analysis.apply_loop_evidence(&inferred.loops, &inferred.growth)?;
     }
     let report = if symbolic_bound.is_some() {
         analysis.storage.finish_conditional()

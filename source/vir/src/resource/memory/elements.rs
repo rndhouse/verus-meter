@@ -578,6 +578,27 @@ fn add(span: &Span, charges: &mut BTreeMap<MemoryKind, Expr>, kind: MemoryKind, 
 }
 
 impl super::growth::Growth {
+    /// An iteration can start after earlier iterations have inserted children.
+    /// Retire first-visit zero shortcuts; exact forests and inductive byte
+    /// invariants describe the charges at every subsequent loop head.
+    pub(super) fn begin_element_iteration(&mut self, ids: &[usize]) {
+        for id in ids {
+            self.elements[*id].extent = None;
+            self.elements[*id].uncharged = false;
+        }
+    }
+
+    pub(super) fn element_nonnegative(&self, span: &Span, ids: &[usize]) -> Vec<Expr> {
+        let mut result = Vec::new();
+        for id in ids {
+            let state = &self.elements[*id];
+            let zero = contracts::literal(span, 0);
+            result.push(mk_ineq(span, &zero, &state.bytes, InequalityOp::Le));
+            result.push(mk_ineq(span, &zero, &state.count, InequalityOp::Le));
+        }
+        result
+    }
+
     pub(super) fn repeat_elements(&mut self, ids: &[usize]) {
         for id in ids {
             self.elements[*id].extent = None;
@@ -606,6 +627,25 @@ impl super::growth::Growth {
         allowed: &HashSet<VarIdent>,
         fallback: &Expr,
     ) -> Vec<Expr> {
+        self.element_invariants_at(span, ids, allowed, fallback, None)
+    }
+
+    pub(super) fn element_sources(&self, ids: &[usize]) -> std::collections::HashMap<usize, Expr> {
+        ids.iter()
+            .filter_map(|id| self.elements[*id].length.clone().map(|source| (*id, source)))
+            .collect()
+    }
+
+    /// Reuse the enclosing iteration's completed charge policy while retaining
+    /// the executable length expression valid at this nested loop's location.
+    pub(super) fn element_invariants_at(
+        &self,
+        span: &Span,
+        ids: &[usize],
+        allowed: &HashSet<VarIdent>,
+        fallback: &Expr,
+        sources: Option<&std::collections::HashMap<usize, Expr>>,
+    ) -> Vec<Expr> {
         let mut result = Vec::new();
         for id in ids {
             let state = &self.elements[*id];
@@ -626,7 +666,11 @@ impl super::growth::Growth {
                 // Prove this invariant at entry and on every back edge rather
                 // than losing the fact when the loop query havocs its counters.
                 zero.clone()
-            } else if let Some(length) = &state.length {
+            } else if let Some(length) = if state.counted {
+                sources.map_or(state.length.as_ref(), |sources| sources.get(id))
+            } else {
+                None
+            } {
                 let length = SpannedTyped::new(&length.span, &int_typ(), length.x.clone());
                 result.push(mk_ineq(span, &state.count, &length, InequalityOp::Le));
                 contracts::add(

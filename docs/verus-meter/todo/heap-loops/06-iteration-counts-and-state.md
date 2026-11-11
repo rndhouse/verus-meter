@@ -1,7 +1,7 @@
 # 6. General iteration counts and carried state
 
 Builds on the ownership transformations in tasks
-[1](01-compose-iteration-operations.md) through
+[1](complete/01-compose-iteration-operations.md) through
 [5](05-borrowed-and-incoming-ownership.md).
 
 ## Goal

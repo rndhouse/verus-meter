@@ -25,7 +25,7 @@ use crate::resource::memory::{
 use std::collections::HashSet;
 use std::sync::Arc;
 
-type Location = (VarIdent, Vec<OwnerSlot>, Vec<Expr>);
+use super::effects::{Effect, Location};
 
 #[derive(Clone, Default)]
 struct State {
@@ -46,18 +46,24 @@ struct Trace<'a> {
     symbols: Vec<Symbol>,
     /// Immutable allocation regions addressed by body lifetime identities.
     regions: BTreeMap<usize, Expr>,
-    appends: bool,
     /// Effects on persistent owners distinguish collection regions from
     /// temporary child construction during a representative loop iteration.
-    effects: Vec<loops::Effect>,
+    effects: Vec<Effect>,
     /// Mutations beneath a branch are not unconditional iteration effects.
     branch_depth: usize,
     /// Temporary payload symbols expose data flow within one iteration. They
     /// must be eliminated by the loop summary, never exported as free symbols.
     loop_tokens: Option<HashSet<VarIdent>>,
+    /// Only persistent roles need range tokens; temporary construction keeps
+    /// its concrete forest so it can compose as fresh output.
+    loop_roots: Option<HashSet<VarIdent>>,
     /// Structural transfers from completed loop graphs. No proof expressions
     /// are constructed here; evidence is published only with a complete template.
     loop_transfers: HashMap<u64, Vec<super::super::loops::Transfer>>,
+    /// Per-role append envelopes, expressed in ordinary immutable inputs.
+    loop_growth: HashMap<u64, Vec<(super::super::paths::LocalPath, Expr)>>,
+    /// Convert immutable symbolic inputs back into body-proof observations.
+    proof_values: HashMap<VarIdent, Expr>,
 }
 
 pub(super) fn summarize(
@@ -78,11 +84,13 @@ pub(super) fn summarize(
         state: State::default(),
         symbols: vec![],
         regions: BTreeMap::new(),
-        appends: false,
         effects: vec![],
         branch_depth: 0,
         loop_tokens: None,
+        loop_roots: None,
         loop_transfers: HashMap::new(),
+        loop_growth: HashMap::new(),
+        proof_values: HashMap::new(),
     };
     for (index, parameter) in function.x.params.iter().enumerate() {
         if parameter.x.mode != Mode::Exec {
@@ -94,9 +102,15 @@ pub(super) fn summarize(
             let memory = trace.input_memory(&parameter.span, index, typ, &memory, &mut vec![])?;
             let mut minima = Minima::new();
             trace.input_minima(&parameter.span, index, typ, &mut vec![], &mut minima)?;
-            Value::Owner(Node { typ: typ.clone(), memory, minima })
+            Value::Owner(Node { origin: Some(index), typ: typ.clone(), memory, minima })
         } else if contracts::scalar(typ) {
-            Value::Scalar(trace.symbol(&parameter.span, Input::Scalar(index), typ.clone()))
+            let symbol = trace.symbol(&parameter.span, Input::Scalar(index), typ.clone());
+            let ExprX::Var(name) = &symbol.x else { unreachable!() };
+            trace.proof_values.insert(
+                name.clone(),
+                SpannedTyped::new(&parameter.span, typ, ExprX::Var(parameter.x.name.clone())),
+            );
+            Value::Scalar(symbol)
         } else {
             Value::Unknown
         };
@@ -121,6 +135,7 @@ pub(super) fn summarize(
             borrowed.insert(index, node.clone());
         }
     }
+    let effects = trace.parameter_effects(function, &result);
     // Unused scalar arguments need no snapshot or additional representability restriction.
     let mut names = HashSet::new();
     let mut collect = |value: &Expr| {
@@ -147,6 +162,11 @@ pub(super) fn summarize(
     for region in trace.regions.values() {
         collect(region);
     }
+    if let Some(effects) = &effects {
+        for (_, effect) in effects {
+            effect.expressions(&mut collect);
+        }
+    }
     // A template may refer only to caller observations. In particular, a
     // representative iteration's counter and extracted-child tokens cannot
     // escape through intermediate lifetime regions or returned descriptors.
@@ -156,10 +176,11 @@ pub(super) fn summarize(
     trace.symbols.retain(|symbol| names.contains(&symbol.name));
     Some(Inferred {
         loops: trace.loop_transfers,
+        growth: trace.loop_growth,
         template: Template {
             regions: trace.regions,
             symbols: trace.symbols,
-            appends: trace.appends,
+            effects,
             borrowed,
             result,
         },
@@ -167,6 +188,55 @@ pub(super) fn summarize(
 }
 
 impl Trace<'_> {
+    /// Export only checked, parameter-relative effects. Captured input forests
+    /// in a payload require a transfer relation, not repeated fresh construction.
+    fn parameter_effects(
+        &self,
+        function: &Function,
+        result: &Value,
+    ) -> Option<Vec<(usize, Effect)>> {
+        let closed = |value: &Expr| {
+            let mut closed = true;
+            let _ = crate::ast_visitor::expr_visitor_check(value, &mut |_, value| {
+                if let ExprX::Var(name) = &value.x {
+                    closed &= self.symbols.iter().any(|symbol| {
+                        &symbol.name == name && matches!(symbol.input, Input::Scalar(_))
+                    });
+                }
+                Ok::<(), VirErr>(())
+            });
+            closed
+        };
+        if let Value::Owner(node) = result {
+            if node.origin.is_none() && !closed(&node.memory) {
+                return None;
+            }
+        }
+        let mut effects = Vec::new();
+        for effect in &self.effects {
+            let Some(index) = function.x.params.iter().position(|parameter| {
+                matches!(&*parameter.x.typ, TypX::MutRef(_)) && &parameter.x.name == effect.root()
+            }) else {
+                continue;
+            };
+            if matches!(effect, Effect::Mutation(_) | Effect::TransferBlock { .. }) {
+                return None;
+            }
+            let mut valid = true;
+            if !matches!(
+                effect,
+                Effect::Append { child: Value::Owner(Node { origin: Some(_), .. }), .. }
+            ) {
+                effect.expressions(&mut |value| valid &= closed(value));
+            }
+            if !valid {
+                return None;
+            }
+            effects.push((index, effect.clone()));
+        }
+        Some(effects)
+    }
+
     /// Fixed ownership is finite even when runtime children have unbounded
     /// depth. Keep the fixed descriptors explicit so composing helpers does
     /// not repeatedly select scalar properties from an opaque whole forest.
@@ -347,17 +417,23 @@ impl Trace<'_> {
         let memory = location.2.iter().fold(root.memory.clone(), |memory, step| {
             expr::subtree(span, memory, Self::path(span, std::slice::from_ref(step)))
         });
-        Some(Node { typ: typ.clone(), memory, minima })
+        Some(Node {
+            origin: if location.1.is_empty() { root.origin } else { None },
+            typ: typ.clone(),
+            memory,
+            minima,
+        })
     }
 
     fn set(&mut self, span: &Span, location: &Location, child: Node) -> Option<()> {
-        self.effects.push(loops::Effect::Mutation(location.0.clone()));
+        self.effects.push(Effect::Mutation(location.0.clone()));
         if location.1.is_empty() {
             self.state.values.insert(location.0.clone(), Value::Owner(child));
         } else {
             let Value::Owner(root) = self.state.values.get_mut(&location.0)? else {
                 return None;
             };
+            root.origin = None;
             let mut parents = Vec::new();
             let mut selected = root.memory.clone();
             for step in &location.2 {
@@ -386,13 +462,14 @@ impl Trace<'_> {
     fn take(&mut self, span: &Span, location: &Location, typ: &Typ) -> Option<Node> {
         let child = self.get(span, location, typ)?;
         if location.1.is_empty() {
-            self.effects.push(loops::Effect::Mutation(location.0.clone()));
+            self.effects.push(Effect::Mutation(location.0.clone()));
             self.state.values.remove(&location.0);
         } else {
             self.set(
                 span,
                 location,
                 Node {
+                    origin: None,
                     typ: typ.clone(),
                     memory: expr::empty(span, expr::record_type()),
                     minima: Minima::new(),
@@ -667,6 +744,7 @@ impl Trace<'_> {
                 let mut minima = yes.minima.clone();
                 join_minima(span, &mut minima, &no.minima);
                 Value::Owner(Node {
+                    origin: None,
                     typ: yes.typ.clone(),
                     memory: choice(span, condition, yes.memory.clone(), no.memory.clone()),
                     minima,
@@ -717,6 +795,6 @@ impl Trace<'_> {
                 }));
             }
         }
-        Some(Value::Owner(Node { typ: value.typ.clone(), memory, minima }))
+        Some(Value::Owner(Node { origin: None, typ: value.typ.clone(), memory, minima }))
     }
 }

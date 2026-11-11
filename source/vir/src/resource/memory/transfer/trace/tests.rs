@@ -22,11 +22,13 @@ fn with_trace(checked: &Checked, test: impl FnOnce(&mut Trace<'_>)) {
         state: State::default(),
         symbols: vec![],
         regions: BTreeMap::new(),
-        appends: false,
         effects: vec![],
         branch_depth: 0,
         loop_tokens: None,
+        loop_roots: None,
         loop_transfers: HashMap::new(),
+        loop_growth: HashMap::new(),
+        proof_values: HashMap::new(),
     });
 }
 
@@ -80,6 +82,7 @@ fn movement_uses_the_checked_dereference_and_cannot_be_invented_or_skipped() {
         )
     };
     let parent = Node {
+        origin: None,
         typ: outer_type,
         memory: expr::add(
             &span,

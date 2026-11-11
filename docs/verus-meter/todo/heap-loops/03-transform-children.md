@@ -1,6 +1,6 @@
 # 3. Transform children during traversal
 
-Builds on [task 1](01-compose-iteration-operations.md) and uses
+Builds on [task 1](complete/01-compose-iteration-operations.md) and uses
 [task 2](02-conditional-ownership-effects.md) for conditional transformations.
 
 ## Goal

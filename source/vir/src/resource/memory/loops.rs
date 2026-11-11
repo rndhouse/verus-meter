@@ -72,6 +72,15 @@ pub(super) struct Loop {
     charges: Vec<Charge>,
     /// Shared source classification; consumers do not rescan the body.
     effects: Effects,
+    /// State identities and source lengths at this loop, independent of later
+    /// moves. An enclosing loop supplies the completed charge policy.
+    element_ids: Vec<usize>,
+    /// Executable lengths at this source location, retained across owner moves.
+    element_sources: HashMap<usize, Expr>,
+    /// Immutable scalars eligible for completed element-charge policies.
+    proof_scalars: HashSet<VarIdent>,
+    /// Inductive element bounds supplied after enclosing policies are complete.
+    element_facts: Vec<Expr>,
 }
 
 /// Fixed ownership roles at a loop boundary; indices remain in each forest.
@@ -96,6 +105,10 @@ struct Charge {
     entry: Expr,
     /// Collection backing and its entry snapshot for identity frame proofs.
     backing: Option<(Expr, Expr)>,
+    /// Executable occupied length and its immutable loop-entry observation.
+    length: (Expr, Expr),
+    /// Current capacity, its entry snapshot, and inline size for append proofs.
+    reservation: Option<(Expr, Expr, u64)>,
 }
 
 impl Loop {
@@ -169,8 +182,34 @@ impl Loop {
                         let changes = !summary.allocations.collections.is_empty()
                             || !summary.allocations.children.is_empty()
                             || !summary.vectors.removals.is_empty();
+                        if let Some(program) =
+                            summary.transfer.as_ref().and_then(|template| template.effects.as_ref())
+                        {
+                            for (index, effect) in program {
+                                if matches!(
+                                    effect,
+                                    super::transfer::effects::Effect::Append { .. }
+                                        | super::transfer::effects::Effect::AppendBlock { .. }
+                                ) {
+                                    if let Some(argument) = args.get(*index) {
+                                        if let Some((name, mut path)) = super::paths::expr(
+                                            argument,
+                                            super::paths::referent(&argument.typ),
+                                        ) {
+                                            if let Some(location) = effect.location() {
+                                                path.extend(location.1.iter().cloned());
+                                                effects.appends.insert((name, path));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         effects.opaque_helpers |= changes
-                            && summary.transfer.as_ref().is_none_or(|template| template.appends);
+                            && summary
+                                .transfer
+                                .as_ref()
+                                .is_none_or(|template| template.effects.is_none());
                     }
                 }
                 Ok(())
@@ -185,6 +224,10 @@ impl Loop {
             effects,
             regions: vec![],
             charges: vec![],
+            element_ids: vec![],
+            element_sources: HashMap::new(),
+            proof_scalars: HashSet::new(),
+            element_facts: vec![],
         })
     }
 

@@ -1,6 +1,6 @@
 # 2. Conditional ownership effects
 
-Depends on [task 1](01-compose-iteration-operations.md).
+Depends on [task 1](complete/01-compose-iteration-operations.md).
 
 ## Goal
 

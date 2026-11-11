@@ -140,13 +140,16 @@ fn counted_iterations_can_build_multiple_independent_collections() {
 fn disjoint_fixed_roles_transfer_nested_children_with_a_symbolic_count() {
     let code = "struct Child { data: Vec<u32>, tag: Box<[u8;8]> }
         struct State { source: Vec<Child>, destination: Vec<Child> }
-        fn transfer(mut state: State, n: usize) -> State
+        fn transfer(mut state: State, n: usize) -> (r: State)
             requires n <= state.source.len(),
                 state.destination.len() + n <= 2,
+            ensures r.destination.len() == state.destination.len() + n,
             resources peak(memory) <= 512 {
+            let ghost initial = state.destination.len();
             let mut i = 0usize;
             while i < n
-                invariant i <= n, state.source.len() >= n - i,
+                invariant i <= n, state.destination.len() == initial + i,
+                    state.source.len() >= n - i,
                     state.destination.len() + n - i <= 2,
                 decreases n - i,
             {
@@ -175,6 +178,18 @@ fn disjoint_fixed_roles_transfer_nested_children_with_a_symbolic_count() {
             "memory budget exceeded",
         );
     }
+    // Selecting a child after a fixed-field transfer must retain its nested
+    // reservations and release both collection buffers independently.
+    let extracted = code
+        .replace("COUNT", "2")
+        .replace("let state = transfer(state, 2);", "let mut state = transfer(state, 2);")
+        .replace("drop(state.source); let scratch", "drop(state.source); let child = state.destination.pop().unwrap(); drop(state.destination); let scratch");
+    verifies("fixed_role_extraction", &extracted.replace("BOUND", "1128"));
+    rejects(
+        "fixed_role_extraction_short",
+        &extracted.replace("BOUND", "1127"),
+        "memory budget exceeded",
+    );
 }
 
 #[test]
@@ -300,5 +315,282 @@ fn ordered_round_trips_preserve_complete_children_and_input_lifetimes() {
             .replace("COUNT", "2")
             .replace("BOUND", "100000"),
         "no precise helper summary can be inferred",
+    );
+}
+
+#[test]
+fn ordered_append_blocks_compose_direct_helpers_and_nested_loops() {
+    let pair = "let a = Vec::<u32>::with_capacity(4); v.push(a);
+                let b = Vec::<u32>::with_capacity(8); v.push(b);";
+    let declarations = format!(
+        "fn append_pair(v: &mut Vec<Vec<u32>>)
+            requires old(v).len() <= 6,
+            ensures final(v).len() == old(v).len() + 2,
+            resources peak(memory) <= 1024 {{ {pair} }}"
+    );
+    let nested = format!(
+        "let mut j = 0usize;
+        while j < 2
+            invariant j <= 2, v.len() == 4*i + 2*j, i < n, n <= 2,
+            decreases 2-j,
+        {{ {pair} j += 1; }}"
+    );
+    for (name, body) in [
+        ("direct_block", format!("{pair} {pair}")),
+        ("helper_block", "append_pair(&mut v); append_pair(&mut v);".into()),
+        ("nested_block", nested),
+    ] {
+        let code = format!(
+            "{declarations}
+            fn build(n: usize) -> (r: Vec<Vec<u32>>)
+                requires n <= 2, ensures r.len() == 4*n,
+                resources peak(memory) <= 2048 {{
+                let mut v = Vec::<Vec<u32>>::with_capacity(8);
+                let mut i = 0usize;
+                while i < n
+                    invariant i <= n, n <= 2, v.len() == 4*i,
+                    decreases n-i,
+                {{ {body} i += 1; }}
+                v
+            }}
+            fn f() resources peak(memory) <= BOUND {{
+                let mut v = build(2); let last = v.pop().unwrap(); drop(v);
+                let scratch = [0u8;4096];
+            }}"
+        );
+        verifies(name, &code.replace("BOUND", "4152"));
+        rejects(&format!("{name}_short"), &code.replace("BOUND", "4151"), "memory budget exceeded");
+        verifies(
+            &format!("{name}_zero"),
+            &code
+                .replace(
+                    "let mut v = build(2); let last = v.pop().unwrap(); drop(v);",
+                    "let v = build(0); drop(v);",
+                )
+                .replace("BOUND", "4096"),
+        );
+    }
+}
+
+#[test]
+fn removal_blocks_compose_and_preserve_the_unconsumed_prefix() {
+    let code = "fn trim_pair(v: &mut Vec<Vec<u32>>)
+        requires old(v).len() >= 2,
+        ensures final(v).len() == old(v).len() - 2,
+        resources peak(memory) <= 64 { v.pop(); v.pop(); }
+        fn build(n: usize) -> (r: Vec<Vec<u32>>)
+            requires n <= 2, ensures r.len() == 4-2*n,
+            resources peak(memory) <= 2048 {
+            let mut v = Vec::<Vec<u32>>::with_capacity(4);
+            let a = Vec::<u32>::with_capacity(4); v.push(a);
+            let b = Vec::<u32>::with_capacity(8); v.push(b);
+            let c = Vec::<u32>::with_capacity(12); v.push(c);
+            let d = Vec::<u32>::with_capacity(16); v.push(d);
+            let mut i = 0usize;
+            while i < n
+                invariant i <= n, n <= 2, v.len() == 4-2*i,
+                decreases n-i,
+            { BODY i += 1; }
+            v
+        }
+        fn f() resources peak(memory) <= BOUND {
+            let mut v = build(1); let last = v.pop().unwrap(); drop(v);
+            let scratch = [0u8;4096];
+        }";
+    for (name, body) in [
+        ("direct_removal_block", "v.pop(); v.pop();"),
+        ("helper_removal_block", "trim_pair(&mut v);"),
+        (
+            "nested_removal_block",
+            "let mut j = 0usize;
+            while j < 2
+                invariant j <= 2, i < n, n <= 2, v.len() == 4-2*i-j,
+                decreases 2-j,
+            { v.pop(); j += 1; }",
+        ),
+    ] {
+        let code = code.replace("BODY", body);
+        verifies(name, &code.replace("BOUND", "4152"));
+        rejects(&format!("{name}_short"), &code.replace("BOUND", "4151"), "memory budget exceeded");
+        verifies(
+            &format!("{name}_empty"),
+            &code
+                .replace(
+                    "let mut v = build(1); let last = v.pop().unwrap(); drop(v);",
+                    "let v = build(2); drop(v);",
+                )
+                .replace("BOUND", "4096"),
+        );
+    }
+}
+
+#[test]
+fn removal_blocks_partition_original_input_lifetimes() {
+    let code = "fn trim(mut v: Vec<Vec<u32>>, n: usize) -> (r: Vec<Vec<u32>>)
+        requires v.len() == 4, n <= 2,
+        ensures r.len() == 4-2*n,
+        resources peak(memory) <= 128 {
+            let mut i = 0usize;
+            while i < n
+                invariant i <= n, n <= 2, v.len() + 2*i == 4,
+                decreases n-i,
+            { v.pop(); v.pop(); i += 1; }
+            v
+        }
+        fn f() resources peak(memory) <= BOUND {
+            let mut v = Vec::<Vec<u32>>::with_capacity(4);
+            let a = Vec::<u32>::with_capacity(4); v.push(a);
+            let b = Vec::<u32>::with_capacity(8); v.push(b);
+            let c = Vec::<u32>::with_capacity(12); v.push(c);
+            let d = Vec::<u32>::with_capacity(16); v.push(d);
+            let v = trim(v, COUNT); let scratch = [0u8;4096];
+        }";
+    for (count, bound) in [(0, 4376), (1, 4264), (2, 4216)] {
+        let code = code.replace("COUNT", &count.to_string());
+        verifies("input_removal_block", &code.replace("BOUND", &bound.to_string()));
+        rejects(
+            "input_removal_block_short",
+            &code.replace("BOUND", &(bound - 1).to_string()),
+            "memory budget exceeded",
+        );
+    }
+}
+
+#[test]
+fn transfer_ranges_compose_and_keep_child_order_across_helpers_and_loops() {
+    let operation = "let child = source.pop().unwrap(); destination.push(child);";
+    let nested = format!(
+        "let mut j = 0usize;
+        while j < 2
+            invariant j <= 2, i < n, n <= 2,
+                source.len() + destination.len() == 4,
+                destination.len() == 2*i+j,
+            decreases 2-j,
+        {{ {operation} j += 1; }}"
+    );
+    for (name, body) in [
+        ("direct_range", format!("{operation} {operation}")),
+        ("nested_range", nested),
+        (
+            "helper_range",
+            "let a = source.pop().unwrap(); insert(&mut destination, a);
+            let b = source.pop().unwrap(); insert(&mut destination, b);"
+                .into(),
+        ),
+        (
+            "forwarded_range",
+            "let a = source.pop().unwrap(); let a = forward(a); destination.push(a);
+            let b = source.pop().unwrap(); let b = forward(b); destination.push(b);"
+                .into(),
+        ),
+    ] {
+        let code = format!(
+            "fn insert(v: &mut Vec<Vec<u32>>, child: Vec<u32>)
+            requires old(v).len() < 4,
+            ensures final(v).len() == old(v).len()+1,
+            resources peak(memory) <= 256 {{ v.push(child); }}
+            fn forward(v: Vec<u32>) -> Vec<u32> resources peak(memory) <= 24 {{ v }}
+            fn build(n: usize) -> (r: Vec<Vec<u32>>)
+                requires n <= 2, ensures r.len() == 2*n,
+                resources peak(memory) <= 2048 {{
+                let mut source = Vec::<Vec<u32>>::with_capacity(4);
+                let a = Vec::<u32>::with_capacity(4); source.push(a);
+                let b = Vec::<u32>::with_capacity(8); source.push(b);
+                let c = Vec::<u32>::with_capacity(12); source.push(c);
+                let d = Vec::<u32>::with_capacity(16); source.push(d);
+                let mut destination = Vec::<Vec<u32>>::with_capacity(4);
+                let mut i = 0usize;
+                while i < n
+                    invariant i <= n, n <= 2,
+                        source.len() + destination.len() == 4,
+                        destination.len() == 2*i,
+                    decreases n-i,
+                {{ {body} i += 1; }}
+                destination
+            }}
+            fn f() resources peak(memory) <= BOUND {{
+                let mut v = build(2); let last = v.pop().unwrap(); drop(v);
+                let scratch = [0u8;4096];
+            }}"
+        );
+        verifies(name, &code.replace("BOUND", "4136"));
+        rejects(&format!("{name}_short"), &code.replace("BOUND", "4135"), "memory budget exceeded");
+    }
+}
+
+#[test]
+fn unsupported_block_dependencies_do_not_become_repeated_fresh_children() {
+    for (name, body) in [
+        (
+            "partial_range_routing",
+            "source.pop(); let child = source.pop().unwrap(); destination.push(child);",
+        ),
+        (
+            "reordered_range",
+            "let first = source.pop().unwrap(); let second = source.pop().unwrap(); destination.push(second); destination.push(first);",
+        ),
+        (
+            "changing_nested_count",
+            "let mut j = 0usize;
+            while j < source.len() invariant j <= source.len(), decreases source.len()-j,
+            { let child = Vec::<u32>::new(); destination.push(child); j += 1; }
+            source.pop();",
+        ),
+    ] {
+        rejects(
+            name,
+            &format!(
+                "fn f(mut source: Vec<Vec<u32>>) -> Vec<Vec<u32>>
+            requires source.len() == 4, resources peak(memory) <= 100000 {{
+            let mut destination = Vec::<Vec<u32>>::with_capacity(8);
+            let mut i = 0usize;
+            while i < 2 invariant i <= 2, decreases 2-i,
+            {{ {body} i += 1; }}
+            destination
+        }}"
+            ),
+            "no precise helper summary can be inferred",
+        );
+    }
+    rejects(
+        "changed_helper_parameter",
+        "fn grow(mut v: Vec<u32>) -> Vec<u32>
+        requires v.len() == 0, resources peak(memory) <= 256 { v.push(1); v }
+        fn f(mut source: Vec<Vec<u32>>) -> Vec<Vec<u32>>
+            requires source.len() == 2,
+                forall|i: int| 0 <= i < source.len() ==> source[i].len() == 0,
+            resources peak(memory) <= 100000 {
+            let mut destination = Vec::<Vec<u32>>::with_capacity(2);
+            let mut i = 0usize;
+            while i < 2 invariant i <= 2, source.len() == 2-i,
+                forall|j: int| 0 <= j < source.len() ==> source[j].len() == 0,
+                decreases 2-i,
+            {
+                let child = source.pop().unwrap(); let child = grow(child);
+                destination.push(child); i += 1;
+            }
+            destination
+        }",
+        "no precise helper summary can be inferred",
+    );
+}
+
+#[test]
+fn later_iterations_do_not_reuse_first_visit_zero_charge_shortcuts() {
+    rejects(
+        "later_extracted_charge",
+        "fn f() resources peak(memory) <= 300 {
+        let mut values = Vec::<Vec<u8>>::with_capacity(1);
+        let mut i = 0usize;
+        while i < 2
+            invariant i <= 2, values.len() == if i == 0 { 0usize } else { 1usize },
+            decreases 2-i,
+        {
+            let old = values.pop();
+            let new = Vec::<u8>::with_capacity(128); values.push(new);
+            drop(old); i += 1;
+        }
+    }",
+        "memory budget exceeded",
     );
 }

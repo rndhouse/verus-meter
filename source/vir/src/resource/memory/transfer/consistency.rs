@@ -117,13 +117,14 @@ mod tests {
         let mut template = Template {
             regions: Default::default(),
             symbols: vec![],
-            appends: false,
+            effects: None,
             borrowed: Default::default(),
             result: Value::Unit,
         };
         let affected = [0].into();
         assert!(check_interface(&span, false, &affected, &template).is_err());
         let node = Node {
+            origin: None,
             typ: crate::ast_util::unit_typ(),
             memory: expr::empty(&span, expr::record_type()),
             minima: Default::default(),

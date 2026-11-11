@@ -300,6 +300,13 @@ impl Analysis<'_> {
     }
 
     pub(super) fn metadata_partition(&mut self, span: &Span, records: Expr, path: Expr) {
+        if self.growth.transferred_views {
+            self.growth.before.entry(span.id).or_default().push(expr::lemma(
+                span,
+                "request_path",
+                vec![records.clone(), path.clone()],
+            ));
+        }
         self.growth.before.entry(span.id).or_default().push(expr::lemma(
             span,
             "inspect",

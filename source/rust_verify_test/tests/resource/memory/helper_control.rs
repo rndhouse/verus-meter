@@ -2,8 +2,8 @@
 use super::support::{rejects, verifies};
 
 #[test]
-fn loop_carried_helper_appends_cannot_discard_precision() {
-    rejects(
+fn loop_carried_helper_appends_preserve_precision() {
+    verifies(
         "helper_append_loop",
         "fn append(v: &mut Vec<Vec<u32>>)
         requires old(v).len() <= 1,
@@ -18,7 +18,6 @@ fn loop_carried_helper_appends_cannot_discard_precision() {
                 append(&mut v); i += 1;
             }
         }",
-        "loop-carried helper effects without precise allocation metadata",
     );
 }
 

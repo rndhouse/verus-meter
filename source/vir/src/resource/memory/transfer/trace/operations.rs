@@ -35,6 +35,7 @@ impl Trace<'_> {
                     ),
                 );
                 Some(Value::Owner(Node {
+                    origin: None,
                     typ: value.typ.clone(),
                     memory,
                     minima: [(vec![], Floor { capacity, element })].into(),
@@ -70,17 +71,18 @@ impl Trace<'_> {
                         )
                     }));
                 }
-                Some(Value::Owner(Node { typ: value.typ.clone(), memory, minima }))
+                Some(Value::Owner(Node { origin: None, typ: value.typ.clone(), memory, minima }))
             }
             Operation::Length { receiver } => {
                 let location = self.checked_location(&receiver)?;
                 let node = self.get(span, &location, &receiver.typ)?;
-                self.effects.push(loops::Effect::Read(location.0));
+                self.effects.push(Effect::Read(location.0));
                 Some(Value::Scalar(property(span, node.memory, "length")))
             }
             Operation::Push { receiver, child, element, grow, input } => {
                 let location = self.checked_location(&receiver)?;
                 let mut node = self.get(span, &location, &receiver.typ)?;
+                node.origin = None;
                 let child = self.value(&child)?;
                 let appended = child.clone();
                 let length = property(span, node.memory.clone(), "length");
@@ -105,7 +107,6 @@ impl Trace<'_> {
                     (capacity, bytes)
                 };
                 if let Value::Owner(child) = child {
-                    self.appends = true;
                     let path = expr::push(span, expr::path(span, []), length.clone());
                     node.memory =
                         expr::add(span, node.memory, expr::prefix(span, child.memory, path));
@@ -130,7 +131,7 @@ impl Trace<'_> {
                 self.set(span, &location, node)?;
                 if self.branch_depth == 0 {
                     self.effects.pop();
-                    self.effects.push(loops::Effect::Append {
+                    self.effects.push(Effect::Append {
                         location,
                         typ,
                         child: appended,
@@ -144,6 +145,7 @@ impl Trace<'_> {
                 let optional = index.is_none();
                 let location = self.checked_location(&receiver)?;
                 let mut node = self.get(span, &location, &receiver.typ)?;
+                node.origin = None;
                 let length = property(span, node.memory.clone(), "length");
                 let removal = if optional {
                     Removal::pop(span, length)
@@ -178,6 +180,7 @@ impl Trace<'_> {
                 let token = if optional
                     && self.branch_depth == 0
                     && self.loop_tokens.is_some()
+                    && self.loop_roots.as_ref().is_some_and(|roots| roots.contains(&location.0))
                     && self.layouts.owner(&value.typ)
                 {
                     let name = VarIdent(
@@ -191,7 +194,7 @@ impl Trace<'_> {
                 };
                 if optional && self.branch_depth == 0 {
                     self.effects.pop();
-                    self.effects.push(loops::Effect::Pop { location, typ, token: token.clone() });
+                    self.effects.push(Effect::Pop { location, typ, token: token.clone() });
                 }
                 if !self.layouts.owner(&value.typ) {
                     return Some(Value::Unknown);
@@ -230,7 +233,7 @@ impl Trace<'_> {
                 } else {
                     selected
                 };
-                Some(Value::Owner(Node { typ: value.typ.clone(), memory, minima }))
+                Some(Value::Owner(Node { origin: None, typ: value.typ.clone(), memory, minima }))
             }
             Operation::Unwrap { source } => {
                 let Value::Owner(node) = self.value(&source)? else {
@@ -245,6 +248,7 @@ impl Trace<'_> {
                     })
                     .collect();
                 Some(Value::Owner(Node {
+                    origin: None,
                     typ: value.typ.clone(),
                     memory: expr::subtree(
                         span,
@@ -270,6 +274,7 @@ impl Trace<'_> {
                 let Value::Owner(mut node) = self.value(&source)? else {
                     return None;
                 };
+                node.origin = None;
                 let length = property(span, node.memory.clone(), "length");
                 node.memory = with_root(
                     span,
@@ -309,7 +314,6 @@ impl Trace<'_> {
     ) -> Option<Value> {
         let function = self.functions.get(target)?;
         let template = self.summaries.get(target)?.transfer.as_ref()?;
-        self.appends |= template.appends;
         let mut values = HashMap::new();
         let mut locations = HashMap::new();
         for (index, (arg, parameter)) in args.iter().zip(function.x.params.iter()).enumerate() {
@@ -359,8 +363,24 @@ impl Trace<'_> {
             };
             replacements.insert(symbol.name.clone(), replacement);
         }
+        let first_effect = self.effects.len();
         for (index, node) in &template.borrowed {
             self.set(&value.span, &locations[index], instantiate_node(node, &replacements))?;
+        }
+        if self.branch_depth == 0 {
+            if let Some(effects) = &template.effects {
+                self.effects.truncate(first_effect);
+                for (index, effect) in effects {
+                    self.effects.push(effect.instantiate(
+                        locations.get(index)?,
+                        &replacements,
+                        &values,
+                    ));
+                }
+            }
+        }
+        if let Value::Owner(Node { origin: Some(index), .. }) = &template.result {
+            return values.get(index).cloned();
         }
         Some(instantiate_value(&template.result, &replacements))
     }

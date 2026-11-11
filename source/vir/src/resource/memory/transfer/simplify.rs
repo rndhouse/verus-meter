@@ -21,7 +21,7 @@ fn empty(value: &Expr) -> bool {
     call(value, "empty").is_some()
 }
 
-fn path(value: &Expr) -> Option<Vec<Expr>> {
+pub(super) fn path(value: &Expr) -> Option<Vec<Expr>> {
     if empty(value) {
         return Some(vec![]);
     }
@@ -40,6 +40,8 @@ fn rootless(value: &Expr) -> bool {
         || call(value, "runtime").is_some()
         || call(value, "descendants").is_some()
         || call(value, "repeat").is_some()
+        || call(value, "tile_children").is_some()
+        || call(value, "shift_children").is_some_and(|args| rootless(&args[0]))
         || call(value, "take_children").is_some()
         || call(value, "reverse_children").is_some()
         || call(value, "prefix")
@@ -81,6 +83,34 @@ fn node(value: &Expr) -> Expr {
                 _ => return value.clone(),
             };
             return SpannedTyped::new(span, &value.typ, args[index].x.clone());
+        }
+    }
+    if let Some(args) = call(value, "cost") {
+        let memory = &args[0];
+        let kind = &args[1];
+        let cost = |memory: Expr| expr::cost(span, memory, kind.clone());
+        if empty(memory) {
+            return expr::integer(span, 0);
+        }
+        if let Some(parts) = call(memory, "add") {
+            return simplify(&contracts::add(span, cost(parts[0].clone()), cost(parts[1].clone())));
+        }
+        if let Some(parts) = call(memory, "prefix").or_else(|| call(memory, "shift_children")) {
+            return simplify(&cost(parts[0].clone()));
+        }
+        if let Some(parts) = call(memory, "repeat").or_else(|| call(memory, "tile_children")) {
+            return simplify(&contracts::multiply(span, parts[2].clone(), cost(parts[0].clone())));
+        }
+        if let Some(parts) = call(memory, "push") {
+            if let Some(record) = call(&parts[1], "allocated") {
+                let amount = super::choice(
+                    span,
+                    crate::ast_util::mk_eq(span, &record[1], kind),
+                    record[2].clone(),
+                    expr::integer(span, 0),
+                );
+                return simplify(&contracts::add(span, cost(parts[0].clone()), amount));
+            }
         }
     }
     if let Some(args) = call(value, "lookup") {
@@ -186,6 +216,107 @@ fn node(value: &Expr) -> Expr {
             }
         }
     }
+    if let Some(args) = call(value, "shift_children") {
+        let memory = &args[0];
+        let base = &args[1];
+        if empty(memory) || contracts::constant(base) == Some(0) {
+            return memory.clone();
+        }
+        if let Some(parts) = call(memory, "add") {
+            return simplify(&expr::add(
+                span,
+                expr::operation(
+                    span,
+                    "shift_children",
+                    vec![parts[0].clone(), base.clone()],
+                    expr::memory_type(),
+                ),
+                expr::operation(
+                    span,
+                    "shift_children",
+                    vec![parts[1].clone(), base.clone()],
+                    expr::memory_type(),
+                ),
+            ));
+        }
+        if let Some(parts) = call(memory, "prefix") {
+            if let Some(mut slots) = path(&parts[1]) {
+                if let Some(first) = slots.first_mut() {
+                    if contracts::constant(first).is_some() {
+                        *first = contracts::add(span, first.clone(), base.clone());
+                        return simplify(&expr::prefix(
+                            span,
+                            parts[0].clone(),
+                            make_path(span, &slots),
+                        ));
+                    }
+                }
+            }
+        }
+        if let Some(parts) = call(memory, "tile_children") {
+            return simplify(&expr::operation(
+                span,
+                "tile_children",
+                vec![
+                    parts[0].clone(),
+                    parts[1].clone(),
+                    parts[2].clone(),
+                    contracts::add(span, parts[3].clone(), base.clone()),
+                ],
+                expr::memory_type(),
+            ));
+        }
+    }
+    if let Some(args) = call(value, "tile_children") {
+        if contracts::constant(&args[1]) == Some(1) {
+            if let Some(parts) = call(&args[0], "prefix") {
+                if path(&parts[1])
+                    .is_some_and(|path| path.len() == 1 && contracts::constant(&path[0]) == Some(0))
+                {
+                    return simplify(&expr::operation(
+                        span,
+                        "repeat",
+                        vec![parts[0].clone(), args[3].clone(), args[2].clone()],
+                        expr::memory_type(),
+                    ));
+                }
+            }
+        }
+        if let Some(parts) = call(&args[0], "tile_children") {
+            if contracts::constant(&parts[3]) == Some(0) {
+                if let (Some(inner), Some(count), Some(width)) = (
+                    contracts::constant(&parts[1]),
+                    contracts::constant(&parts[2]),
+                    contracts::constant(&args[1]),
+                ) {
+                    if inner.checked_mul(count) == Some(width) {
+                        return simplify(&expr::operation(
+                            span,
+                            "tile_children",
+                            vec![
+                                parts[0].clone(),
+                                parts[1].clone(),
+                                contracts::multiply(span, parts[2].clone(), args[2].clone()),
+                                args[3].clone(),
+                            ],
+                            expr::memory_type(),
+                        ));
+                    }
+                }
+            }
+        }
+        if empty(&args[0]) || contracts::constant(&args[2]) == Some(0) {
+            return expr::empty(span, expr::record_type());
+        }
+        if contracts::constant(&args[2]) == Some(1) {
+            return simplify(&expr::operation(
+                span,
+                "shift_children",
+                vec![args[0].clone(), args[3].clone()],
+                expr::memory_type(),
+            ));
+        }
+    }
     if let Some(args) = call(value, "take_children") {
         let memory = &args[0];
         let length = &args[1];
@@ -273,6 +404,53 @@ fn node(value: &Expr) -> Expr {
                 expr::subtree(span, memory, selected.clone())
             }
         };
+        if !cutting {
+            if let Some(parts) = call(memory, "shift_children") {
+                if contracts::constant(&selected_path[0]).is_some() {
+                    let mut relative = selected_path.clone();
+                    relative[0] = contracts::subtract(span, relative[0].clone(), parts[1].clone());
+                    return simplify(&super::choice(
+                        span,
+                        crate::ast_util::mk_ineq(
+                            span,
+                            &parts[1],
+                            &selected_path[0],
+                            InequalityOp::Le,
+                        ),
+                        expr::subtree(span, parts[0].clone(), make_path(span, &relative)),
+                        expr::empty(span, expr::record_type()),
+                    ));
+                }
+            }
+            // Ordered blocks are built with precisely their declared width.
+            // Select one block arithmetically rather than expanding its count.
+            if let Some(parts) = call(memory, "tile_children") {
+                if let (Some(width), Some(start), Some(index)) = (
+                    contracts::constant(&parts[1]),
+                    contracts::constant(&parts[3]),
+                    contracts::constant(&selected_path[0]),
+                ) {
+                    if width > 0 && index >= start {
+                        let iteration = (index - start) / width;
+                        let mut relative = selected_path.clone();
+                        relative[0] = contracts::literal(span, (index - start) % width);
+                        return simplify(&super::choice(
+                            span,
+                            crate::ast_util::mk_ineq(
+                                span,
+                                &contracts::literal(span, iteration),
+                                &parts[2],
+                                InequalityOp::Lt,
+                            ),
+                            expr::subtree(span, parts[0].clone(), make_path(span, &relative)),
+                            expr::empty(span, expr::record_type()),
+                        ));
+                    } else if index < start {
+                        return expr::empty(span, expr::record_type());
+                    }
+                }
+            }
+        }
         if !cutting && selected_path.len() == 1 {
             let index = &selected_path[0];
             if let Some(parts) = call(memory, "repeat") {

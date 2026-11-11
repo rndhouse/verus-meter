@@ -1,6 +1,6 @@
 # 5. Borrowed collections and incoming ownership
 
-Builds on tasks [1](01-compose-iteration-operations.md) through
+Builds on tasks [1](complete/01-compose-iteration-operations.md) through
 [4](04-indexed-traversal.md).
 
 ## Goal

@@ -7,28 +7,6 @@ use crate::resource::memory::loops::Loop;
 
 mod composition;
 
-pub(super) enum Effect {
-    Mutation(VarIdent),
-    Read(VarIdent),
-    Append {
-        location: Location,
-        typ: Typ,
-        child: Value,
-        element: u64,
-        grow: bool,
-    },
-    Pop {
-        location: Location,
-        typ: Typ,
-        token: Option<VarIdent>,
-    },
-    /// Checked operations restore this role's complete entry forest.
-    Identity {
-        location: Location,
-        typ: Typ,
-    },
-}
-
 /// One iteration's disjoint roles and whole-child transfer edges. Applying this
 /// graph to physical forests or original-input regions uses the same trip count.
 struct Iteration {
@@ -38,26 +16,6 @@ struct Iteration {
     transfers: HashMap<usize, usize>,
     /// Nonnegative number of completed iterations.
     count: Expr,
-}
-
-impl Effect {
-    fn location(&self) -> Option<&Location> {
-        match self {
-            Self::Append { location, .. }
-            | Self::Pop { location, .. }
-            | Self::Identity { location, .. } => Some(location),
-            _ => None,
-        }
-    }
-
-    fn root(&self) -> &VarIdent {
-        match self {
-            Self::Mutation(name) | Self::Read(name) => name,
-            Self::Append { location, .. }
-            | Self::Pop { location, .. }
-            | Self::Identity { location, .. } => &location.0,
-        }
-    }
 }
 
 fn independent(value: &Expr, name: &VarIdent) -> bool {
@@ -76,7 +34,9 @@ impl Trace<'_> {
         let used = self.used.clone();
         let regions = self.regions.clone();
         let tokens = self.loop_tokens.clone();
+        let roots = self.loop_roots.clone();
         let loop_transfers = self.loop_transfers.clone();
+        let loop_growth = self.loop_growth.clone();
         let effects = self.effects.len();
         let depth = self.branch_depth;
         if let Some(value) = self.collection_loop(&record) {
@@ -85,7 +45,9 @@ impl Trace<'_> {
         self.state = before;
         self.regions = regions;
         self.loop_tokens = tokens;
+        self.loop_roots = roots;
         self.loop_transfers = loop_transfers;
+        self.loop_growth = loop_growth;
         self.used = used;
         self.effects.truncate(effects);
         self.branch_depth = depth;
@@ -146,8 +108,10 @@ impl Trace<'_> {
         let depth = self.branch_depth;
         self.branch_depth = 0;
         let outer_tokens = self.loop_tokens.replace(HashSet::new());
+        let outer_roots = self.loop_roots.replace(before.values.keys().cloned().collect());
         self.value(&record.body)?;
         let tokens = std::mem::replace(&mut self.loop_tokens, outer_tokens).unwrap();
+        self.loop_roots = outer_roots;
         self.branch_depth = depth;
         let effects = self.effects.split_off(effect_start);
         let persistent: Vec<_> = effects
@@ -155,10 +119,12 @@ impl Trace<'_> {
             .filter(|effect| before.values.contains_key(effect.root()))
             .collect();
         let mut roles = Vec::new();
-        for effect in composition::compose(persistent) {
+        let composed = composition::compose(persistent);
+        for effect in composition::blocks(span, composed, &tokens, &binder, self.layouts)? {
             let (location, typ) = match &effect {
-                Effect::Append { location, typ, .. }
-                | Effect::Pop { location, typ, .. }
+                Effect::TransferBlock { location, typ, .. }
+                | Effect::AppendBlock { location, typ, .. }
+                | Effect::PopBlock { location, typ, .. }
                 | Effect::Identity { location, typ } => (location, typ),
                 _ => return None,
             };
@@ -209,13 +175,13 @@ impl Trace<'_> {
             };
             let tested = self.checked_location(&receiver)?;
             if !roles.iter().any(|(effect, _)| {
-                matches!(effect, Effect::Pop { location, .. }
-                if location.0 == tested.0 && location.1 == tested.1)
+                matches!(effect, Effect::PopBlock { location, amount, .. }
+                    if location.0 == tested.0 && location.1 == tested.1 && contracts::constant(amount) == Some(1))
             }) {
                 return None;
             }
         }
-        let transfers = transfer_edges(&roles, &tokens, &binder)?;
+        let transfers = transfer_edges(&roles)?;
         let iteration = Iteration { roles, transfers, count };
         let Iteration { roles, transfers, count } = &iteration;
         let regions = &record.regions;
@@ -241,24 +207,64 @@ impl Trace<'_> {
                 }
             }
         }
+        for (effect, _) in roles {
+            if let Effect::AppendBlock { location, memory, .. } = effect {
+                let mut valid = true;
+                let _ = crate::ast_visitor::expr_visitor_check(memory, &mut |_, value| {
+                    if let ExprX::Var(name) = &value.x {
+                        valid &= self.proof_values.contains_key(name);
+                    }
+                    Ok::<(), VirErr>(())
+                });
+                if !valid {
+                    return None;
+                }
+                let amount = simplify::simplify(&substitute(
+                    &expr::cost(span, memory.clone(), expr::integer(span, 0)),
+                    &self.proof_values,
+                ));
+                self.loop_growth
+                    .entry(span.id)
+                    .or_default()
+                    .push(((location.0.clone(), location.1.clone()), amount));
+            }
+        }
         self.used.insert((checked::Kind::Loop, span.id));
         self.state = before;
         if let Some(counter) = counter {
             self.state.values.insert(counter, Value::Scalar(contracts::maximum(span, start, end)));
         }
+        let flows: HashMap<_, _> = transfers
+            .values()
+            .map(|source| {
+                (
+                    *source,
+                    VarIdent(
+                        Arc::new("$memory_iteration_range".into()),
+                        VarIdentDisambiguate::VirTemp(
+                            crate::resource::memory::accounting::Accounting::fresh_allocation(),
+                        ),
+                    ),
+                )
+            })
+            .collect();
         for (index, (effect, initial)) in roles.iter().enumerate() {
             let location = effect.location()?;
             let length = property(span, initial.memory.clone(), "length");
             let capacity = property(span, initial.memory.clone(), "capacity");
             let bytes = property(span, initial.memory.clone(), "bytes");
             let mut node = initial.clone();
+            if !matches!(effect, Effect::Identity { .. }) {
+                node.origin = None;
+            }
             match effect {
                 Effect::Identity { .. } => {}
-                Effect::Pop { .. } => {
+                Effect::PopBlock { amount, .. } => {
+                    let removed = contracts::multiply(span, count.clone(), amount.clone());
                     let final_length = contracts::maximum(
                         span,
                         expr::integer(span, 0),
-                        contracts::subtract(span, length, count.clone()),
+                        contracts::subtract(span, length, removed),
                     );
                     node.memory = with_root(
                         span,
@@ -269,80 +275,137 @@ impl Trace<'_> {
                         self.layouts.owning_elements(&node.typ),
                     );
                 }
-                Effect::Append { child, element, grow, .. } => {
-                    let added = if let Some(source) = transfers.get(&index) {
-                        let source = &roles[*source].1;
-                        reverse_range(
-                            span,
-                            source.memory.clone(),
-                            property(span, source.memory.clone(), "length"),
-                            count.clone(),
-                            length.clone(),
-                        )
-                    } else if let Value::Owner(child) = child {
-                        expr::operation(
-                            span,
-                            "repeat",
-                            vec![child.memory.clone(), length.clone(), count.clone()],
-                            expr::memory_type(),
-                        )
-                    } else if !self.layouts.owning_elements(&node.typ) {
-                        expr::empty(span, expr::record_type())
-                    } else {
-                        return None;
-                    };
+                Effect::AppendBlock { memory, length: width, minima, element, grow, .. } => {
+                    let added = composition::tile(
+                        span,
+                        memory.clone(),
+                        width.clone(),
+                        count.clone(),
+                        length.clone(),
+                    );
                     node.memory = expr::add(span, node.memory, added);
-                    if let Value::Owner(child) = child {
-                        let minima = child
-                            .minima
-                            .iter()
-                            .map(|(path, floor)| {
-                                (
-                                    std::iter::once(Step::Repeated)
-                                        .chain(path.iter().cloned())
-                                        .collect(),
-                                    floor.clone(),
-                                )
-                            })
-                            .collect();
-                        join_minima(span, &mut node.minima, &minima);
-                    }
-                    let final_length = contracts::add(span, length, count.clone());
-                    let (capacity, retained) = if *grow {
-                        let replacement = contracts::multiply(
-                            span,
-                            contracts::literal(span, *element),
-                            growth::grown_capacity(span, final_length.clone(), *element),
-                        );
-                        let retained = choice(
-                            span,
-                            mk_ineq(span, &final_length, &capacity, InequalityOp::Le),
-                            bytes.clone(),
-                            contracts::maximum(span, bytes, replacement),
-                        );
-                        (contracts::maximum(span, capacity, final_length.clone()), retained)
-                    } else {
-                        (capacity, bytes)
-                    };
-                    node.memory = with_root(
+                    let floors = minima
+                        .iter()
+                        .map(|(path, floor)| {
+                            (
+                                std::iter::once(Step::Repeated)
+                                    .chain(path.iter().cloned())
+                                    .collect(),
+                                floor.clone(),
+                            )
+                        })
+                        .collect();
+                    join_minima(span, &mut node.minima, &floors);
+                    let final_length = contracts::add(
+                        span,
+                        length,
+                        contracts::multiply(span, width.clone(), count.clone()),
+                    );
+                    node.memory = append_root(
                         span,
                         node.memory,
-                        retained,
                         capacity,
+                        bytes,
                         final_length,
+                        *element,
+                        *grow,
+                        self.layouts.owning_elements(&node.typ),
+                    );
+                }
+                Effect::TransferBlock { amount, minima, element, grow, .. } => {
+                    let source = &roles[*transfers.get(&index)?].1;
+                    let moved = contracts::multiply(span, amount.clone(), count.clone());
+                    let added = reverse_range(
+                        span,
+                        source.memory.clone(),
+                        property(span, source.memory.clone(), "length"),
+                        moved.clone(),
+                        length.clone(),
+                    );
+                    node.memory = expr::add(span, node.memory, added);
+                    let floors = minima
+                        .iter()
+                        .map(|(path, floor)| {
+                            (
+                                std::iter::once(Step::Repeated)
+                                    .chain(path.iter().cloned())
+                                    .collect(),
+                                floor.clone(),
+                            )
+                        })
+                        .collect();
+                    join_minima(span, &mut node.minima, &floors);
+                    let final_length = contracts::add(span, length, moved);
+                    node.memory = append_root(
+                        span,
+                        node.memory,
+                        capacity,
+                        bytes,
+                        final_length,
+                        *element,
+                        *grow,
                         self.layouts.owning_elements(&node.typ),
                     );
                 }
                 _ => return None,
             }
             self.set(span, location, node)?;
-            if depth == 0 && matches!(effect, Effect::Identity { .. }) {
-                // An enclosing iteration can compose this completed identity.
-                self.effects.pop();
-                self.effects.push(Effect::Identity {
-                    location: location.clone(),
-                    typ: initial.typ.clone(),
-                });
+            if depth == 0 {
+                let completed = match effect {
+                    Effect::Identity { .. } => Some(effect.clone()),
+                    Effect::PopBlock { amount, .. } => Some(Effect::PopBlock {
+                        location: location.clone(),
+                        typ: initial.typ.clone(),
+                        amount: simplify::simplify(&contracts::multiply(
+                            span,
+                            amount.clone(),
+                            count.clone(),
+                        )),
+                        flows: flows.get(&index).map(|flow| vec![flow.clone()]),
+                    }),
+                    Effect::TransferBlock { source, amount, minima, element, grow, .. } => {
+                        Some(Effect::TransferBlock {
+                            location: location.clone(),
+                            source: source.clone(),
+                            typ: initial.typ.clone(),
+                            amount: simplify::simplify(&contracts::multiply(
+                                span,
+                                amount.clone(),
+                                count.clone(),
+                            )),
+                            flows: vec![flows[transfers.get(&index)?].clone()],
+                            minima: minima.clone(),
+                            element: *element,
+                            grow: *grow,
+                        })
+                    }
+                    Effect::AppendBlock { memory, length, minima, element, grow, .. } => {
+                        Some(Effect::AppendBlock {
+                            location: location.clone(),
+                            typ: initial.typ.clone(),
+                            memory: composition::tile(
+                                span,
+                                memory.clone(),
+                                length.clone(),
+                                count.clone(),
+                                expr::integer(span, 0),
+                            ),
+                            length: simplify::simplify(&contracts::multiply(
+                                span,
+                                length.clone(),
+                                count.clone(),
+                            )),
+                            minima: minima.clone(),
+                            element: *element,
+                            grow: *grow,
+                        })
+                    }
+                    _ => None,
+                };
+                if let Some(completed) = completed {
+                    self.effects.pop();
+                    self.effects.push(completed);
+                }
             }
             if let Some(region) = regions
                 .iter()
@@ -355,6 +418,9 @@ impl Trace<'_> {
         if regions.iter().any(|region| !self.regions.contains_key(&region.exit)) {
             return None;
         }
+        // A containing iteration must see observations used by this loop's
+        // count; it cannot repeat a count that depends on another changing role.
+        self.effects.extend(bound_effects);
         Some(Value::Unit)
     }
 
@@ -375,15 +441,16 @@ impl Trace<'_> {
             .map(|id| self.regions.get(&id).cloned())
             .unwrap_or_else(|| Some(expr::empty(span, expr::record_type())))?;
         let remaining = match effect {
-            Effect::Identity { .. } => original,
-            Effect::Pop { .. } => {
+            Effect::Identity { .. } | Effect::AppendBlock { .. } => original,
+            Effect::PopBlock { amount, .. } => {
+                let removed = contracts::multiply(span, count.clone(), amount.clone());
                 let length = contracts::maximum(
                     span,
                     expr::integer(span, 0),
                     contracts::subtract(
                         span,
                         property(span, initial.memory.clone(), "length"),
-                        count.clone(),
+                        removed,
                     ),
                 );
                 expr::add(
@@ -397,7 +464,8 @@ impl Trace<'_> {
                     take(span, original, length),
                 )
             }
-            Effect::Append { .. } => {
+            Effect::TransferBlock { amount, .. } => {
+                let moved = contracts::multiply(span, amount.clone(), count.clone());
                 let source = transfers.get(&index)?;
                 let source_location = roles[*source].0.location()?;
                 let source_region = regions.iter().find(|r| {
@@ -411,7 +479,7 @@ impl Trace<'_> {
                         span,
                         source_memory,
                         property(span, roles[*source].1.memory.clone(), "length"),
-                        count.clone(),
+                        moved,
                         property(span, initial.memory.clone(), "length"),
                     ),
                 )
@@ -435,38 +503,61 @@ fn reverse_range(span: &Span, memory: Expr, end: Expr, count: Expr, base: Expr) 
     )
 }
 
-/// Edges move complete child forests, without assuming a uniform footprint.
-/// Other payloads must be independent of the counter and all extracted children.
-fn transfer_edges(
-    roles: &[(Effect, Node)],
-    tokens: &HashSet<VarIdent>,
-    binder: &VarIdent,
-) -> Option<HashMap<usize, usize>> {
+/// An extraction range has one destination and preserves extraction order.
+/// Flow identities are created together with matching source/destination counts;
+/// equality of their ordered lists proves that no child is dropped, duplicated
+/// or routed through a different range when batching operations or inner loops.
+fn transfer_edges(roles: &[(Effect, Node)]) -> Option<HashMap<usize, usize>> {
     let mut transfers = HashMap::new();
     let mut consumed = HashSet::new();
     for (index, (effect, _)) in roles.iter().enumerate() {
-        if let Effect::Append { child: Value::Owner(child), .. } = effect {
-            let memory = simplify::simplify(&child.memory);
-            if let ExprX::Var(name) = &memory.x {
-                if tokens.contains(name) {
-                    let source = roles.iter().position(|(effect, _)| {
-                        matches!(effect,
-                        Effect::Pop { token: Some(token), .. } if token == name)
-                    })?;
-                    if !consumed.insert(source) {
-                        return None;
-                    }
-                    transfers.insert(index, source);
-                    continue;
-                }
-            }
-            if !independent(&memory, binder)
-                || tokens.iter().any(|token| !independent(&memory, token))
-                || child.minima.values().any(|floor| !independent(&floor.capacity, binder))
-            {
+        if let Effect::TransferBlock { source, flows, .. } = effect {
+            let source = roles.iter().position(|(effect, _)| {
+                matches!(effect,
+                Effect::PopBlock { location, flows: Some(taken), .. }
+                    if location.0 == source.0 && location.1 == source.1 && taken == flows)
+            })?;
+            if !consumed.insert(source) {
                 return None;
             }
+            transfers.insert(index, source);
         }
     }
+    if roles.iter().enumerate().any(|(index, (effect, _))| {
+        matches!(effect, Effect::PopBlock { flows: Some(_), .. }) && !consumed.contains(&index)
+    }) {
+        return None;
+    }
     Some(transfers)
+}
+
+/// Buffer replacement depends on completed logical length, independently of
+/// whether the appended children came from one operation, a helper or a loop.
+fn append_root(
+    span: &Span,
+    memory: Expr,
+    capacity: Expr,
+    bytes: Expr,
+    length: Expr,
+    element: u64,
+    grow: bool,
+    owns_children: bool,
+) -> Expr {
+    let (capacity, retained) = if grow {
+        let replacement = contracts::multiply(
+            span,
+            contracts::literal(span, element),
+            growth::grown_capacity(span, length.clone(), element),
+        );
+        let retained = choice(
+            span,
+            mk_ineq(span, &length, &capacity, InequalityOp::Le),
+            bytes.clone(),
+            contracts::maximum(span, bytes, replacement),
+        );
+        (contracts::maximum(span, capacity, length.clone()), retained)
+    } else {
+        (capacity, bytes)
+    };
+    with_root(span, memory, retained, capacity, length, owns_children)
 }

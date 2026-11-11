@@ -9,6 +9,7 @@
 mod calls;
 pub(super) mod checked;
 mod consistency;
+pub(super) mod effects;
 mod proofs;
 mod simplify;
 mod trace;
@@ -47,6 +48,10 @@ pub(super) struct Symbol {
 /// A complete owner expression and conservative uniform reservation candidates.
 #[derive(Clone)]
 pub(super) struct Node {
+    /// An unchanged whole parameter. Cleared whenever its forest is modified or
+    /// projected; helper composition uses this identity independently of the
+    /// descriptor expression chosen to encode that forest.
+    pub(super) origin: Option<usize>,
     /// The ownership layout whose operations produced this forest.
     pub(super) typ: Typ,
     /// Physical allocation descriptors, independent of frame-local charges.
@@ -71,9 +76,9 @@ pub(super) struct Template {
     pub(super) regions: BTreeMap<usize, Expr>,
     /// Only observations needed by the final transformation are retained.
     pub(super) symbols: Vec<Symbol>,
-    /// Reusable append effects still use the aggregate length induction. Other
-    /// finite transfers can preserve forests through a caller's checked loop.
-    pub(super) appends: bool,
+    /// Checked parameter effects reusable in an enclosing iteration. Absent
+    /// when branches, ownership dependencies or mutations cannot be composed.
+    pub(super) effects: Option<Vec<(usize, effects::Effect)>>,
     /// Only modified mutable parameters appear here; paths remain within forests.
     pub(super) borrowed: BTreeMap<usize, Node>,
     /// Ownership or scalar value produced by the checked body.
@@ -87,6 +92,8 @@ pub(super) struct Inferred {
     pub(super) template: Template,
     /// Whole-child transfer relationships, resolved against checked loop roles.
     pub(super) loops: HashMap<u64, Vec<super::loops::Transfer>>,
+    /// Fresh append costs used as ordinary inductive length envelopes.
+    pub(super) growth: HashMap<u64, Vec<(super::paths::LocalPath, Expr)>>,
 }
 
 pub(super) fn summarize(
@@ -147,6 +154,7 @@ fn substitute(value: &Expr, values: &HashMap<VarIdent, Expr>) -> Expr {
 
 fn instantiate_node(node: &Node, values: &HashMap<VarIdent, Expr>) -> Node {
     Node {
+        origin: None,
         typ: node.typ.clone(),
         memory: substitute(&node.memory, values),
         minima: node

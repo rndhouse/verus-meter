@@ -129,19 +129,32 @@ ownership summarizer consume that record; the summarizer cannot infer an uncheck
 loop from source syntax. Source observations select proof candidates, while checked
 operations remain authoritative for ownership effects.
 
-Collection loop summaries interpret a representative iteration as disjoint persistent roles,
-each with one unconditional append or pop. Temporary payload symbols identify
-whole-child restoration sequences before selecting those roles: ordered matching
-extractions and insertions reduce to an identity, which enclosing loops can
-consume. Identity summaries generate ordinary child-charge and backing frame
-proofs; they do not remove intermediate peak checks. Capacity observations from
-pop are monotonic lower bounds, so unchanged backing does not require equality
-of the modeled capacity across iterations. Temporary payload symbols also identify
-whole-child transfers; uniform construction, prefix retention, and reversed range
-transfer then describe completed forests independently of child layout. Counter
-or payload dependencies outside these rules are unsupported, and temporary symbols
-cannot escape a template. Reservation lower bounds remain separate from the
-append-only backing-byte upper bound.
+Collection loop summaries interpret a representative iteration as disjoint persistent
+roles. [Ordered effects](../../source/vir/src/resource/memory/transfer/effects.rs)
+carry complete forests through direct operations, checked helper programs, and
+completed nested loops. Composition reduces exact whole-child restoration, then
+combines like monotone operations into append, removal, or transfer blocks. Logical
+block widths remain separate from byte costs. Transfers match ordered extraction
+identities and preserve complete child forests; partial routing, permutations,
+changed payloads, and overlapping roles outside restoration reject.
+
+Fresh blocks repeat using an indexed forest tiling; removals retain a prefix;
+transfers reverse a contiguous source range. These operations have verified cost,
+validity, and indexed-view laws. View laws activate only for requested paths;
+prefix-cut descriptor laws are instantiated at the relevant range expressions.
+This keeps exact forests available without expanding every child in failing-budget
+queries. Temporary identities cannot escape a template, and reservation lower
+bounds remain separate from backing-byte upper bounds.
+
+Composition retains every intermediate peak check. Local proofs use ordinary
+inductive charge and backing candidates derived from the completed effects. Nested
+queries freeze their parent's completed invariants at their actual entry and keep
+ancestor snapshots immutable. Element policies use saved source lengths and the
+completed containing iteration, including operations after an inner loop. A body
+visit retires first-visit finite extents and known-zero shortcuts: later iterations
+must prove their own charge facts. Capacity observations from pop are monotonic
+lower bounds, so restored backing does not require equality of modeled capacity
+across iterations.
 
 Loop boundaries give changed original-input regions fresh exit identities. Earlier
 peak profiles retain first-iteration regions: original allocations can only move

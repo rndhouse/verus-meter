@@ -261,17 +261,22 @@ collection constructors, whole-owner transfers, and supported append operations
 preserve individual child reservations without additional contract syntax.
 The structural traversal handles fixed children and runtime children separately,
 so supported ownership shapes compose without rules for each nesting combination.
-Loop summaries compose unconditional effects on disjoint persistent collections:
-building children with an iteration-independent footprint, consuming children,
-and moving whole children between collections. The collections can occupy fixed
-fields of the same owner. Transfers preserve each child's complete nested forest,
-including different capacities; repeated last-element extraction reverses their
-order at the destination. Counted loops use a stable upper bound and unit increment;
-consuming loops test a popped collection's length against a stable lower bound.
+Loop summaries compose ordered, unconditional effects on disjoint persistent
+collections. An iteration can append a block of fresh children with an
+iteration-independent footprint, remove several children, or transfer a contiguous
+range of whole children to one destination in extraction order. Direct operations,
+precisely summarized helpers, and completed nested counted loops share these rules.
+Block length counts logical children separately from their allocation bytes.
+The collections can occupy fixed fields of the same owner. Transfers preserve
+each child's complete nested forest, including different capacities. Repeated
+last-element extraction reverses their order at the destination. Counted loops
+use a stable upper bound and unit increment; consuming loops test a popped
+collection's length against a stable lower bound.
 Zero and partial iteration ranges preserve the unconsumed children and backing.
 Ordered extraction followed by restoration of the same whole children can
 compose to an unchanged collection, including through nested counted loops.
-Restoration must preserve child order; changed payloads or permutations still
+Restoration must preserve child order. Changed payloads, permutations, partial
+routing of one extracted range, and mixing growth with removal on the same role
 require additional summary support. All intermediate allocation peaks remain
 checked. A pop preserves backing and supplies its previous length as a capacity
 lower bound, so restoring children can reuse those slots.
@@ -318,7 +323,9 @@ and memory sections. Indexing incoming children inside
 loops and forwarding an incoming collection to another runtime-ownership helper
 are also unsupported. Indexed
 borrows can call ordinary leaf helpers.
-Loop-carried helper effects that lose individual metadata are also unsupported.
+Helpers may insert an unchanged whole owning argument or forward it unchanged.
+Loop-carried helper effects that lose individual metadata, delegate borrowed
+collection traversal, or return transformed incoming payloads remain unsupported.
 There is no aggregate ownership fallback or copied parent charge for an unknown child.
 Conservative upper bounds remain valid for byte sizes and peak usage.
 

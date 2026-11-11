@@ -41,17 +41,50 @@ pub(super) fn forest(span: &Span, value: &Expr, proofs: &mut Vec<Stmt>) -> Resul
                     return Ok(());
                 };
                 match name.as_str() {
+                    "shift_children" => proofs.push(expr::lemma(
+                        span,
+                        "shift_children_facts",
+                        args.as_ref().clone(),
+                    )),
+                    "tile_children" => {
+                        block(span, &args[0], &args[1], proofs)?;
+                        proofs.push(expr::lemma(
+                            span,
+                            "tile_children_facts",
+                            args.as_ref().clone(),
+                        ));
+                        proofs.push(expr::lemma(
+                            span,
+                            "tile_children_views",
+                            args.as_ref().clone(),
+                        ));
+                    }
                     "repeat" => {
                         proofs.push(expr::lemma(span, "repeat_facts", args.as_ref().clone()))
                     }
                     "take_children" => {
+                        retention(span, &args[0], &args[1], proofs);
                         proofs.push(expr::lemma(span, "take_children_facts", args.as_ref().clone()))
                     }
-                    "reverse_children" => proofs.push(expr::lemma(
-                        span,
-                        "reverse_children_facts",
-                        args.as_ref().clone(),
-                    )),
+                    "reverse_children" => {
+                        retention(span, &args[0], &args[1], proofs);
+                        retention(span, &args[0], &args[2], proofs);
+                        proofs.push(expr::lemma(
+                            span,
+                            "reverse_children_facts",
+                            args.as_ref().clone(),
+                        ));
+                        proofs.push(expr::lemma(
+                            span,
+                            "reverse_children_views",
+                            args.as_ref().clone(),
+                        ));
+                        proofs.push(expr::lemma(
+                            span,
+                            "reverse_children_cost",
+                            args.as_ref().clone(),
+                        ));
+                    }
                     "runtime" => {
                         proofs.push(expr::lemma(
                             span,
@@ -78,6 +111,11 @@ pub(super) fn forest(span: &Span, value: &Expr, proofs: &mut Vec<Stmt>) -> Resul
                     }
                     "subtree" | "without" => {
                         if name.as_str() == "without" {
+                            proofs.push(expr::lemma(
+                                span,
+                                "runtime_without_facts",
+                                args.as_ref().clone(),
+                            ));
                             proofs.push(expr::lemma(
                                 span,
                                 "partition_without",
@@ -159,4 +197,89 @@ pub(super) fn forest(span: &Span, value: &Expr, proofs: &mut Vec<Stmt>) -> Resul
         _ => {}
     }
     Ok(())
+}
+
+/// Establish a block's logical index range structurally, independently of bytes.
+fn block(span: &Span, value: &Expr, width: &Expr, proofs: &mut Vec<Stmt>) -> Result<(), VirErr> {
+    let ExprX::Call { target: CallTarget::Fun(_, function, _, _, _), args, .. } = &value.x else {
+        return Err(super::super::model::unsupported(
+            span,
+            "an ownership block without a structural index range",
+        ));
+    };
+    let Some(Segment::V(name, _)) = function.path.segments.last() else { unreachable!() };
+    match name.as_str() {
+        "empty" => {}
+        "prefix" => {
+            let path =
+                simplify::path(&args[1]).filter(|path| path.len() == 1).ok_or_else(|| {
+                    super::super::model::unsupported(
+                        span,
+                        "an ownership block without a single runtime index",
+                    )
+                })?;
+            proofs.push(expr::lemma(
+                span,
+                "block_bounds_prefix",
+                vec![args[0].clone(), path[0].clone(), width.clone()],
+            ));
+        }
+        "add" => {
+            block(span, &args[0], width, proofs)?;
+            block(span, &args[1], width, proofs)?;
+            proofs.push(expr::lemma(
+                span,
+                "block_bounds_add",
+                vec![args[0].clone(), args[1].clone(), width.clone()],
+            ));
+        }
+        "shift_children" => {
+            let inner = super::super::contracts::subtract(span, width.clone(), args[1].clone());
+            block(span, &args[0], &inner, proofs)?;
+            proofs.push(expr::lemma(
+                span,
+                "block_bounds_shift",
+                vec![args[0].clone(), inner, args[1].clone()],
+            ));
+        }
+        "repeat" => proofs.push(expr::lemma(
+            span,
+            "block_bounds_repeat",
+            vec![args[0].clone(), args[1].clone(), args[2].clone(), width.clone()],
+        )),
+        "tile_children" => {
+            block(span, &args[0], &args[1], proofs)?;
+            proofs.push(expr::lemma(span, "block_bounds_tile", args.as_ref().clone()));
+            let extent = super::super::contracts::add(
+                span,
+                args[3].clone(),
+                super::super::contracts::multiply(span, args[1].clone(), args[2].clone()),
+            );
+            proofs.push(expr::lemma(
+                span,
+                "block_bounds_weaken",
+                vec![value.clone(), extent, width.clone()],
+            ));
+        }
+        _ => return Err(super::super::model::unsupported(span, "this structural ownership block")),
+    }
+    Ok(())
+}
+
+/// Instantiate runtime-filter cuts at the range expressions that use them.
+/// Keeping this law local avoids expanding unrelated counterexample terms.
+fn retention(span: &Span, memory: &Expr, length: &Expr, proofs: &mut Vec<Stmt>) {
+    let ExprX::Call { target: CallTarget::Fun(_, function, _, _, _), args, .. } = &memory.x else {
+        return;
+    };
+    if expr::is_operation(function, "runtime") {
+        proofs.push(expr::lemma(
+            span,
+            "take_children_runtime",
+            vec![args[0].clone(), length.clone()],
+        ));
+    } else if *function == crate::fun!(CrateId::Vstd => "seq", "Seq"; "add") {
+        retention(span, &args[0], length, proofs);
+        retention(span, &args[1], length, proofs);
+    }
 }

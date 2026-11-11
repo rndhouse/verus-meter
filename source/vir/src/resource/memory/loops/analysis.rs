@@ -7,6 +7,7 @@ use crate::resource::memory::{analysis::Analysis, contracts};
 impl Analysis<'_> {
     pub(in super::super) fn analyze_loop(&mut self, expr: &Expr) -> Result<(), VirErr> {
         let mut record = Loop::new(expr, self.layouts, self.summaries)?;
+        let nested = self.growth.loop_depth > 0;
         self.prepare_element_loop(&record)?;
         let mut forest_bounds = self.element_loop_bounds(&record);
         forest_bounds.extend(self.loop_charge_candidates(&mut record));
@@ -32,18 +33,20 @@ impl Analysis<'_> {
         let elements = self.heap.element_states();
         let mut entry_facts = Vec::new();
         if precise_forests {
-            entry_facts.extend(self.growth.invariants(
-                &expr.span,
-                &ids,
-                &loop_scalars,
-                &self.bound,
-            ));
-            entry_facts.extend(self.growth.element_invariants(
-                &expr.span,
-                &elements,
-                &loop_scalars,
-                &self.bound,
-            ));
+            if !nested {
+                entry_facts.extend(self.growth.invariants(
+                    &expr.span,
+                    &ids,
+                    &loop_scalars,
+                    &self.bound,
+                ));
+                entry_facts.extend(self.growth.element_invariants(
+                    &expr.span,
+                    &elements,
+                    &loop_scalars,
+                    &self.bound,
+                ));
+            }
             entry_facts.extend(metadata_facts);
             entry_facts.extend(self.element_reservation_invariants(&expr.span, &loop_scalars)?);
         }
@@ -70,6 +73,9 @@ impl Analysis<'_> {
         let first_checkpoint = self.checkpoints.len();
         self.storage.event(&expr.span, "analyze reusable while iteration".into());
         self.growth.loop_depth += 1;
+        // Nested loops enter after any number of outer iterations. Their entry
+        // candidates cannot reuse the first iteration's finite charge extent.
+        self.growth.begin_element_iteration(&elements);
         self.discard(&record.condition)?;
         self.discard(&record.body)?;
         self.growth.loop_depth -= 1;
@@ -110,29 +116,214 @@ impl Analysis<'_> {
         invariants.extend(forest_bounds);
         invariants.extend(frame_invariants);
         invariants.extend(entry_facts);
-        invariants.extend(self.growth.element_invariants(
-            &expr.span,
-            &elements,
-            &loop_scalars,
-            &self.bound,
-        ));
+        if nested {
+            invariants.extend(self.growth.element_nonnegative(&expr.span, &elements));
+        } else {
+            invariants.extend(self.growth.element_invariants(
+                &expr.span,
+                &elements,
+                &loop_scalars,
+                &self.bound,
+            ));
+        }
         invariants.push(crate::ast_util::mk_ineq(&expr.span, &live, &self.bound, InequalityOp::Le));
         self.growth.loops.insert(expr.span.id, invariants);
         self.growth.repeat_elements(&elements);
+        record.element_sources = self.growth.element_sources(&elements);
+        record.element_ids = elements.clone();
+        record.proof_scalars = loop_scalars;
+        let mut children = Vec::new();
+        crate::ast_visitor::expr_visitor_check(&record.body, &mut |_, value| {
+            if matches!(value.x, ExprX::Loop { .. })
+                && self.transitions.loops.contains_key(&value.span.id)
+            {
+                children.push(value.span.id);
+            }
+            Ok::<(), VirErr>(())
+        })?;
+        for id in children {
+            let child = &self.transitions.loops[&id];
+            let facts = self.growth.element_invariants_at(
+                &child.span,
+                &child.element_ids,
+                &child.proof_scalars,
+                &self.bound,
+                Some(&child.element_sources),
+            );
+            self.transitions.loops.get_mut(&id).unwrap().element_facts = facts;
+        }
         self.transitions.loops.insert(expr.span.id, record);
         Ok(())
     }
 
     /// Completed summary evidence becomes ordinary inductive proof candidates.
     /// Failed or partial inference cannot modify the body proof state.
-    pub(in super::super) fn apply_loop_transfers(
+    pub(in super::super) fn apply_loop_evidence(
         &mut self,
         loops: &std::collections::HashMap<u64, Vec<Transfer>>,
-    ) {
+        growth: &std::collections::HashMap<u64, Vec<(super::super::paths::LocalPath, Expr)>>,
+    ) -> Result<(), VirErr> {
         for (id, transfers) in loops {
             let record = &self.transitions.loops[id];
             self.growth.loops.entry(*id).or_default().extend(record.conservation(transfers));
         }
+        for (id, bounds) in growth {
+            let record = &self.transitions.loops[id];
+            for (location, amount) in bounds {
+                if let Some(charge) =
+                    record.charges.iter().find(|charge| &charge.location == location)
+                {
+                    // Isolated loop queries do not retain the executable
+                    // length's type bound for an erased integer snapshot.
+                    self.growth.loops.entry(*id).or_default().push(crate::ast_util::mk_ineq(
+                        &record.span,
+                        &contracts::literal(&record.span, 0),
+                        &charge.length.1,
+                        InequalityOp::Le,
+                    ));
+                    // A positive prefix of a block costs at most the whole
+                    // block. This pointwise envelope remains valid before an
+                    // inner loop; exported forests retain the exact tiled cost.
+                    let added = contracts::multiply(
+                        &record.span,
+                        amount.clone(),
+                        contracts::subtract(
+                            &record.span,
+                            charge.length.0.clone(),
+                            charge.length.1.clone(),
+                        ),
+                    );
+                    let upper = contracts::add(&record.span, charge.entry.clone(), added);
+                    self.growth.loops.entry(*id).or_default().push(crate::ast_util::mk_ineq(
+                        &record.span,
+                        &charge.current,
+                        &upper,
+                        InequalityOp::Le,
+                    ));
+                    if let (Some((bytes, entry)), Some((current_capacity, capacity, element))) =
+                        (&charge.backing, &charge.reservation)
+                    {
+                        // An entry reservation stays available as backing grows.
+                        // Without this frame fact, a loop query can pair an
+                        // arbitrary entry capacity with a smaller current one.
+                        self.growth.loops.entry(*id).or_default().push(crate::ast_util::mk_ineq(
+                            &record.span,
+                            capacity,
+                            current_capacity,
+                            InequalityOp::Le,
+                        ));
+                        let replacement = contracts::multiply(
+                            &record.span,
+                            contracts::literal(&record.span, *element),
+                            crate::resource::memory::growth::grown_capacity(
+                                &record.span,
+                                charge.length.0.clone(),
+                                *element,
+                            ),
+                        );
+                        let upper = crate::resource::memory::growth::select(
+                            &record.span,
+                            crate::ast_util::mk_ineq(
+                                &record.span,
+                                &charge.length.0,
+                                capacity,
+                                InequalityOp::Le,
+                            ),
+                            entry.clone(),
+                            contracts::maximum(&record.span, entry.clone(), replacement),
+                        );
+                        self.growth.loops.entry(*id).or_default().push(crate::ast_util::mk_ineq(
+                            &record.span,
+                            bytes,
+                            &upper,
+                            InequalityOp::Le,
+                        ));
+                    }
+                }
+            }
+        }
+        for (id, record) in &self.transitions.loops {
+            self.growth.loops.entry(*id).or_default().extend(record.element_facts.iter().cloned());
+        }
+        self.inherit_loop_entries()
+    }
+
+    /// A nested query needs facts about its actual entry, not observations from
+    /// the first syntactic visit to its parent's body. Freeze the parent's
+    /// completed inductive facts at that entry after both summaries are known.
+    /// These remain ordinary invariants checked before the nested loop.
+    fn inherit_loop_entries(&mut self) -> Result<(), VirErr> {
+        let records = self.transitions.loops.clone();
+        let mut descendants = std::collections::HashMap::new();
+        for (id, record) in &records {
+            let mut children = std::collections::HashSet::new();
+            crate::ast_visitor::expr_visitor_check(&record.body, &mut |_, value| {
+                if matches!(value.x, ExprX::Loop { .. }) && records.contains_key(&value.span.id) {
+                    children.insert(value.span.id);
+                }
+                Ok::<(), VirErr>(())
+            })?;
+            descendants.insert(*id, children);
+        }
+        let mut parents = Vec::new();
+        for child in records.keys() {
+            if let Some((parent, children)) = descendants
+                .iter()
+                .filter(|(_, children)| children.contains(child))
+                .min_by_key(|(_, children)| children.len())
+            {
+                parents.push((children.len(), *parent, *child));
+            }
+        }
+        parents.sort_by_key(|(size, _, _)| std::cmp::Reverse(*size));
+        for (_, parent, child) in parents {
+            let record = &records[&child];
+            let mut immutable = self
+                .growth
+                .loop_entry
+                .get(&parent)
+                .map(|entries| entries.values().cloned().collect::<Vec<_>>())
+                .unwrap_or_default();
+            for charge in &records[&parent].charges {
+                immutable.push(charge.entry.clone());
+                immutable.push(charge.length.1.clone());
+                if let Some((_, entry)) = &charge.backing {
+                    immutable.push(entry.clone());
+                }
+            }
+            for charge in &record.charges {
+                immutable.push(charge.length.1.clone());
+            }
+            let mut preserved = std::collections::HashMap::new();
+            for value in immutable {
+                crate::ast_visitor::expr_visitor_check(&value, &mut |_, value| {
+                    if let ExprX::Var(name) = &value.x {
+                        preserved.insert(name.clone(), value.clone());
+                    }
+                    Ok::<(), VirErr>(())
+                })?;
+            }
+            for (name, value) in preserved {
+                if let Some(previous) =
+                    self.growth.loop_entry.entry(child).or_default().insert(name, value.clone())
+                {
+                    self.growth.loops.entry(child).or_default().push(crate::ast_util::mk_eq(
+                        &record.span,
+                        &previous,
+                        &value,
+                    ));
+                }
+            }
+            let facts = self.growth.loops[&parent].clone();
+            let facts = self.freeze_loop_facts(&record.span, facts)?;
+            self.growth.loops.entry(child).or_default().extend(facts);
+            for charge in &record.charges {
+                let fact = crate::ast_util::mk_eq(&record.span, &charge.length.0, &charge.length.1);
+                let fact = self.freeze_loop_facts(&record.span, vec![fact])?;
+                self.growth.loops.entry(child).or_default().extend(fact);
+            }
+        }
+        Ok(())
     }
 
     /// Snapshot potential conservation groups before the body changes counters.
@@ -149,6 +340,7 @@ impl Analysis<'_> {
                             (name.clone(), path.clone()),
                             elements.states.values().copied().collect::<Vec<_>>(),
                             node.vector,
+                            self.owner_length(span, node),
                         ));
                     }
                 }
@@ -156,7 +348,7 @@ impl Analysis<'_> {
         }
         let mut candidates = Vec::new();
         let mut charges = Vec::new();
-        for (location, states, vector) in roles {
+        for (location, states, vector, length) in roles {
             let mut current = contracts::literal(span, 0);
             let mut entry = current.clone();
             for id in states {
@@ -187,7 +379,20 @@ impl Analysis<'_> {
                 let snapshot = self.loop_snapshot(span, &bytes);
                 (bytes, snapshot)
             });
-            charges.push(Charge { location, current, entry, backing });
+            let length = SpannedTyped::new(span, &crate::ast_util::int_typ(), length.x.clone());
+            let snapshot = self.loop_snapshot(span, &length);
+            let reservation = vector.map(|id| {
+                let state = self.growth.vectors[id].clone();
+                (state.capacity.clone(), self.loop_snapshot(span, &state.capacity), state.element)
+            });
+            charges.push(Charge {
+                location,
+                current,
+                entry,
+                backing,
+                length: (length, snapshot),
+                reservation,
+            });
         }
         record.charges = charges;
         candidates

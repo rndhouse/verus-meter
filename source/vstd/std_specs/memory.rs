@@ -173,11 +173,20 @@ pub broadcast group group_metadata_algebra {
     cost_push,
     cost_prefix,
     cost_repeat,
+    request_add,
+    request_push,
+    request_runtime,
+    request_nonruntime,
+    request_descendants,
+    request_without,
+    request_subtree,
+    request_prefix,
+    request_shift,
+    request_tile,
+    request_reverse,
+    request_take,
     remove_add,
     remove_prefix,
-    reverse_children_add,
-    reverse_children_prefix,
-    reverse_children_push,
     lookup_add,
     lookup_push,
     lookup_runtime,
@@ -823,6 +832,244 @@ pub proof fn reverse_children_facts(memory: Seq<Record>, start: int, end: int, b
     }
 }
 
+/// A verified matching gate for precise indexed views. It is always true, but
+/// remains opaque so constructor facts activate only for requested paths.
+#[verifier::opaque]
+pub open spec fn view_requested(memory: Seq<Record>, index: int) -> bool {
+    true
+}
+
+/// Request the outer indexed view needed by a concrete projection.
+pub proof fn request_path(memory: Seq<Record>, path: Seq<int>)
+    ensures
+        path.len() > 0 ==> view_requested(memory, path[0]),
+{
+    reveal(view_requested);
+}
+
+/// Requests follow the two operands of a composed forest.
+pub broadcast proof fn request_add(left: Seq<Record>, right: Seq<Record>, index: int)
+    ensures
+        #[trigger] view_requested(left + right, index) ==> view_requested(left, index)
+            && view_requested(right, index),
+{
+    reveal(view_requested);
+}
+
+/// A root descriptor does not hide its descendants' indexed views.
+pub broadcast proof fn request_push(memory: Seq<Record>, value: Record, index: int)
+    ensures
+        #[trigger] view_requested(memory.push(value), index) ==> view_requested(memory, index),
+{
+    reveal(view_requested);
+}
+
+/// Runtime filtering preserves indexed requests.
+pub broadcast proof fn request_runtime(memory: Seq<Record>, index: int)
+    ensures
+        #[trigger] view_requested(runtime(memory), index) ==> view_requested(memory, index),
+{
+    reveal(view_requested);
+}
+
+/// Fixed filtering preserves the source of a projected view.
+pub broadcast proof fn request_nonruntime(memory: Seq<Record>, index: int)
+    ensures
+        #[trigger] view_requested(nonruntime(memory), index) ==> view_requested(memory, index),
+{
+    reveal(view_requested);
+}
+
+/// Descendant filtering preserves the source of a projected view.
+pub broadcast proof fn request_descendants(memory: Seq<Record>, index: int)
+    ensures
+        #[trigger] view_requested(descendants(memory), index) ==> view_requested(memory, index),
+{
+    reveal(view_requested);
+}
+
+/// Excluding a subtree retains the original forest's sibling views.
+pub broadcast proof fn request_without(memory: Seq<Record>, path: Seq<int>, index: int)
+    ensures
+        #[trigger] view_requested(without(memory, path), index) ==> view_requested(memory, index),
+{
+    reveal(view_requested);
+}
+
+/// A nested projection first needs the selected enclosing child.
+pub broadcast proof fn request_subtree(memory: Seq<Record>, path: Seq<int>, index: int)
+    ensures
+        #[trigger] view_requested(subtree(memory, path), index) ==> if path.len() > 0 {
+            view_requested(memory, path[0])
+        } else {
+            view_requested(memory, index)
+        },
+{
+    reveal(view_requested);
+}
+
+/// Prefixing a forest retains requests for the underlying descriptors.
+pub broadcast proof fn request_prefix(memory: Seq<Record>, path: Seq<int>, index: int)
+    ensures
+        #[trigger] view_requested(prefix(memory, path), index) ==> view_requested(memory, index),
+{
+    reveal(view_requested);
+}
+
+/// A shifted slot requests its original index.
+pub broadcast proof fn request_shift(memory: Seq<Record>, base: int, index: int)
+    ensures
+        #[trigger] view_requested(shift_children(memory, base), index) ==> view_requested(
+            memory,
+            index - base,
+        ),
+{
+    reveal(view_requested);
+}
+
+/// A tiled slot requests the corresponding position inside its block.
+pub broadcast proof fn request_tile(
+    block: Seq<Record>,
+    width: int,
+    count: int,
+    start: int,
+    index: int,
+)
+    ensures
+        #[trigger] view_requested(tile_children(block, width, count, start), index) ==> (width > 0
+            ==> view_requested(block, (index - start) % width)),
+{
+    reveal(view_requested);
+}
+
+/// Reversed slots request their source child through the inverse range map.
+pub broadcast proof fn request_reverse(
+    memory: Seq<Record>,
+    start: int,
+    end: int,
+    base: int,
+    index: int,
+)
+    ensures
+        #[trigger] view_requested(reverse_children(memory, start, end, base), index)
+            ==> view_requested(memory, base + end - 1 - index),
+{
+    reveal(view_requested);
+}
+
+/// Prefix retention keeps the original child views.
+pub broadcast proof fn request_take(memory: Seq<Record>, length: int, index: int)
+    ensures
+        #[trigger] view_requested(take_children(memory, length), index) ==> view_requested(
+            memory,
+            index,
+        ),
+{
+    reveal(view_requested);
+}
+
+/// Select a transferred child through the inverse range map, independently of
+/// the number of iterations and the child's nested allocation layout.
+pub proof fn reverse_children_views(memory: Seq<Record>, start: int, end: int, base: int)
+    requires
+        base >= 0,
+    ensures
+        forall|index: int|
+            #![trigger view_requested(reverse_children(memory, start, end, base), index), subtree(reverse_children(memory, start, end, base), seq![index])]
+            view_requested(reverse_children(memory, start, end, base), index) ==> (subtree(
+                reverse_children(memory, start, end, base),
+                seq![index],
+            ) == if base + end - 1 - index >= 0 && start <= base + end - 1 - index < end {
+                subtree(memory, seq![base + end - 1 - index])
+            } else {
+                Seq::<Record>::empty()
+            }),
+    decreases memory.len(),
+{
+    reveal_with_fuel(reverse_children, 2);
+    reveal_with_fuel(subtree, 2);
+    if memory.len() > 0 {
+        reverse_children_views(memory.drop_last(), start, end, base);
+    }
+    assert forall|index: int|
+        #![trigger view_requested(reverse_children(memory, start, end, base), index), subtree(reverse_children(memory, start, end, base), seq![index])]
+        view_requested(reverse_children(memory, start, end, base), index) ==> (subtree(
+            reverse_children(memory, start, end, base),
+            seq![index],
+        ) == if base + end - 1 - index >= 0 && start <= base + end - 1 - index < end {
+            subtree(memory, seq![base + end - 1 - index])
+        } else {
+            Seq::<Record>::empty()
+        }) by {
+        if memory.len() > 0 {
+            request_path(reverse_children(memory.drop_last(), start, end, base), seq![index]);
+            let value = memory.last();
+            let original = base + end - 1 - index;
+            assert(memory.drop_last().push(value) =~= memory);
+            select_push(memory.drop_last(), value, seq![original]);
+            slot_prefix(original, value.path);
+            assert(subtree(reverse_children(memory.drop_last(), start, end, base), seq![index])
+                == if original >= 0 && start <= original < end {
+                subtree(memory.drop_last(), seq![original])
+            } else {
+                Seq::<Record>::empty()
+            });
+            if value.path.len() > 0 && 0 <= value.path[0] && start <= value.path[0] < end {
+                let before = reverse_children(memory.drop_last(), start, end, base);
+                let mapped = Record {
+                    path: value.path.update(0, base + end - 1 - value.path[0]),
+                    ..value
+                };
+                assert(before.push(mapped).drop_last() =~= before);
+                select_push(before, mapped, seq![index]);
+                slot_prefix(index, mapped.path);
+                assert(mapped.path.skip(1) =~= value.path.skip(1));
+            }
+        }
+    }
+}
+
+/// Range costs use prefix cuts; indexed views use the inverse range map.
+/// Neither fact requires expanding every transferred record at a call site.
+pub proof fn reverse_children_cost(memory: Seq<Record>, start: int, end: int, base: int)
+    ensures
+        cost(reverse_children(memory, start, end, base), 0) == if start <= end {
+            cost(take_children(memory, end), 0) - cost(take_children(memory, start), 0)
+        } else {
+            0
+        },
+    decreases memory.len(),
+{
+    reveal_with_fuel(reverse_children, 2);
+    reveal_with_fuel(take_children, 2);
+    reveal_with_fuel(cost, 2);
+    if memory.len() > 0 {
+        reverse_children_cost(memory.drop_last(), start, end, base);
+        let value = memory.last();
+        if value.path.len() > 0 && value.path[0] >= 0 {
+            if value.path[0] < end {
+                let before = take_children(memory.drop_last(), end);
+                assert(before.push(value).drop_last() =~= before);
+                cost_push(before, value, 0);
+            }
+            if value.path[0] < start {
+                let before = take_children(memory.drop_last(), start);
+                assert(before.push(value).drop_last() =~= before);
+                cost_push(before, value, 0);
+            }
+            if start <= value.path[0] < end {
+                let before = reverse_children(memory.drop_last(), start, end, base);
+                let mapped = Record {
+                    path: value.path.update(0, base + end - 1 - value.path[0]),
+                    ..value
+                };
+                assert(before.push(mapped).drop_last() =~= before);
+                cost_push(before, mapped, 0);
+            }
+        }
+    }
+}
+
 /// Expose finite caller descriptors without unfolding recursive range transfers.
 pub broadcast proof fn reverse_children_push(memory: Seq<Record>, value: Record, start: int, end: int, base: int)
     ensures #[trigger] reverse_children(memory.push(value), start, end, base) ==
@@ -946,6 +1193,504 @@ pub proof fn repeat_facts(child: Seq<Record>, start: int, count: int)
     }
 }
 
+/// Removing an indexed subtree cannot move backing bytes into child charges.
+/// Filtering and exclusion commute even for an absent optional child.
+pub proof fn runtime_without_facts(memory: Seq<Record>, path: Seq<int>)
+    requires
+        well_formed(memory),
+    ensures
+        runtime(without(memory, path)) == without(runtime(memory), path),
+        cost(runtime(without(memory, path)), 0) <= cost(runtime(memory), 0),
+    decreases memory.len(),
+{
+    reveal_with_fuel(runtime, 2);
+    reveal_with_fuel(without, 2);
+    if memory.len() > 0 {
+        runtime_without_facts(memory.drop_last(), path);
+        let value = memory.last();
+        if !path.is_prefix_of(value.path) {
+            let before = without(memory.drop_last(), path);
+            assert(before.push(value).drop_last() =~= before);
+            runtime_push(before, value);
+        }
+        if value.path.len() > 0 && value.path[0] >= 0 {
+            let before = runtime(memory.drop_last());
+            assert(before.push(value).drop_last() =~= before);
+        }
+    }
+    inspect(memory, path);
+    inspect(runtime(memory), path);
+    inspect(subtree(runtime(memory), path), Seq::empty());
+    cost_partition(runtime(memory), path, 0);
+}
+
+/// Translate runtime indices without changing allocation descriptors or costs.
+#[verifier::opaque]
+pub open spec fn shift_children(memory: Seq<Record>, base: int) -> Seq<Record>
+    decreases memory.len(),
+{
+    if memory.len() == 0 {
+        Seq::empty()
+    } else {
+        let value = memory.last();
+        let mapped = if value.path.len() > 0 && value.path[0] >= 0 {
+            Record { path: value.path.update(0, value.path[0] + base), ..value }
+        } else {
+            value
+        };
+        shift_children(memory.drop_last(), base).push(mapped)
+    }
+}
+
+/// Shifts preserve charges exactly, independently of child layout.
+pub proof fn shift_children_facts(memory: Seq<Record>, base: int)
+    requires
+        well_formed(memory),
+        base >= 0,
+    ensures
+        well_formed(shift_children(memory, base)),
+        cost(shift_children(memory, base), 0) == cost(memory, 0),
+        runtime(shift_children(memory, base)) == shift_children(runtime(memory), base),
+        nonruntime(shift_children(memory, base)) == nonruntime(memory),
+        descendants(shift_children(memory, base)) == shift_children(descendants(memory), base),
+    decreases memory.len(),
+{
+    reveal_with_fuel(shift_children, 2);
+    reveal_with_fuel(well_formed, 2);
+    reveal_with_fuel(cost, 2);
+    reveal_with_fuel(runtime, 2);
+    reveal_with_fuel(nonruntime, 2);
+    reveal_with_fuel(descendants, 2);
+    if memory.len() > 0 {
+        shift_children_facts(memory.drop_last(), base);
+        let value = memory.last();
+        let mapped = if value.path.len() > 0 && value.path[0] >= 0 {
+            Record { path: value.path.update(0, value.path[0] + base), ..value }
+        } else {
+            value
+        };
+        let before = shift_children(memory.drop_last(), base);
+        assert(before.push(mapped).drop_last() =~= before);
+        runtime_push(memory.drop_last(), value);
+        runtime_push(before, mapped);
+        descendants_push(memory.drop_last(), value);
+        descendants_push(before, mapped);
+        if value.path.len() > 0 && value.path[0] >= 0 {
+            assert(mapped.path[0] >= 0);
+            let filtered = runtime(memory.drop_last());
+            assert(filtered.push(value).drop_last() =~= filtered);
+            assert(shift_children(filtered.push(value), base) == shift_children(
+                filtered,
+                base,
+            ).push(mapped));
+        }
+        if value.path.len() > 0 {
+            let filtered = descendants(memory.drop_last());
+            assert(filtered.push(value).drop_last() =~= filtered);
+            assert(shift_children(filtered.push(value), base) == shift_children(
+                filtered,
+                base,
+            ).push(mapped));
+        }
+    }
+}
+
+/// Repeat an ordered block of runtime children, flattening its logical indices.
+/// Width counts occupied children independently of the block's allocation cost.
+#[verifier::opaque]
+pub open spec fn tile_children(block: Seq<Record>, width: int, count: int, start: int) -> Seq<
+    Record,
+>
+    decreases count,
+{
+    if count <= 0 {
+        Seq::empty()
+    } else {
+        tile_children(block, width, count - 1, start) + shift_children(
+            block,
+            start + width * (count - 1),
+        )
+    }
+}
+
+/// Block repetition preserves every child descriptor and has additive cost.
+pub proof fn tile_children_facts(block: Seq<Record>, width: int, count: int, start: int)
+    requires
+        well_formed(block),
+        width >= 0,
+        count >= 0,
+        start >= 0,
+        runtime(block) == block,
+    ensures
+        well_formed(tile_children(block, width, count, start)),
+        cost(tile_children(block, width, count, start), 0) == count * cost(block, 0),
+        runtime(tile_children(block, width, count, start)) == tile_children(
+            block,
+            width,
+            count,
+            start,
+        ),
+        nonruntime(tile_children(block, width, count, start)) == Seq::<Record>::empty(),
+        descendants(tile_children(block, width, count, start)) == tile_children(
+            block,
+            width,
+            count,
+            start,
+        ),
+    decreases count,
+{
+    reveal_with_fuel(tile_children, 2);
+    if count > 0 {
+        tile_children_facts(block, width, count - 1, start);
+        let base = start + width * (count - 1);
+        assert(width * (count - 1) >= 0) by (nonlinear_arith)
+            requires
+                width >= 0,
+                count > 0,
+        ;
+        assert(base >= 0);
+        shift_children_facts(block, base);
+        let before = tile_children(block, width, count - 1, start);
+        let next = shift_children(block, base);
+        well_formed_add(before, next);
+        cost_add(before, next, 0);
+        runtime_add(before, next);
+        runtime_class(next);
+        descendants_add(before, next);
+        assert((count - 1) * cost(block, 0) + cost(block, 0) == count * cost(block, 0))
+            by (nonlinear_arith);
+        assert(cost(before, 0) + cost(next, 0) == count * cost(block, 0));
+    } else {
+        cost_empty(0);
+    }
+}
+
+/// Every descriptor in an ordered block belongs to one occupied runtime slot.
+pub open spec fn block_bounds(memory: Seq<Record>, width: int) -> bool
+    decreases memory.len(),
+{
+    memory.len() == 0 || (block_bounds(memory.drop_last(), width) && memory.last().path.len() > 0
+        && 0 <= memory.last().path[0] < width)
+}
+
+/// A complete child occupies one declared slot in a block.
+pub proof fn block_bounds_prefix(child: Seq<Record>, index: int, width: int)
+    requires
+        0 <= index < width,
+    ensures
+        block_bounds(prefix(child, seq![index]), width),
+    decreases child.len(),
+{
+    reveal_with_fuel(prefix, 2);
+    if child.len() > 0 {
+        block_bounds_prefix(child.drop_last(), index, width);
+        let before = prefix(child.drop_last(), seq![index]);
+        let value = Record { path: seq![index] + child.last().path, ..child.last() };
+        assert(before.push(value).drop_last() =~= before);
+    }
+}
+
+/// Composing forests preserves their common logical block extent.
+pub proof fn block_bounds_add(left: Seq<Record>, right: Seq<Record>, width: int)
+    requires
+        block_bounds(left, width),
+        block_bounds(right, width),
+    ensures
+        block_bounds(left + right, width),
+    decreases right.len(),
+{
+    if right.len() == 0 {
+        assert(left + right =~= left);
+    } else {
+        block_bounds_add(left, right.drop_last(), width);
+        assert((left + right).drop_last() =~= left + right.drop_last());
+    }
+}
+
+/// A wider logical extent still contains every descriptor.
+pub proof fn block_bounds_weaken(memory: Seq<Record>, from: int, to: int)
+    requires
+        block_bounds(memory, from),
+        from <= to,
+    ensures
+        block_bounds(memory, to),
+    decreases memory.len(),
+{
+    if memory.len() > 0 {
+        block_bounds_weaken(memory.drop_last(), from, to);
+    }
+}
+
+/// Translating runtime indices translates the block extent.
+pub proof fn block_bounds_shift(memory: Seq<Record>, width: int, base: int)
+    requires
+        block_bounds(memory, width),
+        base >= 0,
+    ensures
+        block_bounds(shift_children(memory, base), base + width),
+    decreases memory.len(),
+{
+    reveal_with_fuel(shift_children, 2);
+    if memory.len() > 0 {
+        block_bounds_shift(memory.drop_last(), width, base);
+        let before = shift_children(memory.drop_last(), base);
+        let value = Record {
+            path: memory.last().path.update(0, memory.last().path[0] + base),
+            ..memory.last()
+        };
+        assert(before.push(value).drop_last() =~= before);
+    }
+}
+
+/// Consecutive copies remain inside the declared logical extent.
+pub proof fn block_bounds_repeat(child: Seq<Record>, start: int, count: int, width: int)
+    requires
+        start >= 0,
+        count >= 0,
+        start + count <= width,
+    ensures
+        block_bounds(repeat(child, start, count), width),
+    decreases count,
+{
+    reveal_with_fuel(repeat, 2);
+    if count > 0 {
+        block_bounds_repeat(child, start, count - 1, width);
+        block_bounds_prefix(child, start + count - 1, width);
+        block_bounds_add(
+            repeat(child, start, count - 1),
+            prefix(child, seq![start + count - 1]),
+            width,
+        );
+    }
+}
+
+/// Flattened repeated blocks occupy their combined logical extent.
+pub proof fn block_bounds_tile(block: Seq<Record>, width: int, count: int, start: int)
+    requires
+        block_bounds(block, width),
+        width >= 0,
+        count >= 0,
+        start >= 0,
+    ensures
+        block_bounds(tile_children(block, width, count, start), start + width * count),
+    decreases count,
+{
+    reveal_with_fuel(tile_children, 2);
+    if count > 0 {
+        block_bounds_tile(block, width, count - 1, start);
+        let base = start + width * (count - 1);
+        assert(base >= 0 && base <= start + width * count && base + width == start + width * count)
+            by (nonlinear_arith)
+            requires
+                start >= 0,
+                width >= 0,
+                count > 0,
+                base == start + width * (count - 1),
+        ;
+        block_bounds_weaken(
+            tile_children(block, width, count - 1, start),
+            base,
+            start + width * count,
+        );
+        block_bounds_shift(block, width, base);
+        block_bounds_add(
+            tile_children(block, width, count - 1, start),
+            shift_children(block, base),
+            start + width * count,
+        );
+    }
+}
+
+/// Indices outside a block select no child allocations.
+pub proof fn block_bounds_empty_selection(memory: Seq<Record>, width: int, index: int)
+    requires
+        block_bounds(memory, width),
+        index < 0 || index >= width,
+    ensures
+        subtree(memory, seq![index]) == Seq::<Record>::empty(),
+    decreases memory.len(),
+{
+    reveal_with_fuel(subtree, 2);
+    if memory.len() > 0 {
+        block_bounds_empty_selection(memory.drop_last(), width, index);
+        slot_prefix(index, memory.last().path);
+    }
+}
+
+/// An indexed view follows the inverse translation of its runtime slot.
+pub proof fn shift_children_select(memory: Seq<Record>, width: int, base: int, index: int)
+    requires
+        block_bounds(memory, width),
+        base >= 0,
+    ensures
+        subtree(shift_children(memory, base), seq![index]) == subtree(memory, seq![index - base]),
+    decreases memory.len(),
+{
+    reveal_with_fuel(shift_children, 2);
+    reveal_with_fuel(subtree, 2);
+    if memory.len() > 0 {
+        shift_children_select(memory.drop_last(), width, base, index);
+        let before = shift_children(memory.drop_last(), base);
+        let value = memory.last();
+        let mapped = Record { path: value.path.update(0, value.path[0] + base), ..value };
+        assert(before.push(mapped).drop_last() =~= before);
+        slot_prefix(index, mapped.path);
+        slot_prefix(index - base, value.path);
+        assert(mapped.path.skip(1) =~= value.path.skip(1));
+    }
+}
+
+/// Indices outside the repeated block range select an empty forest.
+pub proof fn tile_children_outside(
+    block: Seq<Record>,
+    width: int,
+    count: int,
+    start: int,
+    index: int,
+)
+    requires
+        block_bounds(block, width),
+        width >= 0,
+        count >= 0,
+        start >= 0,
+        index < start || index >= start + width * count,
+    ensures
+        subtree(tile_children(block, width, count, start), seq![index]) == Seq::<Record>::empty(),
+    decreases count,
+{
+    reveal_with_fuel(tile_children, 2);
+    if count > 0 {
+        let base = start + width * (count - 1);
+        assert(base >= 0 && base <= start + width * count && base + width == start + width * count)
+            by (nonlinear_arith)
+            requires
+                start >= 0,
+                width >= 0,
+                count > 0,
+                base == start + width * (count - 1),
+        ;
+        tile_children_outside(block, width, count - 1, start, index);
+        shift_children_select(block, width, base, index);
+        block_bounds_empty_selection(block, width, index - base);
+        select_add(
+            tile_children(block, width, count - 1, start),
+            shift_children(block, base),
+            seq![index],
+        );
+    } else {
+        select_empty(seq![index]);
+    }
+}
+
+/// Select one logical slot without expanding the number of repetitions.
+pub proof fn tile_children_at(
+    block: Seq<Record>,
+    width: int,
+    count: int,
+    start: int,
+    iteration: int,
+    offset: int,
+)
+    requires
+        block_bounds(block, width),
+        width > 0,
+        count >= 0,
+        start >= 0,
+        0 <= iteration < count,
+        0 <= offset < width,
+    ensures
+        subtree(tile_children(block, width, count, start), seq![start + width * iteration + offset])
+            == subtree(block, seq![offset]),
+    decreases count,
+{
+    reveal_with_fuel(tile_children, 2);
+    let index = start + width * iteration + offset;
+    let base = start + width * (count - 1);
+    assert(base >= 0) by (nonlinear_arith)
+        requires
+            start >= 0,
+            width > 0,
+            count > 0,
+            base == start + width * (count - 1),
+    ;
+    shift_children_select(block, width, base, index);
+    select_add(
+        tile_children(block, width, count - 1, start),
+        shift_children(block, base),
+        seq![index],
+    );
+    if iteration == count - 1 {
+        assert(index == base + offset) by (nonlinear_arith)
+            requires
+                iteration == count - 1,
+                index == start + width * iteration + offset,
+                base == start + width * (count - 1),
+        ;
+        tile_children_outside(block, width, count - 1, start, index);
+    } else {
+        tile_children_at(block, width, count - 1, start, iteration, offset);
+        assert(index - base < 0) by (nonlinear_arith)
+            requires
+                width > 0,
+                0 <= offset < width,
+                iteration < count - 1,
+                index == start + width * iteration + offset,
+                base == start + width * (count - 1),
+        ;
+        block_bounds_empty_selection(block, width, index - base);
+    }
+}
+
+/// Exact indexed views avoid expanding a runtime number of blocks at callers.
+pub proof fn tile_children_views(block: Seq<Record>, width: int, count: int, start: int)
+    requires
+        block_bounds(block, width),
+        width >= 0,
+        count >= 0,
+        start >= 0,
+    ensures
+        forall|index: int|
+            #![trigger view_requested(tile_children(block, width, count, start), index), subtree(tile_children(block, width, count, start), seq![index])]
+            view_requested(tile_children(block, width, count, start), index) ==> (subtree(
+                tile_children(block, width, count, start),
+                seq![index],
+            ) == if width > 0 && start <= index < start + width * count {
+                subtree(block, seq![(index - start) % width])
+            } else {
+                Seq::<Record>::empty()
+            }),
+{
+    assert forall|index: int|
+        #![trigger view_requested(tile_children(block, width, count, start), index), subtree(tile_children(block, width, count, start), seq![index])]
+        view_requested(tile_children(block, width, count, start), index) ==> (subtree(
+            tile_children(block, width, count, start),
+            seq![index],
+        ) == if width > 0 && start <= index < start + width * count {
+            subtree(block, seq![(index - start) % width])
+        } else {
+            Seq::<Record>::empty()
+        }) by {
+        if width > 0 && start <= index < start + width * count {
+            let x = index - start;
+            let k = x / width;
+            let r = x % width;
+            crate::arithmetic::div_mod::lemma_fundamental_div_mod(x, width);
+            crate::arithmetic::div_mod::lemma_mod_pos_bound(x, width);
+            assert(0 <= k < count) by (nonlinear_arith)
+                requires
+                    x == width * k + r,
+                    0 <= r < width,
+                    width > 0,
+                    0 <= x < width * count,
+            ;
+            tile_children_at(block, width, count, start, k, r);
+            assert(index == start + width * k + r);
+        } else {
+            tile_children_outside(block, width, count, start, index);
+        }
+    }
+}
+
 /// Keep the existing runtime children before a logical end index.
 pub open spec fn take_children(memory: Seq<Record>, length: int) -> Seq<Record>
     decreases memory.len(),
@@ -991,6 +1736,43 @@ pub proof fn take_children_facts(memory: Seq<Record>, length: int)
             slot_prefix(index, value.path);
         }
     }
+}
+
+/// Retaining a prefix of an empty forest yields no allocation descriptors.
+pub broadcast proof fn take_children_empty(length: int)
+    ensures
+        #[trigger] take_children(Seq::<Record>::empty(), length) == Seq::<Record>::empty(),
+{
+    reveal(take_children);
+}
+
+/// Retention ignores fixed descriptors and commutes with runtime filtering.
+pub broadcast proof fn take_children_runtime(memory: Seq<Record>, length: int)
+    ensures
+        #[trigger] take_children(runtime(memory), length) == take_children(memory, length),
+    decreases memory.len(),
+{
+    reveal_with_fuel(runtime, 2);
+    reveal_with_fuel(take_children, 2);
+    if memory.len() > 0 {
+        take_children_runtime(memory.drop_last(), length);
+        let value = memory.last();
+        if value.path.len() > 0 && value.path[0] >= 0 {
+            let before = runtime(memory.drop_last());
+            assert(before.push(value).drop_last() =~= before);
+        }
+    }
+}
+
+/// A container root descriptor never belongs to its runtime child prefix.
+pub broadcast proof fn take_children_root(memory: Seq<Record>, value: Record, length: int)
+    requires
+        value.path.len() == 0,
+    ensures
+        #[trigger] take_children(memory.push(value), length) == take_children(memory, length),
+{
+    reveal_with_fuel(take_children, 2);
+    assert(memory.push(value).drop_last() =~= memory);
 }
 
 /// Range retention distributes over independently composed allocation forests.
