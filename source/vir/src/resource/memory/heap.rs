@@ -66,6 +66,9 @@ pub(super) struct Owner {
     pub(super) vector: Option<usize>,
     /// Input provenance for this node; fixed children have independent IDs.
     pub(super) input: Option<usize>,
+    /// False after an indexed replacement whose original input regions have
+    /// not been detached. Such a region cannot subsequently be extracted.
+    pub(super) input_divisible: bool,
 }
 
 impl Default for Owner {
@@ -84,6 +87,7 @@ impl Default for Owner {
             capacity: None,
             vector: None,
             input: None,
+            input_divisible: true,
         }
     }
 }
@@ -228,6 +232,15 @@ impl Heap {
     pub(super) fn mark_replaced(&mut self, name: &VarIdent, path: &OwnerPath) {
         // Indexed borrows return their effects to the containing runtime sum.
         if super::paths::indexed(path) {
+            if let Some(root) = self.owners.get_mut(name) {
+                for depth in 0..path.len() {
+                    if let Some(owner) = root.at_mut(&path[..depth]) {
+                        if owner.input.is_some() {
+                            owner.input_divisible = false;
+                        }
+                    }
+                }
+            }
             return;
         }
         if self.borrowed.contains_key(name) && !self.is_replaced(name, path) {
@@ -267,6 +280,7 @@ impl Analysis<'_> {
     pub(super) fn mark_input(&mut self, owner: &mut Owner, parameter: usize, path: &mut OwnerPath) {
         let id = self.input_paths.len();
         self.input_paths.push((parameter, path.clone()));
+        self.transitions.input(parameter, path.clone());
         self.storage.add_input(id);
         owner.input = Some(id);
         for (slot, child) in &mut owner.children {

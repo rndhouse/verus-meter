@@ -44,6 +44,8 @@ pub(super) struct ElementSummary {
 }
 
 pub(super) struct ElementState {
+    /// Forest whose local charge this state tracks, shared by its memory kinds.
+    pub(super) records: Expr,
     /// Accounting identity of this sum.
     pub(super) id: u64,
     /// Memory kind preserved when a child is transferred.
@@ -67,6 +69,22 @@ pub(super) struct ElementState {
     counted: bool,
     /// Whether local operations have added child allocations.
     pub(super) changed: bool,
+    /// No positive local charge has existed in this state. Descriptor-only
+    /// writes preserve this invariant; allocating writes invalidate it.
+    uncharged: bool,
+}
+
+impl ElementState {
+    /// Cutting or reindexing an initially uncharged forest cannot add bytes.
+    pub(super) fn unchanged_zero(&self) -> bool {
+        self.uncharged
+    }
+}
+
+impl Elements {
+    pub(super) fn zero_charge(&self, growth: &super::growth::Growth) -> bool {
+        self.states.values().all(|id| growth.elements[*id].unchanged_zero())
+    }
 }
 
 impl ElementState {
@@ -122,6 +140,7 @@ impl Analysis<'_> {
             new.records.clone(),
         ));
         for (kind, id) in &old.states {
+            let uncharged = self.growth.elements[new.states[kind]].uncharged;
             let next = self.growth.elements[new.states[kind]].bytes.clone();
             let state = &mut self.growth.elements[*id];
             self.growth.after.entry(span.id).or_default().push(super::symbolic::assign(
@@ -131,6 +150,7 @@ impl Analysis<'_> {
             ));
             self.growth.element_updates.entry(span.id).or_default().insert(*id, next);
             state.changed = true;
+            state.uncharged &= uncharged;
             state.counted = false;
             state.length = None;
             state.extent = None;
@@ -173,6 +193,7 @@ impl Analysis<'_> {
         child: Owner,
         changed: bool,
     ) -> Result<(), VirErr> {
+        let uncharged = self.growth.owner_zero_charge(&child);
         self.merge_element_minima(span, elements, &child);
         let mut proofs = Vec::new();
         let child_records = self.owner_metadata(span, &child, &mut proofs);
@@ -272,6 +293,7 @@ impl Analysis<'_> {
         for id in elements.states.values() {
             let state = &mut self.growth.elements[*id];
             state.changed |= changed;
+            state.uncharged &= uncharged;
             state.counted = false;
             state.length = None;
             state.extent = None;
@@ -331,6 +353,8 @@ impl Analysis<'_> {
             self.storage.set_allocation(allocation, kind.clone(), bytes.clone());
             let id = self.growth.elements.len();
             self.growth.elements.push(ElementState {
+                records: records.clone(),
+                uncharged: contracts::constant(&initial) == Some(0),
                 id: allocation,
                 kind: kind.clone(),
                 extent: Some(initial.clone()),
@@ -461,6 +485,7 @@ impl Analysis<'_> {
             state.counted &= length.is_some();
             state.length = if state.counted { length.clone() } else { None };
             state.changed = true;
+            state.uncharged = false;
         }
         Ok(())
     }

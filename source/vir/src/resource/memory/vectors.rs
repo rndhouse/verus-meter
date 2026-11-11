@@ -382,6 +382,7 @@ impl Analysis<'_> {
             }),
             Some(ResourceIntrinsic::VecPop | ResourceIntrinsic::VecRemove) => {
                 Some(super::transfer::checked::Operation::Remove {
+                    input: None,
                     receiver,
                     index: args.get(1).cloned(),
                 })

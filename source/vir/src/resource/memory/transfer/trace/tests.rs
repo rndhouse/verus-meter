@@ -21,6 +21,7 @@ fn with_trace(checked: &Checked, test: impl FnOnce(&mut Trace<'_>)) {
         used: HashSet::new(),
         state: State::default(),
         symbols: vec![],
+        regions: BTreeMap::new(),
         appends: false,
         effects: vec![],
         branch_depth: 0,

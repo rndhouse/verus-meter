@@ -211,6 +211,7 @@ impl Analysis<'_> {
         typ: &Typ,
         memory: Expr,
         view: super::View,
+        zero_charge: bool,
     ) -> Result<Owner, VirErr> {
         let memory = self.metadata_local(span, "selected_records", memory);
         self.growth.before.entry(span.id).or_default().push(expr::lemma(
@@ -238,7 +239,10 @@ impl Analysis<'_> {
             let path = expr::path(span, [self.layouts.metadata_slot(&slot)]);
             self.metadata_partition(span, rest.clone(), path.clone());
             let child = expr::subtree(span, rest.clone(), path.clone());
-            owner.children.insert(slot, self.owner_from_metadata(span, &child_type, child, view)?);
+            owner.children.insert(
+                slot,
+                self.owner_from_metadata(span, &child_type, child, view, zero_charge)?,
+            );
             rest = expr::without(span, rest, path);
         }
         if self.layouts.owning_elements(typ) {
@@ -254,7 +258,11 @@ impl Analysis<'_> {
                 "cost_runtime_partition",
                 vec![rest.clone(), expr::integer(span, 0)],
             ));
-            let amount = self.metadata_sum(span, children.clone());
+            let amount = if zero_charge {
+                expr::integer(span, 0)
+            } else {
+                self.metadata_sum(span, children.clone())
+            };
             let mut elements =
                 self.elements_from_bytes(span, [(owner.kind.clone(), amount)].into());
             self.growth.before.entry(span.id).or_default().push(expr::assign(
@@ -272,7 +280,11 @@ impl Analysis<'_> {
             "inspect",
             vec![rest.clone(), expr::path(span, [])],
         ));
-        let amount = self.metadata_sum(span, rest);
+        // A partition of a known-zero local charge remains zero even when its
+        // executable child owns incoming storage. Preserve that fact in peak
+        // profiles instead of exporting an unbound metadata snapshot.
+        let amount =
+            if zero_charge { expr::integer(span, 0) } else { self.metadata_sum(span, rest) };
         owner.extent = Some(amount.clone());
         let allocation = super::super::accounting::Accounting::fresh_allocation();
         if self.layouts.vector(typ) {

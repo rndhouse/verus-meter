@@ -21,6 +21,7 @@ mod integers;
 mod lifetimes;
 mod nested_growth;
 mod nested_ownership;
+mod owned_extraction;
 mod ownership;
 mod pattern_ownership;
 mod projections;

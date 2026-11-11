@@ -23,6 +23,14 @@ pub(in super::super) fn validate(
         error(&function.span, "internal memory analysis inconsistency: missing ownership template")
     })?;
     let affected = modified_parameters(function, layouts, summary);
+    for input in summary.profiles.iter().flat_map(|point| &point.inputs) {
+        if *input >= summary.input_paths.len() && !template.regions.contains_key(input) {
+            return Err(error(
+                &function.span,
+                "internal memory analysis inconsistency: missing input lifetime region",
+            ));
+        }
+    }
     check_interface(&function.span, summary.allocations.returned.is_some(), &affected, template)?;
     if let Value::Owner(node) = &template.result {
         if !crate::ast_util::types_equal(&node.typ, &function.x.outer_ret.x.typ) {
@@ -107,6 +115,7 @@ mod tests {
             as_string: "ownership consistency".into(),
         };
         let mut template = Template {
+            regions: Default::default(),
             symbols: vec![],
             appends: false,
             borrowed: Default::default(),

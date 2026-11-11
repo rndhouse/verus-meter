@@ -66,6 +66,9 @@ pub(super) enum Value {
 /// A transformation of supplied forests, not an aggregate allocation allowance.
 #[derive(Clone)]
 pub(super) struct Template {
+    /// Original allocation regions used by lifetime profiles after a split.
+    /// These exclude allocations introduced in the helper's own frame.
+    pub(super) regions: BTreeMap<usize, Expr>,
     /// Only observations needed by the final transformation are retained.
     pub(super) symbols: Vec<Symbol>,
     /// Reusable append effects still use the aggregate length induction. Other

@@ -10,6 +10,19 @@ use crate::messages::Span;
 use crate::resource::memory::heap::{OwnerPath, OwnerSlot};
 use std::collections::{HashMap, HashSet};
 
+/// Disjoint lifetime regions created by extracting from an owned input.
+#[derive(Clone)]
+pub(in super::super) struct InputSplit {
+    /// Existing input-region identity, relative to its owning ancestor.
+    pub(in super::super) source: usize,
+    /// Number of receiver path steps belonging to that ancestor.
+    pub(in super::super) depth: usize,
+    /// New identity for the ancestor's remaining allocations.
+    pub(in super::super) remaining: usize,
+    /// New identities for disjoint fixed nodes of the extracted child.
+    pub(in super::super) selected: std::collections::BTreeMap<OwnerPath, usize>,
+}
+
 /// An owner place resolved by the operation that checks its lifetime and layout.
 #[derive(Clone)]
 pub(in super::super) struct Place {
@@ -39,7 +52,7 @@ pub(in super::super) enum Operation {
         grow: bool,
     },
     /// Extract and reindex; an absent index denotes an optional last element.
-    Remove { receiver: Place, index: Option<Expr> },
+    Remove { receiver: Place, index: Option<Expr>, input: Option<InputSplit> },
     /// Read cardinality from the checked receiver.
     Length { receiver: Place },
     /// Replace vector backing with length-sized slice backing.
@@ -83,6 +96,10 @@ pub(super) enum Kind {
 
 #[derive(Default)]
 pub(in super::super) struct Checked {
+    /// Original owned parameter nodes, before any runtime partitioning.
+    pub(super) inputs: Vec<crate::resource::memory::paths::InputPath>,
+    /// Number of additional, operation-derived input lifetime regions.
+    regions: usize,
     /// Ordered writes let operation-local loans distinguish mutation from reads.
     mutations: Vec<(VarIdent, OwnerPath)>,
     /// Semantic operations selected by body accounting.
@@ -98,6 +115,17 @@ pub(in super::super) struct Checked {
 }
 
 impl Checked {
+    pub(in super::super) fn input(&mut self, parameter: usize, path: OwnerPath) {
+        assert_eq!(self.regions, 0);
+        self.inputs.push((parameter, path));
+    }
+
+    pub(in super::super) fn fresh_region(&mut self) -> usize {
+        let id = self.inputs.len() + self.regions;
+        self.regions += 1;
+        id
+    }
+
     pub(in super::super) fn operation(&mut self, span: &Span, operation: Operation) {
         match &operation {
             Operation::Push { receiver, .. } | Operation::Remove { receiver, .. } => {

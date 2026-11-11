@@ -280,12 +280,19 @@ complete allocation metadata between that result and the remaining collection; e
 can then be dropped independently. The same rule covers nested child shapes and
 fixed or indexed paths to the borrowed collection, without new contract syntax.
 
+Straight-line `remove` also supports collections passed by value. Incoming
+allocation lifetimes split between the removed child and the remaining collection,
+including nested owners and partial moves from the child. Dropping either owner
+inside the helper releases only its own input regions; allocations made inside
+the helper remain separate charges. Repeated removals use the reindexed remainder.
+
 Missing ownership support is an error even with a generous memory budget. A helper
 whose control flow or value dependencies cannot be represented by a finite ownership
-transformation is unsupported. Incoming owning extraction from
-by-value collection inputs or within branches, loops, and memory sections remains
-unsupported. Indexing incoming children inside loops and forwarding an incoming
-collection to another runtime-ownership helper are also unsupported. Indexed
+transformation is unsupported. Incoming `pop` from by-value collections, extraction
+within branches, loops, and memory sections, and owned incoming extraction after
+indexed child replacement remain unsupported. Indexing incoming children inside
+loops and forwarding an incoming collection to another runtime-ownership helper
+are also unsupported. Indexed
 borrows can call ordinary leaf helpers.
 Loop-carried helper effects that lose individual metadata are also unsupported.
 There is no aggregate ownership fallback or copied parent charge for an unknown child.

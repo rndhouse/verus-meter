@@ -152,9 +152,20 @@ an executable source can establish cardinality. Record removal before finishing
 enclosing indexed loans so they export the mutation. Borrowed input storage stays
 charged throughout the call, and result/parent charges separate when its template
 is applied. Pop derives its optional tag from the executable length, independently
-of local charges; an empty pop selects no runtime child. By-value extraction would
-additionally need to split input-lifetime provenance and is unsupported, as is
-extraction in protected control-flow regions.
+of local charges; an empty pop selects no runtime child.
+
+[Input provenance](../../source/vir/src/resource/memory/provenance.rs) splits
+owned incoming lifetimes for straight-line `remove`. Body accounting replaces one
+live identity with disjoint remaining and selected identities. The checked
+transition evaluator partitions original input descriptors using the same removal
+algebra, including reindexing and ancestor paths. Each fixed child gets its own
+region; local allocations never enter these original-input expressions. Caller
+peak profiles instantiate region costs before applying the final ownership
+template. Preserve known-zero local charges through descriptor-only updates so
+symbolic zero counters do not hide independent input lifetimes. Indexed child
+replacement invalidates partitionability, including across branch joins, until
+its original input region can be detached. Owned incoming `pop` and extraction in
+protected control-flow regions remain unsupported.
 
 Local views cannot be substituted for complete arguments to runtime-ownership
 calls. Indexed incoming loans inside loops remain unsupported. Never copy a

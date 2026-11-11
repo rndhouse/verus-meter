@@ -4,6 +4,7 @@
 pub(super) mod expr;
 pub(super) mod operations;
 mod owners;
+pub(super) mod profiles;
 pub(super) mod reservations;
 
 use super::analysis::Analysis;

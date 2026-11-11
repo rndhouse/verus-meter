@@ -7,7 +7,6 @@ fn unsupported_incoming_extractions_reject_even_with_a_larger_budget() {
         ("owned_pop", "v.pop()", "Option<Box<u32>>"),
         // Discarding the result must not bypass the unsupported ownership effect.
         ("discarded_owned_pop", "v.pop();", "()"),
-        ("owned_remove", "v.remove(0)", "Box<u32>"),
     ] {
         rejects(
             name,
@@ -15,7 +14,7 @@ fn unsupported_incoming_extractions_reject_even_with_a_larger_budget() {
                 "fn f(mut v: Vec<Box<u32>>) -> {result}
                     resources peak(memory) <= 10000 {{ {operation} }}"
             ),
-            "extracting an incoming child from an owned collection",
+            "popping an incoming child from an owned collection",
         );
     }
 }

@@ -9,6 +9,7 @@
 mod loops;
 mod operations;
 mod patterns;
+mod provenance;
 
 #[cfg(test)]
 mod tests;
@@ -43,6 +44,8 @@ struct Trace<'a> {
     used: HashSet<(checked::Kind, u64)>,
     state: State,
     symbols: Vec<Symbol>,
+    /// Immutable allocation regions addressed by body lifetime identities.
+    regions: BTreeMap<usize, Expr>,
     appends: bool,
     /// Effects on persistent owners distinguish collection regions from
     /// temporary child construction during a representative loop iteration.
@@ -68,6 +71,7 @@ pub(super) fn summarize(
         used: HashSet::new(),
         state: State::default(),
         symbols: vec![],
+        regions: BTreeMap::new(),
         appends: false,
         effects: vec![],
         branch_depth: 0,
@@ -90,6 +94,7 @@ pub(super) fn summarize(
         };
         trace.state.values.insert(parameter.x.name.clone(), value);
     }
+    trace.initialize_regions(function)?;
     let result = trace.value(function.x.body.as_ref()?)?;
     if !checked.covered(&trace.used) {
         return None;
@@ -130,8 +135,18 @@ pub(super) fn summarize(
     if let Value::Scalar(value) = &result {
         collect(value);
     }
+    trace.regions.retain(|id, _| *id >= checked.inputs.len());
+    for region in trace.regions.values() {
+        collect(region);
+    }
     trace.symbols.retain(|symbol| names.contains(&symbol.name));
-    Some(Template { symbols: trace.symbols, appends: trace.appends, borrowed, result })
+    Some(Template {
+        regions: trace.regions,
+        symbols: trace.symbols,
+        appends: trace.appends,
+        borrowed,
+        result,
+    })
 }
 
 impl Trace<'_> {

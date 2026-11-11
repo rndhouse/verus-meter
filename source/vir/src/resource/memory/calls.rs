@@ -167,8 +167,12 @@ impl Analysis<'_> {
             let mut cost = cost.limit(c, bound.clone());
             let mut excluded = external_inputs.clone();
             for index in &point.inputs {
-                cost = cost.add(c, input_costs[*index].clone());
-                if let Some(owner) = &transferred[*index] {
+                let input_cost = input_costs
+                    .get(*index)
+                    .or_else(|| transfer.as_ref().and_then(|transfer| transfer.regions.get(index)))
+                    .ok_or_else(|| unsupported(c, "an input lifetime without a precise region"))?;
+                cost = cost.add(c, input_cost.clone());
+                if let Some(Some(owner)) = transferred.get(*index) {
                     for input in owner.inputs() {
                         excluded.remove(&input);
                     }

@@ -666,16 +666,23 @@ pub(super) fn check(
     let symbolic_bound = super::symbolic::function_bound(function, budgets, functions, layouts)?;
     let result = analysis.produce(body)?;
     let return_parameter = result.parameter;
+    let zero_charges = analysis.growth.zero_charges();
+    let zero_forests = analysis.growth.zero_forests();
     let profiles = analysis
         .storage
         .points()
         .iter()
         .map(|p| super::lifetime::Profile {
-            cost: p.cost.clone(),
+            cost: p
+                .cost
+                .map(&function.span, &|value| {
+                    super::metadata::profiles::simplify(value, &zero_charges, &zero_forests)
+                })
+                .expect("infallible zero-charge substitution"),
             result: !p.values.is_disjoint(&result.origins),
             inputs: p.inputs.clone(),
         })
-        .collect();
+        .collect::<Vec<_>>();
     let result_owner = analysis.result_owner.take();
     let (returned, returned_capacities) = super::ownership::summarize(
         function,

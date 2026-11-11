@@ -268,7 +268,13 @@ impl Analysis<'_> {
             partition.remaining,
         ));
         self.set_element_records(span, &elements, false);
-        let mut child = self.owner_from_metadata(span, typ, selected, elements.view)?;
+        let mut child = self.owner_from_metadata(
+            span,
+            typ,
+            selected,
+            elements.view,
+            elements.zero_charge(&self.growth),
+        )?;
         self.install_owner_minima(&mut child, &elements.minima);
         self.bind_collection_sources(span, &mut child, typ, value)?;
         let mut collections = Vec::new();

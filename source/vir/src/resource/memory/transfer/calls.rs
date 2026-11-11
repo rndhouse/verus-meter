@@ -5,6 +5,8 @@ use super::*;
 use crate::resource::memory::{analysis::Analysis, heap::Owner, model::unsupported};
 
 pub(in super::super) struct Prepared {
+    /// Caller-specific costs for partitioned input lifetime identities.
+    pub(in super::super) regions: BTreeMap<usize, super::super::footprint::Footprint>,
     borrowed: BTreeMap<usize, Node>,
     result: Option<Node>,
 }
@@ -178,7 +180,23 @@ impl Analysis<'_> {
             Value::Owner(node) => Some(node),
             _ => None,
         };
-        Ok(Some(Prepared { borrowed, result }))
+        let mut regions = BTreeMap::new();
+        for (id, region) in &template.regions {
+            let region = substitute(region, &values);
+            let mut proofs = Vec::new();
+            super::proofs::forest(&value.span, &region, &mut proofs)?;
+            self.growth.before.entry(value.span.id).or_default().extend(proofs);
+            let amount = self.metadata_sum(&value.span, region);
+            let amount = self.transfer_scalar_snapshot(&value.span, amount);
+            regions.insert(
+                *id,
+                super::super::footprint::Footprint::charge(
+                    super::super::footprint::MemoryKind::host_heap(),
+                    amount,
+                ),
+            );
+        }
+        Ok(Some(Prepared { regions, borrowed, result }))
     }
 
     fn transfer_scalar_snapshot(&mut self, span: &Span, initial: Expr) -> Expr {
@@ -361,6 +379,7 @@ impl Analysis<'_> {
             &node.typ,
             node.memory,
             super::super::metadata::View::Complete,
+            false,
         )?;
         self.install_owner_minima(&mut owner, &node.minima);
         Ok(owner)

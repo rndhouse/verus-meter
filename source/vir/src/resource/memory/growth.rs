@@ -137,6 +137,59 @@ pub(super) fn push_transition(
 }
 
 impl Growth {
+    pub(super) fn zero_forests(&self) -> std::collections::HashSet<VarIdent> {
+        let mut forests = HashMap::new();
+        for state in &self.elements {
+            if let ExprX::Var(name) = &state.records.x {
+                *forests.entry(name.clone()).or_insert(true) &= state.unchanged_zero();
+            }
+        }
+        forests.into_iter().filter_map(|(name, zero)| zero.then_some(name)).collect()
+    }
+
+    /// Incoming descriptors are absent from local charges. A restored owner
+    /// can therefore own real input storage while contributing zero here.
+    pub(super) fn owner_zero_charge(&self, owner: &super::heap::Owner) -> bool {
+        owner.bytes == 0
+            && (owner.dynamic.is_none()
+                || if let Some(id) = owner.vector {
+                    let backing = &self.vectors[id].backing;
+                    !backing.changed && contracts::constant(&backing.initial_bytes) == Some(0)
+                } else {
+                    owner
+                        .extent
+                        .as_ref()
+                        .is_some_and(|extent| contracts::constant(extent) == Some(0))
+                })
+            && owner.elements.as_ref().is_none_or(|elements| elements.zero_charge(self))
+            && owner.children.values().all(|child| self.owner_zero_charge(child))
+    }
+
+    /// Proof counters that remain zero throughout this body. Use only states
+    /// without allocating writes: partitioning may remove descriptors but
+    /// cannot introduce a charge. These facts keep input lifetime profiles
+    /// independent of unnecessary symbolic zero-byte counters.
+    pub(super) fn zero_charges(&self) -> std::collections::HashSet<VarIdent> {
+        self.vectors
+            .iter()
+            .filter(|state| {
+                !state.backing.changed
+                    && contracts::constant(&state.backing.initial_bytes) == Some(0)
+            })
+            .map(|state| &state.backing.bytes)
+            .chain(
+                self.elements
+                    .iter()
+                    .filter(|state| state.unchanged_zero())
+                    .map(|state| &state.bytes),
+            )
+            .filter_map(|value| match &value.x {
+                ExprX::Var(name) => Some(name.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Express a committed allocation charge in pre-operation variables. Follow
     /// snapshot assignments in execution order; reading the current counter
     /// would omit allocations retained by the operation being summarized.

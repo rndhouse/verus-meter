@@ -116,11 +116,11 @@ impl Analysis<'_> {
                     // the checked template partitions the complete forest at
                     // the call site. Pop's tag comes from the executable length,
                     // not the local forest, which may be empty for a live child.
-                    // Owned inputs need a separate lifetime split.
-                    if !self.heap.borrowed.contains_key(&name) {
+                    // Owned removal additionally partitions incoming lifetimes.
+                    if optional && !self.heap.borrowed.contains_key(&name) {
                         return Err(unsupported(
                             &source.span,
-                            "extracting an incoming child from an owned collection",
+                            "popping an incoming child from an owned collection",
                         ));
                     }
                     self.heap.check_transfer(&name, &source.span)?;
@@ -175,8 +175,15 @@ impl Analysis<'_> {
                 } else {
                     source.typ.clone()
                 };
-                let child =
-                    self.owner_from_metadata(&source.span, &payload, selected, elements.view)?;
+                let mut child = self.owner_from_metadata(
+                    &source.span,
+                    &payload,
+                    selected,
+                    elements.view,
+                    elements.zero_charge(&self.growth),
+                )?;
+                let input =
+                    self.split_input(&source.span, &(name.clone(), path.clone()), &mut child)?;
                 let mut option = Owner { geometry: tag, ..Default::default() };
                 if optional {
                     option.children.insert(OwnerSlot::Contents, child);
@@ -193,6 +200,7 @@ impl Analysis<'_> {
                             location: (name, path),
                         },
                         index: args.get(1).cloned(),
+                        input,
                     },
                 );
                 self.finish_projections(&source.span, focused)?;

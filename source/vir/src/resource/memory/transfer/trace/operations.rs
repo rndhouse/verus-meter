@@ -137,7 +137,7 @@ impl Trace<'_> {
                 }
                 Some(Value::Unit)
             }
-            Operation::Remove { receiver, index } => {
+            Operation::Remove { receiver, index, input } => {
                 let optional = index.is_none();
                 let location = self.checked_location(&receiver)?;
                 let mut node = self.get(span, &location, &receiver.typ)?;
@@ -148,6 +148,9 @@ impl Trace<'_> {
                     Removal::remove(span, length, self.scalar(index.as_ref()?)?)
                 };
                 let partition = removal.partition(span, node.memory.clone());
+                if let Some(input) = input {
+                    self.split_region(span, &location, &removal, &input)?;
+                }
                 let next = with_root(
                     span,
                     partition.remaining,
