@@ -12,7 +12,7 @@ use crate::resource::memory::{contracts, growth};
 
 /// Selected ownership and the descriptors retained by its parent.
 pub(in super::super) struct Partition {
-    /// Complete footprint of the selected child, relative to that child.
+    /// Selected descriptors, relative to the child, preserving the input's view.
     pub(in super::super) selected: Expr,
     /// Retained descriptors, including any sibling reindexing by the operation.
     pub(in super::super) remaining: Expr,

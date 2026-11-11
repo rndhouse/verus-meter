@@ -221,11 +221,17 @@ impl Analysis<'_> {
         let mut rest = memory.clone();
         let mut owner = Owner {
             view,
-            geometry: Some(expr::record_field(
-                span,
-                expr::lookup(span, memory.clone(), expr::path(span, [])),
-                "length",
-            )),
+            // A local-charge forest can omit untouched incoming descriptors.
+            // Only a complete forest establishes the executable cardinality;
+            // local views must obtain it from a bound source value instead.
+            geometry_known: view == super::View::Complete || !self.layouts.cardinality(typ),
+            geometry: (view == super::View::Complete).then(|| {
+                expr::record_field(
+                    span,
+                    expr::lookup(span, memory.clone(), expr::path(span, [])),
+                    "length",
+                )
+            }),
             ..Default::default()
         };
         for (slot, child_type) in self.layouts.owned_children(typ, span)? {

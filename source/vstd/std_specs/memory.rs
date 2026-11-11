@@ -686,6 +686,29 @@ pub open spec fn remove_index(memory: Seq<Record>, index: int) -> Seq<Record>
     }
 }
 
+/// Removing and reindexing children preserves the container's root descriptor.
+pub proof fn remove_root(memory: Seq<Record>, index: int)
+    ensures lookup(remove_index(memory, index), Seq::empty()) == lookup(memory, Seq::empty()),
+    decreases memory.len(),
+{
+    reveal_with_fuel(remove_index, 2);
+    reveal_with_fuel(lookup, 2);
+    if memory.len() > 0 {
+        remove_root(memory.drop_last(), index);
+        let before = remove_index(memory.drop_last(), index);
+        let value = memory.last();
+        assert(memory =~= memory.drop_last().push(value));
+        if value.path.len() == 0 || value.path[0] != index {
+            let next = if value.path.len() > 0 && value.path[0] > index {
+                Record { path: value.path.update(0, value.path[0] - 1), ..value }
+            } else { value };
+            assert(next.path.len() == value.path.len());
+            if value.path.len() == 0 { assert(value.path =~= Seq::<int>::empty()); }
+            lookup_push(before, next, Seq::empty());
+        }
+    }
+}
+
 /// Reindexing changes paths alone; removal transfers precisely one footprint.
 pub proof fn remove_partition(memory: Seq<Record>, index: int)
     requires well_formed(memory),
@@ -960,22 +983,33 @@ pub proof fn with_root_facts(memory: Seq<Record>, root: Record)
     cost_push(descendants(memory), root, 0);
 }
 
-/// Removing a root preserves validity and every nonempty child view.
+/// Removing roots preserves validity. Descendants and the selected root are
+/// disjoint charges; any duplicate root descriptors only increase the total.
 pub proof fn descendants_facts(memory: Seq<Record>)
     requires well_formed(memory),
     ensures well_formed(descendants(memory)),
         !contains(descendants(memory), Seq::empty()),
         cost(descendants(memory), 0) >= 0,
+        cost(descendants(memory), 0)
+            + (if lookup(memory, Seq::empty()).kind == 0 { lookup(memory, Seq::empty()).bytes } else { 0 })
+            <= cost(memory, 0),
     decreases memory.len(),
 {
     reveal_with_fuel(descendants, 2);
     reveal_with_fuel(well_formed, 2);
     reveal_with_fuel(contains, 2);
     reveal_with_fuel(cost, 2);
+    reveal_with_fuel(lookup, 2);
     if memory.len() > 0 {
         descendants_facts(memory.drop_last());
+        inspect(memory.drop_last(), Seq::empty());
+        lookup_push(memory.drop_last(), memory.last(), Seq::empty());
+        assert(memory =~= memory.drop_last().push(memory.last()));
         if memory.last().path.len() != 0 {
             assert(descendants(memory.drop_last()).push(memory.last()).drop_last() =~= descendants(memory.drop_last()));
+            cost_push(descendants(memory.drop_last()), memory.last(), 0);
+        } else {
+            assert(memory.last().path =~= Seq::<int>::empty());
         }
     }
 }

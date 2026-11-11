@@ -145,9 +145,19 @@ changes to one incoming child. The checked transition log identifies mutations;
 read-only loans must not export write effects.
 
 The caller applies the helper template to its complete forest after accounting
-for the call's peak. Local views cannot be substituted for complete arguments to
-runtime-ownership calls. Incoming extraction and indexed loans inside loops
-remain unsupported. Never copy a parent charge to stand in for an unknown child.
+for the call's peak. Straight-line `remove` from a borrowed incoming collection
+uses the same partition for local charges and complete caller ownership. Restore
+the selected child with the input forest's view; only a complete descriptor or
+an executable source can establish cardinality. Record removal before finishing
+enclosing indexed loans so they export the mutation. Borrowed input storage stays
+charged throughout the call, and result/parent charges separate when its template
+is applied. By-value extraction would additionally need to split input-lifetime
+provenance and is unsupported, as are incoming `pop` and extraction in protected
+control-flow regions.
+
+Local views cannot be substituted for complete arguments to runtime-ownership
+calls. Indexed incoming loans inside loops remain unsupported. Never copy a
+parent charge to stand in for an unknown child.
 
 Loop proofs preserve forest validity and sums, immutable entry facts, and inferred
 reservation candidates indexed by fixed and repeated ownership steps. Every

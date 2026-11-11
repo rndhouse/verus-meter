@@ -38,6 +38,16 @@ fn add_at(rows: &mut Vec<Row>, index: usize)
     add(&mut rows[index]);
 }
 
+// Transfer one row out of a borrowed collection. Its buffers follow the result;
+// the remaining rows keep their own allocations and shift down one index.
+fn remove_at(rows: &mut Vec<Row>, index: usize) -> (row: Row)
+    requires index < old(rows).len(),
+    ensures row == old(rows)[index as int], final(rows)@ == old(rows)@.remove(index as int),
+    resources peak(memory) <= ref_size(rows) + value_size(index) + value_size(Row),
+{
+    rows.remove(index)
+}
+
 // Update individual buffers, then reuse their storage for another task.
 //
 // Only the saved length remains live alongside the later byte workspace.
@@ -57,7 +67,8 @@ fn main()
     // old child's footprint when Rust drops that child.
     let replacement = Row { cells: Vec::with_capacity(2) };
     rows[0] = replacement;
-    rows.pop();
+    let removed = remove_at(&mut rows, 1);
+    drop(removed);
 
     // Boxed slices use the same indexed child metadata and allocation sums.
     let frozen = rows.into_boxed_slice();

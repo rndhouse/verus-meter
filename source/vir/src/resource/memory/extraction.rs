@@ -104,11 +104,27 @@ impl Analysis<'_> {
                     .as_ref()
                     .unwrap()
                     .clone();
-                if !elements.precise || elements.view != super::metadata::View::Complete {
+                if !elements.precise {
                     return Err(unsupported(
                         &source.span,
                         "extracting a child without precise allocation metadata",
                     ));
+                }
+                if elements.view == super::metadata::View::Local {
+                    // A borrowed input stays charged to the caller throughout
+                    // this frame. Partition only the helper's new charges here;
+                    // the checked template partitions the complete forest at
+                    // the call site. Owned inputs need a separate lifetime split.
+                    if optional {
+                        return Err(unsupported(&source.span, "popping an incoming owning child"));
+                    }
+                    if !self.heap.borrowed.contains_key(&name) {
+                        return Err(unsupported(
+                            &source.span,
+                            "extracting an incoming child from an owned collection",
+                        ));
+                    }
+                    self.heap.check_transfer(&name, &source.span)?;
                 }
                 if elements.states.values().any(|id| self.growth.protected_elements.contains(id)) {
                     return Err(unsupported(
@@ -160,12 +176,8 @@ impl Analysis<'_> {
                 } else {
                     source.typ.clone()
                 };
-                let child = self.owner_from_metadata(
-                    &source.span,
-                    &payload,
-                    selected,
-                    super::metadata::View::Complete,
-                )?;
+                let child =
+                    self.owner_from_metadata(&source.span, &payload, selected, elements.view)?;
                 let mut option = Owner { geometry: tag, ..Default::default() };
                 if optional {
                     option.children.insert(OwnerSlot::Contents, child);
@@ -173,7 +185,6 @@ impl Analysis<'_> {
                     option = child;
                 }
                 self.storage.record_live(&source.span)?;
-                self.finish_projections(&source.span, focused)?;
                 self.transitions.operation(
                     &source.span,
                     super::transfer::checked::Operation::Remove {
@@ -185,6 +196,7 @@ impl Analysis<'_> {
                         index: args.get(1).cloned(),
                     },
                 );
+                self.finish_projections(&source.span, focused)?;
                 Ok(Some(option))
             }
             _ => Ok(None),

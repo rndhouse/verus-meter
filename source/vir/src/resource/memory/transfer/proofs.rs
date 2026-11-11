@@ -88,6 +88,7 @@ pub(super) fn forest(span: &Span, value: &Expr, proofs: &mut Vec<Stmt>) -> Resul
                     "remove_index" => {
                         proofs.push(expr::lemma(span, "partition_remove", args.as_ref().clone()));
                         proofs.push(expr::lemma(span, "remove_partition", args.as_ref().clone()));
+                        proofs.push(expr::lemma(span, "remove_root", args.as_ref().clone()));
                     }
                     "with_root" => {
                         proofs.push(expr::lemma(span, "with_root_facts", args.as_ref().clone()))

@@ -273,11 +273,19 @@ tracks its own new allocations by child path, and its ownership summary updates
 the caller's complete forest. Zero bytes charged inside a helper do not imply an
 empty incoming allocation or establish its capacity.
 
+In straight-line code, a helper can also use `remove` on a borrowed incoming
+collection and return the owning child. The caller partitions its complete
+allocation metadata between that result and the remaining collection; either
+can then be dropped independently. The same rule covers nested child shapes and
+fixed or indexed paths to the borrowed collection, without new contract syntax.
+
 Missing ownership support is an error even with a generous memory budget. A helper
 whose control flow or value dependencies cannot be represented by a finite ownership
-transformation is unsupported. Extracting incoming owning children, indexing them
-inside loops, or forwarding an incoming collection to another runtime-ownership
-helper remains unsupported. Indexed borrows can call ordinary leaf helpers.
+transformation is unsupported. Incoming owning extraction through `pop`, from
+by-value collection inputs, or within branches, loops, and memory sections remains
+unsupported. Indexing incoming children inside loops and forwarding an incoming
+collection to another runtime-ownership helper are also unsupported. Indexed
+borrows can call ordinary leaf helpers.
 Loop-carried helper effects that lose individual metadata are also unsupported.
 There is no aggregate ownership fallback or copied parent charge for an unknown child.
 Conservative upper bounds remain valid for byte sizes and peak usage.
