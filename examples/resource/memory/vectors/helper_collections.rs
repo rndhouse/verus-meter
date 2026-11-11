@@ -28,8 +28,9 @@ fn main()
     resources peak(memory) <= 288,
 {
     let mut rows = rows(2);
-    // Incoming runtime children cannot yet be extracted inside a helper.
-    // Here the constructor supplied each row's metadata, so removal is precise.
+    // The helper's summary preserves each row's allocation and reservation.
+    // Discarding the popped row releases its buffer. The surviving row's
+    // reservation lets the following push reuse its existing buffer.
     rows.pop();
     rows[0].push(7);
     // 24-byte handle + 48-byte outer buffer + 16-byte surviving row + scratch.

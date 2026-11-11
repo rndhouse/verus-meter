@@ -35,6 +35,7 @@ ordinary Verus correctness checks. Start with the basics, then explore a topic.
 - [Growing vectors](vectors/vector_growth.rs): budget for old and replacement buffers together.
 - [Nested growth](vectors/nested_growth.rs): grow related buffers independently.
 - [Owning collections](vectors/owning_collections.rs): include allocations owned by the elements.
+- [Helper collections](vectors/helper_collections.rs): retain child reservations through counted construction and reuse them after a call.
 - [Indexed owners](vectors/indexed_owners.rs): account for changes to individual owning elements.
 - [Element transfers](vectors/element_transfers.rs): extract owning elements and reuse their storage across loop iterations.
 
