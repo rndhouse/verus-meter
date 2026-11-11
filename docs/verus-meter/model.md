@@ -287,12 +287,17 @@ inside the helper releases only its own input regions; allocations made inside
 the helper remain separate charges. Repeated removals use the reindexed remainder.
 An empty `pop` has no child allocation charge and retains the collection's backing
 storage; a successful pop transfers the last child's allocations into `Some`.
+Indexed replacement, including fixed fields inside an element, releases the
+displaced input subtree after evaluating the replacement. Later `remove` and
+`pop` preserve the replacement's allocations and the surviving original children
+separately. Leaf helpers that replace fixed children follow the same rule, with
+the original subtree kept live throughout the leaf call.
 
 Missing ownership support is an error even with a generous memory budget. A helper
 whose control flow or value dependencies cannot be represented by a finite ownership
-transformation is unsupported. Incoming extraction within branches, loops, and
-memory sections, and owned incoming extraction after indexed child replacement
-remain unsupported. Indexing incoming children inside
+transformation is unsupported. Extraction from incoming collections, and indexed
+replacement in owned incoming collections, remain unsupported within protected
+branches, loops, and memory sections. Indexing incoming children inside
 loops and forwarding an incoming collection to another runtime-ownership helper
 are also unsupported. Indexed
 borrows can call ordinary leaf helpers.

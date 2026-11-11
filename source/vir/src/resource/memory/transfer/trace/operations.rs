@@ -149,7 +149,9 @@ impl Trace<'_> {
                 };
                 let partition = removal.partition(span, node.memory.clone());
                 if let Some(input) = input {
-                    self.split_region(span, &location, &removal, &input)?;
+                    self.partition_region(span, &location, &input, |memory| {
+                        removal.partition(span, memory)
+                    })?;
                 }
                 let next = with_root(
                     span,
@@ -264,7 +266,13 @@ impl Trace<'_> {
                 Some(Value::Unit)
             }
             Operation::Aggregate { fields, tag } => self.construct(value, fields, tag),
-            Operation::Call { target, args, borrowed, .. } => {
+            Operation::Call { target, args, borrowed, replaced_inputs, .. } => {
+                for replacement in replaced_inputs {
+                    if let Some(input) = &replacement.input {
+                        let location = self.checked_location(&replacement.destination)?;
+                        self.replace_region(span, &location, input)?;
+                    }
+                }
                 self.checked_call(value, &target, &args, &borrowed)
             }
         }

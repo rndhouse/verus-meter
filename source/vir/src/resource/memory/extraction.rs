@@ -178,8 +178,11 @@ impl Analysis<'_> {
                     elements.view,
                     elements.zero_charge(&self.growth),
                 )?;
-                let input =
-                    self.split_input(&source.span, &(name.clone(), path.clone()), &mut child)?;
+                let input = self.split_input(
+                    &source.span,
+                    &(name.clone(), path.clone()),
+                    Some(&mut child),
+                )?;
                 let mut option = Owner { geometry: tag, ..Default::default() };
                 if optional {
                     option.children.insert(OwnerSlot::Contents, child);

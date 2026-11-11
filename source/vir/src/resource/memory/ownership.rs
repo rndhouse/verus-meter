@@ -250,7 +250,8 @@ impl Analysis<'_> {
         callee: &Function,
         args: &Exprs,
         transferred: &mut [Option<Owner>],
-    ) -> Result<(), VirErr> {
+    ) -> Result<Vec<super::transfer::checked::Assignment>, VirErr> {
+        let mut inputs = Vec::new();
         for ((index, child_path), effect) in
             self.summaries[&callee.x.name].allocations.children.clone()
         {
@@ -260,6 +261,7 @@ impl Analysis<'_> {
             if !super::paths::indexed(&path) {
                 self.heap.check_transfer(&name, &expr.span)?;
             }
+            let input = self.split_input(&expr.span, &(name.clone(), path.clone()), None)?;
             let old = self
                 .heap
                 .root_mut(&name)
@@ -273,6 +275,16 @@ impl Analysis<'_> {
                         || unsupported(&expr.span, "an unknown replacement child type"),
                     )?;
             }
+            if let Some(input) = input {
+                inputs.push(super::transfer::checked::Assignment {
+                    destination: super::transfer::checked::Place {
+                        source: args[index].clone(),
+                        typ: typ.clone(),
+                        location: (name.clone(), path.clone()),
+                    },
+                    input: Some(input),
+                });
+            }
             let child = self.adopt_owner_tree(
                 &mut OwnerCall { expr, callee, args, transferred, capacities: &effect.capacities },
                 &typ,
@@ -282,7 +294,7 @@ impl Analysis<'_> {
             self.heap.root_mut(&name).unwrap().replace_child(&path, child);
             self.heap.mark_replaced(&name, &path);
         }
-        Ok(())
+        Ok(inputs)
     }
 
     fn adopt_owner_tree(

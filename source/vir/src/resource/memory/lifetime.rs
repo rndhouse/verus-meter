@@ -214,9 +214,6 @@ impl Analysis<'_> {
         for (name, old) in state.heap.owners.iter().chain(state.heap.borrowed.iter()) {
             if let Some(current) = self.heap.root_mut(name) {
                 old.visit_paths(&mut vec![], &mut |path, node| {
-                    if let Some(owner) = current.at_mut(path) {
-                        owner.input_divisible &= node.input_divisible;
-                    }
                     if let Some(elements) =
                         current.at_mut(path).and_then(|owner| owner.elements.as_mut())
                     {

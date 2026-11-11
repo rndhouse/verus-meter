@@ -10,16 +10,17 @@ use crate::messages::Span;
 use crate::resource::memory::heap::{OwnerPath, OwnerSlot};
 use std::collections::{HashMap, HashSet};
 
-/// Disjoint lifetime regions created by extracting from an owned input.
+/// Disjoint lifetime regions created by partitioning an owned input.
 #[derive(Clone)]
 pub(in super::super) struct InputSplit {
     /// Existing input-region identity, relative to its owning ancestor.
     pub(in super::super) source: usize,
-    /// Number of receiver path steps belonging to that ancestor.
+    /// Number of receiver or destination path steps belonging to that ancestor.
     pub(in super::super) depth: usize,
     /// New identity for the ancestor's remaining allocations.
     pub(in super::super) remaining: usize,
-    /// New identities for disjoint fixed nodes of the extracted child.
+    /// New identities for disjoint fixed nodes of the extracted child. Empty
+    /// when replacement drops the selected subtree instead of transferring it.
     pub(in super::super) selected: std::collections::BTreeMap<OwnerPath, usize>,
 }
 
@@ -32,6 +33,15 @@ pub(in super::super) struct Place {
     pub(in super::super) typ: Typ,
     /// Named owner and its structural path.
     pub(in super::super) location: (VarIdent, OwnerPath),
+}
+
+/// Replacement commits after RHS evaluation, preserving displaced/new overlap.
+#[derive(Clone)]
+pub(in super::super) struct Assignment {
+    /// Checked destination whose physical forest receives the replacement.
+    pub(in super::super) destination: Place,
+    /// Original input region after removing the displaced subtree, if any.
+    pub(in super::super) input: Option<InputSplit>,
 }
 
 /// One executable ownership rule, with layout decisions supplied by accounting.
@@ -71,6 +81,9 @@ pub(in super::super) enum Operation {
         args: Exprs,
         borrowed: HashMap<usize, Place>,
         modified: std::collections::BTreeSet<usize>,
+        /// Incoming regions retired by fixed-child replacement effects. The
+        /// callee's peak is accounted before these caller lifetimes end.
+        replaced_inputs: Vec<Assignment>,
     },
 }
 
@@ -107,7 +120,7 @@ pub(in super::super) struct Checked {
     /// Consumed places, with the actual selected type rather than the outer place type.
     pub(super) moves: HashMap<u64, Place>,
     /// Destinations whose old forests are replaced after RHS evaluation.
-    pub(super) assignments: HashMap<u64, Place>,
+    pub(super) assignments: HashMap<u64, Assignment>,
     /// Checked by-value pattern transfers.
     pub(super) patterns: HashMap<u64, Pattern>,
     /// Owning locals released at each scope exit, if they have not been moved.
@@ -147,9 +160,14 @@ impl Checked {
         self.moves.insert(span.id, place);
     }
 
-    pub(in super::super) fn assignment(&mut self, span: &Span, place: Place) {
+    pub(in super::super) fn assignment(
+        &mut self,
+        span: &Span,
+        place: Place,
+        input: Option<InputSplit>,
+    ) {
         self.mutations.push(place.location.clone());
-        self.assignments.insert(span.id, place);
+        self.assignments.insert(span.id, Assignment { destination: place, input });
     }
 
     pub(in super::super) fn pattern(&mut self, span: &Span, pattern: Pattern) {

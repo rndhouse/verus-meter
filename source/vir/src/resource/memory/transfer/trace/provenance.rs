@@ -3,9 +3,26 @@
 //! in the ordinary body charge, so it cannot be counted again at the caller.
 
 use super::*;
-use crate::resource::memory::metadata::operations::{Removal, replace};
+use crate::resource::memory::metadata::operations::{Partition, replace};
 
 impl Trace<'_> {
+    /// Replacement releases the selected original subtree, without inserting
+    /// the new child's local charges into an incoming lifetime region.
+    pub(super) fn replace_region(
+        &mut self,
+        span: &Span,
+        location: &Location,
+        input: &checked::InputSplit,
+    ) -> Option<()> {
+        self.partition_region(span, location, input, |memory| {
+            crate::resource::memory::metadata::operations::detach(
+                span,
+                memory,
+                expr::path(span, []),
+            )
+        })
+    }
+
     pub(super) fn initialize_regions(&mut self, function: &Function) -> Option<()> {
         for (id, (parameter, path)) in self.checked.inputs.iter().enumerate() {
             let Value::Owner(node) =
@@ -37,12 +54,12 @@ impl Trace<'_> {
         Some(())
     }
 
-    pub(super) fn split_region(
+    pub(super) fn partition_region(
         &mut self,
         span: &Span,
         location: &Location,
-        removal: &Removal,
         input: &checked::InputSplit,
+        partition: impl FnOnce(Expr) -> Partition,
     ) -> Option<()> {
         let mut memory = self.regions.get(&input.source)?.clone();
         let mut parents = Vec::new();
@@ -51,7 +68,7 @@ impl Trace<'_> {
             parents.push((memory.clone(), path.clone()));
             memory = expr::subtree(span, memory, path);
         }
-        let partition = removal.partition(span, memory);
+        let partition = partition(memory);
         let remaining =
             parents.into_iter().rev().fold(partition.remaining, |memory, (parent, path)| {
                 replace(span, parent, path, memory)

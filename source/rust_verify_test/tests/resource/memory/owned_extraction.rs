@@ -311,14 +311,9 @@ fn owned_pop_keeps_new_allocations_separate_from_input_regions() {
 fn unsupported_owned_region_transfers_reject_generous_budgets() {
     for (name, body, message) in [
         (
-            "replacement",
-            "v[0] = Box::new(7u32); v.remove(0);",
-            "owned incoming extraction after indexed replacement",
-        ),
-        (
             "conditional_replacement",
             "if take { v[0] = Box::new(7u32); } v.remove(0);",
-            "owned incoming extraction after indexed replacement",
+            "moving or dropping an enclosing heap owner across a branch, loop, or memory section",
         ),
         (
             "branch",

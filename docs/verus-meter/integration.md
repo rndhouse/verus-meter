@@ -154,8 +154,8 @@ charged throughout the call, and result/parent charges separate when its templat
 is applied. Pop derives its optional tag from the executable length, independently
 of local charges; an empty pop selects no runtime child.
 
-[Input provenance](../../source/vir/src/resource/memory/provenance.rs) splits
-owned incoming lifetimes for straight-line `remove` and `pop`. Body accounting
+[Input provenance](../../source/vir/src/resource/memory/provenance.rs) partitions
+owned incoming lifetimes for straight-line extraction and replacement. Body accounting
 replaces one live identity with disjoint remaining and selected identities. The checked
 transition evaluator partitions original input descriptors using the same removal
 algebra, including reindexing and ancestor paths. Each fixed child gets its own
@@ -164,10 +164,13 @@ pop selects empty regions while retaining the parent's backing allocation; the
 optional tag and last index follow the same removal operation as the physical
 forest. Caller peak profiles instantiate region costs before applying the final ownership
 template. Preserve known-zero local charges through descriptor-only updates so
-symbolic zero counters do not hide independent input lifetimes. Indexed child
-replacement invalidates partitionability, including across branch joins, until
-its original input region can be detached. Incoming extraction in protected
-control-flow regions remains unsupported.
+symbolic zero counters do not hide independent input lifetimes. Straight-line
+indexed replacement detaches the displaced subtree from its original input
+region after RHS evaluation, preserving old/new overlap in earlier profiles.
+Fixed-child replacement effects from leaf calls use the same detachment after
+accounting for the call peak. The replacement retains its own charges, so later
+extraction cannot recover displaced input allocations. Incoming extraction and
+indexed replacement in protected control-flow regions remain unsupported.
 
 Local views cannot be substituted for complete arguments to runtime-ownership
 calls. Indexed incoming loans inside loops remain unsupported. Never copy a

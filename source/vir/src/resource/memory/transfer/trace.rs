@@ -514,7 +514,10 @@ impl Trace<'_> {
                     let Value::Owner(child) = value else {
                         return None;
                     };
-                    let location = self.checked_location(&transition)?;
+                    let location = self.checked_location(&transition.destination)?;
+                    if let Some(input) = &transition.input {
+                        self.replace_region(span, &location, input)?;
+                    }
                     self.set(span, &location, child)?;
                 } else if self.layouts.owner(typ) {
                     return None;

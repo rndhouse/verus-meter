@@ -98,6 +98,9 @@ impl Analysis<'_> {
             typ,
             super::projections::spec_value(&crate::ast_util::place_to_spec_expr(place))?,
         )?;
+        // RHS evaluation has already recorded the old/new overlap. Retire only
+        // the destination's original input subtree before installing the child.
+        let input = self.split_input(&place.span, &(name.clone(), path.clone()), None)?;
         self.transitions.assignment(
             &place.span,
             super::transfer::checked::Place {
@@ -112,6 +115,7 @@ impl Analysis<'_> {
                 typ: typ.clone(),
                 location: (name.clone(), path.clone()),
             },
+            input,
         );
         self.heap.mark_replaced(&name, &path);
         let owner = self

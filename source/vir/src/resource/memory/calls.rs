@@ -183,12 +183,14 @@ impl Analysis<'_> {
             }
             self.storage.call_cost(c, base.add(c, cost), &excluded, &result_ids, point.result);
         }
+        let mut replaced_inputs = Vec::new();
         if let Some(transfer) = transfer {
             self.result_owner =
                 self.apply_transfer_call(expr, callee, args, transfer, &mut transferred)?;
         } else {
             self.apply_vector_call_effects(expr, callee, args)?;
-            self.apply_child_call_effects(expr, callee, args, &mut transferred)?;
+            replaced_inputs =
+                self.apply_child_call_effects(expr, callee, args, &mut transferred)?;
             self.result_owner =
                 self.complete_ownership_call(expr, callee, args, &mut transferred)?;
         }
@@ -219,6 +221,7 @@ impl Analysis<'_> {
                 target: target.clone(),
                 args: args.clone(),
                 borrowed,
+                replaced_inputs,
                 modified: super::transfer::modified_parameters(
                     callee,
                     self.layouts,
