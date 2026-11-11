@@ -15,11 +15,12 @@ type Buffer = Vec<u32>;
 // Every buffer reserves space for eight integers.
 type BufferStorage = [u32; 8];
 
-// Count the collection handle, four buffer slots, four buffer allocations,
-// and the loop counter. The helper's temporary storage is added at the call site.
-spec fn construction_budget() -> nat {
-    let backing = 4 * value_size(Buffer);
-    let allocations = 4 * value_size(BufferStorage);
+// Capacity determines the collection's backing storage; the maximum live
+// buffer count determines its separate allocations. Also count the collection
+// handle and loop counter. The helper's temporary storage is added by the caller.
+spec fn construction_budget(capacity: nat, max_live_buffers: nat) -> nat {
+    let backing = capacity * value_size(Buffer);
+    let allocations = max_live_buffers * value_size(BufferStorage);
     value_size(Vec<Buffer>) + backing + allocations + value_size(usize)
 }
 
@@ -33,7 +34,7 @@ fn allocate_buffer() -> Buffer
 // Build four buffers in two batches, then release all their allocations.
 // The length bound connects loop progress to the amount of live heap storage.
 fn main()
-    resources peak(memory) <= construction_budget() + peak(allocate_buffer),
+    resources peak(memory) <= construction_budget(4, 4) + peak(allocate_buffer),
 {
     let mut buffers = Vec::<Buffer>::with_capacity(4);
     let mut batch = 0usize;
