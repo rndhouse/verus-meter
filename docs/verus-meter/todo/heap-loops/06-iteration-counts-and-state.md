@@ -17,6 +17,10 @@ strides, countdowns, changing bounds, and updates to additional persistent scala
 state are not generally supported. Reads and dependencies involving collections
 modified by the iteration also restrict summary construction.
 
+Local memory proofs still require handwritten collection-length invariants to
+connect counter progress with checked collection operations, even when the
+ownership summary already represents those operations.
+
 ## Work
 
 - [ ] Define a checked progress/count interface consumed by ownership repetition,
@@ -25,6 +29,10 @@ modified by the iteration also restrict summary construction.
   iterations and ranges whose length is not a multiple of the stride.
 - [ ] Carry supported scalar recurrences and their exit values without allowing
   temporary iteration symbols to escape.
+- [ ] Generate collection-length invariants from checked iteration effects and
+  progress, such as `length = initial_length + 2 * completed_iterations` for two
+  appends per iteration. Prove generated relationships at loop entry and on back
+  edges; do not assume them from the ownership summary.
 - [ ] Classify changing bounds and data-dependent stopping conditions. Implement
   those with a precise representable relation; explicitly reject the rest.
 - [ ] Preserve integer overflow obligations and distinguish loop termination
@@ -37,6 +45,9 @@ ownership summaries. Tests cover boundary counts, final scalar values, overflow,
 and nested loops whose counts use supported outer state. Document the accepted
 recurrence and stopping-condition classes; do not claim arbitrary recurrence
 inference.
+
+The [batched-construction example](../../../../examples/resource/memory/heap/loops/batched_construction.rs)
+must verify without its handwritten `buffers.len() == 2 * batch` invariant.
 
 ## Starting points
 
