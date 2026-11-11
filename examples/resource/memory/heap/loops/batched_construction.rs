@@ -1,8 +1,8 @@
 // Collect heap buffers while keeping every live allocation within one budget.
 //
 // This example shows how to prove a memory bound for a loop that calls a helper
-// to allocate buffers and collects them. The bound includes every buffer still
-// alive; dropping the collection releases all of their heap storage.
+// to allocate buffers and collects them. The bound includes all of those
+// allocations as the collection grows.
 #![verifier::exec_allows_no_decreases_clause]
 
 use vstd::prelude::*;
