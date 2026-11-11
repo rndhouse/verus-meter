@@ -32,7 +32,7 @@ ordinary Verus correctness checks. Start with the basics, then explore a topic.
 Budgets use named storage types and memory formulas. Collection-length bounds
 are included only where needed for memory verification.
 
-- [Batched construction](heap/loops/batched_construction.rs): compose helpers and nested loops while preserving child reservations.
+- [Batched construction](heap/loops/batched_construction.rs): collect two buffers per iteration and budget for every live allocation.
 - [Partial transfers](heap/loops/partial_transfers.rs): move batches of children and release the source independently.
 - [Peak overlap](heap/loops/peak_overlap.rs): release an extracted buffer before allocating its replacement on each iteration.
 
