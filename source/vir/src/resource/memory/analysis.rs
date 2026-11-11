@@ -33,8 +33,8 @@ pub(super) struct Checkpoint {
     span: Span,
     // Maximum permitted cumulative model bytes at this assertion.
     budget: u64,
-    // Historical cost points that can precede this assertion.
-    peak: Peak,
+    /// Historical cost points that can precede this assertion.
+    pub(super) peak: Peak,
 }
 
 /// One function's evolving ownership state and already checked callee facts.
@@ -395,123 +395,8 @@ impl Analysis<'_> {
                 self.conditional(expr, cond, then_expr, else_expr.as_ref(), false)?;
                 return Ok(0);
             }
-            ExprX::Loop {
-                cond: Some(cond),
-                body,
-                source: LoopSource::Loop,
-                is_for_loop: false,
-                atomic_call: false,
-                ..
-            } if unit(&expr.typ) => {
-                self.prepare_element_loop(&expr.span, body)?;
-                let mut forest_bounds = self.element_loop_bounds(&expr.span, body)?;
-                forest_bounds.extend(self.loop_charge_candidates(&expr.span));
-                let loop_scalars = self.stable_scalars.clone();
-                let entry = self.storage.live();
-                let ids = self.heap.vectors();
-                let metadata_facts = self.element_metadata_invariants(&expr.span);
-                let precise_forests = !metadata_facts.is_empty();
-                if precise_forests {
-                    self.enable_loop_metadata(&expr.span);
-                }
-                let vector_entry: Vec<_> = ids
-                    .iter()
-                    .filter(|_| precise_forests)
-                    .map(|id| {
-                        (
-                            *id,
-                            self.growth.vectors[*id].pushes,
-                            self.growth.vectors[*id].backing.floor.clone(),
-                        )
-                    })
-                    .collect();
-                let elements = self.heap.element_states();
-                let mut entry_facts = Vec::new();
-                if precise_forests {
-                    entry_facts.extend(self.growth.invariants(
-                        &expr.span,
-                        &ids,
-                        &loop_scalars,
-                        &self.bound,
-                    ));
-                    entry_facts.extend(self.growth.element_invariants(
-                        &expr.span,
-                        &elements,
-                        &loop_scalars,
-                        &self.bound,
-                    ));
-                    entry_facts.extend(metadata_facts);
-                    entry_facts
-                        .extend(self.element_reservation_invariants(&expr.span, &loop_scalars)?);
-                }
-                let ExprX::Loop { invs, .. } = &expr.x else { unreachable!() };
-                entry_facts.extend(
-                    invs.iter()
-                        .filter(|inv| {
-                            precise_forests
-                                && matches!(
-                                    inv.kind,
-                                    LoopInvariantKind::InvariantAndEnsures
-                                        | LoopInvariantKind::InvariantExceptBreak
-                                )
-                        })
-                        .map(|inv| inv.inv.clone()),
-                );
-                let entry_facts = self.freeze_loop_facts(&expr.span, entry_facts)?;
-                let live = self.storage.live_expression(&expr.span).total();
-                let loop_inputs = self.loop_inputs();
-                let protection = self.heap.protect();
-                self.heap.permit_loop_partitions(&protection.0);
-                let first_checkpoint = self.checkpoints.len();
-                self.storage.event(&expr.span, "analyze reusable while iteration".into());
-                self.growth.loop_depth += 1;
-                self.discard(cond)?;
-                self.discard(body)?;
-                self.growth.loop_depth -= 1;
-                assert_eq!(self.storage.live(), entry);
-                // Every checkpoint may be reached after a previous complete
-                // iteration. With reusable storage, one iteration's maximum is
-                // the fixed point, including any nested loops or alternatives.
-                let iteration_peak = self.storage.peak();
-                for checkpoint in &mut self.checkpoints[first_checkpoint..] {
-                    checkpoint.peak.merge(&iteration_peak);
-                }
-                self.heap.unprotect(protection);
-                self.finish_loop_inputs(&expr.span, loop_inputs)?;
-                let mut frame_invariants = Vec::new();
-                for (id, pushes, floor) in vector_entry {
-                    let state = self.growth.vectors[id].clone();
-                    if state.pushes == pushes
-                        && std::sync::Arc::ptr_eq(&floor, &state.backing.floor)
-                    {
-                        for value in [state.capacity, state.backing.bytes] {
-                            let snapshot = self.loop_snapshot(&expr.span, &value);
-                            frame_invariants
-                                .push(crate::ast_util::mk_eq(&expr.span, &value, &snapshot));
-                        }
-                    }
-                }
-                let mut invariants =
-                    self.growth.invariants(&expr.span, &ids, &loop_scalars, &self.bound);
-                invariants.extend(self.element_metadata_invariants(&expr.span));
-                invariants.extend(self.element_reservation_invariants(&expr.span, &loop_scalars)?);
-                invariants.extend(forest_bounds);
-                invariants.extend(frame_invariants);
-                invariants.extend(entry_facts);
-                invariants.extend(self.growth.element_invariants(
-                    &expr.span,
-                    &elements,
-                    &loop_scalars,
-                    &self.bound,
-                ));
-                invariants.push(crate::ast_util::mk_ineq(
-                    &expr.span,
-                    &live,
-                    &self.bound,
-                    InequalityOp::Le,
-                ));
-                self.growth.loops.insert(expr.span.id, invariants);
-                self.growth.repeat_elements(&elements);
+            ExprX::Loop { .. } => {
+                self.analyze_loop(expr)?;
                 return Ok(0);
             }
             _ => {
@@ -711,6 +596,17 @@ pub(super) fn check(
         );
     }
     analysis.check_checkpoints()?;
+    let inferred = super::transfer::summarize(
+        function,
+        layouts,
+        functions,
+        summaries,
+        &modes.var_modes,
+        &analysis.transitions,
+    )?;
+    if let Some(inferred) = &inferred {
+        analysis.apply_loop_transfers(&inferred.loops);
+    }
     let report = if symbolic_bound.is_some() {
         analysis.storage.finish_conditional()
     } else {
@@ -725,15 +621,7 @@ pub(super) fn check(
         kind: CheckKind::Function,
     }));
     let summary = super::summary::FunctionSummary {
-        transfer: super::transfer::summarize(
-            function,
-            layouts,
-            functions,
-            summaries,
-            &modes.var_modes,
-            &analysis.transitions,
-            &mut analysis.growth.loops,
-        )?,
+        transfer: inferred.map(|inferred| inferred.template),
         vectors: super::vector_calls::VectorSummary {
             removals: input_vectors
                 .into_iter()

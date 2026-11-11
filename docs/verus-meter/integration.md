@@ -119,8 +119,17 @@ checks reject disagreement about results and affected borrowed parameters;
 these checks do not prove equivalence of complete forest expressions.
 Commit borrowed effects into existing proof-state IDs so
 branch joins and loop invariants observe the updated allocations.
-By-value optional patterns join parametric branch states. Collection loop
-summaries interpret a representative iteration as disjoint persistent roles,
+By-value optional patterns join parametric branch states.
+[Shared loop records](../../source/vir/src/resource/memory/loops.rs) classify control
+forms, scalar writes, direct appends, and helper proof requirements once. Body
+accounting adds entry-charge snapshots and input-region boundaries, then publishes
+the record with its checked operations. Both the
+[inductive proof driver](../../source/vir/src/resource/memory/loops/analysis.rs) and
+ownership summarizer consume that record; the summarizer cannot infer an unchecked
+loop from source syntax. Source observations select proof candidates, while checked
+operations remain authoritative for ownership effects.
+
+Collection loop summaries interpret a representative iteration as disjoint persistent roles,
 each with one unconditional append or pop. Temporary payload symbols identify
 whole-child transfers; uniform construction, prefix retention, and reversed range
 transfer then describe completed forests independently of child layout. Counter
@@ -133,8 +142,11 @@ peak profiles retain first-iteration regions: original allocations can only move
 or be released, so their total at corresponding later iteration points cannot
 increase. Local allocations remain governed by inductive body proofs. Entry
 snapshots and the checked transfer graph supply conservation candidates for sums
-across source and destination; these are proved at entry and on back edges, never
-assumed. Exact exit forests keep subsequent caller accounting and extraction precise.
+across source and destination. Ownership inference returns structural transfer
+relationships only with a complete template; the proof driver turns them into
+invariants, proved at entry and on back edges. Summary inference never mutates the
+body's proof state. Exact exit forests keep subsequent caller accounting and
+extraction precise.
 
 [Indexed projections](../../source/vir/src/resource/memory/projections.rs) loan a
 selected footprint from a precise collection and return its final descriptors.

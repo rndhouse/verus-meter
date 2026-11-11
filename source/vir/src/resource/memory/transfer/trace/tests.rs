@@ -26,7 +26,7 @@ fn with_trace(checked: &Checked, test: impl FnOnce(&mut Trace<'_>)) {
         effects: vec![],
         branch_depth: 0,
         loop_tokens: None,
-        loop_invariants: HashMap::new(),
+        loop_transfers: HashMap::new(),
     });
 }
 
@@ -112,6 +112,43 @@ fn movement_uses_the_checked_dereference_and_cannot_be_invented_or_skipped() {
         assert_eq!(contracts::constant(&property(&span, child.memory, "bytes")), Some(1));
         let Value::Owner(parent) = &trace.state.values[&name] else { panic!("parent consumed") };
         assert_eq!(contracts::constant(&property(&span, parent.memory.clone(), "bytes")), Some(8));
+        assert!(checked.covered(&trace.used));
+    });
+}
+
+#[test]
+fn even_read_only_loops_require_body_accounting_and_consume_its_record() {
+    let span = span(3);
+    let source = SpannedTyped::new(
+        &span,
+        &crate::ast_util::unit_typ(),
+        ExprX::Loop {
+            loop_isolation: true,
+            allow_complex_invariants: false,
+            is_for_loop: false,
+            assume_termination: false,
+            label: Label { id: 0, name: None },
+            cond: Some(crate::ast_util::mk_bool(&span, false)),
+            body: crate::ast_util::mk_block(&span, vec![], None),
+            invs: Arc::new(vec![]),
+            decrease: Arc::new(vec![]),
+            atomic_call: false,
+            known_no_back_edge: false,
+            source: LoopSource::Loop,
+        },
+    );
+    with_trace(&Checked::default(), |trace| assert!(trace.value(&source).is_none()));
+    let mut checked = Checked::default();
+    let record = crate::resource::memory::loops::Loop::new(
+        &source,
+        &Layouts::new(&[], None, None, None),
+        &HashMap::new(),
+    )
+    .unwrap();
+    checked.loops.insert(span.id, record);
+    with_trace(&checked, |trace| {
+        assert!(!checked.covered(&trace.used));
+        assert!(matches!(trace.value(&source), Some(Value::Unit)));
         assert!(checked.covered(&trace.used));
     });
 }

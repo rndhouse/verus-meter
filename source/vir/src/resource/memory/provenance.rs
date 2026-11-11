@@ -9,57 +9,6 @@ use super::{analysis::Analysis, heap::Owner, transfer::checked::InputSplit};
 use crate::{ast::VirErr, messages::Span};
 
 impl Analysis<'_> {
-    /// Snapshot potential conservation groups before the body changes counters.
-    /// The checked iteration graph chooses groups later; every candidate remains
-    /// an ordinary invariant proved at loop entry and on all back edges.
-    pub(super) fn loop_charge_candidates(&mut self, span: &Span) -> Vec<crate::ast::Expr> {
-        let mut roles = Vec::new();
-        for (name, owner) in self.heap.owners.iter().chain(self.heap.borrowed.iter()) {
-            owner.visit_paths(&mut vec![], &mut |path, node| {
-                if let Some(elements) = &node.elements {
-                    if elements.precise {
-                        roles.push((
-                            (name.clone(), path.clone()),
-                            elements.states.values().copied().collect::<Vec<_>>(),
-                        ));
-                    }
-                }
-            });
-        }
-        let mut candidates = Vec::new();
-        let mut charges = Vec::new();
-        for (location, states) in roles {
-            let mut current = super::contracts::literal(span, 0);
-            let mut entry = current.clone();
-            for id in states {
-                let bytes = self.growth.elements[id].bytes.clone();
-                let snapshot = self.loop_snapshot(span, &bytes);
-                if let Some(upper) = self.growth.elements[id].entry_upper() {
-                    let mut stable = true;
-                    let _ = crate::ast_visitor::expr_visitor_check(&upper, &mut |_, expr| {
-                        if let crate::ast::ExprX::Var(name) = &expr.x {
-                            stable &= self.stable_scalars.contains(name);
-                        }
-                        Ok::<(), VirErr>(())
-                    });
-                    if stable {
-                        candidates.push(crate::ast_util::mk_ineq(
-                            span,
-                            &snapshot,
-                            &upper,
-                            crate::ast::InequalityOp::Le,
-                        ));
-                    }
-                }
-                current = super::contracts::add(span, current, bytes);
-                entry = super::contracts::add(span, entry, snapshot);
-            }
-            charges.push(super::transfer::checked::LoopCharge { location, current, entry });
-        }
-        self.transitions.loop_charges.insert(span.id, charges);
-        candidates
-    }
-
     /// A loop carries original ownership by persistent destination, not by an
     /// ever-growing set of per-iteration element identities.
     pub(super) fn join_input(
@@ -125,7 +74,7 @@ impl Analysis<'_> {
         &mut self,
         span: &Span,
         entry: std::collections::BTreeMap<super::paths::LocalPath, Option<usize>>,
-    ) -> Result<(), VirErr> {
+    ) -> Result<Vec<super::loops::Region>, VirErr> {
         let mut regions = Vec::new();
         for (location, entry) in entry {
             let node = self
@@ -152,11 +101,10 @@ impl Analysis<'_> {
                 self.storage.release_input(input);
                 self.storage.add_input(exit);
                 node.input = Some(exit);
-                regions.push(super::transfer::checked::LoopRegion { location, entry, exit });
+                regions.push(super::loops::Region { location, entry, exit });
             }
         }
-        self.transitions.loops.insert(span.id, regions);
-        Ok(())
+        Ok(regions)
     }
 
     /// Extraction splits a receiver's region into surviving and selected owners.

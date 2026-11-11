@@ -55,9 +55,9 @@ struct Trace<'a> {
     /// Temporary payload symbols expose data flow within one iteration. They
     /// must be eliminated by the loop summary, never exported as free symbols.
     loop_tokens: Option<HashSet<VarIdent>>,
-    /// Frame-local conservation candidates inferred from completed loop graphs.
-    /// Published only after the complete function transformation is accepted.
-    loop_invariants: HashMap<u64, Vec<Expr>>,
+    /// Structural transfers from completed loop graphs. No proof expressions
+    /// are constructed here; evidence is published only with a complete template.
+    loop_transfers: HashMap<u64, Vec<super::super::loops::Transfer>>,
 }
 
 pub(super) fn summarize(
@@ -67,8 +67,7 @@ pub(super) fn summarize(
     summaries: &HashMap<Fun, super::super::summary::FunctionSummary>,
     modes: &HashMap<VarIdent, Mode>,
     checked: &Checked,
-    loop_invariants: &mut HashMap<u64, Vec<Expr>>,
-) -> Option<Template> {
+) -> Option<Inferred> {
     let mut trace = Trace {
         layouts,
         functions,
@@ -83,7 +82,7 @@ pub(super) fn summarize(
         effects: vec![],
         branch_depth: 0,
         loop_tokens: None,
-        loop_invariants: HashMap::new(),
+        loop_transfers: HashMap::new(),
     };
     for (index, parameter) in function.x.params.iter().enumerate() {
         if parameter.x.mode != Mode::Exec {
@@ -155,15 +154,15 @@ pub(super) fn summarize(
         return None;
     }
     trace.symbols.retain(|symbol| names.contains(&symbol.name));
-    for (id, candidates) in trace.loop_invariants {
-        loop_invariants.entry(id).or_default().extend(candidates);
-    }
-    Some(Template {
-        regions: trace.regions,
-        symbols: trace.symbols,
-        appends: trace.appends,
-        borrowed,
-        result,
+    Some(Inferred {
+        loops: trace.loop_transfers,
+        template: Template {
+            regions: trace.regions,
+            symbols: trace.symbols,
+            appends: trace.appends,
+            borrowed,
+            result,
+        },
     })
 }
 
@@ -592,7 +591,7 @@ impl Trace<'_> {
                 Some(Value::Unknown)
             }
             ExprX::Call { .. } => None,
-            ExprX::Loop { body, cond, .. } => self.loop_value(span, cond, body),
+            ExprX::Loop { .. } => self.loop_value(span),
             _ => None,
         }
     }

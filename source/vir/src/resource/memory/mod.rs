@@ -13,6 +13,8 @@
 //! `paths` resolves fixed child owners for operations, reservations, and call effects.
 //! `elements` maintains runtime child-footprint sums and ownership capture across calls.
 //! `projections` borrows indexed child shapes and returns their allocation effects to those sums.
+//! `loops` shares loop structure and boundaries between inductive body proofs
+//! and the ownership summaries consumed by callers.
 //! `contracts`
 //! specializes declared formulas with stable scalar arguments. `symbolic`
 //! turns conditional contracts into ordinary Verus proof obligations.
@@ -46,6 +48,7 @@ mod heap;
 mod inference;
 mod layout;
 mod lifetime;
+mod loops;
 mod metadata;
 mod model;
 mod ownership;

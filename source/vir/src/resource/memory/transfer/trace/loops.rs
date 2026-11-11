@@ -3,6 +3,7 @@
 //! Unsupported dependencies reject the summary rather than inventing footprints.
 
 use super::*;
+use crate::resource::memory::loops::Loop;
 
 pub(super) enum Effect {
     Mutation(VarIdent),
@@ -38,17 +39,6 @@ impl Effect {
     }
 }
 
-fn local(value: &Expr) -> Option<&VarIdent> {
-    match &value.x {
-        ExprX::Var(name) => Some(name),
-        ExprX::ReadPlace(place, _) => match &place.x {
-            PlaceX::Local(name) => Some(name),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
 fn independent(value: &Expr, name: &VarIdent) -> bool {
     let mut found = false;
     let _ = crate::ast_visitor::expr_visitor_check(value, &mut |_, value| {
@@ -59,40 +49,27 @@ fn independent(value: &Expr, name: &VarIdent) -> bool {
 }
 
 impl Trace<'_> {
-    pub(super) fn loop_value(
-        &mut self,
-        span: &Span,
-        condition: &Option<Expr>,
-        body: &Expr,
-    ) -> Option<Value> {
+    pub(super) fn loop_value(&mut self, span: &Span) -> Option<Value> {
+        let record = self.checked.loops.get(&span.id)?.clone();
         let before = self.state.clone();
         let used = self.used.clone();
         let regions = self.regions.clone();
         let tokens = self.loop_tokens.clone();
-        let invariants = self.loop_invariants.clone();
+        let loop_transfers = self.loop_transfers.clone();
         let effects = self.effects.len();
         let depth = self.branch_depth;
-        if let Some(value) = self.collection_loop(span, condition, body) {
+        if let Some(value) = self.collection_loop(&record) {
             return Some(value);
         }
         self.state = before;
         self.regions = regions;
         self.loop_tokens = tokens;
-        self.loop_invariants = invariants;
+        self.loop_transfers = loop_transfers;
         self.used = used;
         self.effects.truncate(effects);
         self.branch_depth = depth;
-        // Preserve the existing read-only traversal case, without exporting
-        // unknown scalar results or ignoring executable ownership effects.
-        let mut effects = false;
-        for region in condition.iter().chain(std::iter::once(body)) {
-            let _ = crate::ast_visitor::expr_visitor_check(region, &mut |_, value| {
-                effects |= self.layouts.owner(&value.typ)
-                    || matches!(value.x, ExprX::Call { .. } | ExprX::Return(_));
-                Ok::<(), VirErr>(())
-            });
-        }
-        if effects {
+        // Read-only eligibility was classified with the body proof's record.
+        if !record.read_only() {
             return None;
         }
         for value in self.state.values.values_mut() {
@@ -100,41 +77,23 @@ impl Trace<'_> {
                 *value = Value::Unknown;
             }
         }
-        if self.checked.loops.get(&span.id).is_some_and(Vec::is_empty) {
-            self.used.insert((checked::Kind::Loop, span.id));
-        }
+        self.used.insert((checked::Kind::Loop, span.id));
         Some(Value::Unit)
     }
 
-    fn collection_loop(
-        &mut self,
-        span: &Span,
-        condition: &Option<Expr>,
-        body: &Expr,
-    ) -> Option<Value> {
-        let ExprX::Binary(BinaryOp::Inequality(op), left, right) = &condition.as_ref()?.x else {
-            return None;
-        };
-        let counted = match op {
-            InequalityOp::Lt => true,
-            InequalityOp::Gt => false,
-            _ => return None,
-        };
+    fn collection_loop(&mut self, record: &Loop) -> Option<Value> {
+        let span = &record.span;
+        let control = record.control.as_ref()?;
+        let (left, right) = control.bounds();
+        let counter = control.counter().cloned();
+        let counted = counter.is_some();
         let before = self.state.clone();
-        let counter = if counted { Some(local(left)?.clone()) } else { None };
         let start = self.scalar(left)?;
-        let mut invalid = false;
-        let _ = crate::ast_visitor::expr_visitor_check(body, &mut |_, value| {
-            if let ExprX::Assign { place, .. } = &value.x {
-                if let PlaceX::Local(name) = &place.x {
-                    invalid |= before.values.contains_key(name)
-                        && !matches!(before.values[name], Value::Owner(_))
-                        && Some(name) != counter.as_ref();
-                }
-            }
-            Ok::<(), VirErr>(())
-        });
-        if invalid {
+        if record.writes().any(|name| {
+            before.values.contains_key(name)
+                && !matches!(before.values[name], Value::Owner(_))
+                && Some(name) != counter.as_ref()
+        }) {
             return None;
         }
         let binder = VarIdent(
@@ -166,7 +125,7 @@ impl Trace<'_> {
         let depth = self.branch_depth;
         self.branch_depth = 0;
         let outer_tokens = self.loop_tokens.replace(HashSet::new());
-        self.value(body)?;
+        self.value(&record.body)?;
         let tokens = std::mem::replace(&mut self.loop_tokens, outer_tokens).unwrap();
         self.branch_depth = depth;
         let effects = self.effects.split_off(effect_start);
@@ -238,25 +197,17 @@ impl Trace<'_> {
         let transfers = transfer_edges(&roles, &tokens, &binder)?;
         let iteration = Iteration { roles, transfers, count };
         let Iteration { roles, transfers, count } = &iteration;
-        let regions = self.checked.loops.get(&span.id)?.clone();
-        // Each transfer preserves the sum of the source and destination child
-        // charges. These are proof candidates, not assumed accounting facts.
-        let charges = self.checked.loop_charges.get(&span.id)?;
+        let regions = &record.regions;
+        // Return structural relationships. The shared record resolves endpoints,
+        // and the body proof layer constructs conservation inequalities later.
         for (target, source) in transfers {
-            let charge = |index: usize| {
-                let location = roles[index].0.location()?;
-                charges.iter().find(|charge| {
-                    charge.location.0 == location.0 && charge.location.1 == location.1
-                })
-            };
-            let a = charge(*source)?;
-            let b = charge(*target)?;
-            self.loop_invariants.entry(span.id).or_default().push(mk_ineq(
-                span,
-                &contracts::add(span, a.current.clone(), b.current.clone()),
-                &contracts::add(span, a.entry.clone(), b.entry.clone()),
-                InequalityOp::Le,
-            ));
+            let source = roles[*source].0.location()?;
+            let target = roles[*target].0.location()?;
+            let transfer = record.transfer(
+                &(source.0.clone(), source.1.clone()),
+                &(target.0.clone(), target.1.clone()),
+            )?;
+            self.loop_transfers.entry(span.id).or_default().push(transfer);
         }
         self.used.insert((checked::Kind::Loop, span.id));
         self.state = before;
@@ -356,7 +307,7 @@ impl Trace<'_> {
                 .iter()
                 .find(|region| region.location.0 == location.0 && region.location.1 == location.1)
             {
-                let remaining = self.loop_region(span, index, &iteration, &regions, region)?;
+                let remaining = self.loop_region(span, index, &iteration, regions, region)?;
                 self.regions.insert(region.exit, remaining);
             }
         }
@@ -373,8 +324,8 @@ impl Trace<'_> {
         span: &Span,
         index: usize,
         iteration: &Iteration,
-        regions: &[checked::LoopRegion],
-        region: &checked::LoopRegion,
+        regions: &[crate::resource::memory::loops::Region],
+        region: &crate::resource::memory::loops::Region,
     ) -> Option<Expr> {
         let Iteration { roles, transfers, count } = iteration;
         let (effect, initial) = &roles[index];

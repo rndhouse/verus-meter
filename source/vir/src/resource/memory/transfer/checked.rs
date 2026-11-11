@@ -35,28 +35,6 @@ pub(in super::super) struct InputJoin {
     pub(in super::super) result: usize,
 }
 
-/// Fixed ownership roles at a loop boundary; indices remain in each forest.
-#[derive(Clone)]
-pub(in super::super) struct LoopRegion {
-    /// Persistent collection slot; runtime indices stay inside its forest.
-    pub(in super::super) location: (VarIdent, OwnerPath),
-    /// Original region before any iterations, absent for fresh local storage.
-    pub(in super::super) entry: Option<usize>,
-    /// Original region after all iterations, distinct from first-iteration IDs.
-    pub(in super::super) exit: usize,
-}
-
-/// Inductive child-charge candidates for a persistent collection role.
-#[derive(Clone)]
-pub(in super::super) struct LoopCharge {
-    /// Persistent collection whose local child counters form this sum.
-    pub(in super::super) location: (VarIdent, OwnerPath),
-    /// Mutable sum of this frame's child allocations at the loop head.
-    pub(in super::super) current: Expr,
-    /// Immutable snapshot of the same sum before entering the loop.
-    pub(in super::super) entry: Expr,
-}
-
 /// An owner place resolved by the operation that checks its lifetime and layout.
 #[derive(Clone)]
 pub(in super::super) struct Place {
@@ -145,10 +123,8 @@ pub(super) enum Kind {
 
 #[derive(Default)]
 pub(in super::super) struct Checked {
-    /// Changed original regions at each completed loop boundary.
-    pub(in super::super) loops: HashMap<u64, Vec<LoopRegion>>,
-    /// Available charge snapshots for proving transfer conservation.
-    pub(in super::super) loop_charges: HashMap<u64, Vec<LoopCharge>>,
+    /// Shared loop structure and boundaries, published after body accounting.
+    pub(in super::super) loops: HashMap<u64, crate::resource::memory::loops::Loop>,
     /// Original owned parameter nodes, before any runtime partitioning.
     pub(super) inputs: Vec<crate::resource::memory::paths::InputPath>,
     /// Number of additional, operation-derived input lifetime regions.

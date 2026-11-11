@@ -80,6 +80,15 @@ pub(super) struct Template {
     pub(super) result: Value,
 }
 
+/// A complete ownership template and structural evidence for local loop proofs.
+/// Nothing is published if any part of template inference fails.
+pub(super) struct Inferred {
+    /// Physical ownership transformation substituted by callers.
+    pub(super) template: Template,
+    /// Whole-child transfer relationships, resolved against checked loop roles.
+    pub(super) loops: HashMap<u64, Vec<super::loops::Transfer>>,
+}
+
 pub(super) fn summarize(
     function: &Function,
     layouts: &super::layout::Layouts,
@@ -87,10 +96,8 @@ pub(super) fn summarize(
     summaries: &HashMap<Fun, super::summary::FunctionSummary>,
     modes: &HashMap<VarIdent, Mode>,
     checked: &Checked,
-    loop_invariants: &mut HashMap<u64, Vec<Expr>>,
-) -> Result<Option<Template>, VirErr> {
-    let template =
-        trace::summarize(function, layouts, functions, summaries, modes, checked, loop_invariants);
+) -> Result<Option<Inferred>, VirErr> {
+    let template = trace::summarize(function, layouts, functions, summaries, modes, checked);
     if template.is_none() && required(function, layouts)? {
         return Err(super::model::unsupported(
             &function.span,

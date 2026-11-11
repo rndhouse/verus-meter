@@ -312,31 +312,16 @@ impl Analysis<'_> {
         ));
     }
 
-    pub(super) fn prepare_element_loop(&mut self, span: &Span, body: &Expr) -> Result<(), VirErr> {
-        let mut opaque = false;
-        let mut transfers = false;
-        crate::ast_visitor::expr_visitor_check(body, &mut |_, expression| {
-            if let ExprX::Call { target: CallTarget::Fun(_, fun, _, _, _), .. } = &expression.x {
-                if let Some(summary) = self.summaries.get(fun) {
-                    transfers |= summary.transfer.is_some();
-                    let effects = !summary.allocations.collections.is_empty()
-                        || !summary.allocations.children.is_empty()
-                        || !summary.vectors.removals.is_empty();
-                    opaque |= effects
-                        && summary.transfer.as_ref().is_none_or(|template| template.appends);
-                }
-            }
-            Ok::<(), VirErr>(())
-        })?;
-        if opaque {
-            return Err(super::model::unsupported(
-                span,
-                "loop-carried helper effects without precise allocation metadata",
-            ));
-        }
-        if !transfers {
+    pub(super) fn prepare_element_loop(
+        &mut self,
+        record: &super::loops::Loop,
+    ) -> Result<(), VirErr> {
+        record.check_helpers()?;
+        if !record.uses_templates() {
             return Ok(());
         }
+        let span = &record.span;
+        let body = &record.body;
         self.growth.transfer_loops.insert(span.id);
         for owner in self.heap.owners.values().chain(self.heap.borrowed.values()) {
             owner.visit(&mut |node| {
@@ -400,32 +385,12 @@ impl Analysis<'_> {
     /// A non-growing forest can use its entry charge as an inductive ceiling.
     /// This is a candidate invariant: Verus proves it on every back edge.
     /// Direct append loops keep the existing length/count induction instead.
-    pub(super) fn element_loop_bounds(
-        &mut self,
-        span: &Span,
-        body: &Expr,
-    ) -> Result<Vec<Expr>, VirErr> {
-        let mut appends = std::collections::HashSet::new();
-        crate::ast_visitor::expr_visitor_check(body, &mut |_, expression| {
-            if let ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), args, .. } =
-                &expression.x
-            {
-                if attrs.resource_intrinsic == Some(ResourceIntrinsic::VecPush) {
-                    if let Some(receiver) = args.first() {
-                        if let Some(location) =
-                            super::paths::expr(receiver, super::paths::referent(&receiver.typ))
-                        {
-                            appends.insert(location);
-                        }
-                    }
-                }
-            }
-            Ok::<(), VirErr>(())
-        })?;
+    pub(super) fn element_loop_bounds(&mut self, record: &super::loops::Loop) -> Vec<Expr> {
+        let span = &record.span;
         let mut counters = Vec::new();
         for (name, owner) in self.heap.owners.iter().chain(self.heap.borrowed.iter()) {
             owner.visit_paths(&mut vec![], &mut |path, node| {
-                if !appends.contains(&(name.clone(), path.clone())) {
+                if !record.appends_to(&(name.clone(), path.clone())) {
                     if let Some(elements) = &node.elements {
                         if elements.precise {
                             counters.extend(
@@ -439,13 +404,13 @@ impl Analysis<'_> {
                 }
             });
         }
-        Ok(counters
+        counters
             .into_iter()
             .map(|bytes| {
                 let ceiling = self.loop_snapshot(span, &bytes);
                 crate::ast_util::mk_ineq(span, &bytes, &ceiling, InequalityOp::Le)
             })
-            .collect())
+            .collect()
     }
 
     pub(super) fn metadata_path(&mut self, span: &Span, index: Expr) -> Result<Expr, VirErr> {
