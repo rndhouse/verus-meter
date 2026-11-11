@@ -210,10 +210,10 @@ borrowed calls conservatively retain the caller's old allocations throughout the
 call, then install the final child ownership and capacity facts. See
 [child transfers](../../examples/resource/memory/heap/child_transfers.rs).
 
-Moves and replacements of enclosing owners or their fixed children across branches,
-loops, or memory sections remain unsupported, as do extraction from temporary
-containers and direct moves out of borrowed owners. Supported collection operations
-can extract children from borrowed containers. Recursive layouts and owning array
+Moves and replacements of persistent enclosing owners or their fixed children
+across branches, loops, or memory sections remain unsupported, as do extraction
+from temporary containers and direct moves out of borrowed owners. Supported
+collection operations can extract children from borrowed containers. Recursive layouts and owning array
 elements remain excluded. Shared ownership needs
 last-owner release rules.
 
@@ -261,9 +261,9 @@ collection constructors, whole-owner transfers, and supported append operations
 preserve individual child reservations without additional contract syntax.
 The structural traversal handles fixed children and runtime children separately,
 so supported ownership shapes compose without rules for each nesting combination.
-Loop summaries compose ordered, unconditional effects on disjoint persistent
-collections. An iteration can append a block of fresh children with an
-iteration-independent footprint, remove several children, or transfer a contiguous
+Loop summaries compose ordered effects on disjoint persistent collections. An
+iteration can append a block of fresh children with an iteration-independent
+footprint, remove several children, or transfer a contiguous
 range of whole children to one destination in extraction order. Direct operations,
 precisely summarized helpers, and completed nested counted loops share these rules.
 Block length counts logical children separately from their allocation bytes.
@@ -275,13 +275,35 @@ collection's length against a stable lower bound.
 Zero and partial iteration ranges preserve the unconsumed children and backing.
 Ordered extraction followed by restoration of the same whole children can
 compose to an unchanged collection, including through nested counted loops.
-Restoration must preserve child order. Changed payloads, permutations, partial
-routing of one extracted range, and mixing growth with removal on the same role
-require additional summary support. All intermediate allocation peaks remain
+Restoration must preserve child order. Changed payloads, permutations, splitting
+one iteration's extracted block between destinations, and mixing growth with
+removal on the same role within an iteration require additional summary support.
+All intermediate allocation peaks remain
 checked. A pop preserves backing and supplies its previous length as a capacity
 lower bound, so restoring children can reuse those slots.
-Generated invariants prove local child-charge conservation across transfers.
-Callee peak budgets still cover temporary allocations and buffer replacement.
+Counted loops also support conditional appends, last-element removals, and routing
+an unchanged whole child to alternative destinations. Conditions may use immutable
+scalar parameters or compare the counter itself with scalar thresholds built
+from those inputs and constants, combined with `!`, `&&`, and `||`.
+Thresholds partition the iterations
+into ordered ranges with exact widths; each range selects a complete ownership
+program. Empty selections preserve the entry forest. Children retain their
+individual capacities and order across the selected ranges. Persistent fixed
+ownership slots must agree at branch joins; iteration-local children can move
+into different destinations when both branches consume them.
+
+Payload-dependent decisions and arithmetic on the counter in selection predicates
+remain unsupported. Every represented branch program must satisfy the block
+composition rules; relationships between separate decisions are not solved to
+rescue incompatible programs. Symbolic expansion is bounded to six distinct
+decisions and sixteen threshold boundaries. These limits reject explicitly rather
+than discarding child metadata.
+
+Generated invariants prove local child-charge conservation across transfers,
+including the combined sum for alternative destinations. Uniform reservation
+lower bounds join across contributing branches; exact child descriptors stay
+separate. Callee peak budgets still cover temporary allocations and buffer
+replacement.
 See [helper collections](../../examples/resource/memory/vectors/helper_collections.rs).
 
 A collection passed into a helper can be indexed to borrow, grow, or replace an
@@ -315,13 +337,13 @@ Missing ownership support is an error even with a generous memory budget. A help
 whose control flow or value dependencies cannot be represented by a finite ownership
 transformation is unsupported. The loop rules above support local collections and
 collections passed by value. Extraction from borrowed inputs and indexed replacement
-in owned inputs remain unsupported inside loops. Conditional effects, overlapping
-collection roles that cannot reduce to whole-child restoration, and ownership
-changes to a transferred payload within an iteration are also unsupported.
-Incoming extraction and replacement remain unsupported within protected branches
-and memory sections. Indexing incoming children inside
-loops and forwarding an incoming collection to another runtime-ownership helper
-are also unsupported. Indexed
+in owned inputs remain unsupported inside loops. Overlapping collection roles
+that cannot reduce to whole-child restoration and ownership changes to a
+transferred payload within an iteration are also unsupported. Incoming extraction
+and replacement remain unsupported within protected ordinary branches and memory
+sections; checked loop branches can partition supported persistent roles.
+Indexing incoming children inside loops and forwarding an incoming collection
+to another runtime-ownership helper are also unsupported. Indexed
 borrows can call ordinary leaf helpers.
 Helpers may insert an unchanged whole owning argument or forward it unchanged.
 Loop-carried helper effects that lose individual metadata, delegate borrowed

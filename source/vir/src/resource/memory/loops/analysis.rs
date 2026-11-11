@@ -78,6 +78,9 @@ impl Analysis<'_> {
         self.growth.begin_element_iteration(&elements);
         self.discard(&record.condition)?;
         self.discard(&record.body)?;
+        if !nested {
+            self.finish_element_reservations()?;
+        }
         self.growth.loop_depth -= 1;
         assert_eq!(self.storage.live(), entry);
         // Every checkpoint may be reached after a previous complete
@@ -169,7 +172,16 @@ impl Analysis<'_> {
         }
         for (id, bounds) in growth {
             let record = &self.transitions.loops[id];
+            let mut envelopes = std::collections::BTreeMap::<_, Expr>::new();
             for (location, amount) in bounds {
+                envelopes
+                    .entry(location)
+                    .and_modify(|old| {
+                        *old = contracts::maximum(&record.span, old.clone(), amount.clone());
+                    })
+                    .or_insert_with(|| amount.clone());
+            }
+            for (location, amount) in envelopes {
                 if let Some(charge) =
                     record.charges.iter().find(|charge| &charge.location == location)
                 {
@@ -402,19 +414,49 @@ impl Analysis<'_> {
 impl Loop {
     /// These are proof candidates, not assumptions or inferred byte allowances.
     fn conservation(&self, transfers: &[Transfer]) -> Vec<Expr> {
-        transfers
-            .iter()
-            .flat_map(|transfer| {
-                let a = &self.charges[transfer.source];
-                let b = &self.charges[transfer.target];
-                let mut candidates = vec![crate::ast_util::mk_ineq(
-                    &self.span,
-                    &contracts::add(&self.span, a.current.clone(), b.current.clone()),
-                    &contracts::add(&self.span, a.entry.clone(), b.entry.clone()),
-                    InequalityOp::Le,
-                )];
-                if transfer.source == transfer.target {
-                    if let Some((bytes, entry)) = &a.backing {
+        // Alternative destinations belong to one connected conservation group.
+        // Pairwise bounds would incorrectly require each destination to contain
+        // everything removed from the source on every branch.
+        let mut groups: Vec<std::collections::BTreeSet<usize>> = Vec::new();
+        for transfer in transfers {
+            let mut group = std::collections::BTreeSet::from([transfer.source, transfer.target]);
+            let mut index = 0;
+            while index < groups.len() {
+                if !groups[index].is_disjoint(&group) {
+                    group.extend(groups.remove(index));
+                    index = 0;
+                } else {
+                    index += 1;
+                }
+            }
+            groups.push(group);
+        }
+        groups.sort();
+        let mut candidates = Vec::new();
+        for group in groups {
+            let sum = |entry: bool| {
+                group.iter().fold(contracts::literal(&self.span, 0), |sum, index| {
+                    let charge = &self.charges[*index];
+                    contracts::add(
+                        &self.span,
+                        sum,
+                        if entry { charge.entry.clone() } else { charge.current.clone() },
+                    )
+                })
+            };
+            candidates.push(crate::ast_util::mk_ineq(
+                &self.span,
+                &sum(false),
+                &sum(true),
+                InequalityOp::Le,
+            ));
+            if group.len() == 1 {
+                let role = *group.first().unwrap();
+                if transfers
+                    .iter()
+                    .any(|transfer| transfer.source == role && transfer.target == role)
+                {
+                    if let Some((bytes, entry)) = &self.charges[role].backing {
                         candidates.push(crate::ast_util::mk_ineq(
                             &self.span,
                             bytes,
@@ -423,8 +465,8 @@ impl Loop {
                         ));
                     }
                 }
-                candidates
-            })
-            .collect()
+            }
+        }
+        candidates
     }
 }

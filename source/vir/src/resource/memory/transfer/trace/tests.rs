@@ -155,3 +155,24 @@ fn even_read_only_loops_require_body_accounting_and_consume_its_record() {
         assert!(checked.covered(&trace.used));
     });
 }
+
+/// Selecting one fixed role must discard branch-dependent siblings before the
+/// next update, rather than embedding the complete joined owner in that role.
+#[test]
+fn conditional_projection_keeps_only_the_selected_role() {
+    let span = span(10);
+    let name = |value: &str| VarIdent(Arc::new(value.into()), VarIdentDisambiguate::VirTemp(10));
+    let source = SpannedTyped::new(&span, &expr::memory_type(), ExprX::Var(name("source")));
+    let other = SpannedTyped::new(&span, &expr::memory_type(), ExprX::Var(name("other")));
+    let condition = SpannedTyped::new(&span, &bool_typ(), ExprX::Var(name("choose")));
+    let source_path = expr::path(&span, [-1]);
+    let yes = expr::add(
+        &span,
+        expr::prefix(&span, source.clone(), source_path.clone()),
+        expr::prefix(&span, other, expr::path(&span, [-2])),
+    );
+    let no = expr::prefix(&span, source.clone(), source_path.clone());
+    let joined = choice(&span, condition, yes, no);
+    let selected = simplify::simplify(&expr::subtree(&span, joined, source_path));
+    assert!(simplify::same_expression(&selected, &source), "{selected:?}");
+}

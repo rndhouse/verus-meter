@@ -35,6 +35,17 @@ pub(in super::super) struct InputJoin {
     pub(in super::super) result: usize,
 }
 
+/// A persistent input role has one lifetime identity after a checked branch.
+#[derive(Clone)]
+pub(in super::super) struct InputChoice {
+    /// Original allocations surviving the true branch, if any.
+    pub(in super::super) yes: Option<usize>,
+    /// Original allocations surviving the false branch, if any.
+    pub(in super::super) no: Option<usize>,
+    /// Conditional region used by all later observations of this role.
+    pub(in super::super) result: usize,
+}
+
 /// An owner place resolved by the operation that checks its lifetime and layout.
 #[derive(Clone)]
 pub(in super::super) struct Place {
@@ -114,6 +125,7 @@ pub(in super::super) enum Pattern {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum Kind {
     Operation,
+    Branch,
     Move,
     Assign,
     Pattern,
@@ -125,6 +137,8 @@ pub(super) enum Kind {
 pub(in super::super) struct Checked {
     /// Shared loop structure and boundaries, published after body accounting.
     pub(in super::super) loops: HashMap<u64, crate::resource::memory::loops::Loop>,
+    /// Conditional lifetime joins accepted by branch accounting.
+    pub(in super::super) branches: HashMap<u64, Vec<InputChoice>>,
     /// Original owned parameter nodes, before any runtime partitioning.
     pub(super) inputs: Vec<crate::resource::memory::paths::InputPath>,
     /// Number of additional, operation-derived input lifetime regions.
@@ -211,7 +225,8 @@ impl Checked {
     }
 
     pub(super) fn covered(&self, used: &HashSet<(Kind, u64)>) -> bool {
-        self.operations.keys().all(|id| used.contains(&(Kind::Operation, *id)))
+        self.branches.keys().all(|id| used.contains(&(Kind::Branch, *id)))
+            && self.operations.keys().all(|id| used.contains(&(Kind::Operation, *id)))
             && self.moves.keys().all(|id| used.contains(&(Kind::Move, *id)))
             && self.assignments.keys().all(|id| used.contains(&(Kind::Assign, *id)))
             && self.patterns.keys().all(|id| used.contains(&(Kind::Pattern, *id)))

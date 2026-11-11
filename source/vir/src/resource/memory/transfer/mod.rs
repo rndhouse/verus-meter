@@ -142,14 +142,7 @@ pub(super) fn required(
 }
 
 fn substitute(value: &Expr, values: &HashMap<VarIdent, Expr>) -> Expr {
-    let value = crate::ast_visitor::map_expr_visitor(value, &|value| {
-        Ok::<_, VirErr>(match &value.x {
-            ExprX::Var(name) => values.get(name).cloned().unwrap_or_else(|| value.clone()),
-            _ => value.clone(),
-        })
-    })
-    .expect("infallible template substitution");
-    simplify::simplify(&value)
+    simplify::specialize(value, values)
 }
 
 fn instantiate_node(node: &Node, values: &HashMap<VarIdent, Expr>) -> Node {
@@ -221,7 +214,7 @@ fn with_root(
 }
 
 fn choice(span: &Span, condition: Expr, yes: Expr, no: Expr) -> Expr {
-    if std::sync::Arc::ptr_eq(&yes, &no) {
+    if simplify::same_expression(&yes, &no) {
         return yes;
     }
     simplify::simplify(&SpannedTyped::new(

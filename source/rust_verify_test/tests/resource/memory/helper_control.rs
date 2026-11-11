@@ -102,7 +102,7 @@ fn repeated_nested_owners_compose_with_boxed_slice_results() {
 }
 
 #[test]
-fn unrepresentable_collection_control_flow_is_unsupported() {
+fn conditional_construction_preserves_child_reservations() {
     let code = "fn make() -> (v: Vec<Vec<u32>>)
         ensures v.len() == 1, v[0].len() == 0,
         resources peak(memory) <= 200 {
@@ -123,11 +123,8 @@ fn unrepresentable_collection_control_flow_is_unsupported() {
         fn f() resources peak(memory) <= BOUND {
             let mut v = make(); v[0].push(7); let scratch = [0u8;200];
         }";
-    rejects(
-        "conditional_loop_unsupported",
-        &code.replace("BOUND", "10000"),
-        "no precise helper summary can be inferred",
-    );
+    verifies("conditional_loop", &code.replace("BOUND", "288"));
+    rejects("conditional_loop_short", &code.replace("BOUND", "287"), "memory budget exceeded");
 }
 
 #[test]

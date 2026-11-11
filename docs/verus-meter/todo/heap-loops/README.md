@@ -5,7 +5,7 @@ the ownership information needed after loops and across function calls. They do
 not promise support for every Rust program or every owning container.
 
 1. [Compose iteration operations](complete/01-compose-iteration-operations.md) — complete
-2. [Conditional ownership effects](02-conditional-ownership-effects.md)
+2. [Conditional ownership effects](complete/02-conditional-ownership-effects.md) — complete
 3. [Transform children during traversal](03-transform-children.md)
 4. [Indexed traversal and updates](04-indexed-traversal.md)
 5. [Borrowed collections and incoming ownership](05-borrowed-and-incoming-ownership.md)
@@ -17,9 +17,11 @@ not promise support for every Rust program or every owning container.
 Local peak proofs and ownership summaries share checked loop records and ordered
 ownership effects. Multiple unconditional appends, removals, and whole-child
 transfers compose on disjoint persistent roles, including through precise helper
-programs and nested counted loops. Roles can occupy fixed fields; children can
-contain nested supported ownership shapes. Conditional effects, transformed
-payloads, indexed roles, and broader control forms are covered by the remaining tasks.
+programs and nested counted loops. Guarded effects also support stable scalar
+conditions and counter thresholds with ordered, exact selection ranges. Roles
+can occupy fixed fields; children can contain nested supported ownership shapes.
+Transformed payloads, indexed roles, incoming delegation, broader control forms,
+and leaf-only interface precision are covered by the remaining tasks.
 Local peak proofs support some cases that cannot yet be exported as precise
 ownership summaries.
 

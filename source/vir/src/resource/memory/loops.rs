@@ -186,11 +186,7 @@ impl Loop {
                             summary.transfer.as_ref().and_then(|template| template.effects.as_ref())
                         {
                             for (index, effect) in program {
-                                if matches!(
-                                    effect,
-                                    super::transfer::effects::Effect::Append { .. }
-                                        | super::transfer::effects::Effect::AppendBlock { .. }
-                                ) {
+                                if effect.appends() {
                                     if let Some(argument) = args.get(*index) {
                                         if let Some((name, mut path)) = super::paths::expr(
                                             argument,

@@ -1,7 +1,7 @@
 # 3. Transform children during traversal
 
 Builds on [task 1](complete/01-compose-iteration-operations.md) and uses
-[task 2](02-conditional-ownership-effects.md) for conditional transformations.
+[task 2](complete/02-conditional-ownership-effects.md) for conditional transformations.
 
 ## Goal
 
@@ -15,7 +15,9 @@ Transfers preserve whole children unchanged. Fresh repeated children must have
 an iteration-independent footprint. Extracting a child, changing its ownership,
 and reinserting it is not generally supported. Intermediate input regions from
 nested extraction can also make a summary unrepresentable, even if the extracted
-child is eventually dropped.
+child is eventually dropped. Leaf-only helper signatures can also select the
+older allocation-summary path, retaining a larger proved bound instead of an
+already inferred selected-child descriptor.
 
 ## Work
 
@@ -25,6 +27,9 @@ child is eventually dropped.
   child before insertion or drop.
 - [ ] Represent nonuniform generated child forests and their combined footprint
   without replacing them with one uniform child descriptor.
+- [ ] Preserve inferred child descriptors across leaf-only helper interfaces,
+  including helpers that traverse an internal owning collection and return one
+  selected child.
 - [ ] Preserve original-input provenance through intermediate regions; eliminate
   temporary iteration symbols before exporting the summary.
 - [ ] Identify and address expression-admission restrictions that prevent sizes

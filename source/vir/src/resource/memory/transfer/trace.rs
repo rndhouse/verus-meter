@@ -49,7 +49,8 @@ struct Trace<'a> {
     /// Effects on persistent owners distinguish collection regions from
     /// temporary child construction during a representative loop iteration.
     effects: Vec<Effect>,
-    /// Mutations beneath a branch are not unconditional iteration effects.
+    /// Pattern branches keep unsupported mutations opaque; `if` branches record
+    /// explicit guards instead.
     branch_depth: usize,
     /// Temporary payload symbols expose data flow within one iteration. They
     /// must be eliminated by the loop summary, never exported as free symbols.
@@ -219,17 +220,25 @@ impl Trace<'_> {
             }) else {
                 continue;
             };
-            if matches!(effect, Effect::Mutation(_) | Effect::TransferBlock { .. }) {
+            if !effect.exportable() {
                 return None;
             }
-            let mut valid = true;
-            if !matches!(
-                effect,
-                Effect::Append { child: Value::Owner(Node { origin: Some(_), .. }), .. }
-            ) {
-                effect.expressions(&mut |value| valid &= closed(value));
+            fn valid(effect: &Effect, closed: &impl Fn(&Expr) -> bool) -> bool {
+                match effect {
+                    Effect::Guarded { condition, effect, .. } => {
+                        closed(condition) && valid(effect, closed)
+                    }
+                    Effect::Append {
+                        child: Value::Owner(Node { origin: Some(_), .. }), ..
+                    } => true,
+                    _ => {
+                        let mut valid = true;
+                        effect.expressions(&mut |value| valid &= closed(value));
+                        valid
+                    }
+                }
             }
-            if !valid {
+            if !valid(effect, &closed) {
                 return None;
             }
             effects.push((index, effect.clone()));
@@ -707,19 +716,41 @@ impl Trace<'_> {
         yes: &Expr,
         no: &Option<Expr>,
     ) -> Option<Value> {
-        self.branch_depth += 1;
         let before = self.state.clone();
+        let effect_start = self.effects.len();
         let yes_value = self.value(yes)?;
         let yes = self.state.clone();
+        let yes_effects = self.effects.split_off(effect_start);
         self.state = before;
         let no_value = if let Some(no) = no { self.value(no)? } else { Value::Unit };
         let no = self.state.clone();
+        let no_effects = self.effects.split_off(effect_start);
         self.state = Self::join_state(span, condition.clone(), yes, no)?;
-        self.branch_depth -= 1;
+        for (selected, effects) in [(true, yes_effects), (false, no_effects)] {
+            self.effects.extend(effects.into_iter().map(|effect| Effect::Guarded {
+                condition: condition.clone(),
+                selected,
+                effect: Box::new(effect),
+            }));
+        }
+        if let Some(joins) = self.checked.branches.get(&span.id) {
+            self.used.insert((checked::Kind::Branch, span.id));
+            for join in joins {
+                let memory = |id: Option<usize>| match id {
+                    Some(id) => self.regions.get(&id).cloned(),
+                    None => Some(expr::empty(span, expr::record_type())),
+                };
+                let memory = choice(span, condition.clone(), memory(join.yes)?, memory(join.no)?);
+                self.regions.insert(join.result, simplify::simplify(&memory));
+            }
+        }
         Self::join_value(span, condition, &yes_value, &no_value)
     }
 
     fn join_state(span: &Span, condition: Expr, yes: State, no: State) -> Option<State> {
+        if let ExprX::Const(Constant::Bool(selected)) = condition.x {
+            return Some(if selected { yes } else { no });
+        }
         if yes.values.keys().collect::<HashSet<_>>() != no.values.keys().collect::<HashSet<_>>() {
             return None;
         }
@@ -744,7 +775,7 @@ impl Trace<'_> {
                 let mut minima = yes.minima.clone();
                 join_minima(span, &mut minima, &no.minima);
                 Value::Owner(Node {
-                    origin: None,
+                    origin: if yes.origin == no.origin { yes.origin } else { None },
                     typ: yes.typ.clone(),
                     memory: choice(span, condition, yes.memory.clone(), no.memory.clone()),
                     minima,

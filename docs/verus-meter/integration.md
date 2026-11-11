@@ -135,8 +135,19 @@ carry complete forests through direct operations, checked helper programs, and
 completed nested loops. Composition reduces exact whole-child restoration, then
 combines like monotone operations into append, removal, or transfer blocks. Logical
 block widths remain separate from byte costs. Transfers match ordered extraction
-identities and preserve complete child forests; partial routing, permutations,
-changed payloads, and overlapping roles outside restoration reject.
+identities and preserve complete child forests; partial routing within a block,
+permutations, changed payloads, and overlapping roles outside restoration reject.
+
+[Guarded programs](../../source/vir/src/resource/memory/transfer/trace/loops/guards.rs)
+partition counted iterations at stable scalar thresholds. Each ordered interval
+selects a complete checked block program; state and original-input regions join
+with the same scalar decision. Stable flags select an entire range, while
+counter comparisons select exact subranges. Changing payload predicates reject.
+Project fixed roles through joins before composing later updates, so unrelated
+sibling forests do not become part of each role's expression. Post-operation
+reservation candidates join across all contributing branch classes before their
+ordinary checks are emitted. Alternative transfer destinations share a connected
+charge-conservation group, proved at entry and on every back edge.
 
 Fresh blocks repeat using an indexed forest tiling; removals retain a prefix;
 transfers reverse a contiguous source range. These operations have verified cost,

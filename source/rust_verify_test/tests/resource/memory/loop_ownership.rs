@@ -196,9 +196,9 @@ fn disjoint_fixed_roles_transfer_nested_children_with_a_symbolic_count() {
 fn unsupported_iteration_dependencies_reject_generous_budgets() {
     for (name, body, message) in [
         (
-            "conditional",
-            "if choose { source.pop(); }",
-            "moving or dropping an enclosing heap owner across a branch, loop, or memory section",
+            "periodic_condition",
+            "if i % 2 == 0 { source.pop(); }",
+            "this executable expression or control-flow exit",
         ),
         ("indexed_remove", "source.remove(0);", "no precise helper summary can be inferred"),
         (

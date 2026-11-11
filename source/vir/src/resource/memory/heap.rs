@@ -2,7 +2,8 @@
 //!
 //! Each ownership tree has one named root. Fixed children can move independently;
 //! explicit drop and scope exit release only the remaining tree. Control-flow
-//! regions protect enclosing owners until path-sensitive joins are supported.
+//! regions protect persistent owners; checked loop branches join partitioned
+//! input lifetimes while keeping their fixed ownership slots stable.
 
 use super::analysis::Analysis;
 use super::footprint::MemoryKind;
@@ -19,7 +20,8 @@ pub(super) struct Heap {
     pub(super) borrowed: HashMap<VarIdent, Owner>,
     protected: HashSet<VarIdent>,
     /// Loops may partition ownership while retaining enclosing owner slots.
-    /// A nested branch or section clears this permission until it exits.
+    /// Checked loop branches preserve it through explicit lifetime joins;
+    /// optional matches and memory sections clear it until they exit.
     partitions: HashSet<VarIdent>,
     /// Disjoint replaced child paths of borrowed inputs, exported at calls.
     pub(super) replaced: HashSet<super::paths::LocalPath>,
@@ -213,6 +215,21 @@ impl Heap {
         old
     }
 
+    /// A loop branch can partition its persistent roles and consume owners
+    /// created by the current iteration. The join must agree on surviving slots;
+    /// enclosing owners remain protected against whole moves or drops.
+    pub(super) fn protect_branch(
+        &mut self,
+        in_loop: bool,
+    ) -> (HashSet<VarIdent>, HashSet<VarIdent>) {
+        let old = self.protect();
+        if in_loop {
+            self.protected = old.0.clone();
+            self.partitions = old.1.clone();
+        }
+        old
+    }
+
     pub(super) fn unprotect(&mut self, old: (HashSet<VarIdent>, HashSet<VarIdent>)) {
         (self.protected, self.partitions) = old;
     }
@@ -223,8 +240,8 @@ impl Heap {
         partitions: &HashSet<VarIdent>,
     ) {
         // A directly nested loop may continue partitioning roles authorized by
-        // its enclosing loop. Branches and sections clear these permissions
-        // when entering their own protection scope.
+        // its enclosing loop. Checked loop branches join these partitions;
+        // optional matches and sections retain their own protection scope.
         self.partitions.extend(partitions.iter().cloned());
         self.partitions.extend(self.owners.keys().filter(|name| !outer.contains(*name)).cloned());
     }

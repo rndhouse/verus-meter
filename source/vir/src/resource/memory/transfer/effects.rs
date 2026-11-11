@@ -5,11 +5,23 @@
 
 use super::*;
 use crate::resource::memory::heap::OwnerSlot;
+use std::sync::Arc;
 
 pub(in super::super) type Location = (VarIdent, Vec<OwnerSlot>, Vec<Expr>);
 
+/// Checked ownership operations retain their order and branch decisions until
+/// composition can resolve them into complete repeated forest transformations.
 #[derive(Clone)]
 pub(in super::super) enum Effect {
+    /// Execute an effect only on the selected checked branch.
+    Guarded {
+        /// Scalar decision observed at the checked branch.
+        condition: Expr,
+        /// True for its then arm, false for its else arm.
+        selected: bool,
+        /// One ordered ownership operation on that path.
+        effect: Box<Effect>,
+    },
     Mutation(VarIdent),
     Read(VarIdent),
     Append {
@@ -63,6 +75,7 @@ pub(in super::super) enum Effect {
 impl Effect {
     pub(in super::super) fn location(&self) -> Option<&Location> {
         match self {
+            Self::Guarded { effect, .. } => effect.location(),
             Self::TransferBlock { location, .. }
             | Self::AppendBlock { location, .. }
             | Self::PopBlock { location, .. }
@@ -75,6 +88,7 @@ impl Effect {
 
     pub(super) fn root(&self) -> &VarIdent {
         match self {
+            Self::Guarded { effect, .. } => effect.root(),
             Self::Mutation(name) | Self::Read(name) => name,
             Self::TransferBlock { location, .. }
             | Self::AppendBlock { location, .. }
@@ -87,9 +101,33 @@ impl Effect {
 }
 
 impl Effect {
+    /// Whether this checked operation can extend its destination's backing.
+    pub(in super::super) fn appends(&self) -> bool {
+        match self {
+            Self::Guarded { effect, .. } => effect.appends(),
+            Self::Append { .. } | Self::AppendBlock { .. } | Self::TransferBlock { .. } => true,
+            _ => false,
+        }
+    }
+
+    /// Range endpoints require a checked source role; unknown writes have no
+    /// reusable ownership rule, even beneath a branch guard.
+    pub(super) fn exportable(&self) -> bool {
+        match self {
+            Self::Guarded { effect, .. } => effect.exportable(),
+            Self::Mutation(_) | Self::TransferBlock { .. } => false,
+            _ => true,
+        }
+    }
+
     /// Visit forest expressions, scalar observations and reservation floors.
     pub(super) fn expressions(&self, visit: &mut impl FnMut(&Expr)) {
         let minima = match self {
+            Self::Guarded { condition, effect, .. } => {
+                visit(condition);
+                effect.expressions(visit);
+                None
+            }
             Self::Append { child: Value::Owner(node), .. } => {
                 visit(&node.memory);
                 Some(&node.minima)
@@ -122,9 +160,18 @@ impl Effect {
         prefix: &Location,
         values: &HashMap<VarIdent, Expr>,
         arguments: &HashMap<usize, Value>,
+        guards: &mut HashMap<usize, Expr>,
     ) -> Self {
         let mut result = self.clone();
         let location = match &mut result {
+            Self::Guarded { condition, effect, .. } => {
+                *condition = guards
+                    .entry(Arc::as_ptr(condition) as usize)
+                    .or_insert_with(|| substitute(condition, values))
+                    .clone();
+                **effect = effect.instantiate(prefix, values, arguments, guards);
+                return result;
+            }
             // Parameter programs do not export unresolved range endpoints.
             Self::TransferBlock { .. } => {
                 unreachable!("range endpoints require a checked source role")

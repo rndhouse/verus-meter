@@ -238,6 +238,74 @@ impl Analysis<'_> {
         }
         Ok(())
     }
+
+    /// Join original lifetimes by fixed ownership role. Earlier branch peak
+    /// witnesses keep their separate identities; only live exit paths switch to
+    /// the conditional identity consumed by later operations and loop summaries.
+    fn join_conditional_inputs(
+        &mut self,
+        span: &Span,
+        yes: &mut BranchState,
+    ) -> Result<(), VirErr> {
+        if self.heap.owners.keys().collect::<std::collections::HashSet<_>>()
+            != yes.heap.owners.keys().collect::<std::collections::HashSet<_>>()
+        {
+            return Err(unsupported(span, "branch-dependent surviving ownership slots"));
+        }
+        let mut joins = Vec::new();
+        for (name, owner) in &yes.heap.owners {
+            owner.visit_paths(&mut vec![], &mut |path, node| {
+                joins.push((name.clone(), path.clone(), node.input));
+            });
+        }
+        for (name, owner) in &yes.heap.borrowed {
+            owner.visit_paths(&mut vec![], &mut |path, node| {
+                joins.push((name.clone(), path.clone(), node.input));
+            });
+        }
+        // Fixed child slots must also agree in both directions. A branch-local
+        // subtree cannot be silently retained as though it existed on both paths.
+        let mut current_paths = Vec::new();
+        for (name, owner) in self.heap.owners.iter().chain(self.heap.borrowed.iter()) {
+            owner.visit_paths(&mut vec![], &mut |path, _| {
+                current_paths.push((name.clone(), path.clone()));
+            });
+        }
+        if current_paths.len() != joins.len()
+            || current_paths.iter().any(|(name, path)| {
+                !joins.iter().any(|(other, other_path, _)| name == other && path == other_path)
+            })
+        {
+            return Err(unsupported(span, "branch-dependent fixed ownership slots"));
+        }
+        let mut choices = Vec::new();
+        for (name, path, input) in joins {
+            let current = self
+                .heap
+                .root_mut(&name)
+                .and_then(|owner| owner.at_mut(&path))
+                .ok_or_else(|| unsupported(span, "branch-dependent fixed ownership slots"))?;
+            if current.input == input {
+                continue;
+            }
+            let other = current.input;
+            let result = self.transitions.fresh_region();
+            for id in input.into_iter().chain(other) {
+                self.storage.release_input(id);
+                yes.storage.release_input(id);
+            }
+            self.storage.add_input(result);
+            yes.storage.add_input(result);
+            current.input = Some(result);
+            yes.heap.root_mut(&name).unwrap().at_mut(&path).unwrap().input = Some(result);
+            choices.push(super::transfer::checked::InputChoice { yes: input, no: other, result });
+        }
+        if !choices.is_empty() {
+            self.transitions.branches.insert(span.id, choices);
+        }
+        Ok(())
+    }
+
     pub(super) fn conditional(
         &mut self,
         expr: &Expr,
@@ -249,7 +317,7 @@ impl Analysis<'_> {
         if self.layouts.owner(&expr.typ) {
             return Err(unsupported(&expr.span, "conditional heap ownership results"));
         }
-        let protection = self.heap.protect();
+        let protection = self.heap.protect_branch(self.growth.loop_depth > 0);
         self.discard(cond)?;
         let entry = self.branch_state();
         let mut result = if new_value {
@@ -258,7 +326,7 @@ impl Analysis<'_> {
             self.initialize_expr(yes)?;
             None
         };
-        let yes_state = self.branch_state();
+        let mut yes_state = self.branch_state();
         self.restore_branch(&entry);
         if let Some(no) = no {
             if new_value {
@@ -268,6 +336,7 @@ impl Analysis<'_> {
                 self.initialize_expr(no)?;
             }
         }
+        self.join_conditional_inputs(&expr.span, &mut yes_state)?;
         self.join_branch(&yes_state)?;
         self.heap.unprotect(protection);
         Ok(result)

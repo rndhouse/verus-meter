@@ -201,6 +201,40 @@ impl Analysis<'_> {
         if !elements.precise || self.growth.loop_depth == 0 {
             return Ok(());
         }
+        if after {
+            self.growth.pending_reservations.push((span.clone(), elements.clone()));
+            return Ok(());
+        }
+        self.check_element_minima(span, elements, after)
+    }
+
+    /// All contributing paths share one reservation candidate. The exact
+    /// per-child descriptors remain distinct; only the reusable lower bound joins.
+    pub(in super::super) fn finish_element_reservations(&mut self) -> Result<(), VirErr> {
+        let pending = std::mem::take(&mut self.growth.pending_reservations);
+        let mut common = std::collections::HashMap::<_, Minima>::new();
+        for (span, elements) in &pending {
+            let ExprX::Var(name) = &elements.records.x else {
+                unreachable!("collection state identity")
+            };
+            join_minima(span, common.entry(name.clone()).or_default(), &elements.minima);
+        }
+        for (span, mut elements) in pending {
+            let ExprX::Var(name) = &elements.records.x else {
+                unreachable!("collection state identity")
+            };
+            elements.minima = common[name].clone();
+            self.check_element_minima(&span, &elements, true)?;
+        }
+        Ok(())
+    }
+
+    fn check_element_minima(
+        &mut self,
+        span: &Span,
+        elements: &Elements,
+        after: bool,
+    ) -> Result<(), VirErr> {
         let Some((typ, value)) = &elements.source else {
             return Ok(());
         };

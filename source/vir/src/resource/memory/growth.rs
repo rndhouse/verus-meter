@@ -62,6 +62,9 @@ pub(super) struct Growth {
     pub(super) elements: Vec<super::elements::ElementState>,
     /// Complete next sums used for post-operation peak checks before execution.
     pub(super) element_updates: HashMap<u64, std::collections::BTreeMap<usize, Expr>>,
+    /// Post-operation reservation checks wait for all branches of the outer
+    /// iteration to contribute their common child-class lower bounds.
+    pub(super) pending_reservations: Vec<(Span, super::elements::Elements)>,
     /// Enclosing runtime child sums excluded from a section's accounting.
     pub(super) protected_elements: std::collections::HashSet<usize>,
     /// Function-entry declarations for erased proof state.

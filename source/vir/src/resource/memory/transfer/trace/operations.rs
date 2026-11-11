@@ -370,11 +370,13 @@ impl Trace<'_> {
         if self.branch_depth == 0 {
             if let Some(effects) = &template.effects {
                 self.effects.truncate(first_effect);
+                let mut guards = HashMap::new();
                 for (index, effect) in effects {
                     self.effects.push(effect.instantiate(
                         locations.get(index)?,
                         &replacements,
                         &values,
+                        &mut guards,
                     ));
                 }
             }

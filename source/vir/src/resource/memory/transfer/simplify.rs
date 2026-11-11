@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::resource::memory::contracts;
+use std::sync::Arc;
 
 fn call<'a>(value: &'a Expr, name: &str) -> Option<&'a Exprs> {
     let ExprX::Call { target: CallTarget::Fun(_, function, _, _, _), args, .. } = &value.x else {
@@ -66,13 +67,263 @@ fn known_root(value: &Expr) -> Option<Expr> {
     None
 }
 
+/// Normalize a shared expression graph once per node. Branch composition reuses
+/// entry forests; preserving that sharing avoids repeatedly expanding unchanged
+/// subtrees and skips alternatives already decided by caller specialization.
 pub(super) fn simplify(value: &Expr) -> Expr {
-    crate::ast_visitor::map_expr_visitor(value, &|value| Ok::<_, VirErr>(node(value)))
+    rewrite(value, None)
+}
+
+pub(super) fn specialize(value: &Expr, values: &HashMap<VarIdent, Expr>) -> Expr {
+    rewrite(value, Some(values))
+}
+
+fn rewrite(value: &Expr, values: Option<&HashMap<VarIdent, Expr>>) -> Expr {
+    use crate::ast_visitor::{AstVisitor, NoScoper, Rewrite};
+    struct Normalize<'a> {
+        /// Immutable caller observations replacing template symbols.
+        values: Option<&'a HashMap<VarIdent, Expr>>,
+        /// Normalized results keyed by nodes in the still-live input graph.
+        cache: HashMap<usize, Expr>,
+    }
+    impl AstVisitor<Rewrite, VirErr, NoScoper> for Normalize<'_> {
+        fn visit_expr(&mut self, value: &Expr) -> Result<Expr, VirErr> {
+            let key = Arc::as_ptr(value) as usize;
+            if let Some(value) = self.cache.get(&key) {
+                return Ok(value.clone());
+            }
+            if let ExprX::Var(name) = &value.x {
+                if let Some(replacement) = self.values.and_then(|values| values.get(name)) {
+                    let result = simplify(replacement);
+                    self.cache.insert(key, result.clone());
+                    return Ok(result);
+                }
+            }
+            if let ExprX::If(condition, yes, Some(no)) = &value.x {
+                let condition = self.visit_expr(condition)?;
+                if let ExprX::Const(Constant::Bool(selected)) = condition.x {
+                    let result = self.visit_expr(if selected { yes } else { no })?;
+                    self.cache.insert(key, result.clone());
+                    return Ok(result);
+                }
+            }
+            let result = node(&self.visit_expr_rec(value)?);
+            self.cache.insert(key, result.clone());
+            Ok(result)
+        }
+        fn visit_typ(&mut self, typ: &Typ) -> Result<Typ, VirErr> {
+            Ok(typ.clone())
+        }
+        fn visit_place(&mut self, place: &Place) -> Result<Place, VirErr> {
+            self.visit_place_rec(place)
+        }
+        fn visit_pattern(&mut self, pattern: &Pattern) -> Result<Pattern, VirErr> {
+            self.visit_pattern_rec(pattern)
+        }
+        fn visit_stmt(&mut self, stmt: &Stmt) -> Result<Vec<Stmt>, VirErr> {
+            Ok(vec![self.visit_stmt_rec(stmt)?])
+        }
+    }
+    Normalize { values, cache: HashMap::new() }
+        .visit_expr(value)
         .expect("infallible forest normalization")
+}
+
+/// Structural equality for pure expressions used by forest maps and joins.
+/// Unknown forms stay distinct; this never asks the solver or guesses an index.
+pub(super) fn same_expression(a: &Expr, b: &Expr) -> bool {
+    if Arc::ptr_eq(a, b) {
+        return true;
+    }
+    if !crate::ast_util::types_equal(&a.typ, &b.typ) {
+        return false;
+    }
+    match (&a.x, &b.x) {
+        (ExprX::Var(a), ExprX::Var(b)) => a == b,
+        (ExprX::Const(Constant::Int(a)), ExprX::Const(Constant::Int(b))) => a == b,
+        (ExprX::Const(Constant::Bool(a)), ExprX::Const(Constant::Bool(b))) => a == b,
+        (ExprX::Binary(a, al, ar), ExprX::Binary(b, bl, br)) => {
+            a == b && same_expression(al, bl) && same_expression(ar, br)
+        }
+        (ExprX::Unary(a, al), ExprX::Unary(b, bl)) => a == b && same_expression(al, bl),
+        (ExprX::If(ac, al, Some(ar)), ExprX::If(bc, bl, Some(br))) => {
+            same_expression(ac, bc) && same_expression(al, bl) && same_expression(ar, br)
+        }
+        (
+            ExprX::Call {
+                target: CallTarget::Fun(CallTargetKind::Static, af, at, ai, _),
+                args: aa,
+                post_args: None,
+                body: None,
+            },
+            ExprX::Call {
+                target: CallTarget::Fun(CallTargetKind::Static, bf, bt, bi, _),
+                args: ba,
+                post_args: None,
+                body: None,
+            },
+        ) => {
+            af == bf
+                && ai.is_empty()
+                && bi.is_empty()
+                && crate::ast_util::n_types_equal(at, bt)
+                && aa.len() == ba.len()
+                && aa.iter().zip(ba.iter()).all(|(a, b)| same_expression(a, b))
+        }
+        _ => false,
+    }
+}
+
+/// Expand finite closed forests without disturbing the scoped range algebra
+/// used for symbolic caller-supplied ownership. Its requested views and prefix
+/// cuts deliberately stay opaque for counterexample queries.
+fn closed(value: &Expr) -> bool {
+    crate::ast_visitor::expr_visitor_check(value, &mut |_, value| {
+        if matches!(value.x, ExprX::Var(_)) { Err(()) } else { Ok(()) }
+    })
+    .is_ok()
 }
 
 fn node(value: &Expr) -> Expr {
     let span = &value.span;
+    if let ExprX::If(_, yes, Some(no)) = &value.x {
+        if same_expression(yes, no) {
+            return yes.clone();
+        }
+    }
+    // Project a branch join before inspecting its children. Otherwise selecting
+    // one fixed role retains every sibling forest in both alternatives, and
+    // sequential updates duplicate the entire enclosing ownership tree.
+    for name in [
+        "subtree",
+        "without",
+        "descendants",
+        "runtime",
+        "nonruntime",
+        "lookup",
+        "cost",
+        "take_children",
+        "reverse_children",
+    ] {
+        if let Some(args) = call(value, name) {
+            if let ExprX::If(condition, yes, Some(no)) = &args[0].x {
+                let apply = |memory| {
+                    let mut args = args.as_ref().clone();
+                    args[0] = memory;
+                    expr::operation(span, name, args, value.typ.clone())
+                };
+                return simplify(&super::choice(
+                    span,
+                    condition.clone(),
+                    apply(yes.clone()),
+                    apply(no.clone()),
+                ));
+            }
+        }
+    }
+    if let ExprX::UnaryOpr(op @ UnaryOpr::Field(_), record) = &value.x {
+        if let ExprX::If(condition, yes, Some(no)) = &record.x {
+            let apply =
+                |record| SpannedTyped::new(span, &value.typ, ExprX::UnaryOpr(op.clone(), record));
+            return simplify(&super::choice(
+                span,
+                condition.clone(),
+                apply(yes.clone()),
+                apply(no.clone()),
+            ));
+        }
+    }
+    if let ExprX::Binary(BinaryOp::Arith(op), left, right) = &value.x {
+        match op {
+            ArithOp::Add(OverflowBehavior::Allow) | ArithOp::Sub(OverflowBehavior::Allow)
+                if contracts::constant(right) == Some(0) =>
+            {
+                return left.clone();
+            }
+            ArithOp::Mul(OverflowBehavior::Allow)
+                if contracts::constant(right) == Some(0)
+                    || contracts::constant(left) == Some(0) =>
+            {
+                return expr::integer(span, 0);
+            }
+            ArithOp::Mul(OverflowBehavior::Allow) if contracts::constant(right) == Some(1) => {
+                return left.clone();
+            }
+            ArithOp::Mul(OverflowBehavior::Allow) if contracts::constant(left) == Some(1) => {
+                return right.clone();
+            }
+            _ => {}
+        }
+    }
+    if let Some(args) = call(value, "reverse_children").filter(|args| closed(&args[0])) {
+        let memory = &args[0];
+        let (start, end, base) = (&args[1], &args[2], &args[3]);
+        let apply = |memory| {
+            expr::operation(
+                span,
+                "reverse_children",
+                vec![memory, start.clone(), end.clone(), base.clone()],
+                expr::memory_type(),
+            )
+        };
+        if empty(memory) || call(memory, "nonruntime").is_some() || same_expression(start, end) {
+            return expr::empty(span, expr::record_type());
+        }
+        if let Some(parts) = call(memory, "add") {
+            return simplify(&expr::add(span, apply(parts[0].clone()), apply(parts[1].clone())));
+        }
+        if let Some(parts) = call(memory, "push") {
+            if call(&parts[1], "allocated").is_some_and(|record| empty(&record[0])) {
+                return simplify(&apply(parts[0].clone()));
+            }
+        }
+        // Reversal selects runtime children only. A previous prefix cut ending
+        // exactly at this extraction's end cannot remove any selected child.
+        if let Some(parts) =
+            call(memory, "take_children").filter(|parts| same_expression(&parts[1], end))
+        {
+            return simplify(&apply(parts[0].clone()));
+        }
+        // Keep runtime filters explicit: scoped prefix-cut proofs use them to
+        // connect source descriptors to the local collection's child records.
+        if let Some(parts) = call(memory, "descendants") {
+            return simplify(&apply(parts[0].clone()));
+        }
+        if let Some(parts) = call(memory, "prefix") {
+            if let Some(mut path) = path(&parts[1]) {
+                if let Some(index) = path.first().cloned() {
+                    let selected = crate::ast_util::conjoin(
+                        span,
+                        &vec![
+                            crate::ast_util::mk_ineq(
+                                span,
+                                &expr::integer(span, 0),
+                                &index,
+                                InequalityOp::Le,
+                            ),
+                            crate::ast_util::mk_ineq(span, start, &index, InequalityOp::Le),
+                            crate::ast_util::mk_ineq(span, &index, end, InequalityOp::Lt),
+                        ],
+                    );
+                    path[0] = contracts::add(
+                        span,
+                        base.clone(),
+                        contracts::subtract(
+                            span,
+                            contracts::subtract(span, end.clone(), expr::integer(span, 1)),
+                            index,
+                        ),
+                    );
+                    return simplify(&super::choice(
+                        span,
+                        selected,
+                        expr::prefix(span, parts[0].clone(), make_path(span, &path)),
+                        expr::empty(span, expr::record_type()),
+                    ));
+                }
+            }
+        }
+    }
     if let ExprX::UnaryOpr(UnaryOpr::Field(field), record) = &value.x {
         if let Some(args) = call(record, "allocated") {
             let index = match field.field.as_str() {
@@ -331,6 +582,22 @@ fn node(value: &Expr) -> Expr {
         if empty(memory) {
             return memory.clone();
         }
+        if let Some(parts) = call(memory, "take_children") {
+            let retained = if same_expression(&parts[1], length) {
+                length.clone()
+            } else {
+                contracts::minimum(span, parts[1].clone(), length.clone())
+            };
+            return simplify(&expr::operation(
+                span,
+                "take_children",
+                vec![parts[0].clone(), retained],
+                expr::memory_type(),
+            ));
+        }
+        if call(memory, "nonruntime").is_some() {
+            return expr::empty(span, expr::record_type());
+        }
         // Prefix retention counts only nonnegative runtime indices. Keep the
         // conditional theorem for symbolic starts in the proof algebra.
         if let Some(parts) =
@@ -421,6 +688,42 @@ fn node(value: &Expr) -> Expr {
                         expr::empty(span, expr::record_type()),
                     ));
                 }
+            }
+            // Whole-range transfers have an exact inverse index map. Select
+            // the original child directly before introducing general range view
+            // facts; this also keeps failing-budget queries finite.
+            if let Some(parts) = call(memory, "reverse_children").filter(|parts| closed(&parts[0]))
+            {
+                let index = contracts::subtract(
+                    span,
+                    contracts::add(
+                        span,
+                        parts[3].clone(),
+                        contracts::subtract(span, parts[2].clone(), expr::integer(span, 1)),
+                    ),
+                    selected_path[0].clone(),
+                );
+                let conditions = crate::ast_util::conjoin(
+                    span,
+                    &vec![
+                        crate::ast_util::mk_ineq(
+                            span,
+                            &expr::integer(span, 0),
+                            &index,
+                            InequalityOp::Le,
+                        ),
+                        crate::ast_util::mk_ineq(span, &parts[1], &index, InequalityOp::Le),
+                        crate::ast_util::mk_ineq(span, &index, &parts[2], InequalityOp::Lt),
+                    ],
+                );
+                let mut relative = selected_path.clone();
+                relative[0] = index;
+                return simplify(&super::choice(
+                    span,
+                    conditions,
+                    expr::subtree(span, parts[0].clone(), make_path(span, &relative)),
+                    expr::empty(span, expr::record_type()),
+                ));
             }
             // Ordered blocks are built with precisely their declared width.
             // Select one block arithmetically rather than expanding its count.
@@ -542,5 +845,11 @@ fn node(value: &Expr) -> Expr {
             ));
         }
     }
-    contracts::simplify(value)
+    let constant = |value: &Expr| matches!(value.x, ExprX::Const(_));
+    let fold = match &value.x {
+        ExprX::Unary(_, a) => constant(a),
+        ExprX::Binary(_, a, b) | ExprX::Logical(_, a, b) => constant(a) && constant(b),
+        _ => false,
+    };
+    if fold { contracts::simplify(value) } else { value.clone() }
 }

@@ -6,6 +6,7 @@ use super::*;
 use crate::resource::memory::loops::Loop;
 
 mod composition;
+mod guards;
 
 /// One iteration's disjoint roles and whole-child transfer edges. Applying this
 /// graph to physical forests or original-input regions uses the same trip count.
@@ -118,41 +119,6 @@ impl Trace<'_> {
             .into_iter()
             .filter(|effect| before.values.contains_key(effect.root()))
             .collect();
-        let mut roles = Vec::new();
-        let composed = composition::compose(persistent);
-        for effect in composition::blocks(span, composed, &tokens, &binder, self.layouts)? {
-            let (location, typ) = match &effect {
-                Effect::TransferBlock { location, typ, .. }
-                | Effect::AppendBlock { location, typ, .. }
-                | Effect::PopBlock { location, typ, .. }
-                | Effect::Identity { location, typ } => (location, typ),
-                _ => return None,
-            };
-            if location.1.iter().any(|slot| matches!(slot, OwnerSlot::Element(_))) {
-                return None;
-            }
-            // A transition acts on one disjoint role, independently of child layout.
-            if roles.iter().any(|(other, _): &(Effect, Node)| {
-                let other = other.location().unwrap();
-                other.0 == location.0
-                    && (other.1.starts_with(&location.1) || location.1.starts_with(&other.1))
-            }) {
-                return None;
-            }
-            let after = std::mem::replace(&mut self.state, before.clone());
-            let node = self.get(span, location, typ)?;
-            self.state = after;
-            roles.push((effect, node));
-        }
-        if roles.is_empty() {
-            return None;
-        }
-        if bound_effects.iter().any(|effect| {
-            !matches!(effect, Effect::Read(name)
-            if roles.iter().all(|(effect, _)| effect.root() != name))
-        }) {
-            return None;
-        }
         if counted {
             let Value::Scalar(next) = self.state.values.get(counter.as_ref()?)? else {
                 return None;
@@ -167,24 +133,180 @@ impl Trace<'_> {
             {
                 return None;
             }
-        } else {
-            let checked::Operation::Length { receiver } =
-                self.checked.operations.get(&left.span.id)?.clone()
-            else {
+        }
+        let programs = guards::partition(
+            span,
+            &persistent,
+            &binder,
+            if counted { start.clone() } else { expr::integer(span, 0) },
+            count,
+            &self.proof_values,
+        )?;
+        let mut blocks = Vec::new();
+        for interval in programs {
+            let mut phase = Vec::new();
+            for program in interval {
+                let effects = composition::blocks(
+                    span,
+                    composition::compose(program.effects),
+                    &tokens,
+                    &binder,
+                    self.layouts,
+                )?;
+                if bound_effects.iter().any(|effect| {
+                    !matches!(effect, Effect::Read(name)
+                    if effects.iter().all(|effect| effect.root() != name))
+                }) {
+                    return None;
+                }
+                if !counted {
+                    let checked::Operation::Length { receiver } =
+                        self.checked.operations.get(&left.span.id)?.clone()
+                    else {
+                        return None;
+                    };
+                    let tested = self.checked_location(&receiver)?;
+                    let progresses = effects.iter().any(|effect| match effect {
+                        Effect::PopBlock { location, amount, .. } => {
+                            location.0 == tested.0
+                                && location.1 == tested.1
+                                && contracts::constant(amount) == Some(1)
+                        }
+                        _ => false,
+                    });
+                    if !progresses {
+                        return None;
+                    }
+                }
+                phase.push((effects, program.count, program.condition));
+            }
+            blocks.push(phase);
+        }
+        // An identity frame bound is valid only if every selected program leaves
+        // that role unchanged. Alternative transfers share conservation groups.
+        for (effects, _, _) in blocks.iter().flatten() {
+            for effect in effects {
+                if let Effect::Identity { location, .. } = effect {
+                    if blocks.iter().flatten().flat_map(|(effects, _, _)| effects).all(|other| {
+                        matches!(other, Effect::Identity { .. })
+                            || other
+                                .location()
+                                .is_none_or(|other| other.0 != location.0 || other.1 != location.1)
+                    }) {
+                        let role = (location.0.clone(), location.1.clone());
+                        if let Some(transfer) = record.transfer(&role, &role) {
+                            self.loop_transfers.entry(span.id).or_default().push(transfer);
+                        }
+                    }
+                }
+            }
+        }
+        self.state = before;
+        let mut original = record
+            .regions
+            .iter()
+            .map(|region| {
+                let memory = match region.entry {
+                    Some(id) => self.regions.get(&id)?.clone(),
+                    None => expr::empty(span, expr::record_type()),
+                };
+                Some((region.location.clone(), memory))
+            })
+            .collect::<Option<BTreeMap<_, _>>>()?;
+        for phase in blocks {
+            let entry = self.state.clone();
+            let entry_original = original.clone();
+            let mut joined = entry.clone();
+            let mut joined_original = entry_original.clone();
+            let mut completed = Vec::new();
+            for (effects, count, condition) in phase {
+                self.state = entry.clone();
+                let mut selected_original = entry_original.clone();
+                let first_effect = self.effects.len();
+                self.apply_program(record, effects, count, &mut selected_original)?;
+                let effects = self.effects.split_off(first_effect);
+                completed.extend(effects.into_iter().map(|effect| {
+                    if matches!(condition.x, ExprX::Const(Constant::Bool(true))) {
+                        effect
+                    } else {
+                        Effect::Guarded {
+                            condition: condition.clone(),
+                            selected: true,
+                            effect: Box::new(effect),
+                        }
+                    }
+                }));
+                joined = Self::join_state(span, condition.clone(), self.state.clone(), joined)?;
+                for (role, memory) in selected_original {
+                    joined_original.insert(
+                        role.clone(),
+                        choice(span, condition.clone(), memory, joined_original[&role].clone()),
+                    );
+                }
+            }
+            self.state = joined;
+            original = joined_original;
+            self.effects.extend(completed);
+        }
+        // Intermediate identities are first-iteration peak witnesses, just as
+        // for unconditional loops. Their total original storage cannot increase
+        // on later visits. Loop exits instead retain the complete interval map.
+        let replacements = HashMap::from([(binder.clone(), start.clone())]);
+        for memory in self.regions.values_mut() {
+            if !independent(memory, &binder) {
+                *memory = substitute(memory, &replacements);
+            }
+        }
+        for region in &record.regions {
+            self.regions.insert(region.exit, original.get(&region.location)?.clone());
+        }
+        self.used.insert((checked::Kind::Loop, span.id));
+        if let Some(counter) = counter {
+            self.state.values.insert(counter, Value::Scalar(contracts::maximum(span, start, end)));
+        }
+        // A containing iteration must see observations used by this loop's
+        // count; it cannot repeat a count that depends on another changing role.
+        self.effects.extend(bound_effects);
+        Some(Value::Unit)
+    }
+
+    /// Apply one branch-selected interval using the same forest graph for full
+    /// storage and original lifetimes. Later intervals start from these results.
+    fn apply_program(
+        &mut self,
+        record: &Loop,
+        effects: Vec<Effect>,
+        count: Expr,
+        original: &mut BTreeMap<crate::resource::memory::paths::LocalPath, Expr>,
+    ) -> Option<()> {
+        let span = &record.span;
+        let mut roles = Vec::new();
+        for effect in effects {
+            let location = effect.location()?;
+            if location.1.iter().any(|slot| matches!(slot, OwnerSlot::Element(_))) {
                 return None;
-            };
-            let tested = self.checked_location(&receiver)?;
-            if !roles.iter().any(|(effect, _)| {
-                matches!(effect, Effect::PopBlock { location, amount, .. }
-                    if location.0 == tested.0 && location.1 == tested.1 && contracts::constant(amount) == Some(1))
+            }
+            if roles.iter().any(|(other, _): &(Effect, Node)| {
+                let other = other.location().unwrap();
+                other.0 == location.0
+                    && (other.1.starts_with(&location.1) || location.1.starts_with(&other.1))
             }) {
                 return None;
             }
+            let typ = match &effect {
+                Effect::TransferBlock { typ, .. }
+                | Effect::AppendBlock { typ, .. }
+                | Effect::PopBlock { typ, .. }
+                | Effect::Identity { typ, .. } => typ,
+                _ => return None,
+            };
+            let node = self.get(span, location, typ)?;
+            roles.push((effect, node));
         }
+        let entry_original = original.clone();
         let transfers = transfer_edges(&roles)?;
         let iteration = Iteration { roles, transfers, count };
         let Iteration { roles, transfers, count } = &iteration;
-        let regions = &record.regions;
         // Return structural relationships. The shared record resolves endpoints,
         // and the body proof layer constructs conservation inequalities later.
         for (target, source) in transfers {
@@ -195,17 +317,6 @@ impl Trace<'_> {
                 &(target.0.clone(), target.1.clone()),
             )?;
             self.loop_transfers.entry(span.id).or_default().push(transfer);
-        }
-        // Restoring an entry forest conserves its local child charges as well
-        // as its physical descriptors. This remains a proved invariant, never
-        // an assumption justified solely by summary normalization.
-        for (effect, _) in roles {
-            if let Effect::Identity { location, .. } = effect {
-                let role = (location.0.clone(), location.1.clone());
-                if let Some(transfer) = record.transfer(&role, &role) {
-                    self.loop_transfers.entry(span.id).or_default().push(transfer);
-                }
-            }
         }
         for (effect, _) in roles {
             if let Effect::AppendBlock { location, memory, .. } = effect {
@@ -228,11 +339,6 @@ impl Trace<'_> {
                     .or_default()
                     .push(((location.0.clone(), location.1.clone()), amount));
             }
-        }
-        self.used.insert((checked::Kind::Loop, span.id));
-        self.state = before;
-        if let Some(counter) = counter {
-            self.state.values.insert(counter, Value::Scalar(contracts::maximum(span, start, end)));
         }
         let flows: HashMap<_, _> = transfers
             .values()
@@ -350,7 +456,7 @@ impl Trace<'_> {
                 _ => return None,
             }
             self.set(span, location, node)?;
-            if depth == 0 {
+            if self.branch_depth == 0 {
                 let completed = match effect {
                     Effect::Identity { .. } => Some(effect.clone()),
                     Effect::PopBlock { amount, .. } => Some(Effect::PopBlock {
@@ -407,21 +513,14 @@ impl Trace<'_> {
                     self.effects.push(completed);
                 }
             }
-            if let Some(region) = regions
-                .iter()
-                .find(|region| region.location.0 == location.0 && region.location.1 == location.1)
+            if let std::collections::btree_map::Entry::Occupied(mut entry) =
+                original.entry((location.0.clone(), location.1.clone()))
             {
-                let remaining = self.loop_region(span, index, &iteration, regions, region)?;
-                self.regions.insert(region.exit, remaining);
+                let remaining = self.loop_region(span, index, &iteration, &entry_original)?;
+                entry.insert(remaining);
             }
         }
-        if regions.iter().any(|region| !self.regions.contains_key(&region.exit)) {
-            return None;
-        }
-        // A containing iteration must see observations used by this loop's
-        // count; it cannot repeat a count that depends on another changing role.
-        self.effects.extend(bound_effects);
-        Some(Value::Unit)
+        Some(())
     }
 
     /// Original lifetime regions exclude all allocations created in this frame.
@@ -431,17 +530,14 @@ impl Trace<'_> {
         span: &Span,
         index: usize,
         iteration: &Iteration,
-        regions: &[crate::resource::memory::loops::Region],
-        region: &crate::resource::memory::loops::Region,
+        regions: &BTreeMap<crate::resource::memory::paths::LocalPath, Expr>,
     ) -> Option<Expr> {
         let Iteration { roles, transfers, count } = iteration;
         let (effect, initial) = &roles[index];
-        let original = region
-            .entry
-            .map(|id| self.regions.get(&id).cloned())
-            .unwrap_or_else(|| Some(expr::empty(span, expr::record_type())))?;
+        let location = effect.location()?;
+        let original = regions.get(&(location.0.clone(), location.1.clone()))?.clone();
         let remaining = match effect {
-            Effect::Identity { .. } | Effect::AppendBlock { .. } => original,
+            Effect::Identity { .. } | Effect::AppendBlock { .. } => original.clone(),
             Effect::PopBlock { amount, .. } => {
                 let removed = contracts::multiply(span, count.clone(), amount.clone());
                 let length = contracts::maximum(
@@ -461,20 +557,20 @@ impl Trace<'_> {
                         vec![original.clone()],
                         expr::memory_type(),
                     ),
-                    take(span, original, length),
+                    take(span, original.clone(), length),
                 )
             }
             Effect::TransferBlock { amount, .. } => {
                 let moved = contracts::multiply(span, amount.clone(), count.clone());
                 let source = transfers.get(&index)?;
                 let source_location = roles[*source].0.location()?;
-                let source_region = regions.iter().find(|r| {
-                    r.location.0 == source_location.0 && r.location.1 == source_location.1
-                })?;
-                let source_memory = self.regions.get(&source_region.entry?)?.clone();
+                let source_memory = regions
+                    .get(&(source_location.0.clone(), source_location.1.clone()))
+                    .cloned()
+                    .unwrap_or_else(|| expr::empty(span, expr::record_type()));
                 expr::add(
                     span,
-                    original,
+                    original.clone(),
                     reverse_range(
                         span,
                         source_memory,
