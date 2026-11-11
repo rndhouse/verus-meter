@@ -116,13 +116,9 @@ impl Analysis<'_> {
                     // the checked template partitions the complete forest at
                     // the call site. Pop's tag comes from the executable length,
                     // not the local forest, which may be empty for a live child.
-                    // Owned removal additionally partitions incoming lifetimes.
-                    if optional && !self.heap.borrowed.contains_key(&name) {
-                        return Err(unsupported(
-                            &source.span,
-                            "popping an incoming child from an owned collection",
-                        ));
-                    }
+                    // Owned extraction additionally partitions incoming lifetimes.
+                    // An empty pop's selected input regions are empty too; its
+                    // remaining region still includes the collection backing.
                     self.heap.check_transfer(&name, &source.span)?;
                 }
                 if elements.states.values().any(|id| self.growth.protected_elements.contains(id)) {

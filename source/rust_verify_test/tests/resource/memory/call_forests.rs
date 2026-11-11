@@ -2,24 +2,6 @@
 use super::support::{rejects, verifies};
 
 #[test]
-fn unsupported_incoming_extractions_reject_even_with_a_larger_budget() {
-    for (name, operation, result) in [
-        ("owned_pop", "v.pop()", "Option<Box<u32>>"),
-        // Discarding the result must not bypass the unsupported ownership effect.
-        ("discarded_owned_pop", "v.pop();", "()"),
-    ] {
-        rejects(
-            name,
-            &format!(
-                "fn f(mut v: Vec<Box<u32>>) -> {result}
-                    resources peak(memory) <= 10000 {{ {operation} }}"
-            ),
-            "popping an incoming child from an owned collection",
-        );
-    }
-}
-
-#[test]
 fn incoming_indexed_mutation_preserves_selected_and_sibling_allocations() {
     let code = "fn grow(v: &mut Vec<Vec<u32>>, i: usize)
         requires i < old(v).len(), old(v)[i as int].len() == 0,

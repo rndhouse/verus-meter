@@ -167,6 +167,147 @@ fn extraction_keeps_new_charges_separate_from_original_input_regions() {
 }
 
 #[test]
+fn owned_pop_separates_optional_child_and_parent_lifetimes() {
+    let code = "fn take(mut v: Vec<Box<[u8;32]>>) -> (r: Option<Box<[u8;32]>>)
+        ensures r.is_some() == (v.len() > 0),
+        resources peak(memory) <= 265 {
+            let child = v.pop(); drop(v); let scratch = [0u8;256]; child
+        }
+        fn f() resources peak(memory) <= BOUND {
+            let mut v = Vec::<Box<[u8;32]>>::with_capacity(2);
+            SETUP
+            let result = take(v); assert(result.is_some() == PRESENT);
+            let scratch = [0u8;512];
+        }";
+    for (name, setup, present, bound) in [
+        ("empty", "", false, 521),
+        (
+            "present",
+            "let a = Box::new([0u8;32]); v.push(a);
+             let b = Box::new([1u8;32]); v.push(b);",
+            true,
+            553,
+        ),
+    ] {
+        let code = code.replace("SETUP", setup).replace("PRESENT", &present.to_string());
+        verifies(name, &code.replace("BOUND", &bound.to_string()));
+        rejects(
+            &format!("{name}_short"),
+            &code.replace("BOUND", &(bound - 1).to_string()),
+            "memory budget exceeded",
+        );
+        // With no later workspace, the helper peak must still include the
+        // selected original allocation after its parent has been dropped.
+        let code = code.replace("let scratch = [0u8;512];", "");
+        let bound = if present { 297 } else { 265 };
+        verifies(&format!("{name}_during"), &code.replace("BOUND", &bound.to_string()));
+        rejects(
+            &format!("{name}_during_short"),
+            &code.replace("BOUND", &(bound - 1).to_string()),
+            "memory budget exceeded",
+        );
+    }
+}
+
+#[test]
+fn discarded_owned_pop_retains_backing_and_only_surviving_children() {
+    let code = "fn discard(mut v: Vec<Vec<u32>>) -> Vec<Vec<u32>>
+        resources peak(memory) <= 280 {
+            v.pop(); let scratch = [0u8;256]; v
+        }
+        fn f() resources peak(memory) <= BOUND {
+            let mut v = Vec::<Vec<u32>>::with_capacity(2);
+            SETUP let result = discard(v);
+        }";
+    for (name, setup, bound) in [
+        ("empty", "", 328),
+        (
+            "survivor",
+            "let a = Vec::<u32>::with_capacity(4); v.push(a);
+             let b = Vec::<u32>::with_capacity(8); v.push(b);",
+            344,
+        ),
+    ] {
+        // Empty pop retains the 48-byte backing; nonempty pop additionally
+        // retains only the first child's 16-byte buffer, not the last's 32.
+        let code = code.replace("SETUP", setup);
+        verifies(name, &code.replace("BOUND", &bound.to_string()));
+        rejects(
+            &format!("{name}_short"),
+            &code.replace("BOUND", &(bound - 1).to_string()),
+            "memory budget exceeded",
+        );
+    }
+}
+
+#[test]
+fn repeated_owned_pop_preserves_the_extracted_region_across_empty_pop() {
+    let code = "fn take(mut v: Vec<Vec<u32>>) -> (r: Option<Vec<u32>>)
+        requires v.len() == 2,
+        ensures r.is_some(), r->0 == v[0],
+        resources peak(memory) <= 281 {
+            v.pop(); let child = v.pop();
+            let empty = v.pop(); assert(empty.is_none()); drop(empty);
+            drop(v); let scratch = [0u8;256]; child
+        }
+        fn f() resources peak(memory) <= BOUND {
+            let mut v = Vec::<Vec<u32>>::with_capacity(2);
+            let a = Vec::<u32>::with_capacity(4); v.push(a);
+            let b = Vec::<u32>::with_capacity(8); v.push(b);
+            let result = take(v);
+            let mut child = result.unwrap(); child.push(7);
+        }";
+    verifies("repeated_pop", &code.replace("BOUND", "297"));
+    rejects("repeated_pop_short", &code.replace("BOUND", "296"), "memory budget exceeded");
+}
+
+#[test]
+fn owned_pop_unwrap_splits_fixed_children_through_a_nested_receiver() {
+    let code = "struct Child { data: Box<[u8;32]>, tag: Box<[u8;64]>, }
+        fn take(mut v: Box<Vec<Vec<Child>>>) -> Box<[u8;32]>
+            requires v.len() == 1, v[0].len() == 1,
+            resources peak(memory) <= 272 {
+                let child = v[0].pop().unwrap(); drop(v); drop(child.tag);
+                { let scratch = [0u8;256]; }
+                child.data
+            }
+        fn f() resources peak(memory) <= BOUND {
+            let mut rows = Vec::<Vec<Child>>::with_capacity(1);
+            let mut row = Vec::<Child>::with_capacity(1);
+            let child = Child { data: Box::new([0u8;32]), tag: Box::new([0u8;64]) };
+            row.push(child); rows.push(row);
+            let v = Box::new(rows); let result = take(v);
+        }";
+    verifies("nested_pop", &code.replace("BOUND", "304"));
+    rejects("nested_pop_short", &code.replace("BOUND", "303"), "memory budget exceeded");
+}
+
+#[test]
+fn owned_pop_keeps_new_allocations_separate_from_input_regions() {
+    let code = "fn take(mut v: Vec<Vec<[u8;32]>>) -> (r: Option<Vec<[u8;32]>>)
+        requires v.len() == 1, v[0].len() == 0,
+        ensures r.is_some(), r->0.len() == 1,
+        resources peak(memory) <= 409 {
+            v[0].push([0u8;32]); let child = v.pop(); drop(v);
+            let scratch = [0u8;256]; child
+        }
+        fn f() resources peak(memory) <= BOUND {
+            let mut v = Vec::<Vec<[u8;32]>>::with_capacity(1);
+            let child = Vec::<[u8;32]>::new(); v.push(child);
+            let result = take(v); AFTER
+        }";
+    for (name, after, bound) in [("during", "", 433), ("after", "let scratch = [0u8;512];", 665)] {
+        let code = code.replace("AFTER", after);
+        verifies(name, &code.replace("BOUND", &bound.to_string()));
+        rejects(
+            &format!("{name}_short"),
+            &code.replace("BOUND", &(bound - 1).to_string()),
+            "memory budget exceeded",
+        );
+    }
+}
+
+#[test]
 fn unsupported_owned_region_transfers_reject_generous_budgets() {
     for (name, body, message) in [
         (
@@ -190,12 +331,15 @@ fn unsupported_owned_region_transfers_reject_generous_budgets() {
             "moving or dropping an enclosing heap owner across a branch, loop, or memory section",
         ),
     ] {
-        rejects(
-            name,
-            &format!(
-                "fn f(mut v: Vec<Box<u32>>, take: bool) resources peak(memory) <= 10000 {{ {body} }}"
-            ),
-            message,
-        );
+        for operation in ["v.remove(0)", "v.pop()"] {
+            let body = body.replace("v.remove(0)", operation);
+            rejects(
+                name,
+                &format!(
+                    "fn f(mut v: Vec<Box<u32>>, take: bool) resources peak(memory) <= 10000 {{ {body} }}"
+                ),
+                message,
+            );
+        }
     }
 }
