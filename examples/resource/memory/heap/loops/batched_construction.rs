@@ -18,9 +18,9 @@ type BufferStorage = [u32; 8];
 // Capacity determines the collection's backing storage; the maximum live
 // buffer count determines its separate allocations. Also count the collection
 // handle and loop counter. The helper's temporary storage is added by the caller.
-spec fn construction_budget(capacity: nat, max_live_buffers: nat) -> nat {
-    let backing = capacity * value_size(Buffer);
-    let allocations = max_live_buffers * value_size(BufferStorage);
+spec fn construction_budget(capacity: usize, max_live_buffers: usize) -> nat {
+    let backing = (capacity as nat) * value_size(Buffer);
+    let allocations = (max_live_buffers as nat) * value_size(BufferStorage);
     value_size(Vec<Buffer>) + backing + allocations + value_size(usize)
 }
 
