@@ -21,14 +21,22 @@ fn incoming_children_cannot_be_extracted_with_a_larger_budget() {
 }
 
 #[test]
-fn incoming_indexed_children_require_individual_metadata() {
-    rejects(
-        "incoming_index",
-        "fn f(v: &mut Vec<Vec<u32>>)
-        requires old(v).len() > 0, old(v)[0].len() == 0,
-        resources peak(memory) <= 10000 { v[0].push(1); }",
-        "indexing a child without precise allocation metadata",
-    );
+fn incoming_indexed_mutation_preserves_selected_and_sibling_allocations() {
+    let code = "fn grow(v: &mut Vec<Vec<u32>>, i: usize)
+        requires i < old(v).len(), old(v)[i as int].len() == 0,
+        ensures final(v).len() == old(v).len(), final(v)[i as int].len() == 1,
+            forall|j: int| 0 <= j < old(v).len() && j != i ==> final(v)[j] == old(v)[j],
+        resources peak(memory) <= 32 { v[i].push(7); }
+        fn f() resources peak(memory) <= BOUND {
+            let mut v = Vec::<Vec<u32>>::with_capacity(2);
+            let a = Vec::<u32>::new(); v.push(a);
+            let b = Vec::<u32>::with_capacity(8); v.push(b);
+            grow(&mut v, 0); grow(&mut v, 1);
+            v[0].push(8); v[1].push(8);
+            let scratch = [0u8;200];
+        }";
+    verifies("incoming_index", &code.replace("BOUND", "320"));
+    rejects("incoming_index_short", &code.replace("BOUND", "319"), "memory budget exceeded");
 }
 
 #[test]

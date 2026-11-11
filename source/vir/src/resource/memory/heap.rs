@@ -38,6 +38,8 @@ pub(super) type OwnerPath = Vec<OwnerSlot>;
 /// its inline storage belongs to the enclosing value or allocation layout.
 #[derive(Clone)]
 pub(super) struct Owner {
+    /// Whether descriptors include incoming allocations or only this frame's charges.
+    pub(super) view: super::metadata::View,
     /// Current logical value, used to serialize collection geometry before a call.
     pub(super) source: Option<(Typ, Expr)>,
     /// Frozen logical count when an owner moves beneath an optional payload.
@@ -69,6 +71,7 @@ pub(super) struct Owner {
 impl Default for Owner {
     fn default() -> Self {
         Self {
+            view: Default::default(),
             source: None,
             geometry: None,
             geometry_known: true,
@@ -276,6 +279,8 @@ impl Analysis<'_> {
     /// Mirror the input's structure without charging its original allocations.
     /// Each node receives independent lifetime provenance; vector states count
     /// only replacements made here. The caller retains every original charge.
+    /// Runtime descendants use an initially empty local-charge forest: absence
+    /// means no allocation was made here, not that the executable child is absent.
     pub(super) fn input_owner(
         &mut self,
         typ: &Typ,
@@ -285,11 +290,14 @@ impl Analysis<'_> {
         path: &mut OwnerPath,
         capacities: &HashMap<super::paths::LocalPath, Expr>,
     ) -> Result<Owner, VirErr> {
-        let mut owner =
-            Owner { geometry_known: !self.layouts.cardinality(typ), ..Default::default() };
+        let mut owner = Owner {
+            view: super::metadata::View::Local,
+            geometry_known: !self.layouts.cardinality(typ),
+            ..Default::default()
+        };
         if self.layouts.owning_elements(typ) {
             owner.elements = Some(self.new_elements(span));
-            owner.elements.as_mut().unwrap().precise = false;
+            owner.elements.as_mut().unwrap().view = super::metadata::View::Local;
         }
         if self.layouts.vector(typ) {
             let capacity = capacities.get(&(name.clone(), path.clone()));

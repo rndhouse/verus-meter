@@ -3,13 +3,12 @@
 use super::support::{rejects, verifies};
 
 #[test]
-fn incoming_read_borrows_require_individual_metadata() {
-    rejects(
+fn incoming_read_borrows_preserve_caller_ownership() {
+    verifies(
         "indexed_read",
         "fn read(b: &Box<u32>) -> u32 resources peak(memory) <= 12 { **b }
         fn f(v: &Vec<Box<u32>>, i: usize) -> u32
             requires i < v.len(), resources peak(memory) <= 10000 { read(&v[i]) }",
-        "indexing a child without precise allocation metadata",
     );
 }
 

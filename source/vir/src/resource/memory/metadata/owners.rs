@@ -210,6 +210,7 @@ impl Analysis<'_> {
         span: &Span,
         typ: &Typ,
         memory: Expr,
+        view: super::View,
     ) -> Result<Owner, VirErr> {
         let memory = self.metadata_local(span, "selected_records", memory);
         self.growth.before.entry(span.id).or_default().push(expr::lemma(
@@ -219,6 +220,7 @@ impl Analysis<'_> {
         ));
         let mut rest = memory.clone();
         let mut owner = Owner {
+            view,
             geometry: Some(expr::record_field(
                 span,
                 expr::lookup(span, memory.clone(), expr::path(span, [])),
@@ -230,7 +232,7 @@ impl Analysis<'_> {
             let path = expr::path(span, [self.layouts.metadata_slot(&slot)]);
             self.metadata_partition(span, rest.clone(), path.clone());
             let child = expr::subtree(span, rest.clone(), path.clone());
-            owner.children.insert(slot, self.owner_from_metadata(span, &child_type, child)?);
+            owner.children.insert(slot, self.owner_from_metadata(span, &child_type, child, view)?);
             rest = expr::without(span, rest, path);
         }
         if self.layouts.owning_elements(typ) {
@@ -255,6 +257,7 @@ impl Analysis<'_> {
                 children,
             ));
             elements.precise = true;
+            elements.view = view;
             owner.elements = Some(elements);
             rest = expr::operation(span, "nonruntime", vec![rest], expr::memory_type());
         }
@@ -273,12 +276,15 @@ impl Analysis<'_> {
                 "selected_capacity",
                 expr::record_field(span, record, "capacity"),
             );
+            // A loan from an incoming collection has no separately charged
+            // handle in this frame. Its bytes exclude caller storage, so bytes
+            // == capacity * element cannot establish the actual capacity.
             let id = self.growth.new_vector(
                 span,
                 capacity.clone(),
                 Charge { kind: owner.kind.clone(), amount },
                 self.layouts.vector_element(typ, span)?,
-                None,
+                (view == super::View::Local).then_some(0),
                 allocation,
             );
             owner.vector = Some(id);

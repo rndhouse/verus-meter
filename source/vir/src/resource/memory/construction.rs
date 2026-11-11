@@ -220,10 +220,12 @@ impl Analysis<'_> {
                 // The payload is absent, so all of its logical counts and
                 // storage are zero regardless of its nested container types.
                 child.visit_mut(&mut |node| {
+                    node.view = super::metadata::View::Complete;
                     node.geometry = Some(super::contracts::literal(&expr.span, 0));
                     node.geometry_known = true;
                     if let Some(elements) = &mut node.elements {
                         elements.precise = true;
+                        elements.view = super::metadata::View::Complete;
                     }
                 });
                 owner.children.insert(super::heap::OwnerSlot::Contents, child);

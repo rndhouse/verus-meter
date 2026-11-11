@@ -40,6 +40,19 @@ pub(super) fn runtime_shape_proof(span: &Span, records: Expr) -> Stmt {
     )
 }
 
+/// Which allocations a forest accounts for. The caller keeps incoming storage
+/// live throughout a helper call; its body tracks only allocations added there.
+/// A local view is exact for those charges, but is not a transferable physical
+/// forest and cannot justify ownership extraction or exact-capacity inference.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(super) enum View {
+    /// All modeled allocations owned by the value, including caller storage.
+    #[default]
+    Complete,
+    /// Only charges introduced by this function; caller storage stays external.
+    Local,
+}
+
 impl Analysis<'_> {
     /// Freeze before the payload expression moves its source. Caller-only
     /// aggregate geometry remains unknown rather than becoming a zero count.

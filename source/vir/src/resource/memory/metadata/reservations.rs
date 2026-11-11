@@ -102,6 +102,11 @@ impl Analysis<'_> {
         elements: &mut Elements,
         child: &Owner,
     ) {
+        // Updating one incoming child establishes no uniform reservation for
+        // its untouched siblings. Per-child lower bounds remain in the records.
+        if elements.view == super::View::Local {
+            return;
+        }
         let mut minima = BTreeMap::new();
         self.owner_minima(child, &mut vec![], &mut minima);
         join_minima(span, &mut elements.minima, &minima);

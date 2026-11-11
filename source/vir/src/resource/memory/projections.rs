@@ -1,8 +1,10 @@
 //! Operation-local borrows into runtime collections.
 //!
 //! A precise projection partitions the selected allocation subtree out of the
-//! parent forest and restores its ordinary ownership shape. Finishing the loan
-//! returns its updated descriptors and charge. Opaque children are unsupported.
+//! parent forest and restores its ordinary ownership shape. For incoming
+//! collections this forest contains only charges introduced in the helper;
+//! the caller retains the original allocations. Finishing the loan returns
+//! its updated descriptors and charge. Opaque transfers remain unsupported.
 
 use super::analysis::Analysis;
 use super::model::unsupported;
@@ -13,6 +15,8 @@ use crate::messages::Span;
 pub(super) struct Projection {
     /// Operation-local slot used while the child is borrowed.
     location: LocalPath,
+    /// Checked mutation log at loan entry; reads do not export write effects.
+    revision: usize,
     /// A precise loan has already removed this subtree from the parent sum.
     path: Expr,
     /// Parent forest before detachment, used to prove preservation of siblings.
@@ -245,6 +249,9 @@ impl Analysis<'_> {
         if !precise {
             return Err(unsupported(span, "indexing a child without precise allocation metadata"));
         }
+        if elements.view == super::metadata::View::Local && self.growth.loop_depth != 0 {
+            return Err(unsupported(span, "indexed incoming children inside loops"));
+        }
         let original = self.metadata_local(span, "loan_parent", elements.records.clone());
         let selected_path = self.metadata_path(span, spec_value(&index)?)?;
         let partition = super::metadata::operations::detach(
@@ -261,7 +268,7 @@ impl Analysis<'_> {
             partition.remaining,
         ));
         self.set_element_records(span, &elements, false);
-        let mut child = self.owner_from_metadata(span, typ, selected)?;
+        let mut child = self.owner_from_metadata(span, typ, selected, elements.view)?;
         self.install_owner_minima(&mut child, &elements.minima);
         self.bind_collection_sources(span, &mut child, typ, value)?;
         let mut collections = Vec::new();
@@ -274,7 +281,12 @@ impl Analysis<'_> {
             self.assert_element_minima(span, &elements, false)?;
         }
         self.heap.root_mut(name).unwrap().replace_child(path, child);
-        focused.push(Projection { location, path: selected_path, original });
+        focused.push(Projection {
+            location,
+            path: selected_path,
+            original,
+            revision: self.transitions.revision(),
+        });
         Ok(())
     }
 
@@ -290,6 +302,7 @@ impl Analysis<'_> {
             return Ok(());
         }
         for projection in focused.into_iter().rev() {
+            let changed = self.transitions.changed_since(projection.revision, &projection.location);
             let (name, path) = projection.location;
             let child = self
                 .heap
@@ -312,6 +325,7 @@ impl Analysis<'_> {
                 projection.original,
                 projection.path,
                 child,
+                changed,
             )?;
             self.heap.root_mut(&name).unwrap().at_mut(parent).unwrap().elements = Some(elements);
         }

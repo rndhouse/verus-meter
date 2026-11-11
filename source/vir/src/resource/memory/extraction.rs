@@ -104,7 +104,7 @@ impl Analysis<'_> {
                     .as_ref()
                     .unwrap()
                     .clone();
-                if !elements.precise {
+                if !elements.precise || elements.view != super::metadata::View::Complete {
                     return Err(unsupported(
                         &source.span,
                         "extracting a child without precise allocation metadata",
@@ -160,7 +160,12 @@ impl Analysis<'_> {
                 } else {
                     source.typ.clone()
                 };
-                let child = self.owner_from_metadata(&source.span, &payload, selected)?;
+                let child = self.owner_from_metadata(
+                    &source.span,
+                    &payload,
+                    selected,
+                    super::metadata::View::Complete,
+                )?;
                 let mut option = Owner { geometry: tag, ..Default::default() };
                 if optional {
                     option.children.insert(OwnerSlot::Contents, child);

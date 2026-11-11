@@ -135,9 +135,19 @@ avoid repeating executable indexing or its bounds checks.
 
 [Extraction](../../source/vir/src/resource/memory/extraction.rs) transfers storage
 into an independently owned result, including conditional Option payloads.
-Incoming runtime children have abstract provenance; indexing or extracting them
-is unsupported until local analysis can represent their individual forests.
-Do not duplicate an enclosing charge to stand in for an unknown child.
+Incoming collections use a local-charge view: the caller retains the original
+allocations, while an initially empty forest records allocations introduced by
+the helper. Indexed loans partition this forest using the same path rules as a
+complete forest. Bind selected geometry to the executable child; an absent local
+record means zero local charge, not an absent child. Disable exact-capacity
+inference from partial byte charges, and do not infer uniform reservations from
+changes to one incoming child. The checked transition log identifies mutations;
+read-only loans must not export write effects.
+
+The caller applies the helper template to its complete forest after accounting
+for the call's peak. Local views cannot be substituted for complete arguments to
+runtime-ownership calls. Incoming extraction and indexed loans inside loops
+remain unsupported. Never copy a parent charge to stand in for an unknown child.
 
 Loop proofs preserve forest validity and sums, immutable entry facts, and inferred
 reservation candidates indexed by fixed and repeated ownership steps. Every

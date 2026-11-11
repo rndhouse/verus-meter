@@ -18,16 +18,18 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub(super) struct Elements {
+    /// Whether records cover all allocations or only charges introduced in this frame.
+    pub(super) view: super::metadata::View,
     /// Uniform reservation candidates, indexed by ownership class.
     pub(super) minima: super::metadata::reservations::Minima,
     /// Current collection value; a move rebinds this to its destination.
     pub(super) source: Option<(Typ, Expr)>,
-    /// Allocation data for individually modeled children. Input collections
-    /// have abstract provenance and cannot be indexed or extracted yet.
+    /// Allocation data indexed by child paths. A local view starts empty because
+    /// every incoming allocation remains charged to the caller.
     pub(super) records: Expr,
     /// Pending forest snapshot committed after the executable operation.
     pub(super) next_records: Expr,
-    /// Every live child has modeled descriptors; opaque additions disable this.
+    /// Every allocation charge in this view has descriptors; opaque additions disable this.
     pub(super) precise: bool,
     /// Stable counter identities; the containing owner controls their lifetime.
     pub(super) states: BTreeMap<MemoryKind, usize>,
@@ -169,6 +171,7 @@ impl Analysis<'_> {
         original: Expr,
         path: Expr,
         child: Owner,
+        changed: bool,
     ) -> Result<(), VirErr> {
         self.merge_element_minima(span, elements, &child);
         let mut proofs = Vec::new();
@@ -268,7 +271,7 @@ impl Analysis<'_> {
         self.assert_element_minima(span, elements, true)?;
         for id in elements.states.values() {
             let state = &mut self.growth.elements[*id];
-            state.changed = true;
+            state.changed |= changed;
             state.counted = false;
             state.length = None;
             state.extent = None;
@@ -344,6 +347,7 @@ impl Analysis<'_> {
             states.insert(kind, id);
         }
         Elements {
+            view: Default::default(),
             minima: Default::default(),
             source: None,
             records,

@@ -22,19 +22,7 @@ pub(in super::super) fn validate(
     let template = summary.transfer.as_ref().ok_or_else(|| {
         error(&function.span, "internal memory analysis inconsistency: missing ownership template")
     })?;
-    let mut affected = BTreeSet::new();
-    for (index, _) in summary
-        .allocations
-        .retained
-        .keys()
-        .chain(summary.allocations.children.keys())
-        .chain(summary.allocations.collections.keys())
-        .chain(summary.vectors.removals.iter())
-    {
-        if layouts.borrowed_owner(&function.x.params[*index].x.typ).is_some() {
-            affected.insert(*index);
-        }
-    }
+    let affected = modified_parameters(function, layouts, summary);
     check_interface(&function.span, summary.allocations.returned.is_some(), &affected, template)?;
     if let Value::Owner(node) = &template.result {
         if !crate::ast_util::types_equal(&node.typ, &function.x.outer_ret.x.typ) {
@@ -58,6 +46,28 @@ pub(in super::super) fn validate(
         }
     }
     Ok(())
+}
+
+/// Borrowed parameters with checked allocation or collection-shape effects.
+pub(in super::super) fn modified_parameters(
+    function: &Function,
+    layouts: &Layouts,
+    summary: &FunctionSummary,
+) -> BTreeSet<usize> {
+    let mut affected = BTreeSet::new();
+    for (index, _) in summary
+        .allocations
+        .retained
+        .keys()
+        .chain(summary.allocations.children.keys())
+        .chain(summary.allocations.collections.keys())
+        .chain(summary.vectors.removals.iter())
+    {
+        if layouts.borrowed_owner(&function.x.params[*index].x.typ).is_some() {
+            affected.insert(*index);
+        }
+    }
+    affected
 }
 
 fn check_interface(

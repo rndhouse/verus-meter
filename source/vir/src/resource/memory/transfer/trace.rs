@@ -388,7 +388,7 @@ impl Trace<'_> {
                         return None;
                     };
                     let value = if let Some(init) = init {
-                        self.place_value(init)?
+                        self.place_value(init, &binding.typ)?
                     } else {
                         Value::Unknown
                     };
@@ -409,7 +409,7 @@ impl Trace<'_> {
         Some(value)
     }
 
-    fn place_value(&mut self, place: &Place) -> Option<Value> {
+    fn place_value(&mut self, place: &Place, typ: &Typ) -> Option<Value> {
         if let PlaceX::Temporary(value) = &place.x {
             return self.value(value);
         }
@@ -418,11 +418,17 @@ impl Trace<'_> {
             let location = self.checked_location(&transition)?;
             return Some(Value::Owner(self.take(&place.span, &location, &transition.typ)?));
         }
-        if self.layouts.owner(&place.typ) {
+        if self.layouts.owner(typ) {
             return None;
         }
+        // A scalar read through a box does not consume the outer owner. Its
+        // value may be irrelevant to ownership inference, but its actual result
+        // type must govern this decision rather than the enclosing place type.
         if let PlaceX::Local(name) = &place.x {
-            return Some(self.state.values.get(name).cloned().unwrap_or(Value::Unknown));
+            return Some(match self.state.values.get(name) {
+                Some(Value::Owner(_)) => Value::Unknown,
+                value => value.cloned().unwrap_or(Value::Unknown),
+            });
         }
         self.place_effects(place)?;
         Some(Value::Unknown)
@@ -473,7 +479,7 @@ impl Trace<'_> {
                     Some(self.state.values.get(name).cloned().unwrap_or(Value::Unknown))
                 }
             }
-            ExprX::ReadPlace(place, _) => self.place_value(place),
+            ExprX::ReadPlace(place, _) => self.place_value(place, &value.typ),
             ExprX::Block(statements, tail) => self.block(span, statements, tail),
             ExprX::If(condition, yes, no) => self.branch(span, condition, yes, no),
             ExprX::Match(scrutinee, arms, _) => self.match_value(span, scrutinee, arms),

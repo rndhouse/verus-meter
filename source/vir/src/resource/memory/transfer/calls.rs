@@ -68,9 +68,11 @@ impl Analysis<'_> {
             };
             let mut precise = owner.inputs().is_empty();
             owner.visit(&mut |node| {
+                precise &= node.view == super::super::metadata::View::Complete;
                 precise &= node.geometry_known || node.source.is_some();
                 precise &= node.elements.as_ref().is_none_or(|elements| {
                     elements.precise
+                        && elements.view == super::super::metadata::View::Complete
                         && elements
                             .states
                             .values()
@@ -200,10 +202,16 @@ impl Analysis<'_> {
     }
 
     fn enable_transfer_algebra(&mut self, span: &Span) {
+        // Composed helpers can reconstruct fixed descriptors beneath a runtime
+        // child. Selection and prefix lookup facts keep the child's own record
+        // distinct from the records nested under its fixed fields.
         for group in [
             crate::fun!(CrateId::Vstd => "seq"; "group_seq_axioms"),
             crate::fun!(CrateId::Vstd => "std_specs", "memory"; "group_metadata_algebra"),
             crate::fun!(CrateId::Vstd => "std_specs", "memory"; "select_root"),
+            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "select_runtime"),
+            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "contains_prefix"),
+            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "lookup_prefix"),
             crate::fun!(CrateId::Vstd => "std_specs", "memory"; "take_children_add"),
             crate::fun!(CrateId::Vstd => "std_specs", "memory"; "take_children_prefix"),
             crate::fun!(CrateId::Vstd => "std_specs", "memory"; "take_children_repeat"),
@@ -346,7 +354,12 @@ impl Analysis<'_> {
         let mut proofs = Vec::new();
         super::proofs::forest(span, &node.memory, &mut proofs)?;
         self.growth.before.entry(span.id).or_default().extend(proofs);
-        let mut owner = self.owner_from_metadata(span, &node.typ, node.memory)?;
+        let mut owner = self.owner_from_metadata(
+            span,
+            &node.typ,
+            node.memory,
+            super::super::metadata::View::Complete,
+        )?;
         self.install_owner_minima(&mut owner, &node.minima);
         Ok(owner)
     }

@@ -22,7 +22,7 @@ use crate::messages::Span;
 use std::collections::{BTreeMap, HashMap};
 
 pub(super) use checked::Checked;
-pub(super) use consistency::validate;
+pub(super) use consistency::{modified_parameters, validate};
 
 #[derive(Clone)]
 pub(super) enum Input {

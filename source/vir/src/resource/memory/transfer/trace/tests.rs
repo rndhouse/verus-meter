@@ -87,7 +87,7 @@ fn movement_uses_the_checked_dereference_and_cannot_be_invented_or_skipped() {
     };
     with_trace(&Checked::default(), |trace| {
         trace.state.values.insert(name.clone(), Value::Owner(parent.clone()));
-        assert!(trace.place_value(&place).is_none());
+        assert!(trace.place_value(&place, &place.typ).is_none());
         assert!(trace.state.values.contains_key(&name));
     });
     let mut checked = Checked::default();
@@ -102,7 +102,9 @@ fn movement_uses_the_checked_dereference_and_cannot_be_invented_or_skipped() {
     with_trace(&checked, |trace| {
         trace.state.values.insert(name.clone(), Value::Owner(parent));
         assert!(!checked.covered(&trace.used));
-        let Some(Value::Owner(child)) = trace.place_value(&place) else { panic!("missing move") };
+        let Some(Value::Owner(child)) = trace.place_value(&place, &place.typ) else {
+            panic!("missing move")
+        };
         assert!(crate::ast_util::types_equal(&child.typ, &child_type));
         assert_eq!(contracts::constant(&property(&span, child.memory, "bytes")), Some(1));
         let Value::Owner(parent) = &trace.state.values[&name] else { panic!("parent consumed") };

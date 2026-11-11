@@ -53,7 +53,12 @@ pub(in super::super) enum Operation {
     /// Evaluate scalar constructor operands without producing ownership.
     Evaluate { args: Exprs },
     /// Apply an already checked helper, including its resolved borrowed places.
-    Call { target: Fun, args: Exprs, borrowed: HashMap<usize, Place> },
+    Call {
+        target: Fun,
+        args: Exprs,
+        borrowed: HashMap<usize, Place>,
+        modified: std::collections::BTreeSet<usize>,
+    },
 }
 
 /// Pattern ownership decisions made while checking the actual match arm.
@@ -78,6 +83,8 @@ pub(super) enum Kind {
 
 #[derive(Default)]
 pub(in super::super) struct Checked {
+    /// Ordered writes let operation-local loans distinguish mutation from reads.
+    mutations: Vec<(VarIdent, OwnerPath)>,
     /// Semantic operations selected by body accounting.
     pub(super) operations: HashMap<u64, Operation>,
     /// Consumed places, with the actual selected type rather than the outer place type.
@@ -92,6 +99,19 @@ pub(in super::super) struct Checked {
 
 impl Checked {
     pub(in super::super) fn operation(&mut self, span: &Span, operation: Operation) {
+        match &operation {
+            Operation::Push { receiver, .. } | Operation::Remove { receiver, .. } => {
+                self.mutations.push(receiver.location.clone());
+            }
+            Operation::Call { borrowed, modified, .. } => {
+                for index in modified {
+                    if let Some(place) = borrowed.get(index) {
+                        self.mutations.push(place.location.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
         self.operations.insert(span.id, operation);
     }
 
@@ -100,6 +120,7 @@ impl Checked {
     }
 
     pub(in super::super) fn assignment(&mut self, span: &Span, place: Place) {
+        self.mutations.push(place.location.clone());
         self.assignments.insert(span.id, place);
     }
 
@@ -109,6 +130,22 @@ impl Checked {
 
     pub(in super::super) fn scope(&mut self, span: &Span, locals: Vec<VarIdent>) {
         self.scopes.insert(span.id, locals);
+    }
+
+    pub(in super::super) fn revision(&self) -> usize {
+        self.mutations.len()
+    }
+
+    /// A descendant write changes this loan's subtree. Nested projections retain
+    /// their source index identities for the duration of the operation.
+    pub(in super::super) fn changed_since(
+        &self,
+        revision: usize,
+        place: &(VarIdent, OwnerPath),
+    ) -> bool {
+        self.mutations[revision..]
+            .iter()
+            .any(|(name, path)| name == &place.0 && path.starts_with(&place.1))
     }
 
     pub(super) fn covered(&self, used: &HashSet<(Kind, u64)>) -> bool {

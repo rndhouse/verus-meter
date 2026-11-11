@@ -353,6 +353,12 @@ impl Analysis<'_> {
             self.discard(index)?;
             let (name, path) = super::paths::expr(receiver, &typ).unwrap();
             self.forget_collection_length(&name, &path);
+        } else if intrinsic == Some(ResourceIntrinsic::VecPop) {
+            // Removing a scalar changes the sequence shape even though its
+            // backing allocation is retained. Export that effect through leaf
+            // helpers so an enclosing indexed loan observes the mutation.
+            let (name, path) = super::paths::expr(receiver, &typ).unwrap();
+            self.forget_collection_length(&name, &path);
         } else if index {
             if args.len() != 2 {
                 return Err(unsupported(&expr.span, "this vector index"));

@@ -215,6 +215,11 @@ impl Analysis<'_> {
                 target: target.clone(),
                 args: args.clone(),
                 borrowed,
+                modified: super::transfer::modified_parameters(
+                    callee,
+                    self.layouts,
+                    &self.summaries[target],
+                ),
             },
         );
         self.calls.push((target.clone(), expr.span.clone()));

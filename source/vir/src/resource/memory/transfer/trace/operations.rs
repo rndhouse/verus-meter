@@ -261,7 +261,7 @@ impl Trace<'_> {
                 Some(Value::Unit)
             }
             Operation::Aggregate { fields, tag } => self.construct(value, fields, tag),
-            Operation::Call { target, args, borrowed } => {
+            Operation::Call { target, args, borrowed, .. } => {
                 self.checked_call(value, &target, &args, &borrowed)
             }
         }

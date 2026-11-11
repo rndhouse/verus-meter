@@ -25,6 +25,19 @@ fn add(row: &mut Row)
     row.cells.push(7);
 }
 
+// Borrow a child of a collection supplied by the caller. The same ownership
+// rules apply inside this helper as at a direct indexing operation in main.
+fn add_at(rows: &mut Vec<Row>, index: usize)
+    requires index < old(rows).len(), old(rows)[index as int].cells.len() <= 1,
+    ensures
+        final(rows).len() == old(rows).len(),
+        final(rows)[index as int].cells.len() == old(rows)[index as int].cells.len() + 1,
+        forall|j: int| 0 <= j < old(rows).len() && j != index ==> final(rows)[j] == old(rows)[j],
+    resources peak(memory) <= ref_size(rows) + value_size(index) + peak(add),
+{
+    add(&mut rows[index]);
+}
+
 // Update individual buffers, then reuse their storage for another task.
 //
 // Only the saved length remains live alongside the later byte workspace.
@@ -37,7 +50,7 @@ fn main()
     let second = Row { cells: Vec::new() };
     rows.push(second);
 
-    add(&mut rows[0]);
+    add_at(&mut rows, 0);
     rows[1].cells.push(9);
 
     // Bind the replacement before assigning it. Its footprint replaces the

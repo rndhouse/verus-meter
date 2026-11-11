@@ -230,6 +230,7 @@ pub proof fn inspect(memory: Seq<Record>, path: Seq<int>)
     requires well_formed(memory),
     ensures well_formed(subtree(memory, path)), well_formed(without(memory, path)),
         well_formed(runtime(memory)), well_formed(nonruntime(memory)),
+        lookup(memory, path).bytes >= 0,
         lookup(memory, path).capacity >= 0,
         lookup(memory, path).length >= 0,
         cost(memory, 0) >= 0,

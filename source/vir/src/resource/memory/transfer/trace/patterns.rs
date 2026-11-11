@@ -9,7 +9,7 @@ impl Trace<'_> {
         source: &Place,
         arms: &Arms,
     ) -> Option<Value> {
-        let value = self.place_value(source)?;
+        let value = self.place_value(source, &source.typ)?;
         self.branch_depth += 1;
         let before = self.state.clone();
         let mut branches = Vec::new();

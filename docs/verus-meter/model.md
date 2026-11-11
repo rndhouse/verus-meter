@@ -266,11 +266,18 @@ footprint. Loop bounds must remain stable and the append must be unconditional.
 Callee peak budgets still cover temporary allocations and buffer replacement.
 See [helper collections](../../examples/resource/memory/vectors/helper_collections.rs).
 
+A collection passed into a helper can be indexed to borrow, grow, or replace an
+owning child, including through nested fixed and runtime ownership paths. Its
+original allocations remain charged to the caller throughout the call. The helper
+tracks its own new allocations by child path, and its ownership summary updates
+the caller's complete forest. Zero bytes charged inside a helper do not imply an
+empty incoming allocation or establish its capacity.
+
 Missing ownership support is an error even with a generous memory budget. A helper
 whose control flow or value dependencies cannot be represented by a finite ownership
-transformation is unsupported. Local analysis does not yet have individual forests
-for incoming runtime children: extracting or indexing those children, or passing
-such an incoming collection to another runtime-ownership helper, is unsupported.
+transformation is unsupported. Extracting incoming owning children, indexing them
+inside loops, or forwarding an incoming collection to another runtime-ownership
+helper remains unsupported. Indexed borrows can call ordinary leaf helpers.
 Loop-carried helper effects that lose individual metadata are also unsupported.
 There is no aggregate ownership fallback or copied parent charge for an unknown child.
 Conservative upper bounds remain valid for byte sizes and peak usage.
