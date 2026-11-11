@@ -21,6 +21,7 @@ examples_in_dir!("../../examples/resource");
 examples_in_dir!("../../examples/resource/memory/basics");
 examples_in_dir!("../../examples/resource/memory/contracts");
 examples_in_dir!("../../examples/resource/memory/heap");
+examples_in_dir!("../../examples/resource/memory/heap/loops");
 examples_in_dir!("../../examples/resource/memory/vectors");
 examples_in_dir!("../../examples/resource/memory/algorithms");
 examples_in_dir!("../../examples/resource/memory/expected-failures");
@@ -168,7 +169,7 @@ fn run_example_for_file(file_path: &str) {
     };
 
     if !success {
-        eprintln!("- example {} - mode: {:?} - failed -", &path, mode);
+        eprintln!("- example {path} - mode: {mode:?} - failed -");
         if warnings.len() > 0 {
             for w in warnings {
                 eprintln!("- warning - {}", w.rendered);

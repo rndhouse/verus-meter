@@ -27,6 +27,12 @@ ordinary Verus correctness checks. Start with the basics, then explore a topic.
 - [Child transfers](heap/child_transfers.rs): move and replace owning fields.
 - [Boxed slices](heap/boxed_slices.rs): turn a vector into a fixed-length owning buffer.
 
+### Loops
+
+- [Batched construction](heap/loops/batched_construction.rs): compose helpers and nested loops while preserving child reservations.
+- [Partial transfers](heap/loops/partial_transfers.rs): move batches of children and release the source independently.
+- [Peak overlap](heap/loops/peak_overlap.rs): release an extracted buffer before allocating its replacement on each iteration.
+
 ## Vectors
 
 - [Reserved capacity](vectors/vectors.rs): prove that every addition fits the reservation.
@@ -53,6 +59,7 @@ operation or checkpoint that exceeds its allowance.
 - [Array copy](expected-failures/array_copy.rs): keep a copy without budgeting for its storage.
 - [Checkpoint](expected-failures/checkpoint.rs): assert too small a bound on an earlier peak.
 - [Overlapping allocations](expected-failures/heap_overlap.rs): keep two heap buffers within room for one.
+- [Loop allocation overlap](expected-failures/loop_peak_overlap.rs): retain an extracted buffer while reserving its replacement on later iterations.
 - [Returned allocations](expected-failures/heap_returns.rs): retain allocations across repeated helper calls.
 - [Returned buffers](expected-failures/returned_buffers.rs): keep more results than the budget allows.
 - [Vector growth](expected-failures/vector_growth.rs): grow beyond the reserved buffer without extra allowance.
