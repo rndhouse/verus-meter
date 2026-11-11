@@ -87,8 +87,10 @@ pub(super) fn summarize(
     summaries: &HashMap<Fun, super::summary::FunctionSummary>,
     modes: &HashMap<VarIdent, Mode>,
     checked: &Checked,
+    loop_invariants: &mut HashMap<u64, Vec<Expr>>,
 ) -> Result<Option<Template>, VirErr> {
-    let template = trace::summarize(function, layouts, functions, summaries, modes, checked);
+    let template =
+        trace::summarize(function, layouts, functions, summaries, modes, checked, loop_invariants);
     if template.is_none() && required(function, layouts)? {
         return Err(super::model::unsupported(
             &function.span,

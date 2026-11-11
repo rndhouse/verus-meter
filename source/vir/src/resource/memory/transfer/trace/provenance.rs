@@ -6,6 +6,37 @@ use super::*;
 use crate::resource::memory::metadata::operations::{Partition, replace};
 
 impl Trace<'_> {
+    pub(super) fn join_region(
+        &mut self,
+        span: &Span,
+        index: Expr,
+        input: &checked::InputJoin,
+    ) -> Option<()> {
+        let mut child = expr::empty(span, expr::record_type());
+        for (path, id) in &input.children {
+            child = expr::add(
+                span,
+                child,
+                expr::prefix(
+                    span,
+                    self.regions.get(id)?.clone(),
+                    expr::path(span, path.iter().map(|slot| self.layouts.metadata_slot(slot))),
+                ),
+            );
+        }
+        let parent = match input.previous {
+            Some(id) => self.regions.get(&id)?.clone(),
+            None => expr::empty(span, expr::record_type()),
+        };
+        let joined = expr::add(
+            span,
+            parent,
+            expr::prefix(span, child, expr::push(span, expr::path(span, []), index)),
+        );
+        self.regions.insert(input.result, simplify::simplify(&joined));
+        Some(())
+    }
+
     /// Replacement releases the selected original subtree, without inserting
     /// the new child's local charges into an incoming lifetime region.
     pub(super) fn replace_region(

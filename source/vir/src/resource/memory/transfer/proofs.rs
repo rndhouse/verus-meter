@@ -47,6 +47,11 @@ pub(super) fn forest(span: &Span, value: &Expr, proofs: &mut Vec<Stmt>) -> Resul
                     "take_children" => {
                         proofs.push(expr::lemma(span, "take_children_facts", args.as_ref().clone()))
                     }
+                    "reverse_children" => proofs.push(expr::lemma(
+                        span,
+                        "reverse_children_facts",
+                        args.as_ref().clone(),
+                    )),
                     "runtime" => {
                         proofs.push(expr::lemma(
                             span,

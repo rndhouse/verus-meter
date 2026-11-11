@@ -175,6 +175,9 @@ pub broadcast group group_metadata_algebra {
     cost_repeat,
     remove_add,
     remove_prefix,
+    reverse_children_add,
+    reverse_children_prefix,
+    reverse_children_push,
     lookup_add,
     lookup_push,
     lookup_runtime,
@@ -775,6 +778,96 @@ pub broadcast proof fn remove_prefix(memory: Seq<Record>, slot: int, index: int)
         if slot > index {
             assert(value.path.update(0, slot - 1) =~= seq![slot - 1] + memory.last().path);
         }
+    }
+}
+
+/// Move a runtime interval to consecutive destination indices in reverse order.
+/// The nested descriptors and their byte extents are preserved independently of
+/// the element layout; repeated pops followed by pushes induce this map.
+#[verifier::opaque]
+pub open spec fn reverse_children(memory: Seq<Record>, start: int, end: int, base: int) -> Seq<Record>
+    decreases memory.len(),
+{
+    if memory.len() == 0 { Seq::empty() } else {
+        let before = reverse_children(memory.drop_last(), start, end, base);
+        let value = memory.last();
+        if value.path.len() > 0 && 0 <= value.path[0] && start <= value.path[0] < end {
+            before.push(Record { path: value.path.update(0, base + end - 1 - value.path[0]), ..value })
+        } else { before }
+    }
+}
+
+/// Range transfer preserves validity and never invents allocation bytes.
+pub proof fn reverse_children_facts(memory: Seq<Record>, start: int, end: int, base: int)
+    requires well_formed(memory), base >= 0,
+    ensures well_formed(reverse_children(memory, start, end, base)),
+        0 <= cost(reverse_children(memory, start, end, base), 0) <= cost(memory, 0),
+        runtime(reverse_children(memory, start, end, base)) == reverse_children(memory, start, end, base),
+        nonruntime(reverse_children(memory, start, end, base)) == Seq::<Record>::empty(),
+        descendants(reverse_children(memory, start, end, base)) == reverse_children(memory, start, end, base),
+    decreases memory.len(),
+{
+    reveal_with_fuel(reverse_children, 2);
+    reveal_with_fuel(well_formed, 2);
+    reveal_with_fuel(cost, 2);
+    if memory.len() > 0 {
+        reverse_children_facts(memory.drop_last(), start, end, base);
+        let before = reverse_children(memory.drop_last(), start, end, base);
+        let value = memory.last();
+        if value.path.len() > 0 && 0 <= value.path[0] && start <= value.path[0] < end {
+            let mapped = Record { path: value.path.update(0, base + end - 1 - value.path[0]), ..value };
+            assert(before.push(mapped).drop_last() =~= before);
+            runtime_push(before, mapped);
+            descendants_push(before, mapped);
+        }
+    }
+}
+
+/// Expose finite caller descriptors without unfolding recursive range transfers.
+pub broadcast proof fn reverse_children_push(memory: Seq<Record>, value: Record, start: int, end: int, base: int)
+    ensures #[trigger] reverse_children(memory.push(value), start, end, base) ==
+        if value.path.len() > 0 && 0 <= value.path[0] && start <= value.path[0] < end {
+            reverse_children(memory, start, end, base).push(Record {
+                path: value.path.update(0, base + end - 1 - value.path[0]), ..value
+            })
+        } else { reverse_children(memory, start, end, base) },
+{
+    reveal_with_fuel(reverse_children, 2);
+    assert(memory.push(value).drop_last() =~= memory);
+}
+
+/// Range transfer distributes over disjoint contributions to a forest.
+pub broadcast proof fn reverse_children_add(left: Seq<Record>, right: Seq<Record>, start: int, end: int, base: int)
+    ensures #[trigger] reverse_children(left + right, start, end, base) ==
+        reverse_children(left, start, end, base) + reverse_children(right, start, end, base),
+    decreases right.len(),
+{
+    reveal_with_fuel(reverse_children, 2);
+    if right.len() == 0 { assert(left + right =~= left); }
+    else {
+        reverse_children_add(left, right.drop_last(), start, end, base);
+        assert((left + right).drop_last() =~= left + right.drop_last());
+    }
+}
+
+/// A selected child keeps its entire nested forest at the mapped destination.
+pub broadcast proof fn reverse_children_prefix(memory: Seq<Record>, path: Seq<int>, start: int, end: int, base: int)
+    requires path.len() > 0,
+    ensures #[trigger] reverse_children(prefix(memory, path), start, end, base) ==
+        if 0 <= path[0] && start <= path[0] < end {
+            prefix(memory, path.update(0, base + end - 1 - path[0]))
+        } else { Seq::<Record>::empty() },
+    decreases memory.len(),
+{
+    reveal_with_fuel(reverse_children, 2);
+    reveal_with_fuel(prefix, 2);
+    if memory.len() > 0 {
+        reverse_children_prefix(memory.drop_last(), path, start, end, base);
+        let before = prefix(memory.drop_last(), path);
+        let value = Record { path: path + memory.last().path, ..memory.last() };
+        assert(before.push(value).drop_last() =~= before);
+        assert((path + memory.last().path).update(0, base + end - 1 - path[0]) =~=
+            path.update(0, base + end - 1 - path[0]) + memory.last().path);
     }
 }
 

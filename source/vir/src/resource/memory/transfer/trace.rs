@@ -52,6 +52,12 @@ struct Trace<'a> {
     effects: Vec<loops::Effect>,
     /// Mutations beneath a branch are not unconditional iteration effects.
     branch_depth: usize,
+    /// Temporary payload symbols expose data flow within one iteration. They
+    /// must be eliminated by the loop summary, never exported as free symbols.
+    loop_tokens: Option<HashSet<VarIdent>>,
+    /// Frame-local conservation candidates inferred from completed loop graphs.
+    /// Published only after the complete function transformation is accepted.
+    loop_invariants: HashMap<u64, Vec<Expr>>,
 }
 
 pub(super) fn summarize(
@@ -61,6 +67,7 @@ pub(super) fn summarize(
     summaries: &HashMap<Fun, super::super::summary::FunctionSummary>,
     modes: &HashMap<VarIdent, Mode>,
     checked: &Checked,
+    loop_invariants: &mut HashMap<u64, Vec<Expr>>,
 ) -> Option<Template> {
     let mut trace = Trace {
         layouts,
@@ -75,6 +82,8 @@ pub(super) fn summarize(
         appends: false,
         effects: vec![],
         branch_depth: 0,
+        loop_tokens: None,
+        loop_invariants: HashMap::new(),
     };
     for (index, parameter) in function.x.params.iter().enumerate() {
         if parameter.x.mode != Mode::Exec {
@@ -139,7 +148,16 @@ pub(super) fn summarize(
     for region in trace.regions.values() {
         collect(region);
     }
+    // A template may refer only to caller observations. In particular, a
+    // representative iteration's counter and extracted-child tokens cannot
+    // escape through intermediate lifetime regions or returned descriptors.
+    if names.iter().any(|name| !trace.symbols.iter().any(|symbol| &symbol.name == name)) {
+        return None;
+    }
     trace.symbols.retain(|symbol| names.contains(&symbol.name));
+    for (id, candidates) in trace.loop_invariants {
+        loop_invariants.entry(id).or_default().extend(candidates);
+    }
     Some(Template {
         regions: trace.regions,
         symbols: trace.symbols,

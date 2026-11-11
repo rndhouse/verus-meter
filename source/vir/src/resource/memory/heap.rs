@@ -18,6 +18,9 @@ pub(super) struct Heap {
     /// allocations remain charged to the caller; replacements are charged here.
     pub(super) borrowed: HashMap<VarIdent, Owner>,
     protected: HashSet<VarIdent>,
+    /// Loops may partition ownership while retaining enclosing owner slots.
+    /// A nested branch or section clears this permission until it exits.
+    partitions: HashSet<VarIdent>,
     /// Disjoint replaced child paths of borrowed inputs, exported at calls.
     pub(super) replaced: HashSet<super::paths::LocalPath>,
 }
@@ -203,15 +206,23 @@ impl Heap {
         ids
     }
 
-    pub(super) fn protect(&mut self) -> HashSet<VarIdent> {
-        let old = self.protected.clone();
+    pub(super) fn protect(&mut self) -> (HashSet<VarIdent>, HashSet<VarIdent>) {
+        let old = (self.protected.clone(), std::mem::take(&mut self.partitions));
         self.protected.extend(self.owners.keys().cloned());
         self.protected.extend(self.borrowed.keys().cloned());
         old
     }
 
-    pub(super) fn unprotect(&mut self, old: HashSet<VarIdent>) {
-        self.protected = old;
+    pub(super) fn unprotect(&mut self, old: (HashSet<VarIdent>, HashSet<VarIdent>)) {
+        (self.protected, self.partitions) = old;
+    }
+
+    pub(super) fn permit_loop_partitions(&mut self, outer: &HashSet<VarIdent>) {
+        self.partitions.extend(self.owners.keys().filter(|name| !outer.contains(*name)).cloned());
+    }
+
+    pub(super) fn check_partition(&self, name: &VarIdent, span: &Span) -> Result<(), VirErr> {
+        if self.partitions.contains(name) { Ok(()) } else { self.check_transfer(name, span) }
     }
 
     pub(super) fn take(&mut self, name: &VarIdent, span: &Span) -> Result<Owner, VirErr> {

@@ -119,7 +119,7 @@ impl Analysis<'_> {
                     // Owned extraction additionally partitions incoming lifetimes.
                     // An empty pop's selected input regions are empty too; its
                     // remaining region still includes the collection backing.
-                    self.heap.check_transfer(&name, &source.span)?;
+                    self.heap.check_partition(&name, &source.span)?;
                 }
                 if elements.states.values().any(|id| self.growth.protected_elements.contains(id)) {
                     return Err(unsupported(

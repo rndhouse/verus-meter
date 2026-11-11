@@ -41,6 +41,7 @@ fn rootless(value: &Expr) -> bool {
         || call(value, "descendants").is_some()
         || call(value, "repeat").is_some()
         || call(value, "take_children").is_some()
+        || call(value, "reverse_children").is_some()
         || call(value, "prefix")
             .is_some_and(|args| path(&args[1]).is_some_and(|path| !path.is_empty()))
         || call(value, "add").is_some_and(|args| rootless(&args[0]) && rootless(&args[1]))

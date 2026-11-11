@@ -404,7 +404,8 @@ impl Analysis<'_> {
                 ..
             } if unit(&expr.typ) => {
                 self.prepare_element_loop(&expr.span, body)?;
-                let forest_bounds = self.element_loop_bounds(&expr.span, body)?;
+                let mut forest_bounds = self.element_loop_bounds(&expr.span, body)?;
+                forest_bounds.extend(self.loop_charge_candidates(&expr.span));
                 let loop_scalars = self.stable_scalars.clone();
                 let entry = self.storage.live();
                 let ids = self.heap.vectors();
@@ -458,7 +459,9 @@ impl Analysis<'_> {
                 );
                 let entry_facts = self.freeze_loop_facts(&expr.span, entry_facts)?;
                 let live = self.storage.live_expression(&expr.span).total();
+                let loop_inputs = self.loop_inputs();
                 let protection = self.heap.protect();
+                self.heap.permit_loop_partitions(&protection.0);
                 let first_checkpoint = self.checkpoints.len();
                 self.storage.event(&expr.span, "analyze reusable while iteration".into());
                 self.growth.loop_depth += 1;
@@ -474,6 +477,7 @@ impl Analysis<'_> {
                     checkpoint.peak.merge(&iteration_peak);
                 }
                 self.heap.unprotect(protection);
+                self.finish_loop_inputs(&expr.span, loop_inputs)?;
                 let mut frame_invariants = Vec::new();
                 for (id, pushes, floor) in vector_entry {
                     let state = self.growth.vectors[id].clone();
@@ -728,6 +732,7 @@ pub(super) fn check(
             summaries,
             &modes.var_modes,
             &analysis.transitions,
+            &mut analysis.growth.loops,
         )?,
         vectors: super::vector_calls::VectorSummary {
             removals: input_vectors

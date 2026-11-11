@@ -320,11 +320,6 @@ fn unsupported_owned_region_transfers_reject_generous_budgets() {
             "if take { v.remove(0); }",
             "moving or dropping an enclosing heap owner across a branch, loop, or memory section",
         ),
-        (
-            "loop",
-            "while v.len() > 0 invariant true, decreases v.len(), { v.remove(0); }",
-            "moving or dropping an enclosing heap owner across a branch, loop, or memory section",
-        ),
     ] {
         for operation in ["v.remove(0)", "v.pop()"] {
             let body = body.replace("v.remove(0)", operation);

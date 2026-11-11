@@ -19,6 +19,7 @@ mod incoming_extraction;
 mod inference;
 mod integers;
 mod lifetimes;
+mod loop_ownership;
 mod nested_growth;
 mod nested_ownership;
 mod owned_extraction;

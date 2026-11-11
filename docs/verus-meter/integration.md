@@ -120,11 +120,21 @@ these checks do not prove equivalence of complete forest expressions.
 Commit borrowed effects into existing proof-state IDs so
 branch joins and loop invariants observe the updated allocations.
 By-value optional patterns join parametric branch states. Collection loop
-summaries interpret a representative iteration and require one unconditional
-persistent append or pop. A fresh iteration symbol rejects index-dependent
-footprints; stable bounds and isolated effects justify repetition or prefix
-retention over complete child forests. Reservation lower bounds remain separate
-from the conservative append-only backing-byte upper bound.
+summaries interpret a representative iteration as disjoint persistent roles,
+each with one unconditional append or pop. Temporary payload symbols identify
+whole-child transfers; uniform construction, prefix retention, and reversed range
+transfer then describe completed forests independently of child layout. Counter
+or payload dependencies outside these rules are unsupported, and temporary symbols
+cannot escape a template. Reservation lower bounds remain separate from the
+append-only backing-byte upper bound.
+
+Loop boundaries give changed original-input regions fresh exit identities. Earlier
+peak profiles retain first-iteration regions: original allocations can only move
+or be released, so their total at corresponding later iteration points cannot
+increase. Local allocations remain governed by inductive body proofs. Entry
+snapshots and the checked transfer graph supply conservation candidates for sums
+across source and destination; these are proved at entry and on back edges, never
+assumed. Exact exit forests keep subsequent caller accounting and extraction precise.
 
 [Indexed projections](../../source/vir/src/resource/memory/projections.rs) loan a
 selected footprint from a precise collection and return its final descriptors.

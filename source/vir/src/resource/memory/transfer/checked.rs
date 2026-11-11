@@ -24,6 +24,39 @@ pub(in super::super) struct InputSplit {
     pub(in super::super) selected: std::collections::BTreeMap<OwnerPath, usize>,
 }
 
+/// Original regions transferred into one runtime collection slot.
+#[derive(Clone)]
+pub(in super::super) struct InputJoin {
+    /// Destination's original region before insertion, if it has one.
+    pub(in super::super) previous: Option<usize>,
+    /// Disjoint original regions of the transferred child's fixed nodes.
+    pub(in super::super) children: std::collections::BTreeMap<OwnerPath, usize>,
+    /// Joined original region retained by the destination after insertion.
+    pub(in super::super) result: usize,
+}
+
+/// Fixed ownership roles at a loop boundary; indices remain in each forest.
+#[derive(Clone)]
+pub(in super::super) struct LoopRegion {
+    /// Persistent collection slot; runtime indices stay inside its forest.
+    pub(in super::super) location: (VarIdent, OwnerPath),
+    /// Original region before any iterations, absent for fresh local storage.
+    pub(in super::super) entry: Option<usize>,
+    /// Original region after all iterations, distinct from first-iteration IDs.
+    pub(in super::super) exit: usize,
+}
+
+/// Inductive child-charge candidates for a persistent collection role.
+#[derive(Clone)]
+pub(in super::super) struct LoopCharge {
+    /// Persistent collection whose local child counters form this sum.
+    pub(in super::super) location: (VarIdent, OwnerPath),
+    /// Mutable sum of this frame's child allocations at the loop head.
+    pub(in super::super) current: Expr,
+    /// Immutable snapshot of the same sum before entering the loop.
+    pub(in super::super) entry: Expr,
+}
+
 /// An owner place resolved by the operation that checks its lifetime and layout.
 #[derive(Clone)]
 pub(in super::super) struct Place {
@@ -60,6 +93,8 @@ pub(in super::super) enum Operation {
         element: u64,
         /// False when entry reservations or section protection require spare room.
         grow: bool,
+        /// Original input regions joined into the receiver by this insertion.
+        input: Option<InputJoin>,
     },
     /// Extract and reindex; an absent index denotes an optional last element.
     Remove { receiver: Place, index: Option<Expr>, input: Option<InputSplit> },
@@ -105,10 +140,15 @@ pub(super) enum Kind {
     Assign,
     Pattern,
     Scope,
+    Loop,
 }
 
 #[derive(Default)]
 pub(in super::super) struct Checked {
+    /// Changed original regions at each completed loop boundary.
+    pub(in super::super) loops: HashMap<u64, Vec<LoopRegion>>,
+    /// Available charge snapshots for proving transfer conservation.
+    pub(in super::super) loop_charges: HashMap<u64, Vec<LoopCharge>>,
     /// Original owned parameter nodes, before any runtime partitioning.
     pub(super) inputs: Vec<crate::resource::memory::paths::InputPath>,
     /// Number of additional, operation-derived input lifetime regions.
@@ -200,5 +240,6 @@ impl Checked {
             && self.assignments.keys().all(|id| used.contains(&(Kind::Assign, *id)))
             && self.patterns.keys().all(|id| used.contains(&(Kind::Pattern, *id)))
             && self.scopes.keys().all(|id| used.contains(&(Kind::Scope, *id)))
+            && self.loops.keys().all(|id| used.contains(&(Kind::Loop, *id)))
     }
 }

@@ -25,6 +25,8 @@ fn with_trace(checked: &Checked, test: impl FnOnce(&mut Trace<'_>)) {
         appends: false,
         effects: vec![],
         branch_depth: 0,
+        loop_tokens: None,
+        loop_invariants: HashMap::new(),
     });
 }
 

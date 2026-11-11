@@ -261,8 +261,15 @@ collection constructors, whole-owner transfers, and supported append operations
 preserve individual child reservations without additional contract syntax.
 The structural traversal handles fixed children and runtime children separately,
 so supported ownership shapes compose without rules for each nesting combination.
-Counted constructor loops can append one child with an iteration-independent
-footprint. Loop bounds must remain stable and the append must be unconditional.
+Loop summaries compose unconditional effects on disjoint persistent collections:
+building children with an iteration-independent footprint, consuming children,
+and moving whole children between collections. The collections can occupy fixed
+fields of the same owner. Transfers preserve each child's complete nested forest,
+including different capacities; repeated last-element extraction reverses their
+order at the destination. Counted loops use a stable upper bound and unit increment;
+consuming loops test a popped collection's length against a stable lower bound.
+Zero and partial iteration ranges preserve the unconsumed children and backing.
+Generated invariants prove local child-charge conservation across transfers.
 Callee peak budgets still cover temporary allocations and buffer replacement.
 See [helper collections](../../examples/resource/memory/vectors/helper_collections.rs).
 
@@ -295,9 +302,13 @@ the original subtree kept live throughout the leaf call.
 
 Missing ownership support is an error even with a generous memory budget. A helper
 whose control flow or value dependencies cannot be represented by a finite ownership
-transformation is unsupported. Extraction from incoming collections, and indexed
-replacement in owned incoming collections, remain unsupported within protected
-branches, loops, and memory sections. Indexing incoming children inside
+transformation is unsupported. The loop rules above support local collections and
+collections passed by value. Extraction from borrowed inputs and indexed replacement
+in owned inputs remain unsupported inside loops. Conditional effects, overlapping
+collection roles, and ownership changes to a transferred payload within an iteration
+are also unsupported.
+Incoming extraction and replacement remain unsupported within protected branches
+and memory sections. Indexing incoming children inside
 loops and forwarding an incoming collection to another runtime-ownership helper
 are also unsupported. Indexed
 borrows can call ordinary leaf helpers.

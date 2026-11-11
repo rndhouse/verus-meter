@@ -75,6 +75,10 @@ pub(super) struct ElementState {
 }
 
 impl ElementState {
+    pub(super) fn entry_upper(&self) -> Option<Expr> {
+        self.extent.clone()
+    }
+
     /// Cutting or reindexing an initially uncharged forest cannot add bytes.
     pub(super) fn unchanged_zero(&self) -> bool {
         self.uncharged
@@ -617,7 +621,12 @@ impl super::growth::Growth {
                     Ok(())
                 });
             let maximum = if in_scope { state.maximum.clone() } else { fallback.clone() };
-            let upper = if let Some(length) = &state.length {
+            let upper = if state.uncharged {
+                // Descriptor-only cuts and transfers cannot create local bytes.
+                // Prove this invariant at entry and on every back edge rather
+                // than losing the fact when the loop query havocs its counters.
+                zero.clone()
+            } else if let Some(length) = &state.length {
                 let length = SpannedTyped::new(&length.span, &int_typ(), length.x.clone());
                 result.push(mk_ineq(span, &state.count, &length, InequalityOp::Le));
                 contracts::add(

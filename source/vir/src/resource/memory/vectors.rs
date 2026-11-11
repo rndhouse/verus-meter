@@ -250,6 +250,7 @@ impl Analysis<'_> {
         let (state_id, typ, vector) = self.vector_receiver(receiver)?;
         let grow = !self.growth.vectors[state_id].reserved
             && !self.growth.section_protected.contains(&state_id);
+        let mut input = None;
         if self.layouts.owning_elements(&typ)
             && matches!(
                 intrinsic,
@@ -325,8 +326,9 @@ impl Analysis<'_> {
                 self.growth.vectors[state_id].backing.changed = true;
                 self.growth.vectors[state_id].pushes += 1;
             }
-            if let Some(child) = child {
+            if let Some(mut child) = child {
                 let (name, path) = super::paths::expr(receiver, &typ).unwrap();
+                input = self.join_input(&expr.span, &(name.clone(), path.clone()), &mut child)?;
                 let mut elements = self
                     .heap
                     .root_mut(&name)
@@ -379,6 +381,7 @@ impl Analysis<'_> {
                 child: args[1].clone(),
                 element: self.growth.vectors[state_id].element,
                 grow,
+                input,
             }),
             Some(ResourceIntrinsic::VecPop | ResourceIntrinsic::VecRemove) => {
                 Some(super::transfer::checked::Operation::Remove {

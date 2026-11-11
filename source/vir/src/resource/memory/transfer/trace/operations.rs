@@ -78,7 +78,7 @@ impl Trace<'_> {
                 self.effects.push(loops::Effect::Read(location.0));
                 Some(Value::Scalar(property(span, node.memory, "length")))
             }
-            Operation::Push { receiver, child, element, grow } => {
+            Operation::Push { receiver, child, element, grow, input } => {
                 let location = self.checked_location(&receiver)?;
                 let mut node = self.get(span, &location, &receiver.typ)?;
                 let child = self.value(&child)?;
@@ -86,6 +86,9 @@ impl Trace<'_> {
                 let length = property(span, node.memory.clone(), "length");
                 let capacity = property(span, node.memory.clone(), "capacity");
                 let bytes = property(span, node.memory.clone(), "bytes");
+                if let Some(input) = input {
+                    self.join_region(span, length.clone(), &input)?;
+                }
                 let (capacity, bytes) = if grow {
                     // Physical forests contain caller bytes as well as local
                     // replacements, so exact spare capacity can be reused here.
@@ -172,13 +175,32 @@ impl Trace<'_> {
                 node.memory = next;
                 let typ = node.typ.clone();
                 self.set(span, &location, node)?;
+                let token = if optional
+                    && self.branch_depth == 0
+                    && self.loop_tokens.is_some()
+                    && self.layouts.owner(&value.typ)
+                {
+                    let name = VarIdent(
+                        Arc::new("$memory_iteration_child".into()),
+                        VarIdentDisambiguate::VirTemp(span.id),
+                    );
+                    self.loop_tokens.as_mut()?.insert(name.clone());
+                    Some(name)
+                } else {
+                    None
+                };
                 if optional && self.branch_depth == 0 {
                     self.effects.pop();
-                    self.effects.push(loops::Effect::Pop(location, typ));
+                    self.effects.push(loops::Effect::Pop { location, typ, token: token.clone() });
                 }
                 if !self.layouts.owner(&value.typ) {
                     return Some(Value::Unknown);
                 }
+                let selected = if let Some(name) = token {
+                    SpannedTyped::new(span, &expr::memory_type(), ExprX::Var(name))
+                } else {
+                    partition.selected
+                };
                 let memory = if optional {
                     minima = minima
                         .into_iter()
@@ -201,12 +223,12 @@ impl Trace<'_> {
                         ),
                         expr::prefix(
                             span,
-                            partition.selected,
+                            selected,
                             expr::path(span, [self.layouts.metadata_slot(&OwnerSlot::Contents)]),
                         ),
                     )
                 } else {
-                    partition.selected
+                    selected
                 };
                 Some(Value::Owner(Node { typ: value.typ.clone(), memory, minima }))
             }
