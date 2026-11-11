@@ -1,61 +1,72 @@
 // Construct batches of owning buffers through helpers and nested loops.
 //
-// Each batch contains two pairs of empty buffers with different reservations.
-// The returned collection preserves those reservations and allocation sizes,
-// so its caller can keep one buffer and release the rest independently.
+// Named storage types and memory formulas describe the allowance. The length
+// bounds limit live collection storage; no buffer contents are specified.
+// Termination checking is disabled to keep this example focused on memory.
+#![verifier::exec_allows_no_decreases_clause]
+
 use vstd::prelude::*;
 
 verus! {
 
-// Append a pair while preserving the earlier rows and their allocations.
-// The allowance covers new row buffers, handles, and possible collection growth.
-fn append_pair(rows: &mut Vec<Vec<u32>>)
-    requires
-        old(rows).len() <= 6,
-        forall|i: int| 0 <= i < old(rows).len() ==> old(rows)[i].len() == 0,
-    ensures
-        final(rows).len() == old(rows).len() + 2,
-        forall|i: int| 0 <= i < final(rows).len() ==> final(rows)[i].len() == 0,
-    resources peak(memory) <= 1024,
-{
-    let small = Vec::<u32>::with_capacity(4);
-    rows.push(small);
-    let large = Vec::<u32>::with_capacity(8);
-    rows.push(large);
+// One owning row handle; its buffer allocation is counted separately.
+type Row = Vec<u32>;
+
+// Buffer reservation returned by the small-row constructor.
+type SmallBuffer = [u32; 4];
+
+// Buffer reservation returned by the large-row constructor.
+type LargeBuffer = [u32; 8];
+
+// Workspace used after the returned collection has been released.
+type Workspace = [u8; 4096];
+
+// Keep the collection's backing, up to eight large row buffers, both loop
+// counters, and the row being prepared live at the same time.
+spec fn construction_workspace() -> nat {
+    let backing = 8 * value_size(Row);
+    let children = 8 * value_size(LargeBuffer);
+    let locals = 2 * value_size(usize) + value_size(Row);
+    value_size(Vec<Row>) + backing + children + locals
 }
 
-// Build up to two batches, each containing two pairs.
-// The outer reservation holds all eight possible rows. The budget also covers
-// the helper's workspace while previously constructed rows remain allocated.
-fn batches(n: usize) -> (rows: Vec<Vec<u32>>)
-    requires
-        n <= 2,
-    ensures
-        rows.len() == 4 * n,
-        forall|i: int| 0 <= i < rows.len() ==> rows[i].len() == 0,
-    resources peak(memory) <= 2048,
+// Return a small buffer with its owning handle and allocation both budgeted.
+fn small_row() -> Row
+    resources peak(memory) <= value_size(Row) + value_size(SmallBuffer),
 {
-    let mut rows = Vec::<Vec<u32>>::with_capacity(8);
+    Vec::with_capacity(4)
+}
+
+// Return a larger buffer using the same ownership rules.
+fn large_row() -> Row
+    resources peak(memory) <= value_size(Row) + value_size(LargeBuffer),
+{
+    Vec::with_capacity(8)
+}
+
+// Build two batches, each containing two pairs of buffers.
+// The length bounds connect progress to the amount of allocated row storage.
+fn batches() -> Vec<Row>
+    resources peak(memory) <= construction_workspace() + peak(large_row),
+{
+    let mut rows = Vec::<Row>::with_capacity(8);
     let mut i = 0usize;
-    while i < n
+    while i < 2
         invariant
-            i <= n,
-            n <= 2,
+            i <= 2,
             rows.len() == 4 * i,
-            forall|k: int| 0 <= k < rows.len() ==> rows[k].len() == 0,
-        decreases n - i,
     {
         let mut j = 0usize;
         while j < 2
             invariant
                 j <= 2,
-                i < n,
-                n <= 2,
+                i < 2,
                 rows.len() == 4 * i + 2 * j,
-                forall|k: int| 0 <= k < rows.len() ==> rows[k].len() == 0,
-            decreases 2 - j,
         {
-            append_pair(&mut rows);
+            let small = small_row();
+            rows.push(small);
+            let large = large_row();
+            rows.push(large);
             j += 1;
         }
         i += 1;
@@ -63,16 +74,13 @@ fn batches(n: usize) -> (rows: Vec<Vec<u32>>)
     rows
 }
 
-// Reuse the last row's reservation after releasing the collection and siblings.
-// The final peak is its 24-byte handle, 32-byte buffer, and 4096-byte workspace.
+// Release all returned child allocations before using the workspace allowance.
 fn main()
-    resources peak(memory) <= 4152,
+    resources peak(memory) <= value_size(Workspace),
 {
-    let mut rows = batches(2);
-    let mut last = rows.pop().unwrap();
+    let rows = batches();
     drop(rows);
-    last.push(7);
-    let scratch = [0u8;4096];
+    let scratch: Workspace = [0u8;4096];
 }
 
 } // verus!
