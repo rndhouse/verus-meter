@@ -204,12 +204,14 @@ impl Analysis<'_> {
     fn enable_transfer_algebra(&mut self, span: &Span) {
         // Composed helpers can reconstruct fixed descriptors beneath a runtime
         // child. Selection and prefix lookup facts keep the child's own record
-        // distinct from the records nested under its fixed fields.
+        // distinct from the records nested under its fixed fields. Later calls
+        // must also select through descendants retained by a prior extraction.
         for group in [
             crate::fun!(CrateId::Vstd => "seq"; "group_seq_axioms"),
             crate::fun!(CrateId::Vstd => "std_specs", "memory"; "group_metadata_algebra"),
             crate::fun!(CrateId::Vstd => "std_specs", "memory"; "select_root"),
             crate::fun!(CrateId::Vstd => "std_specs", "memory"; "select_runtime"),
+            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "select_descendants"),
             crate::fun!(CrateId::Vstd => "std_specs", "memory"; "contains_prefix"),
             crate::fun!(CrateId::Vstd => "std_specs", "memory"; "lookup_prefix"),
             crate::fun!(CrateId::Vstd => "std_specs", "memory"; "take_children_add"),

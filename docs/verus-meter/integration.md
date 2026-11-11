@@ -145,15 +145,16 @@ changes to one incoming child. The checked transition log identifies mutations;
 read-only loans must not export write effects.
 
 The caller applies the helper template to its complete forest after accounting
-for the call's peak. Straight-line `remove` from a borrowed incoming collection
-uses the same partition for local charges and complete caller ownership. Restore
+for the call's peak. Straight-line `remove` and `pop` from a borrowed incoming
+collection use the same partition for local charges and complete caller ownership. Restore
 the selected child with the input forest's view; only a complete descriptor or
 an executable source can establish cardinality. Record removal before finishing
 enclosing indexed loans so they export the mutation. Borrowed input storage stays
 charged throughout the call, and result/parent charges separate when its template
-is applied. By-value extraction would additionally need to split input-lifetime
-provenance and is unsupported, as are incoming `pop` and extraction in protected
-control-flow regions.
+is applied. Pop derives its optional tag from the executable length, independently
+of local charges; an empty pop selects no runtime child. By-value extraction would
+additionally need to split input-lifetime provenance and is unsupported, as is
+extraction in protected control-flow regions.
 
 Local views cannot be substituted for complete arguments to runtime-ownership
 calls. Indexed incoming loans inside loops remain unsupported. Never copy a

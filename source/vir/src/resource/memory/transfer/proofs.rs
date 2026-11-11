@@ -78,6 +78,14 @@ pub(super) fn forest(span: &Span, value: &Expr, proofs: &mut Vec<Stmt>) -> Resul
                                 "partition_without",
                                 args.as_ref().clone(),
                             ));
+                            // Removing a child preserves its parent's descriptor.
+                            // Nested pop templates need this root fact to bound
+                            // the retained descendants plus the backing buffer.
+                            proofs.push(expr::lemma(
+                                span,
+                                "lookup_without",
+                                vec![args[0].clone(), args[1].clone(), expr::path(span, [])],
+                            ));
                         }
                         proofs.push(expr::lemma(span, "inspect", args.as_ref().clone()));
                         let mut args = args.as_ref().clone();

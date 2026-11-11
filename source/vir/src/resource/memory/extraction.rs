@@ -114,10 +114,9 @@ impl Analysis<'_> {
                     // A borrowed input stays charged to the caller throughout
                     // this frame. Partition only the helper's new charges here;
                     // the checked template partitions the complete forest at
-                    // the call site. Owned inputs need a separate lifetime split.
-                    if optional {
-                        return Err(unsupported(&source.span, "popping an incoming owning child"));
-                    }
+                    // the call site. Pop's tag comes from the executable length,
+                    // not the local forest, which may be empty for a live child.
+                    // Owned inputs need a separate lifetime split.
                     if !self.heap.borrowed.contains_key(&name) {
                         return Err(unsupported(
                             &source.span,

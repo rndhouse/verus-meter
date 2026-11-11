@@ -3,26 +3,21 @@ use super::support::{rejects, verifies};
 
 #[test]
 fn unsupported_incoming_extractions_reject_even_with_a_larger_budget() {
-    for (name, parameter, operation, result) in [
-        ("borrowed_pop", "v: &mut Vec<Box<u32>>", "v.pop()", "Option<Box<u32>>"),
-        ("owned_pop", "mut v: Vec<Box<u32>>", "v.pop()", "Option<Box<u32>>"),
+    for (name, operation, result) in [
+        ("owned_pop", "v.pop()", "Option<Box<u32>>"),
         // Discarding the result must not bypass the unsupported ownership effect.
-        ("discarded_pop", "v: &mut Vec<Box<u32>>", "v.pop();", "()"),
+        ("discarded_owned_pop", "v.pop();", "()"),
+        ("owned_remove", "v.remove(0)", "Box<u32>"),
     ] {
         rejects(
             name,
             &format!(
-                "fn f({parameter}) -> {result} resources peak(memory) <= 10000 {{ {operation} }}"
+                "fn f(mut v: Vec<Box<u32>>) -> {result}
+                    resources peak(memory) <= 10000 {{ {operation} }}"
             ),
-            "popping an incoming owning child",
+            "extracting an incoming child from an owned collection",
         );
     }
-    rejects(
-        "owned_remove",
-        "fn f(mut v: Vec<Box<u32>>) -> Box<u32>
-            resources peak(memory) <= 10000 { v.remove(0) }",
-        "extracting an incoming child from an owned collection",
-    );
 }
 
 #[test]
