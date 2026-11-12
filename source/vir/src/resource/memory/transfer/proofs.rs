@@ -57,6 +57,18 @@ struct ForestProofs {
     /// roots may contain temporary nodes whose addresses would otherwise recycle.
     /// The root scope remains present until the emitter is discarded.
     scopes: Vec<Scope>,
+    /// Deterministic traversal work used by sharing regressions and measurements.
+    #[cfg(test)]
+    work: Work,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct Work {
+    /// Structural range helper bodies evaluated after cache lookup.
+    blocks: usize,
+    /// Runtime-filter helper bodies evaluated after cache lookup.
+    retentions: usize,
 }
 
 /// Graph visits and pure lemma facts established under one set of assumptions.
@@ -70,7 +82,11 @@ struct Scope {
 
 impl ForestProofs {
     fn new() -> Self {
-        Self { scopes: vec![Scope::default()] }
+        Self {
+            scopes: vec![Scope::default()],
+            #[cfg(test)]
+            work: Work::default(),
+        }
     }
 
     fn branch(&mut self, span: &Span, value: &Expr) -> Result<Vec<Stmt>, VirErr> {
@@ -341,6 +357,10 @@ fn block(
     proofs: &mut Vec<Stmt>,
     emitter: &mut ForestProofs,
 ) -> Result<(), VirErr> {
+    #[cfg(test)]
+    {
+        emitter.work.blocks += 1;
+    }
     let ExprX::Call { target: CallTarget::Fun(_, function, _, _, _), args, .. } = &value.x else {
         return Err(super::super::model::unsupported(
             span,
@@ -435,6 +455,10 @@ fn retention(
     proofs: &mut Vec<Stmt>,
     emitter: &mut ForestProofs,
 ) {
+    #[cfg(test)]
+    {
+        emitter.work.retentions += 1;
+    }
     let ExprX::Call { target: CallTarget::Fun(_, function, _, _, _), args, .. } = &memory.x else {
         return;
     };

@@ -187,3 +187,72 @@ fn quantified_builders_establish_facts_under_their_own_requirements() {
     // The shared body is checked in two separate quantified proof queries.
     assert_eq!(calls(&proofs, "well_formed_record"), 2);
 }
+
+/// Build a small shared expression graph with exponentially many occurrences.
+fn shared_sum(span: &Span, mut value: Expr, depth: usize) -> Expr {
+    for _ in 0..depth {
+        value = expr::add(span, value.clone(), value);
+    }
+    value
+}
+
+/// A uniform generated block whose checked builder has its own proof scope.
+fn generated_block(span: &Span) -> Expr {
+    let name = VarIdent(Arc::new("index".into()), VarIdentDisambiguate::VirTemp(1));
+    let builder = SpannedTyped::new(
+        span,
+        &Arc::new(TypX::SpecFn(Arc::new(vec![crate::ast_util::int_typ()]), expr::memory_type())),
+        ExprX::Closure(
+            Arc::new(vec![Arc::new(VarBinderX { name, a: crate::ast_util::int_typ() })]),
+            expr::prefix(span, memory(span), expr::path(span, [0])),
+        ),
+    );
+    expr::operation(
+        span,
+        "generate_children",
+        vec![builder, expr::integer(span, 1), expr::integer(span, 2), expr::integer(span, 0)],
+        expr::memory_type(),
+    )
+}
+
+/// Run manually with --ignored --nocapture to compare helper traversal work,
+/// generated statements, and median generation time without timing assertions.
+#[test]
+#[ignore = "manual proof-generation measurement"]
+fn measure_bound_helper_sharing() {
+    let span = span();
+    let leaf = expr::prefix(&span, memory(&span), expr::path(&span, [0]));
+    let retained = expr::operation(&span, "runtime", vec![leaf.clone()], expr::memory_type());
+    let cases = [
+        ("block", shared_sum(&span, leaf, 16), 1),
+        ("retention", shared_sum(&span, retained, 16), 1),
+        ("generated-block", shared_sum(&span, generated_block(&span), 8), 2),
+    ];
+    for (name, value, bound) in cases {
+        let bound = expr::integer(&span, bound);
+        let mut times = Vec::new();
+        let mut measurement = None;
+        for _ in 0..5 {
+            let mut emitter = ForestProofs::new();
+            let mut proofs = Vec::new();
+            let start = std::time::Instant::now();
+            let visits = if name == "retention" {
+                retention(&span, &value, &bound, &mut proofs, &mut emitter);
+                emitter.work.retentions
+            } else {
+                block(&span, &value, &bound, &mut proofs, &mut emitter).unwrap();
+                emitter.work.blocks
+            };
+            times.push(start.elapsed().as_micros());
+            let current = (visits, proofs.len());
+            assert!(measurement.is_none_or(|previous| previous == current));
+            measurement = Some(current);
+        }
+        times.sort();
+        let (visits, statements) = measurement.unwrap();
+        println!(
+            "{name}: visits={visits} statements={statements} median_us={median}",
+            median = times[2]
+        );
+    }
+}
