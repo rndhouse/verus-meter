@@ -30,6 +30,9 @@ use super::effects::{Effect, Location};
 #[derive(Clone, Default)]
 struct State {
     values: HashMap<VarIdent, Value>,
+    /// Pure source initializers for immutable scalar bindings. Keeping their
+    /// actual definitions avoids inventing logical postconditions for callees.
+    definitions: BTreeMap<VarIdent, Expr>,
     written: HashSet<VarIdent>,
 }
 
@@ -619,6 +622,15 @@ impl Trace<'_> {
                     } else {
                         Value::Unknown
                     };
+                    if binding.user_mut == Some(false)
+                        && contracts::scalar(&binding.typ)
+                        && let Some(init) = init
+                    {
+                        let init = crate::ast_util::place_to_spec_expr(init);
+                        if let Ok(definition) = super::super::projections::spec_value(&init) {
+                            self.state.definitions.insert(binding.name.clone(), definition);
+                        }
+                    }
                     if !locals.contains(&binding.name) {
                         if matches!(value, Value::Owner(_)) {
                             return None;
@@ -632,6 +644,7 @@ impl Trace<'_> {
         let value = if let Some(tail) = tail { self.value(tail)? } else { Value::Unit };
         for local in locals {
             self.state.values.remove(&local);
+            self.state.definitions.remove(&local);
         }
         Some(value)
     }
@@ -679,6 +692,10 @@ impl Trace<'_> {
 
     fn value(&mut self, value: &Expr) -> Option<Value> {
         let span = &value.span;
+        if let Some(inner) = super::super::model::widening_integer_cast(value) {
+            let inner = self.scalar(inner)?;
+            return Some(Value::Scalar(SpannedTyped::new(span, &value.typ, inner.x.clone())));
+        }
         if super::super::execution::ignored_expression(value)
             || matches!(
                 &value.x,
@@ -873,9 +890,18 @@ impl Trace<'_> {
                 ))
             })
             .collect::<Option<_>>()?;
+        let definitions = yes
+            .definitions
+            .into_iter()
+            .filter(|(name, definition)| {
+                no.definitions
+                    .get(name)
+                    .is_some_and(|other| simplify::same_expression(definition, other))
+            })
+            .collect();
         let mut written = yes.written;
         written.extend(no.written);
-        Some(State { values, written })
+        Some(State { values, definitions, written })
     }
 
     fn join_value(span: &Span, condition: Expr, yes: &Value, no: &Value) -> Option<Value> {

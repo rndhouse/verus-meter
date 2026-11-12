@@ -3,6 +3,54 @@
 use super::support::{rejects, verifies};
 
 #[test]
+fn immutable_derived_capacities_remain_related_to_symbolic_counts() {
+    let code = "#[verifier::exec_allows_no_decreases_clause]
+    fn make(n: usize) -> Vec<Box<[u8;8]>>
+        requires n <= 10,
+        resources peak(memory) <= 128 + 32 * n {
+        let base = n + 1; let capacity = 2 * base;
+        let mut result = Vec::with_capacity(capacity); let mut i = 0usize;
+        while i < n {
+            let first = Box::new([0u8;8]); result.push(first);
+            let second = Box::new([0u8;8]); result.push(second);
+            i += 1;
+        }
+        result
+    }
+    fn f() resources peak(memory) <= BOUND {
+        let result = make(COUNT); let scratch = [0u8;512];
+    }";
+    for (count, bound) in [(0, 552), (3, 648)] {
+        let code = code.replace("COUNT", &count.to_string());
+        verifies("derived_capacity", &code.replace("BOUND", &bound.to_string()));
+        rejects(
+            "derived_capacity_short",
+            &code.replace("BOUND", &(bound - 1).to_string()),
+            "memory budget exceeded",
+        );
+    }
+}
+
+#[test]
+fn scalar_calls_do_not_acquire_unstated_postconditions_at_loop_entry() {
+    let code = "fn source() -> u8 resources peak(memory) <= 1 { 7 }
+    #[verifier::exec_allows_no_decreases_clause]
+    fn make() -> Vec<Box<[u8;8]>> resources peak(memory) <= 256 {
+        let unrelated = source();
+        let mut result = Vec::with_capacity(2); let mut i = 0usize;
+        while i < 2 {
+            let child = Box::new([0u8;8]); result.push(child); i += 1;
+        }
+        result
+    }
+    fn f() resources peak(memory) <= BOUND {
+        let result = make(); let scratch = [0u8;512];
+    }";
+    verifies("opaque_scalar", &code.replace("BOUND", "568"));
+    rejects("opaque_scalar_short", &code.replace("BOUND", "567"), "memory budget exceeded");
+}
+
+#[test]
 fn strides_and_countdowns_preserve_partial_final_ranges() {
     let code = "#[verifier::exec_allows_no_decreases_clause]
     fn build() -> Vec<Box<[u8;16]>> resources peak(memory) <= 256 {

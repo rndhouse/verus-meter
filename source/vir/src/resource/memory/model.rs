@@ -5,7 +5,7 @@ use crate::messages::{Span, error};
 use serde::{Deserialize, Serialize};
 use vir_macros::ToDebugSNode;
 
-pub(super) const MODEL_NAME: &str = "source-values-v35-64";
+pub(super) const MODEL_NAME: &str = "source-values-v36-64";
 pub(super) const WORD_BYTES: u64 = 8;
 
 /// Current source-storage contract. This unreleased format has no legacy variants.
@@ -36,6 +36,35 @@ pub(super) fn integer_size(range: &IntRange) -> Option<u64> {
 
 pub(super) fn integer_type_size(typ: &Typ) -> Option<u64> {
     if let TypX::Int(range) = &**typ { integer_size(range) } else { None }
+}
+
+/// Return the operand only when a native integer cast preserves every value.
+/// Check both supported pointer widths: the source storage model's word size
+/// does not constrain Verus's native arithmetic architecture. Signed-to-unsigned
+/// and wrapping conversions need their own value model and remain unsupported.
+pub(super) fn widening_integer_cast(value: &Expr) -> Option<&Expr> {
+    let ExprX::Unary(UnaryOp::Clip { range: target, .. }, operand) = &value.x else {
+        return None;
+    };
+    let TypX::Int(source) = &*operand.typ else { return None };
+    integer_size(source)?;
+    integer_size(target)?;
+    let source_signed = matches!(source, IntRange::I(_) | IntRange::ISize);
+    let target_signed = matches!(target, IntRange::I(_) | IntRange::ISize);
+    if source_signed && !target_signed {
+        return None;
+    }
+    for bits in [32, 64] {
+        let arch = ArchWordBits::Exactly(bits);
+        let source_bits = crate::ast_util::bitwidth_from_int_range(source)?.to_exact(&arch)?;
+        let target_bits = crate::ast_util::bitwidth_from_int_range(target)?.to_exact(&arch)?;
+        if target_bits < source_bits
+            || (!source_signed && target_signed && target_bits == source_bits)
+        {
+            return None;
+        }
+    }
+    Some(operand)
 }
 
 pub(super) fn slice(typ: &Typ) -> bool {

@@ -165,10 +165,91 @@ test_verify_one_file! {
     } => Err(err) => assert_vir_error_msg(err, "array sizes exceeding u64")
 }
 
-test_verify_one_file! {
-    #[test] casts_still_rejected verus_code! {
-        fn f(x: u8) resources peak(memory) <= 100 { let y = x as u64; }
-    } => Err(err) => assert_vir_error_msg(err, "does not support this executable expression")
+#[test]
+fn widening_casts_preserve_values_and_charge_destination_widths() {
+    for (source, target, bytes) in [
+        ("u8", "u64", 9),
+        ("i8", "i64", 9),
+        ("u8", "i16", 3),
+        ("u16", "usize", 10),
+        ("u32", "usize", 12),
+        ("usize", "u64", 16),
+        ("isize", "i128", 24),
+    ] {
+        let code = format!(
+            "fn f(input: {source}) resources peak(memory) <= BUDGET {{
+                let widened = input as {target};
+                assert(widened as int == input as int);
+            }}"
+        );
+        exact_peak(&format!("{source}_to_{target}"), &code, bytes);
+    }
+    exact_peak(
+        "widened_call_result",
+        "fn source() -> (result: u8) ensures result == 7, resources peak(memory) <= 1 { 7 }
+        fn f() resources peak(memory) <= BUDGET {
+            let widened = source() as u64; assert(widened == 7);
+        }",
+        9,
+    );
+    exact_peak(
+        "nested_literal_widening",
+        "fn f() resources peak(memory) <= BUDGET {
+            let widened = (7u8 as u32) as u64; assert(widened == 7);
+        }",
+        8,
+    );
+}
+
+#[test]
+fn widening_flows_through_allocation_arithmetic_and_call_contracts() {
+    let code = "fn bytes(capacity: usize) -> Vec<u8>
+        requires capacity <= 255,
+        resources peak(memory) <= value_size(capacity) + value_size(Vec<u8>) + capacity {
+        Vec::with_capacity(capacity)
+    }
+    fn widen(n: u8) -> Vec<u8>
+        resources peak(memory) <= value_size(n) + value_size(usize) + peak(bytes(n as usize)) {
+        let capacity = n as usize; bytes(capacity)
+    }
+    fn f() resources peak(memory) <= BUDGET {
+        let buffer = widen(7); let scratch = [0u8;64];
+    }";
+    super::support::verifies("widened_capacity", &code.replace("BUDGET", "95"));
+    super::support::rejects(
+        "widened_capacity_short",
+        &code.replace("BUDGET", "94"),
+        "memory budget exceeded",
+    );
+
+    let code = "fn bytes(n: u8) -> Vec<u8>
+        resources peak(memory) <= value_size(n) + value_size(Vec<u8>) + 2 * n {
+        Vec::with_capacity(2 * (n as usize))
+    }
+    fn f() resources peak(memory) <= BUDGET {
+        let buffer = bytes(7); let scratch = [0u8;64];
+    }";
+    super::support::verifies("inline_widened_capacity", &code.replace("BUDGET", "102"));
+    super::support::rejects(
+        "inline_widened_capacity_short",
+        &code.replace("BUDGET", "101"),
+        "memory budget exceeded",
+    );
+}
+
+#[test]
+fn narrowing_and_value_changing_casts_remain_unsupported() {
+    for (source, target) in
+        [("u64", "u8"), ("i16", "u32"), ("u16", "i16"), ("usize", "u32"), ("u64", "usize")]
+    {
+        super::support::rejects(
+            &format!("{source}_to_{target}"),
+            &format!(
+                "fn f(input: {source}) resources peak(memory) <= 100 {{ let result = input as {target}; }}"
+            ),
+            "does not support this executable expression",
+        );
+    }
 }
 
 test_verify_one_file! {

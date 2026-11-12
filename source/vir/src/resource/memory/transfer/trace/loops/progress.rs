@@ -14,6 +14,8 @@ pub(super) struct Progress {
     head: (Expr, Expr),
     /// Persistent scalar entry values and proposed constant per-visit changes.
     scalars: BTreeMap<VarIdent, (Expr, i128)>,
+    /// Immutable scalar definitions before binding this invocation's ordinal.
+    definitions: BTreeMap<VarIdent, Expr>,
     /// Count dependencies stay visible to enclosing ownership composition.
     pub(super) reads: Vec<Effect>,
     /// Left-observation reads need stability or a checked logical length relation.
@@ -79,6 +81,13 @@ impl Trace<'_> {
         let right = self.scalar(&control.end)?;
         let stable_reads = self.effects[right_start..].to_vec();
         let bounds = (left, right);
+        let definitions = self
+            .state
+            .definitions
+            .iter()
+            .filter(|(name, _)| record.stable_scalar(name))
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
         let mut lengths = BTreeMap::new();
         for location in record.length_roles() {
             if let Some(Value::Owner(node)) = self.state.values.get(&location.0) {
@@ -126,6 +135,7 @@ impl Trace<'_> {
             bounds,
             head,
             scalars,
+            definitions,
             reads,
             left_reads,
             stable_reads,
@@ -316,6 +326,17 @@ impl Trace<'_> {
             .iter()
             .filter_map(|(name, (initial, _))| Some((name.clone(), entry(initial)?)))
             .collect();
+        let definitions = progress
+            .definitions
+            .iter()
+            .filter_map(|(name, value)| {
+                let value = entry(value)?;
+                if matches!(&value.x, ExprX::Var(var) if var == name) {
+                    return None;
+                }
+                Some((name.clone(), value))
+            })
+            .collect();
         let entry_lengths = progress
             .lengths
             .iter()
@@ -329,6 +350,7 @@ impl Trace<'_> {
                 lengths,
                 bounds,
                 scalars,
+                definitions,
                 entry_lengths,
                 prefixes: BTreeMap::new(),
             },

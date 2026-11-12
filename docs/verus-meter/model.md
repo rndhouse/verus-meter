@@ -29,7 +29,7 @@ Bounds support nonnegative integer literals, immutable unsigned input parameters
 (up to 64 bits), these queries, addition,
 multiplication, and parentheses. Function bounds can also contain conditionals.
 Both size queries accept types or names. Call queries accept scalar constants, immutable
-scalar inputs, comparisons, and Boolean operators.
+scalar inputs, value-preserving integer widening, comparisons, and Boolean operators.
 Formula arithmetic must fit in `u64`. Verus proves this for runtime quantities,
 using the function's preconditions. Function bounds can also call numeric spec
 functions as described below. Other arbitrary spec expressions and named numeric
@@ -58,9 +58,10 @@ sum or product must fit in `u64`, even though `nat` arithmetic is unbounded.
 
 The initial support requires a nongeneric spec function with a verified body.
 Arguments may use immutable scalar inputs, literals, comparisons, casts to
-mathematical integers, and nested numeric spec calls. Executable calls and mutable
-inputs are rejected. Enum values used only inside the specification do not add
-support for executable enums in memory-checked code.
+mathematical integers, value-preserving native widening, and nested numeric spec
+calls. Executable calls and mutable inputs are rejected. Enum values used only
+inside the specification do not add support for executable enums in
+memory-checked code.
 
 Use `peak(helper(arguments))` when referring to a helper whose budget calls
 a spec function; no constant envelope is inferred from a spec function's body.
@@ -94,6 +95,12 @@ Struct sizes add their fields without padding. `value_size` follows these rules;
 it does not report Rust's physical type layout. Native integers use their width
 in bytes (`u8`/`i8`: 1, through `u128`/`i128`: 16); `usize` and `isize` both use 8.
 Integer arrays multiply that size by their length.
+
+Native integer casts are supported when every source value fits the destination
+on both 32-bit and 64-bit architectures, such as `u16 as usize` or `i8 as i64`.
+The result uses its destination type's storage. Narrowing, signed-to-unsigned,
+and architecture-dependent conversions that could change a value remain
+unsupported. Widening also works in allocation quantities and helper queries.
 
 - Parameters count from entry; new locals and results count when produced.
   A move transfers one charge, including across a call or into a result. A copy
@@ -298,6 +305,9 @@ changes. Both comparison operands may change if their relative gap closes by a
 positive constant. Several removals per visit include a partial last block.
 Additional integer locals may have constant additive translations; their exit
 values remain available after the loop. Zero visits preserve the entry state.
+Definitions of immutable scalar locals, such as a capacity derived from the
+input count, are preserved as checked loop invariants when they close over
+stable values. They do not freeze dependencies on enclosing mutable counters.
 Nontranslation and payload-dependent progress remain unsupported. Comparing two
 shrinking lengths that saturate at zero also remains unsupported: saturation can
 change their relative stride. Arithmetic around shrinking-length progress also

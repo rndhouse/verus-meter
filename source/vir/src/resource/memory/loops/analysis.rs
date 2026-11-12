@@ -600,6 +600,10 @@ impl Analysis<'_> {
                     facts.push(crate::ast_util::mk_eq(span, snapshot, initial));
                 }
             }
+            for (name, definition) in &evidence.definitions {
+                let current = SpannedTyped::new(span, &definition.typ, ExprX::Var(name.clone()));
+                facts.push(crate::ast_util::mk_eq(span, &current, definition));
+            }
             for (location, initial) in &evidence.entry_lengths {
                 if let Some(charge) =
                     record.charges.iter().find(|charge| &charge.location == location)

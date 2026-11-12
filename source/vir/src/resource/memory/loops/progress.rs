@@ -31,6 +31,9 @@ pub(in super::super) struct Evidence {
     pub(in super::super) bounds: (Option<Expr>, Option<Expr>),
     /// Closed scalar initializers retained in isolated loop queries.
     pub(in super::super) scalars: BTreeMap<VarIdent, Expr>,
+    /// Definitions of immutable scalar locals, closed over stable body values.
+    /// Isolated queries prove and preserve these relations as ordinary invariants.
+    pub(in super::super) definitions: BTreeMap<VarIdent, Expr>,
     /// Closed logical lengths before the first visit.
     pub(in super::super) entry_lengths: BTreeMap<LocalPath, Expr>,
     /// Exact checked prefix lengths, including branch-selected visit intervals.

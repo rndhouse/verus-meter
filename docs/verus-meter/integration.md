@@ -15,6 +15,13 @@ Type-only `value_size` and `ref_size` queries in specifications are resolved bef
 function's well-formedness and mode checks, using the shared model layouts.
 Both select the existing inline size calculation after checking whether the
 argument is a reference; neither follows pointers or includes separate allocations.
+
+[Integer cast classification](../../source/vir/src/resource/memory/model.rs)
+admits only range-preserving native conversions on both supported pointer widths.
+Body accounting evaluates the operand and charges the destination normally;
+capacity expressions and templates retain its exact value. Keep clipping or
+wrapping conversions out of identity normalization.
+
 Consumed reads retain Rust's actual result type even when their places contain
 implicit dereferences. Child ownership paths require both the source place type
 and the selected value type; using the outer box type would transfer the wrong tree.
@@ -138,6 +145,11 @@ length candidates. The body proof counts actual back edges in erased state and
 proves those candidates at entry and on back edges. Conditional ownership uses
 the same selected interval programs to describe completed prefix lengths.
 Native overflow and loop termination remain ordinary executable obligations.
+
+The checked evaluator also supplies closed definitions of immutable scalar
+locals from pure source initializers. Do not infer logical postconditions from a
+callee's implementation. Prove and preserve these equalities in isolated queries;
+never reuse a first-visit definition depending on enclosing mutable state.
 
 Entry snapshots are immutable within a loop invocation. Reuse equivalent length
 observations and preserve existing snapshots when freezing headroom facts;

@@ -50,6 +50,11 @@ pub(super) fn predicate(expr: &Expr, allowed: &HashSet<VarIdent>) -> Result<Expr
     }
     let x = match &expr.x {
         ExprX::Const(Constant::Bool(_) | Constant::Int(_)) => return Ok(expr.clone()),
+        ExprX::Unary(op @ UnaryOp::Clip { .. }, inner)
+            if super::model::widening_integer_cast(expr).is_some() =>
+        {
+            ExprX::Unary(*op, predicate(inner, allowed)?)
+        }
         ExprX::Unary(UnaryOp::Not, e) => ExprX::Unary(UnaryOp::Not, predicate(e, allowed)?),
         ExprX::Binary(op @ (BinaryOp::Eq(_) | BinaryOp::Ne | BinaryOp::Inequality(_)), a, b) => {
             ExprX::Binary(*op, predicate(a, allowed)?, predicate(b, allowed)?)
@@ -82,6 +87,15 @@ pub(super) fn simplify(expr: &Expr) -> Expr {
         return SpannedTyped::new(&expr.span, &expr.typ, ExprX::Const(value));
     }
     let x = match &expr.x {
+        ExprX::Unary(UnaryOp::Clip { .. }, inner)
+            if super::model::widening_integer_cast(expr).is_some() =>
+        {
+            // These conversions are identities on their source domain. Keep
+            // the destination type while exposing the pure value to budget
+            // folding and checked scalar relationships, including literal calls.
+            let inner = simplify(inner);
+            return SpannedTyped::new(&expr.span, &expr.typ, inner.x.clone());
+        }
         ExprX::If(c, a, Some(b)) => {
             let c = simplify(c);
             let a = simplify(a);
@@ -332,6 +346,9 @@ pub(super) fn allocation_quantity(
     expr: &Expr,
     allowed: &HashSet<VarIdent>,
 ) -> Result<Expr, VirErr> {
+    if let Some(inner) = super::model::widening_integer_cast(expr) {
+        return allocation_quantity(inner, allowed);
+    }
     let ExprX::Binary(BinaryOp::Arith(op), left, right) = &expr.x else {
         return quantity(expr, allowed);
     };
@@ -365,6 +382,11 @@ pub(super) fn quantity(expr: &Expr, allowed: &HashSet<VarIdent>) -> Result<Expr,
 pub(super) fn numeric_input(expr: &Expr) -> bool {
     match &expr.x {
         ExprX::Var(_) | ExprX::Call { .. } => true,
+        ExprX::Unary(UnaryOp::Clip { .. }, inner)
+            if super::model::widening_integer_cast(expr).is_some() =>
+        {
+            numeric_input(inner)
+        }
         ExprX::If(_, a, Some(b)) | ExprX::Binary(_, a, b) => numeric_input(a) || numeric_input(b),
         _ => false,
     }

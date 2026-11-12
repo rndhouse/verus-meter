@@ -341,6 +341,11 @@ impl Analysis<'_> {
             }
             ExprX::BorrowMut(place) => return self.borrow(place, &expr.typ),
             ExprX::Unary(UnaryOp::Not, arg) => operands = self.expr(arg)?,
+            ExprX::Unary(UnaryOp::Clip { .. }, _)
+                if super::model::widening_integer_cast(expr).is_some() =>
+            {
+                operands = self.expr(super::model::widening_integer_cast(expr).unwrap())?;
+            }
             ExprX::Binary(
                 BinaryOp::Eq(Mode::Exec)
                 | BinaryOp::Ne

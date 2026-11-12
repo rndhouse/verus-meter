@@ -1,8 +1,8 @@
 // Collect heap buffers while keeping every live allocation within one budget.
 //
-// This example shows how to prove a memory bound for a loop that calls a helper
-// to allocate buffers and collects them. The bound includes all of those
-// allocations as the collection grows.
+// This example shows how to prove an input-dependent memory bound for a loop
+// that allocates and collects two buffers per batch. The bound includes every
+// retained allocation as the collection grows.
 #![verifier::exec_allows_no_decreases_clause]
 
 use vstd::prelude::*;
@@ -15,13 +15,14 @@ type Buffer = Vec<u32>;
 // Every buffer reserves space for eight integers.
 type BufferStorage = [u32; 8];
 
-// Capacity determines the collection's backing storage; the maximum live
-// buffer count determines its separate allocations. Also count the collection
-// handle and loop counter. The helper's temporary storage is added by the caller.
-spec fn construction_budget(capacity: usize, max_live_buffers: usize) -> nat {
-    let backing = (capacity as nat) * value_size(Buffer);
-    let allocations = (max_live_buffers as nat) * value_size(BufferStorage);
-    value_size(Vec<Buffer>) + backing + allocations + value_size(usize)
+// Cover two buffer slots and allocations per batch, plus the collection handle,
+// input, reserved-capacity local, and loop counter. Add helper storage separately.
+spec fn construction_budget(batch_count: u16) -> nat {
+    let buffer_count = 2 * (batch_count as nat);
+    let backing = buffer_count * value_size(Buffer);
+    let allocations = buffer_count * value_size(BufferStorage);
+    let scalars = value_size(batch_count) + value_size(usize) + value_size(u16);
+    value_size(Vec<Buffer>) + backing + allocations + scalars
 }
 
 // Allocate one buffer within an allowance for its handle and heap storage.
@@ -31,20 +32,30 @@ fn allocate_buffer() -> Buffer
     Vec::with_capacity(8)
 }
 
-// Build four buffers in two batches within the construction budget. The checker
-// derives the collection length from the two appends in each completed batch.
-fn main()
-    resources peak(memory) <= construction_budget(4, 4) + peak(allocate_buffer),
+// Return two buffers per requested batch. The narrower count type keeps the
+// doubled capacity within usize. The checker derives the collection length
+// from the two appends in each completed batch.
+fn build_buffers(batch_count: u16) -> Vec<Buffer>
+    resources peak(memory) <= construction_budget(batch_count) + peak(allocate_buffer),
 {
-    let mut buffers = Vec::<Buffer>::with_capacity(4);
-    let mut batch = 0usize;
-    while batch < 2 {
+    let capacity = 2 * (batch_count as usize);
+    let mut buffers = Vec::<Buffer>::with_capacity(capacity);
+    let mut batch = 0u16;
+    while batch < batch_count {
         let first = allocate_buffer();
         buffers.push(first);
         let second = allocate_buffer();
         buffers.push(second);
         batch += 1;
     }
+    buffers
+}
+
+// Receive a collection within the builder's allowance for this input.
+fn main()
+    resources peak(memory) <= peak(build_buffers(2)),
+{
+    let buffers = build_buffers(2);
 }
 
 } // verus!
