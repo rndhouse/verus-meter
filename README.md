@@ -11,7 +11,7 @@ on algorithmic memory use for a subset of Rust.
 - Verify memory bounds across function calls and nested operations.
 - Support input-dependent and execution-path-specific memory budgets.
 
-## Examples
+## An Example
 
 This [example](examples/resource/memory/heap/loops/buffer_collection.rs) copies a
 local array into one heap buffer per iteration. The same `count` input determines
@@ -77,6 +77,8 @@ error: conditional memory budget exceeded: cannot prove the required model bytes
 verification results:: 2 verified, 1 errors
 error: aborting due to 1 previous error
 ```
+
+## More Examples
 
 Explore the [memory examples](examples/resource/memory/README.md):
 
