@@ -135,22 +135,6 @@ fn leaf_removal_exports_shape_changes_without_releasing_the_buffer() {
 }
 
 #[test]
-fn incoming_indexed_loans_in_loops_remain_unsupported() {
-    rejects(
-        "incoming_loop",
-        "fn f(v: &mut Vec<Vec<u32>>)
-        requires old(v).len() == 1,
-        resources peak(memory) <= 10000 {
-            let mut i = 0usize;
-            while i < 2 invariant i <= 2, v.len() == 1, decreases 2-i, {
-                let n = v[0].len(); i += 1;
-            }
-        }",
-        "indexed incoming children inside loops",
-    );
-}
-
-#[test]
 fn owned_inputs_keep_their_provenance_when_mutated_and_returned() {
     let code = "fn grow(mut v: Vec<Vec<u32>>) -> (r: Vec<Vec<u32>>)
         requires v.len() == 1, v[0].len() == 0,

@@ -129,13 +129,10 @@ fn removal_through_fixed_and_runtime_parents_exports_the_mutation() {
 }
 
 #[test]
-fn incoming_extraction_inside_control_flow_is_unsupported() {
-    for (name, body) in [
-        ("branch", "if take { v.remove(0); }"),
-        ("loop", "while v.len() > 0 invariant true, decreases v.len(), { v.remove(0); }"),
-        ("pop_branch", "if take { v.pop(); }"),
-        ("pop_loop", "while v.len() > 0 invariant true, decreases v.len(), { v.pop(); }"),
-    ] {
+fn incoming_extraction_in_ordinary_branches_is_unsupported() {
+    for (name, body) in
+        [("branch", "if take { v.remove(0); }"), ("pop_branch", "if take { v.pop(); }")]
+    {
         rejects(
             name,
             &format!(

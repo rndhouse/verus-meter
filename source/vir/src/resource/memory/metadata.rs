@@ -2,6 +2,7 @@
 //! bounds and reserved-slot lower bounds have independent meanings.
 
 pub(super) mod expr;
+mod geometry;
 pub(super) mod operations;
 mod owners;
 pub(super) mod profiles;

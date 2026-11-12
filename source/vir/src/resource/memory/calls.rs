@@ -180,7 +180,24 @@ impl Analysis<'_> {
             if point.result {
                 cost = cost.remove(c, MemoryKind::host_local(), credit.clone());
             }
-            self.storage.call_cost(c, base.add(c, cost), &excluded, &result_ids, point.result);
+            let included = transfer
+                .as_ref()
+                .map(|prepared| {
+                    point
+                        .inputs
+                        .iter()
+                        .filter_map(|id| prepared.origins.peaks.get(id).copied())
+                        .collect()
+                })
+                .unwrap_or_default();
+            self.storage.call_cost_with_inputs(
+                c,
+                base.add(c, cost),
+                &excluded,
+                &included,
+                &result_ids,
+                point.result,
+            );
         }
         let mut replaced_inputs = Vec::new();
         if let Some(transfer) = transfer {
@@ -214,6 +231,7 @@ impl Analysis<'_> {
                 }
             }
         }
+        let origins = self.transitions.call_origins.remove(&expr.span.id).unwrap_or_default();
         self.transitions.operation(
             &expr.span,
             super::transfer::checked::Operation::Call {
@@ -222,6 +240,7 @@ impl Analysis<'_> {
                 args: args.clone(),
                 borrowed,
                 replaced_inputs,
+                origins,
                 modified: super::transfer::modified_parameters(
                     callee,
                     self.layouts,

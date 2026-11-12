@@ -9,15 +9,15 @@ use super::{analysis::Analysis, heap::Owner, transfer::checked::InputSplit};
 use crate::{ast::VirErr, messages::Span};
 
 impl Analysis<'_> {
-    /// A loop carries original ownership by persistent destination, not by an
-    /// ever-growing set of per-iteration element identities.
+    /// Runtime collections carry original ownership by persistent destination,
+    /// independently of the charge introduced by each inserted child.
     pub(super) fn join_input(
         &mut self,
         span: &Span,
         location: &super::paths::LocalPath,
         child: &mut Owner,
     ) -> Result<Option<super::transfer::checked::InputJoin>, VirErr> {
-        if self.growth.loop_depth == 0 || child.inputs().is_empty() {
+        if child.inputs().is_empty() {
             return Ok(None);
         }
         self.heap.check_partition(&location.0, span)?;
@@ -29,14 +29,32 @@ impl Analysis<'_> {
             }
             opaque |= node.elements.as_ref().is_some_and(|elements| !elements.inputs.is_empty());
         });
-        if opaque || super::paths::indexed(&location.1) {
+        if opaque {
             return Err(super::model::unsupported(
                 span,
                 "a loop transfer without structural input regions",
             ));
         }
+        // Runtime loan slots disappear after the operation. Anchor their
+        // original regions in the containing persistent collection instead.
+        let root = self.heap.root(&location.0).unwrap();
+        let anchor = (0..=location.1.len())
+            .rev()
+            .find(|depth| {
+                (*depth == location.1.len()
+                    || matches!(location.1[*depth], super::heap::OwnerSlot::Element(_)))
+                    && root.at(&location.1[..*depth]).is_some_and(|node| node.input.is_some())
+            })
+            .unwrap_or_else(|| {
+                location
+                    .1
+                    .iter()
+                    .position(|slot| matches!(slot, super::heap::OwnerSlot::Element(_)))
+                    .unwrap_or(location.1.len())
+            });
         let result = self.transitions.fresh_region();
-        let parent = self.heap.root_mut(&location.0).unwrap().at_mut(&location.1).unwrap();
+        let parent =
+            self.heap.root_mut(&location.0).unwrap().at_mut(&location.1[..anchor]).unwrap();
         let previous = parent.input.replace(result);
         parent.view = super::metadata::View::Local;
         parent.elements.as_mut().unwrap().view = super::metadata::View::Local;
@@ -51,14 +69,27 @@ impl Analysis<'_> {
             }
         }
         clear(child);
-        Ok(Some(super::transfer::checked::InputJoin { previous, children, result }))
+        let elements = self
+            .heap
+            .root(&location.0)
+            .unwrap()
+            .at(&location.1)
+            .unwrap()
+            .elements
+            .as_ref()
+            .unwrap();
+        for id in elements.states.values() {
+            // Original storage changes ownership even with zero local charge.
+            self.growth.elements[*id].changed = true;
+        }
+        Ok(Some(super::transfer::checked::InputJoin { depth: anchor, previous, children, result }))
     }
 
     pub(super) fn loop_inputs(
         &self,
     ) -> std::collections::BTreeMap<super::paths::LocalPath, Option<usize>> {
         let mut inputs = std::collections::BTreeMap::new();
-        for (name, owner) in &self.heap.owners {
+        for (name, owner) in self.heap.owners.iter().chain(self.heap.borrowed.iter()) {
             owner.visit_paths(&mut vec![], &mut |path, node| {
                 inputs.insert((name.clone(), path.clone()), node.input);
             });

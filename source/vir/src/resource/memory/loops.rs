@@ -298,6 +298,11 @@ impl Loop {
                 .any(|changed| nested_runtime_path(location, changed))
     }
 
+    /// An append can allocate root backing even when children carry no bytes.
+    pub(super) fn grows_backing(&self, location: &LocalPath) -> bool {
+        self.effects.appends.contains(location) || self.effects.replacements.contains(location)
+    }
+
     /// A replacement can reduce reservations in the selected ownership class.
     /// It does not change the descriptors of untouched children.
     pub(super) fn replaces_class(

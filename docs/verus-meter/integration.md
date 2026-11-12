@@ -109,7 +109,7 @@ checked growth permissions, and owning scope releases. The symbolic evaluator
 specializes scalar expressions and control flow; it must consume every recorded transition before exporting a
 template. It must not rediscover ownership operations from source call names or
 reconstruct a consumed place from its outer type. Instantiate against snapshots
-of eligible local owners; ordinary callee peak profiles still keep incoming
+of eligible tracked owners; ordinary callee peak profiles still keep incoming
 storage charged throughout the call. Fixed descriptor properties and runtime forests are separate template inputs. Logical
 counts describe occupied elements independently of byte bounds and reservation
 minima; snapshot a count before its source becomes inaccessible, such as when
@@ -207,7 +207,7 @@ changes to one incoming child. The checked transition log identifies mutations;
 read-only loans must not export write effects.
 
 The caller applies the helper template to its complete forest after accounting
-for the call's peak. Straight-line `remove` and `pop` from a borrowed incoming
+for the call's peak. `remove` and `pop` from a borrowed incoming
 collection use the same partition for local charges and complete caller ownership. Restore
 the selected child with the input forest's view; only a complete descriptor or
 an executable source can establish cardinality. Record removal before finishing
@@ -217,7 +217,7 @@ is applied. Pop derives its optional tag from the executable length, independent
 of local charges; an empty pop selects no runtime child.
 
 [Input provenance](../../source/vir/src/resource/memory/provenance.rs) partitions
-owned incoming lifetimes for straight-line extraction and replacement. Body accounting
+incoming lifetimes for extraction, replacement, and loop-carried transfers. Body accounting
 replaces one live identity with disjoint remaining and selected identities. The checked
 transition evaluator partitions original input descriptors using the same removal
 algebra, including reindexing and ancestor paths. Each fixed child gets its own
@@ -226,21 +226,37 @@ pop selects empty regions while retaining the parent's backing allocation; the
 optional tag and last index follow the same removal operation as the physical
 forest. Caller peak profiles instantiate region costs before applying the final ownership
 template. Preserve known-zero local charges through descriptor-only updates so
-symbolic zero counters do not hide independent input lifetimes. Straight-line
-indexed replacement detaches the displaced subtree from its original input
+symbolic zero counters do not hide independent input lifetimes. Indexed replacement detaches the displaced subtree from its original input
 region after RHS evaluation, preserving old/new overlap in earlier profiles.
 Fixed-child replacement effects from leaf calls use the same detachment after
 accounting for the call peak. The replacement retains its own charges, so later
 extraction cannot recover displaced input allocations. Incoming extraction and
 indexed replacement in protected control-flow regions remain unsupported.
 
-Local views cannot be substituted for complete arguments to runtime-ownership
-calls. Indexed incoming loans inside loops remain unsupported. Never copy a
-parent charge to stand in for an unknown child.
+[Call provenance](../../source/vir/src/resource/memory/transfer/origins.rs) maps
+disjoint original regions at argument and output paths independently of local
+charges. Intermediate callee regions get caller identities for peak witnesses;
+final regions attach once to returned and borrowed owners. Indexed loans replace
+the selected original subtree inside its persistent ancestor. Structural joins
+remain visible as ownership mutations even when they add zero local bytes.
+Derived lifetimes require a template even with a fixed or unit public result.
+
+[Call geometry](../../source/vir/src/resource/memory/metadata/geometry.rs) supplies
+missing incoming descriptors from the executable logical source using zero-byte
+records. Existing charged records retain precedence. The complete/local view is
+checked throughout fixed ownership trees; templates disable exact-capacity
+inference from partial byte charges. Known-zero output charges are normalized
+structurally and proved before use. Partition proofs establish nonnegativity on
+both sides, including discarded subtrees. Ordered-loop outputs publish requested
+inverse removal views at use sites, keeping these laws dormant for ordinary calls.
+Missing geometry or ownership metadata remains unsupported. Never copy a parent
+charge to stand in for an unknown child.
 
 Loop proofs preserve forest validity and sums, immutable entry facts, and inferred
 reservation candidates indexed by fixed and repeated ownership steps. Every
-candidate is checked at loop entry and on back edges. Loop-carried helper effects
+candidate is checked at loop entry and on back edges. Preserve zero local charge
+only with an explicit zero invariant for an unchanged or shrinking collection;
+possible backing growth invalidates first-visit zero shortcuts. Loop-carried helper effects
 that would invalidate precision are unsupported. Shared ownership still needs
 separate last-owner release rules.
 

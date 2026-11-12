@@ -278,7 +278,7 @@ impl Analysis<'_> {
         Ok(())
     }
 
-    fn fixed_value(
+    pub(in super::super) fn fixed_value(
         &self,
         span: &Span,
         typ: &Typ,
@@ -414,22 +414,15 @@ impl Analysis<'_> {
         }
     }
 
-    fn repeated_reservation(
+    /// Select a logical runtime child independently of its allocation charges.
+    pub(in super::super) fn runtime_value(
         &self,
         span: &Span,
         typ: &Typ,
         value: Expr,
-        records: Expr,
-        path: &[Step],
-        floor: &Floor,
-    ) -> Result<Expr, VirErr> {
-        let name = VarIdent(
-            Arc::new("$memory_child_index".into()),
-            VarIdentDisambiguate::VirTemp(super::super::accounting::Accounting::fresh_allocation()),
-        );
-        let index = SpannedTyped::new(span, &int_typ(), ExprX::Var(name.clone()));
-        let value = as_value(span, value);
-        let (child_type, selected, length) = if self.layouts.vector(typ) {
+        index: Expr,
+    ) -> (Typ, Expr, Expr) {
+        let result = if self.layouts.vector(typ) {
             let TypX::Datatype(_, types, _) = &**typ else { unreachable!() };
             let length = super::super::vectors::length(span, types.clone(), value.clone());
             let selected = SpannedTyped::new(
@@ -474,6 +467,25 @@ impl Analysis<'_> {
             );
             (types[0].clone(), selected, length)
         };
+        result
+    }
+
+    fn repeated_reservation(
+        &self,
+        span: &Span,
+        typ: &Typ,
+        value: Expr,
+        records: Expr,
+        path: &[Step],
+        floor: &Floor,
+    ) -> Result<Expr, VirErr> {
+        let name = VarIdent(
+            Arc::new("$memory_child_index".into()),
+            VarIdentDisambiguate::VirTemp(super::super::accounting::Accounting::fresh_allocation()),
+        );
+        let index = SpannedTyped::new(span, &int_typ(), ExprX::Var(name.clone()));
+        let value = as_value(span, value);
+        let (child_type, selected, length) = self.runtime_value(span, typ, value, index.clone());
         let length = SpannedTyped::new(span, &int_typ(), length.x.clone());
         let memory =
             expr::subtree(span, records, expr::push(span, expr::path(span, []), index.clone()));

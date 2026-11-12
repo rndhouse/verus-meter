@@ -57,6 +57,8 @@ struct Trace<'a> {
     used: HashSet<(checked::Kind, u64)>,
     state: State,
     symbols: Vec<Symbol>,
+    /// A local view must never infer physical capacity from zero local bytes.
+    complete: Option<Expr>,
     /// Immutable allocation regions addressed by body lifetime identities.
     regions: BTreeMap<usize, Expr>,
     /// Effects on persistent owners distinguish collection regions from
@@ -111,6 +113,7 @@ pub(super) fn summarize(
         used: HashSet::new(),
         state: State::default(),
         symbols: vec![],
+        complete: None,
         regions: BTreeMap::new(),
         effects: vec![],
         branch_depth: 0,
@@ -171,6 +174,19 @@ pub(super) fn summarize(
         }
     }
     let effects = trace.parameter_effects(function, &result);
+    let origins: super::Origins<Expr> = checked
+        .outputs
+        .iter()
+        .map(|(target, paths)| {
+            Some((
+                *target,
+                paths
+                    .iter()
+                    .map(|(path, id)| Some((path.clone(), trace.regions.get(id)?.clone())))
+                    .collect::<Option<_>>()?,
+            ))
+        })
+        .collect::<Option<_>>()?;
     // Unused scalar arguments need no snapshot or additional representability restriction.
     let mut names = HashSet::new();
     let mut collect = |value: &Expr| {
@@ -199,6 +215,9 @@ pub(super) fn summarize(
     for region in trace.regions.values() {
         collect(region);
     }
+    for region in origins.values().flat_map(|paths| paths.values()) {
+        collect(region);
+    }
     if let Some(effects) = &effects {
         for (_, effect) in effects {
             effect.expressions(&mut collect);
@@ -211,6 +230,7 @@ pub(super) fn summarize(
         return None;
     }
     trace.symbols.retain(|symbol| names.contains(&symbol.name));
+    let ordered = !trace.loop_repetitions.is_empty() || checked.operations.values().any(|operation| matches!(operation, checked::Operation::Call { target, .. } if summaries.get(target).and_then(|summary| summary.transfer.as_ref()).is_some_and(|template| template.ordered)));
     Some(Inferred {
         loops: trace.loop_transfers,
         growth: trace.loop_growth,
@@ -218,6 +238,8 @@ pub(super) fn summarize(
         scratch: trace.loop_scratch,
         repetitions: trace.loop_repetitions,
         template: Template {
+            ordered,
+            origins,
             regions: trace.regions,
             symbols: trace.symbols,
             effects,
@@ -243,7 +265,8 @@ impl Trace<'_> {
                         return Ok::<(), VirErr>(());
                     }
                     closed &= self.symbols.iter().any(|symbol| {
-                        &symbol.name == name && matches!(symbol.input, Input::Scalar(_))
+                        &symbol.name == name
+                            && matches!(symbol.input, Input::Scalar(_) | Input::Complete)
                     });
                 }
                 Ok::<(), VirErr>(())
@@ -330,6 +353,42 @@ impl Trace<'_> {
             );
         }
         Some(memory)
+    }
+
+    /// The same template supports full caller forests and local charge views.
+    fn completeness(&mut self, span: &Span) -> Expr {
+        if let Some(value) = &self.complete {
+            return value.clone();
+        }
+        let value = self.symbol(span, Input::Complete, bool_typ());
+        let ExprX::Var(name) = &value.x else { unreachable!() };
+        self.proof_values.insert(name.clone(), crate::ast_util::mk_bool(span, false));
+        self.complete = Some(value.clone());
+        value
+    }
+
+    /// Fresh root extents are complete even when their children contain inputs.
+    /// Keep view-dependent capacity branches out of fully local allocations.
+    fn complete_for(&mut self, span: &Span, values: &[Expr]) -> Expr {
+        let mut partial = false;
+        for value in values {
+            let _ = crate::ast_visitor::expr_visitor_check(value, &mut |scope, value| {
+                if let ExprX::Var(name) = &value.x {
+                    if !scope.contains_key(name) {
+                        partial |= crate::ast_util::types_equal(&value.typ, &expr::memory_type())
+                            || self.symbols.iter().any(|symbol| {
+                                &symbol.name == name
+                                    && matches!(
+                                        symbol.input,
+                                        Input::Forest(_) | Input::Property(_, _, "bytes")
+                                    )
+                            });
+                    }
+                }
+                Ok::<(), VirErr>(())
+            });
+        }
+        if partial { self.completeness(span) } else { crate::ast_util::mk_bool(span, true) }
     }
 
     fn symbol(&mut self, span: &Span, input: Input, typ: Typ) -> Expr {

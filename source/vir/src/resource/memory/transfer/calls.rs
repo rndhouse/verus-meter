@@ -1,14 +1,23 @@
-//! Instantiate a template against snapshots of locally modeled owners. Peak
-//! profiles still keep incoming allocations live throughout the helper call.
+//! Instantiate templates against tracked charge views and logical geometry.
+//! Original lifetimes remain separate during the call and at its outputs.
 
 use super::*;
 use crate::resource::memory::{analysis::Analysis, heap::Owner, model::unsupported};
 
+/// Snapshots and checked effects prepared before argument evaluation.
 pub(in super::super) struct Prepared {
     /// Caller-specific costs for partitioned input lifetime identities.
     pub(in super::super) regions: BTreeMap<usize, super::super::footprint::Footprint>,
-    borrowed: BTreeMap<usize, Node>,
-    result: Option<Node>,
+    /// Final forests and zero-charge candidates for modified borrowed parameters.
+    borrowed: BTreeMap<usize, (Node, bool)>,
+    /// Whether input bytes include all allocations throughout their fixed trees.
+    view: super::super::metadata::View,
+    /// Completed overlapping loops need requested inverse indexed views.
+    ordered: bool,
+    /// Disjoint caller source, intermediate-peak, and final-output identities.
+    pub(in super::super) origins: super::checked::CallOrigins,
+    /// Returned forest and its independently proved zero-charge candidate.
+    result: Option<(Node, bool)>,
 }
 
 impl Analysis<'_> {
@@ -102,13 +111,7 @@ impl Analysis<'_> {
                     .keys()
                     .any(|(parameter, _)| *parameter == index)
             {
-                self.heap.check_transfer(&name, &value.span)?;
-            }
-            if self.heap.borrowed.contains_key(&name) {
-                return Err(unsupported(
-                    &value.span,
-                    "a runtime ownership call without precise argument metadata",
-                ));
+                self.heap.check_partition(&name, &value.span)?;
             }
             let Some(owner) = self.heap.root(&name).and_then(|root| root.at(&path)) else {
                 return Err(unsupported(
@@ -116,13 +119,12 @@ impl Analysis<'_> {
                     "a runtime ownership argument without a live tracked owner",
                 ));
             };
-            let mut precise = owner.inputs().is_empty();
+            let mut precise = true;
             owner.visit(&mut |node| {
-                precise &= node.view == super::super::metadata::View::Complete;
                 precise &= node.geometry_known || node.source.is_some();
                 precise &= node.elements.as_ref().is_none_or(|elements| {
                     elements.precise
-                        && elements.view == super::super::metadata::View::Complete
+                        && elements.inputs.is_empty()
                         && elements
                             .states
                             .values()
@@ -139,6 +141,12 @@ impl Analysis<'_> {
             }
             owners.insert(index, owner.clone());
         }
+        let mut origins = self.prepare_call_origins(function, args, &owners);
+        let view = if owners.values().any(|owner| !owner.complete()) {
+            super::super::metadata::View::Local
+        } else {
+            super::super::metadata::View::Complete
+        };
         for argument in args.iter() {
             self.check_projection_effects(argument)?;
         }
@@ -172,7 +180,7 @@ impl Analysis<'_> {
                     .push(super::super::metadata::runtime_shape_proof(&value.span, records));
             }
             let mut proofs = Vec::new();
-            let memory = self.owner_metadata(&value.span, owner, &mut proofs);
+            let memory = self.call_metadata(&value.span, owner, &mut proofs)?;
             super::proofs::forest(&value.span, &memory, &mut proofs)?;
             self.growth.before.entry(value.span.id).or_default().extend(proofs);
             forests.insert(*index, self.metadata_local(&value.span, "call_records", memory));
@@ -187,6 +195,10 @@ impl Analysis<'_> {
         let mut values = HashMap::new();
         for symbol in &template.symbols {
             let replacement = match &symbol.input {
+                Input::Complete => crate::ast_util::mk_bool(
+                    &value.span,
+                    view == super::super::metadata::View::Complete,
+                ),
                 Input::Scalar(index) => scalar_snapshots[index].clone(),
                 Input::Forest(index) => forests[index].clone(),
                 Input::Property(index, path, field) => {
@@ -219,18 +231,78 @@ impl Analysis<'_> {
             };
             values.insert(symbol.name.clone(), replacement);
         }
+        let all_zero = owners.values().all(|owner| self.growth.owner_zero_charge(owner));
+        let mut zero_values = values.clone();
+        for symbol in &template.symbols {
+            match symbol.input {
+                Input::Forest(_) => {
+                    zero_values
+                        .insert(symbol.name.clone(), expr::empty(&value.span, expr::record_type()));
+                }
+                Input::Property(_, _, "bytes") => {
+                    zero_values.insert(symbol.name.clone(), expr::integer(&value.span, 0));
+                }
+                _ => {}
+            }
+        }
+        let zero = |node: &Node| {
+            let cost = simplify::simplify(&expr::cost(
+                &value.span,
+                substitute(&node.memory, &zero_values),
+                expr::integer(&value.span, 0),
+            ));
+            let cost = super::super::metadata::profiles::simplify(
+                &cost,
+                &Default::default(),
+                &Default::default(),
+            )
+            .expect("infallible zero-charge normalization");
+            all_zero && super::super::contracts::constant(&cost) == Some(0)
+        };
         let borrowed = template
             .borrowed
             .iter()
-            .map(|(index, node)| (*index, instantiate_node(node, &values)))
+            .map(|(index, node)| (*index, (instantiate_node(node, &values), zero(node))))
             .collect();
         let result = match instantiate_value(&template.result, &values) {
-            Value::Owner(node) => Some(node),
+            Value::Owner(node) => Some((
+                node,
+                match &template.result {
+                    Value::Owner(original) => zero(original),
+                    _ => false,
+                },
+            )),
             _ => None,
         };
+        let mut region_values = values.clone();
+        for symbol in &template.symbols {
+            let borrowed = match &symbol.input {
+                Input::Forest(index) | Input::Property(index, _, _) => {
+                    self.layouts.borrowed_owner(&function.x.params[*index].x.typ).is_some()
+                }
+                _ => false,
+            };
+            if borrowed {
+                match &symbol.input {
+                    Input::Forest(_) => {
+                        region_values.insert(
+                            symbol.name.clone(),
+                            expr::empty(&value.span, expr::record_type()),
+                        );
+                    }
+                    Input::Property(_, _, "bytes") => {
+                        region_values.insert(symbol.name.clone(), expr::integer(&value.span, 0));
+                    }
+                    _ => {}
+                }
+            }
+        }
         let mut regions = BTreeMap::new();
         for (id, region) in &template.regions {
-            let region = substitute(region, &values);
+            if origins.sources.values().any(|sources| !sources.is_empty()) {
+                origins.peaks.insert(*id, self.transitions.fresh_region());
+            }
+            let region = substitute(region, &region_values);
             let mut proofs = Vec::new();
             super::proofs::forest(&value.span, &region, &mut proofs)?;
             self.growth.before.entry(value.span.id).or_default().extend(proofs);
@@ -244,7 +316,7 @@ impl Analysis<'_> {
                 ),
             );
         }
-        Ok(Some(Prepared { regions, borrowed, result }))
+        Ok(Some(Prepared { regions, borrowed, result, view, origins, ordered: template.ordered }))
     }
 
     fn transfer_scalar_snapshot(&mut self, span: &Span, initial: Expr) -> Expr {
@@ -305,13 +377,13 @@ impl Analysis<'_> {
         value: &Expr,
         function: &Function,
         args: &Exprs,
-        prepared: Prepared,
+        mut prepared: Prepared,
         transferred: &mut [Option<Owner>],
     ) -> Result<Option<Owner>, VirErr> {
         for owner in transferred.iter_mut().filter_map(Option::take) {
             self.release_owner(owner, &value.span);
         }
-        for (index, node) in prepared.borrowed {
+        for (index, (node, zero)) in prepared.borrowed {
             let typ = self
                 .layouts
                 .borrowed_owner(&function.x.params[index].x.typ)
@@ -319,8 +391,13 @@ impl Analysis<'_> {
             let (name, path) = super::super::paths::expr(&args[index], typ).ok_or_else(|| {
                 unsupported(&value.span, "a transferred parameter without a tracked owner")
             })?;
+            let borrowed_root = self.heap.borrowed.contains_key(&name);
             let mut old = if path.is_empty() {
-                self.heap.owners.remove(&name)
+                if self.heap.owners.contains_key(&name) {
+                    self.heap.owners.remove(&name)
+                } else {
+                    self.heap.borrowed.remove(&name)
+                }
             } else {
                 self.heap.root_mut(&name).and_then(|root| root.take_child(&path))
             }
@@ -330,7 +407,8 @@ impl Analysis<'_> {
                 .children
                 .keys()
                 .any(|(parameter, _)| *parameter == index);
-            let predicted = self.adopt_transfer_node(&value.span, node)?;
+            let predicted =
+                self.adopt_transfer_node(&value.span, node, prepared.view, zero, prepared.ordered)?;
             let mut owner = if replacement {
                 self.release_owner(old, &value.span);
                 predicted
@@ -360,15 +438,36 @@ impl Analysis<'_> {
                 self.release_owner_storage(predicted, &value.span, false);
                 old
             };
+            self.apply_call_origins(
+                function,
+                args,
+                Some(index),
+                &mut owner,
+                &mut prepared.origins,
+            )?;
             let source = super::super::projections::spec_value(&args[index])?;
             self.bind_collection_sources(&value.span, &mut owner, typ, source)?;
             if path.is_empty() {
-                self.heap.owners.insert(name, owner);
+                if borrowed_root {
+                    self.heap.borrowed.insert(name, owner);
+                } else {
+                    self.heap.owners.insert(name, owner);
+                }
             } else {
                 self.heap.root_mut(&name).unwrap().replace_child(&path, owner);
             }
         }
-        prepared.result.map(|node| self.adopt_transfer_node(&value.span, node)).transpose()
+        let mut result = prepared
+            .result
+            .map(|(node, zero)| {
+                self.adopt_transfer_node(&value.span, node, prepared.view, zero, prepared.ordered)
+            })
+            .transpose()?;
+        if let Some(owner) = &mut result {
+            self.apply_call_origins(function, args, None, owner, &mut prepared.origins)?;
+        }
+        self.transitions.call_origins.insert(value.span.id, prepared.origins);
+        Ok(result)
     }
 
     fn commit_transfer_owner(
@@ -381,6 +480,7 @@ impl Analysis<'_> {
         effects: &HashMap<super::super::paths::InputPath, super::super::footprint::Charge<Expr>>,
         bound: &Expr,
     ) -> Result<(), VirErr> {
+        old.view = predicted.view;
         if let (Some(id), Some(next)) = (old.vector, predicted.vector) {
             if effects.contains_key(&(parameter, path.clone())) {
                 let source = self.growth.vectors[next].clone();
@@ -424,17 +524,58 @@ impl Analysis<'_> {
         Ok(())
     }
 
-    fn adopt_transfer_node(&mut self, span: &Span, node: Node) -> Result<Owner, VirErr> {
+    fn adopt_transfer_node(
+        &mut self,
+        span: &Span,
+        node: Node,
+        view: super::super::metadata::View,
+        zero: bool,
+        ordered: bool,
+    ) -> Result<Owner, VirErr> {
         let mut proofs = Vec::new();
-        super::proofs::forest(span, &node.memory, &mut proofs)?;
+        super::proofs::forest_views(span, &node.memory, &mut proofs, ordered)?;
+        if zero {
+            let check = SpannedTyped::new(
+                span,
+                &crate::ast_util::unit_typ(),
+                ExprX::AssertAssume {
+                    is_assume: false,
+                    expr: crate::ast_util::mk_eq(
+                        span,
+                        &expr::cost(span, node.memory.clone(), expr::integer(span, 0)),
+                        &expr::integer(span, 0),
+                    ),
+                    msg: Some(unsupported(
+                        span,
+                        "a transfer whose zero local charge cannot be proved",
+                    )),
+                },
+            );
+            proofs.push(crate::def::Spanned::new(span.clone(), StmtX::Expr(check)));
+        }
         self.growth.before.entry(span.id).or_default().extend(proofs);
-        let mut owner = self.owner_from_metadata(
-            span,
-            &node.typ,
-            node.memory.clone(),
-            super::super::metadata::View::Complete,
-            false,
-        )?;
+        let mut owner =
+            self.owner_from_metadata(span, &node.typ, node.memory.clone(), view, zero)?;
+        owner.visit_mut(&mut |owner| {
+            owner.geometry_known = true;
+        });
+        /// Completed templates retain logical counts even with local byte charges.
+        fn geometry(analysis: &Analysis<'_>, span: &Span, owner: &mut Owner, memory: Expr) {
+            owner.geometry = Some(property(span, memory.clone(), "length"));
+            for (slot, child) in &mut owner.children {
+                geometry(
+                    analysis,
+                    span,
+                    child,
+                    expr::subtree(
+                        span,
+                        memory.clone(),
+                        expr::path(span, [analysis.layouts.metadata_slot(slot)]),
+                    ),
+                );
+            }
+        }
+        geometry(self, span, &mut owner, node.memory.clone());
         self.install_owner_minima(&mut owner, &node.minima);
         self.preserve_transfer_extents(span, &node.typ, node.memory, &mut owner)?;
         Ok(owner)

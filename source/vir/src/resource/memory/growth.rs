@@ -35,6 +35,8 @@ pub(super) struct VectorState {
     /// Removal permanently disables append-only length bounds, including after
     /// later pushes and across branches analyzed in either order.
     pub(super) append_only: bool,
+    /// Earlier loop visits may have allocated backing before this body point.
+    pub(super) loop_backing: bool,
     /// Container-independent byte state and allocation identity.
     pub(super) backing: super::allocations::RetainedAllocation,
 }
@@ -162,7 +164,9 @@ impl Growth {
             && (owner.dynamic.is_none()
                 || if let Some(id) = owner.vector {
                     let backing = &self.vectors[id].backing;
-                    !backing.changed && contracts::constant(&backing.initial_bytes) == Some(0)
+                    !self.vectors[id].loop_backing
+                        && !backing.changed
+                        && contracts::constant(&backing.initial_bytes) == Some(0)
                 } else {
                     owner
                         .extent
@@ -277,6 +281,7 @@ impl Growth {
             reserved: false,
             sequence_length: None,
             append_only: true,
+            loop_backing: false,
             backing: super::allocations::RetainedAllocation {
                 id: allocation,
                 kind: size.kind,

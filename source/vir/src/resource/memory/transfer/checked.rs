@@ -27,6 +27,8 @@ pub(in super::super) struct InputSplit {
 /// Original regions transferred into one runtime collection slot.
 #[derive(Clone)]
 pub(in super::super) struct InputJoin {
+    /// Receiver path steps belonging to the persistent region's ancestor.
+    pub(in super::super) depth: usize,
     /// Destination's original region before insertion, if it has one.
     pub(in super::super) previous: Option<usize>,
     /// Disjoint original regions of the transferred child's fixed nodes.
@@ -44,6 +46,39 @@ pub(in super::super) struct InputChoice {
     pub(in super::super) no: Option<usize>,
     /// Conditional region used by all later observations of this role.
     pub(in super::super) result: usize,
+}
+
+/// One argument's original region, optionally selected from an enclosing input.
+#[derive(Clone)]
+pub(in super::super) struct OriginSource {
+    /// Original lifetime identity before the call.
+    pub(in super::super) input: usize,
+    /// Fixed path within the argument at which this disjoint region belongs.
+    pub(in super::super) path: OwnerPath,
+    /// A loan beneath an enclosing region selects the argument's runtime path.
+    pub(in super::super) selection: Option<(Place, usize)>,
+}
+
+/// One post-call identity, interpreted using the callee's original-only output.
+#[derive(Clone)]
+pub(in super::super) struct OriginTarget {
+    /// Borrowed output parameter, or the returned owner.
+    pub(in super::super) parameter: Option<usize>,
+    /// One disjoint fixed node; `None` assembles the complete output forest.
+    pub(in super::super) path: Option<OwnerPath>,
+    /// An indexed loan writes its updated original forest into this ancestor.
+    pub(in super::super) ancestor: Option<OriginSource>,
+}
+
+/// Provenance composition is independent of the helper's new allocation charges.
+#[derive(Clone, Default)]
+pub(in super::super) struct CallOrigins {
+    /// Original argument nodes captured before argument evaluation.
+    pub(in super::super) sources: std::collections::BTreeMap<usize, Vec<OriginSource>>,
+    /// Fresh caller identities computed from the callee's original-only outputs.
+    pub(in super::super) targets: std::collections::BTreeMap<usize, OriginTarget>,
+    /// Callee intermediate regions need separate caller identities in peak profiles.
+    pub(in super::super) peaks: std::collections::BTreeMap<usize, usize>,
 }
 
 /// An owner place resolved by the operation that checks its lifetime and layout.
@@ -117,6 +152,8 @@ pub(in super::super) enum Operation {
         /// Incoming regions retired by fixed-child replacement effects. The
         /// callee's peak is accounted before these caller lifetimes end.
         replaced_inputs: Vec<Assignment>,
+        /// Checked correspondence between caller and callee lifetime regions.
+        origins: CallOrigins,
     },
 }
 
@@ -150,7 +187,14 @@ pub(in super::super) struct Checked {
     pub(in super::super) branches: HashMap<u64, Vec<InputChoice>>,
     /// Original owned parameter nodes, before any runtime partitioning.
     pub(super) inputs: Vec<crate::resource::memory::paths::InputPath>,
-    /// Number of additional, operation-derived input lifetime regions.
+    /// Borrowed originals have identities but remain charged outside this frame.
+    pub(super) borrowed_inputs:
+        std::collections::BTreeMap<usize, crate::resource::memory::paths::InputPath>,
+    /// Final disjoint regions attached to the result and borrowed parameters.
+    pub(super) outputs: super::Origins<usize>,
+    /// Caller-side lifetime mappings published after a template is committed.
+    pub(in super::super) call_origins: HashMap<u64, CallOrigins>,
+    /// Additional borrowed-input and operation-derived lifetime identities.
     regions: usize,
     /// Ordered writes let operation-local loans distinguish mutation from reads.
     mutations: Vec<(VarIdent, OwnerPath)>,
@@ -181,6 +225,11 @@ impl Checked {
         let id = self.inputs.len() + self.regions;
         self.regions += 1;
         id
+    }
+
+    /// Derived lifetimes require a template even behind a fixed or unit result.
+    pub(super) fn has_regions(&self) -> bool {
+        self.regions != 0
     }
 
     pub(in super::super) fn operation(&mut self, span: &Span, operation: Operation) {

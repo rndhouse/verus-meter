@@ -85,7 +85,8 @@ impl Analysis<'_> {
             counter.as_ref().is_some_and(|name| self.growth.loop_counters.insert(name.clone()));
         // Nested loops enter after any number of outer iterations. Their entry
         // candidates cannot reuse the first iteration's finite charge extent.
-        self.growth.begin_element_iteration(&elements);
+        let zero = self.loop_zero_candidates(&record, &mut forest_bounds);
+        self.growth.begin_element_iteration(&elements, &zero);
         self.discard(&record.condition)?;
         record.completed = self.loop_progress(&record)?;
         self.discard(&record.body)?;
@@ -176,6 +177,39 @@ impl Analysis<'_> {
         }
         self.transitions.loops.insert(expr.span.id, record);
         Ok(())
+    }
+
+    /// Preserve zero charge only with an explicit, checked loop invariant.
+    /// Potential backing writes also invalidate first-visit zero shortcuts.
+    fn loop_zero_candidates(
+        &mut self,
+        record: &Loop,
+        facts: &mut Vec<Expr>,
+    ) -> std::collections::HashSet<usize> {
+        let mut zero = std::collections::HashSet::new();
+        for (name, owner) in self.heap.owners.iter().chain(self.heap.borrowed.iter()) {
+            owner.visit_paths(&mut vec![], &mut |path, node| {
+                let location = (name.clone(), path.clone());
+                if let Some(id) = node.vector {
+                    self.growth.vectors[id].loop_backing |= record.grows_backing(&location);
+                }
+                if !record.grows_children(&location) {
+                    if let Some(elements) = &node.elements {
+                        for id in elements.states.values() {
+                            if self.growth.elements[*id].unchanged_zero() {
+                                zero.insert(*id);
+                                facts.push(crate::ast_util::mk_eq(
+                                    &record.span,
+                                    &self.growth.elements[*id].bytes,
+                                    &contracts::literal(&record.span, 0),
+                                ));
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        zero
     }
 
     /// Completed summary evidence becomes ordinary inductive proof candidates.

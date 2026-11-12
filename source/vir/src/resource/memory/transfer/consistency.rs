@@ -115,6 +115,8 @@ mod tests {
             as_string: "ownership consistency".into(),
         };
         let mut template = Template {
+            ordered: false,
+            origins: Default::default(),
             regions: Default::default(),
             symbols: vec![],
             effects: None,

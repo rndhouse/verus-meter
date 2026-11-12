@@ -371,10 +371,32 @@ impl Accounting {
         result_ids: &HashSet<u64>,
         result_live: bool,
     ) {
+        self.call_cost_with_inputs(
+            span,
+            cost,
+            excluded_inputs,
+            &HashSet::new(),
+            result_ids,
+            result_live,
+        );
+    }
+
+    /// Add the callee's partitioned original regions only at this peak witness.
+    /// They replace the consumed input identities without changing live owners.
+    pub(super) fn call_cost_with_inputs(
+        &mut self,
+        span: &Span,
+        cost: Footprint,
+        excluded_inputs: &HashSet<usize>,
+        included_inputs: &HashSet<usize>,
+        result_ids: &HashSet<u64>,
+        result_live: bool,
+    ) {
         for mut path in self.paths.clone() {
             for input in excluded_inputs {
                 path.inputs.remove(input);
             }
+            path.inputs.extend(included_inputs.iter().copied());
             if !result_live {
                 for id in result_ids {
                     path.values.remove(id);

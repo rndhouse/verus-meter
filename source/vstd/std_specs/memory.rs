@@ -724,10 +724,16 @@ pub proof fn remove_root(memory: Seq<Record>, index: int)
 
 /// Reindexing changes paths alone; removal transfers precisely one footprint.
 pub proof fn remove_partition(memory: Seq<Record>, index: int)
-    requires well_formed(memory),
-    ensures well_formed(remove_index(memory, index)),
-        cost(memory, 0) == cost(subtree(memory, seq![index]), 0)
-            + cost(remove_index(memory, index), 0),
+    requires
+        well_formed(memory),
+    ensures
+        well_formed(remove_index(memory, index)),
+        cost(memory, 0) == cost(subtree(memory, seq![index]), 0) + cost(
+            remove_index(memory, index),
+            0,
+        ),
+        cost(subtree(memory, seq![index]), 0) >= 0,
+        cost(remove_index(memory, index), 0) >= 0,
     decreases memory.len(),
 {
     reveal_with_fuel(remove_index, 2);
@@ -743,17 +749,27 @@ pub proof fn remove_partition(memory: Seq<Record>, index: int)
         } else if value.path.len() > 0 {
             assert(seq![index][0] != value.path.take(1)[0]);
         }
-        assert(seq![index].is_prefix_of(value.path) == (value.path.len() > 0 && value.path[0] == index));
+        assert(seq![index].is_prefix_of(value.path) == (value.path.len() > 0 && value.path[0]
+            == index));
         if value.path.len() > 0 && value.path[0] == index {
-            cost_push(subtree(memory.drop_last(), seq![index]), Record { path: value.path.skip(1), ..value }, 0);
+            cost_push(
+                subtree(memory.drop_last(), seq![index]),
+                Record { path: value.path.skip(1), ..value },
+                0,
+            );
         } else {
             let next = if value.path.len() > 0 && value.path[0] > index {
                 Record { path: value.path.update(0, value.path[0] - 1), ..value }
-            } else { value };
+            } else {
+                value
+            };
             assert(before.push(next).drop_last() =~= before);
             cost_push(before, next, 0);
         }
     }
+    inspect(memory, seq![index]);
+    inspect(subtree(memory, seq![index]), Seq::empty());
+    inspect(remove_index(memory, index), Seq::empty());
 }
 
 /// Removing an index commutes with joining allocation forests.
@@ -794,8 +810,6 @@ pub broadcast proof fn remove_prefix(memory: Seq<Record>, slot: int, index: int)
 /// A surviving runtime index selects its original child after closing the gap.
 /// Descendant paths and allocation extents are unchanged by reindexing.
 pub broadcast proof fn select_remove(memory: Seq<Record>, removed: int, selected: int)
-    requires
-        selected >= 0,
     ensures
         #[trigger] subtree(remove_index(memory, removed), seq![selected]) == subtree(
             memory,
@@ -872,6 +886,61 @@ pub proof fn remove_index_views(memory: Seq<Record>, removed: int)
         ],
     ) by {
         select_remove(memory, removed, selected);
+    }
+}
+
+/// Expose an inverse index only when a caller requests that surviving child.
+/// A removal that leaves its source unchanged needs no additional source
+/// request, preventing empty forests from spawning unbounded index requests.
+pub proof fn remove_index_requested_views(memory: Seq<Record>, removed: int)
+    ensures
+        forall|selected: int|
+            #![trigger view_requested(remove_index(memory, removed), selected), subtree(remove_index(memory, removed), seq![selected])]
+            selected >= 0 && view_requested(remove_index(memory, removed), selected) ==> (subtree(
+                remove_index(memory, removed),
+                seq![selected],
+            ) == subtree(
+                memory,
+                seq![
+                    if selected < removed {
+                        selected
+                    } else {
+                        selected + 1
+                    },
+                ],
+            ) && (memory != remove_index(memory, removed) ==> view_requested(
+                memory,
+                if selected < removed {
+                    selected
+                } else {
+                    selected + 1
+                },
+            ))),
+{
+    assert forall|selected: int|
+        #![trigger view_requested(remove_index(memory, removed), selected), subtree(remove_index(memory, removed), seq![selected])]
+        selected >= 0 && view_requested(remove_index(memory, removed), selected) implies (subtree(
+        remove_index(memory, removed),
+        seq![selected],
+    ) == subtree(
+        memory,
+        seq![
+            if selected < removed {
+                selected
+            } else {
+                selected + 1
+            },
+        ],
+    ) && (memory != remove_index(memory, removed) ==> view_requested(
+        memory,
+        if selected < removed {
+            selected
+        } else {
+            selected + 1
+        },
+    ))) by {
+        select_remove(memory, removed, selected);
+        reveal(view_requested);
     }
 }
 
@@ -2595,8 +2664,12 @@ pub broadcast proof fn cost_prefix(memory: Seq<Record>, path: Seq<int>, kind: in
 
 /// Extraction partitions storage exactly; it never copies or loses a charge.
 pub proof fn cost_partition(memory: Seq<Record>, path: Seq<int>, kind: int)
-    ensures cost(memory, kind)
-        == cost(subtree(memory, path), kind) + cost(without(memory, path), kind),
+    ensures
+        cost(memory, kind) == cost(subtree(memory, path), kind) + cost(without(memory, path), kind),
+        well_formed(memory) && kind == 0 ==> cost(subtree(memory, path), kind) >= 0 && cost(
+            without(memory, path),
+            kind,
+        ) >= 0,
     decreases memory.len(),
 {
     reveal_with_fuel(cost, 2);
@@ -2605,10 +2678,19 @@ pub proof fn cost_partition(memory: Seq<Record>, path: Seq<int>, kind: int)
     if memory.len() > 0 {
         cost_partition(memory.drop_last(), path, kind);
         if path.is_prefix_of(memory.last().path) {
-            cost_push(subtree(memory.drop_last(), path), Record {
-                path: memory.last().path.skip(path.len() as int), ..memory.last()
-            }, kind);
-        } else { cost_push(without(memory.drop_last(), path), memory.last(), kind); }
+            cost_push(
+                subtree(memory.drop_last(), path),
+                Record { path: memory.last().path.skip(path.len() as int), ..memory.last() },
+                kind,
+            );
+        } else {
+            cost_push(without(memory.drop_last(), path), memory.last(), kind);
+        }
+    }
+    if well_formed(memory) && kind == 0 {
+        inspect(memory, path);
+        inspect(subtree(memory, path), Seq::empty());
+        inspect(without(memory, path), Seq::empty());
     }
 }
 

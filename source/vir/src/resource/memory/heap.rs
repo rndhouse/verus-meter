@@ -94,6 +94,19 @@ impl Default for Owner {
 }
 
 impl Owner {
+    /// A fresh fixed wrapper does not make its incoming children fully charged.
+    pub(super) fn complete(&self) -> bool {
+        let mut complete = true;
+        self.visit(&mut |node| {
+            complete &= node.view == super::metadata::View::Complete
+                && node
+                    .elements
+                    .as_ref()
+                    .is_none_or(|elements| elements.view == super::metadata::View::Complete);
+        });
+        complete
+    }
+
     /// Detach a fixed child without touching any allocation charge.
     pub(super) fn take_child(&mut self, path: &[OwnerSlot]) -> Option<Owner> {
         let (last, parent) = path.split_last()?;
@@ -244,6 +257,7 @@ impl Heap {
         // optional matches and sections retain their own protection scope.
         self.partitions.extend(partitions.iter().cloned());
         self.partitions.extend(self.owners.keys().filter(|name| !outer.contains(*name)).cloned());
+        self.partitions.extend(self.borrowed.keys().filter(|name| !outer.contains(*name)).cloned());
     }
 
     pub(super) fn check_partition(&self, name: &VarIdent, span: &Span) -> Result<(), VirErr> {

@@ -160,6 +160,7 @@ impl Analysis<'_> {
             state.extent = None;
         }
         old.precise = true;
+        old.view = new.view;
         old.minima = new.minima.clone();
     }
 
@@ -607,10 +608,14 @@ impl super::growth::Growth {
     /// An iteration can start after earlier iterations have inserted children.
     /// Retire first-visit zero shortcuts; exact forests and inductive byte
     /// invariants describe the charges at every subsequent loop head.
-    pub(super) fn begin_element_iteration(&mut self, ids: &[usize]) {
+    pub(super) fn begin_element_iteration(
+        &mut self,
+        ids: &[usize],
+        zero: &std::collections::HashSet<usize>,
+    ) {
         for id in ids {
             self.elements[*id].extent = None;
-            self.elements[*id].uncharged = false;
+            self.elements[*id].uncharged &= zero.contains(id);
         }
     }
 

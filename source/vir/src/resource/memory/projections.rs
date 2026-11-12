@@ -249,9 +249,6 @@ impl Analysis<'_> {
         if !precise {
             return Err(unsupported(span, "indexing a child without precise allocation metadata"));
         }
-        if elements.view == super::metadata::View::Local && self.growth.loop_depth != 0 {
-            return Err(unsupported(span, "indexed incoming children inside loops"));
-        }
         let original = self.metadata_local(span, "loan_parent", elements.records.clone());
         let selected_path = self.metadata_path(span, spec_value(&index)?)?;
         let partition = super::metadata::operations::detach(

@@ -376,19 +376,22 @@ when their public result is a leaf owner; forwarding helpers retain that interfa
 
 Missing ownership support is an error even with a generous memory budget. A helper
 whose control flow or value dependencies cannot be represented by a finite ownership
-transformation is unsupported. The loop rules above support local collections and
-collections passed by value. Extraction from borrowed inputs and indexed replacement
-in incoming owned inputs remain unsupported inside loops. Incoming extraction
-and replacement remain unsupported within protected ordinary branches and memory
-sections; checked loop branches can partition supported persistent roles.
-Indexing incoming children inside loops and forwarding an incoming collection
-to another runtime-ownership helper are also unsupported. Indexed
-borrows can call ordinary leaf helpers.
-Helpers may insert or forward whole owning arguments and transform supported
-leaf allocations. Loop-carried helper effects that lack a precise transformation
-or delegate borrowed collection traversal remain unsupported. Passing extracted
-original subtrees to helpers with runtime ownership interfaces also remains
-unsupported.
+transformation is unsupported. The loop rules above apply to local collections,
+owned inputs, and borrowed inputs. Incoming indexed updates, replacement,
+extraction, and helper delegation share the same descriptor transformations.
+Helpers preserve the caller's remaining allocations and transferred results
+independently, including through nested runtime paths. Calls require recoverable
+logical geometry and precise ownership metadata; zero local charge never means
+that an incoming child is absent, nor does it establish its physical capacity.
+
+Original allocations and this frame's new storage have separate lifetime
+regions. Borrowed storage stays charged throughout the call; owned storage follows
+its checked partitions at intermediate peaks and final outputs. Wrapping an
+incoming owner in a fresh struct or box preserves this distinction. Incoming
+extraction and replacement remain unsupported within protected ordinary branches
+and memory sections; checked loop branches can partition supported persistent roles.
+Broader iteration counts, scalar state transitions, and control forms retain the
+limits described above.
 There is no aggregate ownership fallback or copied parent charge for an unknown child.
 Conservative upper bounds remain valid for byte sizes and peak usage.
 

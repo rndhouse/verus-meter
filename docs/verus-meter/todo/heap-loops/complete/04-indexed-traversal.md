@@ -2,7 +2,7 @@
 
 Builds on tasks [1](01-compose-iteration-operations.md) through
 [3](03-transform-children.md). Incoming ownership is completed in
-[task 5](../05-borrowed-and-incoming-ownership.md).
+[task 5](05-borrowed-and-incoming-ownership.md).
 
 ## Goal
 
@@ -33,7 +33,7 @@ reject. Exact finite normalization assists small counts. Broader symbolic cost
 and view induction remains in [task 6](../06-iteration-counts-and-state.md).
 
 Indexed incoming children, borrowed incoming extraction in loops, and incoming
-runtime-helper delegation remain in [task 5](../05-borrowed-and-incoming-ownership.md).
+runtime-helper delegation are covered by [task 5](05-borrowed-and-incoming-ownership.md).
 The path algebra is independent of those lifetime restrictions.
 
 ## Work

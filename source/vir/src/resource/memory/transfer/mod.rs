@@ -1,7 +1,7 @@
 //! Parametric ownership transformations inferred from checked executable bodies.
 //!
-//! Templates describe physical allocation forests, independently of a callee's
-//! frame-local charges. Calls substitute their own forests and scalar snapshots;
+//! Templates transform complete forests or local charges with logical geometry.
+//! Original lifetimes compose separately. Calls substitute forests and snapshots;
 //! no ghost arguments or user annotations cross the executable interface.
 //! Runtime ownership interfaces require a representable template. Missing rules
 //! are unsupported; byte bounds cannot substitute for ownership effects.
@@ -10,8 +10,9 @@ mod calls;
 pub(super) mod checked;
 mod consistency;
 pub(super) mod effects;
+mod origins;
 mod proofs;
-mod simplify;
+pub(super) mod simplify;
 mod trace;
 
 use super::metadata::{
@@ -25,11 +26,17 @@ use std::collections::{BTreeMap, HashMap};
 pub(super) use checked::Checked;
 pub(super) use consistency::{modified_parameters, validate};
 
+/// Disjoint original regions at fixed output paths. `None` names the result;
+/// `Some(parameter)` names a borrowed parameter after the operation.
+pub(super) type Origins<T> = BTreeMap<Option<usize>, BTreeMap<super::heap::OwnerPath, T>>;
+
 #[derive(Clone)]
 pub(super) enum Input {
+    /// Complete byte charges permit exact-capacity inference; local views do not.
+    Complete,
     /// An immutable snapshot of an executable scalar argument.
     Scalar(usize),
-    /// The complete physical forest supplied by an owning argument.
+    /// The supplied descriptor forest, with complete or frame-local byte charges.
     Forest(usize),
     /// One root descriptor property at a finite fixed ownership path.
     Property(usize, super::heap::OwnerPath, &'static str),
@@ -54,7 +61,7 @@ pub(super) struct Node {
     pub(super) origin: Option<usize>,
     /// The ownership layout whose operations produced this forest.
     pub(super) typ: Typ,
-    /// Physical allocation descriptors, independent of frame-local charges.
+    /// Descriptors in the supplied charge view, retaining logical geometry.
     pub(super) memory: Expr,
     /// Reservation lower bounds indexed by ownership class.
     pub(super) minima: Minima,
@@ -71,6 +78,11 @@ pub(super) enum Value {
 /// A transformation of supplied forests, not an aggregate allocation allowance.
 #[derive(Clone)]
 pub(super) struct Template {
+    /// Overlapping iterations need inverse indexed views when callers inspect
+    /// their completed forests; ordinary summaries keep these laws dormant.
+    pub(super) ordered: bool,
+    /// Original input forests retained by each result or borrowed output node.
+    pub(super) origins: Origins<Expr>,
     /// Original allocation regions used by lifetime profiles after a split.
     /// These exclude allocations introduced in the helper's own frame.
     pub(super) regions: BTreeMap<usize, Expr>,
@@ -155,7 +167,7 @@ pub(super) fn requires_summary(
     checked: &Checked,
     summaries: &HashMap<Fun, super::summary::FunctionSummary>,
 ) -> Result<bool, VirErr> {
-    if required(function, layouts)? {
+    if required(function, layouts)? || checked.has_regions() {
         return Ok(true);
     }
     if !layouts.owner(&function.x.outer_ret.x.typ) {

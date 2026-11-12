@@ -123,14 +123,21 @@ impl Trace<'_> {
                 let bytes = property(span, node.memory.clone(), "bytes");
                 let original = if let Some(input) = input {
                     let original = self.original_child(span, &input)?;
-                    self.join_region(span, length.clone(), &input)?;
+                    self.join_region(span, &location, length.clone(), &input)?;
                     original
                 } else {
                     expr::empty(span, expr::record_type())
                 };
                 let (capacity, bytes) = if grow {
-                    // Physical forests contain caller bytes as well as local
-                    // replacements, so exact spare capacity can be reused here.
+                    let complete = self.complete_for(span, std::slice::from_ref(&bytes));
+                    let (lower, _, _) = growth::push_transition(
+                        span,
+                        capacity.clone(),
+                        bytes.clone(),
+                        length.clone(),
+                        element,
+                        false,
+                    );
                     let (capacity, bytes, _) = growth::push_transition(
                         span,
                         capacity,
@@ -139,7 +146,7 @@ impl Trace<'_> {
                         element,
                         true,
                     );
-                    (capacity, bytes)
+                    (choice(span, complete, capacity, lower), bytes)
                 } else {
                     (capacity, bytes)
                 };
@@ -373,7 +380,9 @@ impl Trace<'_> {
                 Some(Value::Unit)
             }
             Operation::Aggregate { fields, tag } => self.construct(value, fields, tag),
-            Operation::Call { target, budget, args, borrowed, replaced_inputs, .. } => {
+            Operation::Call {
+                target, budget, args, borrowed, replaced_inputs, origins, ..
+            } => {
                 if self.loop_tokens.is_some() {
                     let candidate = self.scalar(&budget).unwrap_or_else(|| budget.clone());
                     self.loop_calls.push((span.clone(), budget.clone(), candidate.clone()));
@@ -387,7 +396,7 @@ impl Trace<'_> {
                         self.replace_region(span, &location, input)?;
                     }
                 }
-                self.checked_call(value, &target, &args, &borrowed)
+                self.checked_call(value, &target, &args, &borrowed, &origins)
             }
         }
     }
@@ -398,6 +407,7 @@ impl Trace<'_> {
         target: &Fun,
         args: &Exprs,
         borrowed: &HashMap<usize, checked::Place>,
+        origins: &checked::CallOrigins,
     ) -> Option<Value> {
         let function = self.functions.get(target)?;
         let template = self.summaries.get(target)?.transfer.as_ref()?;
@@ -419,9 +429,22 @@ impl Trace<'_> {
         }
         let mut replacements = HashMap::new();
         for symbol in &template.symbols {
+            if matches!(symbol.input, Input::Complete) {
+                let forests: Vec<_> = values
+                    .values()
+                    .filter_map(|value| match value {
+                        Value::Owner(node) => Some(node.memory.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                let complete = self.complete_for(&value.span, &forests);
+                replacements.insert(symbol.name.clone(), complete);
+                continue;
+            }
             let replacement = match (
                 &symbol.input,
                 values.get(&match &symbol.input {
+                    Input::Complete => unreachable!(),
                     Input::Scalar(i)
                     | Input::Forest(i)
                     | Input::Property(i, _, _)
@@ -450,6 +473,7 @@ impl Trace<'_> {
             };
             replacements.insert(symbol.name.clone(), replacement);
         }
+        self.compose_call_origins(value, function, template, &replacements, origins)?;
         let first_effect = self.effects.len();
         for (index, node) in &template.borrowed {
             self.set(&value.span, &locations[index], instantiate_node(node, &replacements))?;

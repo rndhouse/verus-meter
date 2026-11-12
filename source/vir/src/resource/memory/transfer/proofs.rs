@@ -3,6 +3,32 @@
 use super::*;
 use std::sync::Arc;
 
+/// Ordered loops retain reindexing inside abstract caller forests. Publish
+/// inverse maps only for those completed outputs and only at requested indices.
+pub(super) fn forest_views(
+    span: &Span,
+    value: &Expr,
+    proofs: &mut Vec<Stmt>,
+    ordered: bool,
+) -> Result<(), VirErr> {
+    forest(span, value, proofs)?;
+    if ordered {
+        crate::ast_visitor::expr_visitor_check(value, &mut |scope, value| {
+            if scope.map().is_empty() {
+                if let Some(args) = simplify::call(value, "remove_index") {
+                    proofs.push(expr::lemma(
+                        span,
+                        "remove_index_requested_views",
+                        args.as_ref().clone(),
+                    ));
+                }
+            }
+            Ok::<(), VirErr>(())
+        })?;
+    }
+    Ok(())
+}
+
 /// Prove the forest expression's validity using the same algebra as local
 /// operations. Conditional branches keep their own arithmetic assumptions.
 pub(super) fn forest(span: &Span, value: &Expr, proofs: &mut Vec<Stmt>) -> Result<(), VirErr> {
@@ -119,6 +145,9 @@ pub(super) fn forest(span: &Span, value: &Expr, proofs: &mut Vec<Stmt>) -> Resul
                         proofs.push(expr::lemma(span, "cost_prefix", args));
                     }
                     "subtree" | "without" => {
+                        if name.as_str() == "subtree" {
+                            proofs.push(expr::lemma(span, "request_path", args.as_ref().clone()));
+                        }
                         if name.as_str() == "without" {
                             proofs.push(expr::lemma(
                                 span,
@@ -144,7 +173,19 @@ pub(super) fn forest(span: &Span, value: &Expr, proofs: &mut Vec<Stmt>) -> Resul
                         args.push(expr::integer(span, 0));
                         proofs.push(expr::lemma(span, "cost_partition", args));
                     }
-                    "lookup" => proofs.push(expr::lemma(span, "inspect", args.as_ref().clone())),
+                    "lookup" => {
+                        // Composed calls can observe incoming geometry without
+                        // an executable indexed loan to request its view first.
+                        proofs.push(expr::lemma(span, "request_path", args.as_ref().clone()));
+                        if let Some(selected) = simplify::call(&args[0], "subtree") {
+                            proofs.push(expr::lemma(
+                                span,
+                                "lookup_subtree",
+                                vec![selected[0].clone(), selected[1].clone(), args[1].clone()],
+                            ));
+                        }
+                        proofs.push(expr::lemma(span, "inspect", args.as_ref().clone()));
+                    }
                     "remove_index" => {
                         proofs.push(expr::lemma(span, "partition_remove", args.as_ref().clone()));
                         proofs.push(expr::lemma(span, "remove_partition", args.as_ref().clone()));

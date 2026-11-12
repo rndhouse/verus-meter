@@ -8,7 +8,7 @@ use std::sync::Arc;
 /// Expand small finite forests directly; larger counts keep the verified operator.
 pub(super) const FINITE_GENERATION_LIMIT: u32 = 8;
 
-fn call<'a>(value: &'a Expr, name: &str) -> Option<&'a Exprs> {
+pub(super) fn call<'a>(value: &'a Expr, name: &str) -> Option<&'a Exprs> {
     let ExprX::Call { target: CallTarget::Fun(_, function, _, _, _), args, .. } = &value.x else {
         return None;
     };
@@ -74,7 +74,7 @@ fn known_root(value: &Expr) -> Option<Expr> {
 /// Normalize a shared expression graph once per node. Branch composition reuses
 /// entry forests; preserving that sharing avoids repeatedly expanding unchanged
 /// subtrees and skips alternatives already decided by caller specialization.
-pub(super) fn simplify(value: &Expr) -> Expr {
+pub(in super::super) fn simplify(value: &Expr) -> Expr {
     rewrite(value, None)
 }
 
@@ -193,6 +193,26 @@ fn closed(value: &Expr) -> bool {
 
 fn node(value: &Expr) -> Expr {
     let span = &value.span;
+    // Partial views and original-only substitutions often leave empty input
+    // forests. These operators cannot create descriptors from an empty forest.
+    for name in [
+        "subtree",
+        "without",
+        "descendants",
+        "runtime",
+        "nonruntime",
+        "remove_index",
+        "prefix",
+        "take_children",
+        "reverse_children",
+        "shift_children",
+        "tile_children",
+        "repeat",
+    ] {
+        if call(value, name).is_some_and(|args| empty(&args[0])) {
+            return expr::empty(span, expr::record_type());
+        }
+    }
     if let ExprX::If(_, yes, Some(no)) = &value.x {
         if same_expression(yes, no) {
             return yes.clone();
@@ -753,6 +773,38 @@ fn node(value: &Expr) -> Expr {
             }
         };
         if !cutting {
+            if let Some(parts) = call(memory, "descendants") {
+                return simplify(&expr::subtree(span, parts[0].clone(), selected.clone()));
+            }
+            for (filter, op) in [("runtime", InequalityOp::Le), ("nonruntime", InequalityOp::Gt)] {
+                if let Some(parts) = call(memory, filter) {
+                    return simplify(&super::choice(
+                        span,
+                        crate::ast_util::mk_ineq(
+                            span,
+                            &expr::integer(span, 0),
+                            &selected_path[0],
+                            op,
+                        ),
+                        expr::subtree(span, parts[0].clone(), selected.clone()),
+                        expr::empty(span, expr::record_type()),
+                    ));
+                }
+            }
+            if let Some(parts) = call(memory, "remove_index") {
+                let mut original = selected_path.clone();
+                original[0] = super::choice(
+                    span,
+                    crate::ast_util::mk_ineq(span, &selected_path[0], &parts[1], InequalityOp::Lt),
+                    selected_path[0].clone(),
+                    contracts::add(span, selected_path[0].clone(), expr::integer(span, 1)),
+                );
+                return simplify(&expr::subtree(
+                    span,
+                    parts[0].clone(),
+                    make_path(span, &original),
+                ));
+            }
             if let Some(parts) = call(memory, "without") {
                 if let Some(cut) = path(&parts[1]) {
                     let comparisons: Vec<_> = cut

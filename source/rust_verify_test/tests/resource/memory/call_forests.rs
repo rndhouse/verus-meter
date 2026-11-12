@@ -21,14 +21,13 @@ fn incoming_indexed_mutation_preserves_selected_and_sibling_allocations() {
 }
 
 #[test]
-fn a_template_cannot_be_applied_to_opaque_arguments() {
-    rejects(
+fn incoming_runtime_arguments_can_be_forwarded() {
+    verifies(
         "opaque_relay",
         "fn pass(v: Vec<Box<u32>>) -> Vec<Box<u32>>
             resources peak(memory) <= 100 { v }
         fn relay(v: Vec<Box<u32>>) -> Vec<Box<u32>>
             resources peak(memory) <= 10000 { pass(v) }",
-        "a runtime ownership call without precise argument metadata",
     );
 }
 

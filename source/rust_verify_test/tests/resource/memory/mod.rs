@@ -18,6 +18,7 @@ mod helper_control;
 mod indexed_loops;
 mod incoming_children;
 mod incoming_extraction;
+mod incoming_loops;
 mod inference;
 mod integers;
 mod lifetimes;

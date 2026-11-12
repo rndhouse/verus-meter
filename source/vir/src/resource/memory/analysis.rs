@@ -558,6 +558,7 @@ pub(super) fn check(
             analysis.slots.insert(param.x.name.clone(), value);
         }
     }
+    analysis.mark_borrowed_origins(function)?;
     let symbolic_bound = super::symbolic::function_bound(function, budgets, functions, layouts)?;
     let result = analysis.produce(body)?;
     let return_parameter = result.parameter;
@@ -579,6 +580,7 @@ pub(super) fn check(
         })
         .collect::<Vec<_>>();
     let result_owner = analysis.result_owner.take();
+    analysis.record_output_origins(function, result_owner.as_ref());
     let (returned, returned_capacities) = super::ownership::summarize(
         function,
         result_owner.as_ref(),
