@@ -290,13 +290,31 @@ not replace individual descriptors. Payload values and scalar dependencies that
 cannot be represented remain unsupported.
 
 Counted loops use a stable upper bound and unit increment; consuming loops test
-a popped collection's length against a stable lower bound. Zero and partial
+a collection's length against a stable lower bound, with one removal per visit. Zero and partial
 ranges preserve unconsumed children and backing. Unchanged whole-child transfers
 use an exact inverse index map, preserving different capacities and reversing
 last-element extraction order at the destination. Ordered extraction followed
 by restoration of the same whole children can reduce to an unchanged collection,
-including through nested counted loops. A changed child repeatedly removed and
-restored to the same role requires the repeated-visit model from indexed updates.
+including through nested counted loops.
+
+Evolving collections use an ordered forest recurrence: each visit reads the
+previous visit's result. This covers repeated updates to one child, traversal
+of distinct children, indexed replacement, removal with shifted indices, and
+pop/change/restore on the same collection. Runtime paths compose through fixed
+fields, boxes, and nested collections. Indexed loans can call precisely summarized
+leaf helpers, including helpers containing a completed recurrence. Untouched
+subtrees retain their descriptors. Replacing a class of children retires uniform
+reservation candidates that the new allocations might not satisfy; individual
+reservations remain in the descriptors. Read-only loans restore the saved forest.
+
+Indices can use supported pure scalar arithmetic and metadata observations.
+Bounds and overflow checks still apply to the executable operations. A trip-count
+observation must remain unchanged parametrically, rather than merely have the
+same value on the first visit. Small finite cases are exposed automatically;
+more general cost and indexed-view induction for evolving recurrences remains
+limited. Unsupported scalar dependencies and effects during index evaluation
+still reject.
+
 Every intermediate allocation peak remains checked, including old/new backing
 overlap. A pop preserves backing and supplies its previous length as a capacity
 lower bound, so restoration can reuse those slots.
@@ -360,8 +378,7 @@ Missing ownership support is an error even with a generous memory budget. A help
 whose control flow or value dependencies cannot be represented by a finite ownership
 transformation is unsupported. The loop rules above support local collections and
 collections passed by value. Extraction from borrowed inputs and indexed replacement
-in owned inputs remain unsupported inside loops. Overlapping collection roles
-that cannot reduce to whole-child restoration remain unsupported. Incoming extraction
+in incoming owned inputs remain unsupported inside loops. Incoming extraction
 and replacement remain unsupported within protected ordinary branches and memory
 sections; checked loop branches can partition supported persistent roles.
 Indexing incoming children inside loops and forwarding an incoming collection

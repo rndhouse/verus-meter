@@ -150,6 +150,9 @@ pub(super) fn same_expression(a: &Expr, b: &Expr) -> bool {
             a == b && same_expression(al, bl) && same_expression(ar, br)
         }
         (ExprX::Unary(a, al), ExprX::Unary(b, bl)) => a == b && same_expression(al, bl),
+        (ExprX::UnaryOpr(UnaryOpr::Field(a), al), ExprX::UnaryOpr(UnaryOpr::Field(b), bl)) => {
+            a == b && same_expression(al, bl)
+        }
         (ExprX::If(ac, al, Some(ar)), ExprX::If(bc, bl, Some(br))) => {
             same_expression(ac, bc) && same_expression(al, bl) && same_expression(ar, br)
         }
@@ -370,6 +373,21 @@ fn node(value: &Expr) -> Expr {
     }
     if let Some(args) = call(value, "lookup") {
         if empty(&args[1]) {
+            if let Some(parts) = call(&args[0], "add") {
+                if rootless(&parts[1]) {
+                    return simplify(&expr::lookup(span, parts[0].clone(), args[1].clone()));
+                }
+            }
+            // Cutting a proper child or reindexing runtime siblings preserves
+            // the root record, even when that record is an abstract input.
+            if let Some(parts) = call(&args[0], "without") {
+                if path(&parts[1]).is_some_and(|path| !path.is_empty()) {
+                    return simplify(&expr::lookup(span, parts[0].clone(), args[1].clone()));
+                }
+            }
+            if let Some(parts) = call(&args[0], "remove_index") {
+                return simplify(&expr::lookup(span, parts[0].clone(), args[1].clone()));
+            }
             if let Some(record) = known_root(&args[0]) {
                 return record;
             }
@@ -520,6 +538,25 @@ fn node(value: &Expr) -> Expr {
                 ],
                 expr::memory_type(),
             ));
+        }
+    }
+    if let Some(args) = call(value, "iterate") {
+        if let (ExprX::Closure(binders, body), Some(count)) =
+            (&args[0].x, contracts::constant(&args[2]))
+        {
+            if binders.len() == 2 && count <= u64::from(FINITE_GENERATION_LIMIT) {
+                let mut memory = args[1].clone();
+                for index in 0..count {
+                    memory = specialize(
+                        body,
+                        &HashMap::from([
+                            (binders[0].name.clone(), expr::integer(span, index as i128)),
+                            (binders[1].name.clone(), memory),
+                        ]),
+                    );
+                }
+                return memory;
+            }
         }
     }
     if let Some(args) = call(value, "generate_children") {
@@ -715,6 +752,36 @@ fn node(value: &Expr) -> Expr {
                 expr::subtree(span, memory, selected.clone())
             }
         };
+        if !cutting {
+            if let Some(parts) = call(memory, "without") {
+                if let Some(cut) = path(&parts[1]) {
+                    let comparisons: Vec<_> = cut
+                        .iter()
+                        .zip(&selected_path)
+                        .map(|(a, b)| simplify(&crate::ast_util::mk_eq(span, a, b)))
+                        .collect();
+                    if comparisons
+                        .iter()
+                        .all(|value| matches!(value.x, ExprX::Const(Constant::Bool(true))))
+                    {
+                        if cut.len() <= selected_path.len() {
+                            return expr::empty(span, expr::record_type());
+                        }
+                        return simplify(&expr::without(
+                            span,
+                            expr::subtree(span, parts[0].clone(), selected.clone()),
+                            make_path(span, &cut[selected_path.len()..]),
+                        ));
+                    }
+                    if comparisons
+                        .iter()
+                        .any(|value| matches!(value.x, ExprX::Const(Constant::Bool(false))))
+                    {
+                        return simplify(&expr::subtree(span, parts[0].clone(), selected.clone()));
+                    }
+                }
+            }
+        }
         if !cutting {
             if let Some(parts) = call(memory, "shift_children") {
                 if contracts::constant(&selected_path[0]).is_some() {
@@ -958,4 +1025,40 @@ pub(super) fn allocation_bound(
         Ok::<Expr, VirErr>(expression.clone())
     })
     .expect("infallible allocation-bound construction")
+}
+
+/// Expose a fixed proof window once when building the recurrence. The residual
+/// operator remains exact for every larger count; no uniform descriptor or byte
+/// approximation replaces it. Call specialization can discard decided branches.
+pub(super) fn finite_iteration(
+    span: &Span,
+    builder: Expr,
+    initial: Expr,
+    count: Expr,
+    window: Option<u64>,
+) -> Expr {
+    let make = |count| {
+        expr::operation(
+            span,
+            "iterate",
+            vec![builder.clone(), initial.clone(), count],
+            expr::memory_type(),
+        )
+    };
+    let mut memory = simplify(&make(count.clone()));
+    if contracts::constant(&count).is_some() {
+        return memory;
+    }
+    // A smaller syntactic size hint avoids constructing unused symbolic visits.
+    // It need not be a proved bound: all other counts retain the exact operator.
+    let window = window
+        .unwrap_or(u64::from(FINITE_GENERATION_LIMIT))
+        .min(u64::from(FINITE_GENERATION_LIMIT));
+    for ordinal in (0..=window).rev() {
+        let amount = expr::integer(span, i128::from(ordinal));
+        let selected = simplify(&make(amount.clone()));
+        let condition = crate::ast_util::mk_eq(span, &count, &amount);
+        memory = super::choice(span, condition, selected, memory);
+    }
+    simplify(&memory)
 }

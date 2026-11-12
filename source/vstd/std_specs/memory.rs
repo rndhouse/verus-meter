@@ -791,6 +791,90 @@ pub broadcast proof fn remove_prefix(memory: Seq<Record>, slot: int, index: int)
     }
 }
 
+/// A surviving runtime index selects its original child after closing the gap.
+/// Descendant paths and allocation extents are unchanged by reindexing.
+pub broadcast proof fn select_remove(memory: Seq<Record>, removed: int, selected: int)
+    requires
+        selected >= 0,
+    ensures
+        #[trigger] subtree(remove_index(memory, removed), seq![selected]) == subtree(
+            memory,
+            seq![
+                if selected < removed {
+                    selected
+                } else {
+                    selected + 1
+                },
+            ],
+        ),
+    decreases memory.len(),
+{
+    reveal_with_fuel(remove_index, 2);
+    reveal_with_fuel(subtree, 2);
+    if memory.len() > 0 {
+        select_remove(memory.drop_last(), removed, selected);
+        let value = memory.last();
+        let source = if selected < removed {
+            selected
+        } else {
+            selected + 1
+        };
+        slot_prefix(source, value.path);
+        select_push(memory.drop_last(), value, seq![source]);
+        let before = remove_index(memory.drop_last(), removed);
+        if value.path.len() > 0 && value.path[0] == removed {
+            assert(source != removed);
+        } else {
+            let next = if value.path.len() > 0 && value.path[0] > removed {
+                Record { path: value.path.update(0, value.path[0] - 1), ..value }
+            } else {
+                value
+            };
+            slot_prefix(selected, next.path);
+            assert((next.path.len() > 0 && next.path[0] == selected) == (value.path.len() > 0
+                && value.path[0] == source));
+            assert(next.path.skip(1) =~= value.path.skip(1));
+            select_push(before, next, seq![selected]);
+            assert(before.push(next).drop_last() =~= before);
+        }
+        assert(memory =~= memory.drop_last().push(value));
+    }
+}
+
+/// Publish indexed views for one checked removal, keeping inverse reindexing
+/// local to that forest rather than enabling it for every matching expression.
+pub proof fn remove_index_views(memory: Seq<Record>, removed: int)
+    ensures
+        forall|selected: int|
+            selected >= 0 ==> #[trigger] subtree(remove_index(memory, removed), seq![selected])
+                == subtree(
+                memory,
+                seq![
+                    if selected < removed {
+                        selected
+                    } else {
+                        selected + 1
+                    },
+                ],
+            ),
+{
+    assert forall|selected: int| selected >= 0 implies #[trigger] subtree(
+        remove_index(memory, removed),
+        seq![selected],
+    ) == subtree(
+        memory,
+        seq![
+            if selected < removed {
+                selected
+            } else {
+                selected + 1
+            },
+        ],
+    ) by {
+        select_remove(memory, removed, selected);
+    }
+}
+
 /// Move a runtime interval to consecutive destination indices in reverse order.
 /// The nested descriptors and their byte extents are preserved independently of
 /// the element layout; repeated pops followed by pushes induce this map.
@@ -1378,6 +1462,45 @@ pub proof fn tile_children_facts(block: Seq<Record>, width: int, count: int, sta
         assert(cost(before, 0) + cost(next, 0) == count * cost(block, 0));
     } else {
         cost_empty(0);
+    }
+}
+
+/// Apply an ordered ownership transition to the evolving forest. Each step
+/// sees all earlier updates, including repeated visits and shifted indices.
+#[verifier::opaque]
+pub open spec fn iterate(
+    step: spec_fn(int, Seq<Record>) -> Seq<Record>,
+    initial: Seq<Record>,
+    count: int,
+) -> Seq<Record>
+    decreases count,
+{
+    if count <= 0 {
+        initial
+    } else {
+        step(count - 1, iterate(step, initial, count - 1))
+    }
+}
+
+/// Iteration preserves validity when its checked transition preserves validity
+/// for every reachable ordinal and every valid input forest.
+pub proof fn iterate_facts(
+    step: spec_fn(int, Seq<Record>) -> Seq<Record>,
+    initial: Seq<Record>,
+    count: int,
+)
+    requires
+        count >= 0,
+        well_formed(initial),
+        forall|i: int, state: Seq<Record>|
+            0 <= i < count && well_formed(state) ==> well_formed(#[trigger] step(i, state)),
+    ensures
+        well_formed(iterate(step, initial, count)),
+    decreases count,
+{
+    reveal_with_fuel(iterate, 2);
+    if count > 0 {
+        iterate_facts(step, initial, count - 1);
     }
 }
 
@@ -2028,6 +2151,11 @@ pub proof fn generate_children_views(
             generate_children_at(builder, width, count, start, k, r);
             assert(index == start + width * k + r);
         } else {
+            assert(index < start || index >= start + width * count) by (nonlinear_arith)
+                requires
+                    width >= 0,
+                    !(width > 0 && start <= index < start + width * count),
+            ;
             generate_children_outside(builder, width, count, start, index);
         }
     }

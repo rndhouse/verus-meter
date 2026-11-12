@@ -30,6 +30,7 @@ fn with_trace(checked: &Checked, test: impl FnOnce(&mut Trace<'_>)) {
         loop_allocations: Vec::new(),
         loop_calls: Vec::new(),
         loop_scratch: HashMap::new(),
+        loop_repetitions: HashMap::new(),
         loop_size_ceiling: 0,
         allocation_checks: Vec::new(),
         loop_transfers: HashMap::new(),

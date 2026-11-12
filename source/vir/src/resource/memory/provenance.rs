@@ -101,7 +101,7 @@ impl Analysis<'_> {
                 self.storage.release_input(input);
                 self.storage.add_input(exit);
                 node.input = Some(exit);
-                regions.push(super::loops::Region { location, entry, exit });
+                regions.push(super::loops::Region { location, entry, body: input, exit });
             }
         }
         Ok(regions)

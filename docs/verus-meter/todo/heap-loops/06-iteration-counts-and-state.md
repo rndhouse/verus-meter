@@ -12,7 +12,7 @@ so supported scalar transitions can determine iteration counts and exit state.
 ## Current restriction
 
 Ownership summaries recognize a counter below a stable upper bound with a unit
-increment, or a collection length above a stable lower bound with a pop. Other
+increment, or a collection length above a stable lower bound with one removal. Other
 strides, countdowns, changing bounds, and updates to additional persistent scalar
 state are not generally supported. Reads and dependencies involving collections
 modified by the iteration also restrict summary construction.
@@ -38,6 +38,10 @@ ownership summary already represents those operations.
 - [ ] Broaden checked allocation-envelope inference beyond literal ceilings in
   invariants, including symbolic bounds and observations inherited from enclosing
   loops. Keep operation-site extent checks and complete allocation descriptors.
+- [ ] Extend cost and indexed-view induction for evolving forest recurrences
+  beyond their finite normalization window. Preserve the exact recurrence for
+  larger counts and avoid expanding unrelated descriptor views in failing-budget
+  queries.
 - [ ] Preserve integer overflow obligations and distinguish loop termination
   proofs from the ownership facts needed to describe completed iterations.
 

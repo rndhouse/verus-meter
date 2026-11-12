@@ -87,6 +87,7 @@ impl Analysis<'_> {
         // candidates cannot reuse the first iteration's finite charge extent.
         self.growth.begin_element_iteration(&elements);
         self.discard(&record.condition)?;
+        record.completed = self.loop_progress(&record)?;
         self.discard(&record.body)?;
         if !nested {
             self.finish_element_reservations()?;
@@ -184,6 +185,7 @@ impl Analysis<'_> {
         loops: &std::collections::HashMap<u64, Vec<Transfer>>,
         growth: &std::collections::HashMap<u64, Vec<(super::super::paths::LocalPath, Expr)>>,
         scratch: &std::collections::HashMap<u64, Expr>,
+        repetitions: &std::collections::HashMap<u64, Expr>,
     ) -> Result<(), VirErr> {
         for (id, transfers) in loops {
             let record = self.transitions.loops[id].clone();
@@ -206,72 +208,60 @@ impl Analysis<'_> {
                     .fold(contracts::literal(&record.span, 0), |sum, amount| {
                         contracts::add(&record.span, sum, amount)
                     });
-                let reserve = contracts::multiply(
-                    &record.span,
-                    amount,
-                    contracts::literal(&record.span, record.size_ceiling.unwrap_or(0)),
-                );
-                let call_ceiling =
-                    scratch.get(id).cloned().unwrap_or_else(|| contracts::literal(&record.span, 0));
-                let mut local_peak = contracts::literal(&record.span, 0);
-                for cost in &record.local_costs {
-                    // Body-local scalar aliases do not exist at the loop head.
-                    // Their helper allowances use checked iteration ceilings;
-                    // explicit layout charges and stable bounds stay unchanged.
-                    let cost = cost.map(&record.span, &|amount| {
-                        let stable = crate::ast_visitor::expr_visitor_check(amount, &mut |scope, value| {
-                            if matches!(&value.x, ExprX::Var(name) if !scope.contains_key(name) && !record.proof_scalars.contains(name)) { Err(()) } else { Ok(()) }
-                        }).is_ok();
-                        Ok(if stable { amount.clone() } else { call_ceiling.clone() })
-                    })?;
-                    let selected = cost.select(
-                        &record.span,
-                        &super::super::footprint::MemorySelection::kind(
-                            super::super::footprint::MemoryKind::host_local(),
-                        ),
-                    );
-                    local_peak = contracts::maximum(&record.span, local_peak, selected);
-                }
-                let reserve = contracts::add(&record.span, reserve, local_peak);
-                let candidates = record
-                    .entry_headroom
-                    .iter()
-                    .map(|candidate| {
-                        let ExprX::Binary(BinaryOp::Inequality(InequalityOp::Le), live, bound) =
-                            &candidate.x
-                        else {
-                            unreachable!()
-                        };
-                        crate::ast_util::mk_ineq(
-                            &record.span,
-                            &contracts::add(&record.span, live.clone(), reserve.clone()),
-                            bound,
-                            InequalityOp::Le,
-                        )
-                    })
-                    .collect();
-                let facts = self.freeze_loop_facts(&record.span, candidates)?;
-                for fact in &facts {
-                    let check = SpannedTyped::new(
-                        &record.span,
-                        &crate::ast_util::unit_typ(),
-                        ExprX::AssertAssume {
-                            is_assume: false,
-                            expr: fact.clone(),
-                            msg: Some(crate::messages::error(
-                                &record.span,
-                                "memory budget exceeded: cannot reserve heap headroom for loop allocations",
-                            )),
-                        },
-                    );
-                    self.growth
-                        .before
-                        .entry(*id)
-                        .or_default()
-                        .push(crate::def::Spanned::new(record.span.clone(), StmtX::Expr(check)));
-                }
-                self.growth.loops.entry(*id).or_default().extend(facts);
+                self.reserve_loop_headroom(&record, amount, scratch.get(id))?;
             }
+        }
+        for (id, allowance) in repetitions {
+            let record = self.transitions.loops[id].clone();
+            let sum = |entry: bool| {
+                record.charges.iter().fold(contracts::literal(&record.span, 0), |sum, charge| {
+                    let mut amount =
+                        if entry { charge.entry.clone() } else { charge.current.clone() };
+                    if let Some((current, initial)) = &charge.backing {
+                        amount = contracts::add(
+                            &record.span,
+                            amount,
+                            if entry { initial.clone() } else { current.clone() },
+                        );
+                    }
+                    contracts::add(&record.span, sum, amount)
+                })
+            };
+            let mut upper = sum(true);
+            if contracts::constant(allowance) != Some(0) {
+                let (completed, entry) = record.completed.clone().ok_or_else(|| {
+                    super::super::model::unsupported(
+                        &record.span,
+                        "allocation growth without a checked iteration progress observation",
+                    )
+                })?;
+                self.growth.loops.entry(*id).or_default().extend([
+                    crate::ast_util::mk_ineq(
+                        &record.span,
+                        &contracts::literal(&record.span, 0),
+                        &entry,
+                        InequalityOp::Le,
+                    ),
+                    crate::ast_util::mk_ineq(
+                        &record.span,
+                        &contracts::literal(&record.span, 0),
+                        &completed,
+                        InequalityOp::Le,
+                    ),
+                ]);
+                upper = contracts::add(
+                    &record.span,
+                    upper,
+                    contracts::multiply(&record.span, allowance.clone(), completed),
+                );
+                self.reserve_loop_headroom(&record, allowance.clone(), scratch.get(id))?;
+            }
+            self.growth.loops.entry(*id).or_default().push(crate::ast_util::mk_ineq(
+                &record.span,
+                &sum(false),
+                &upper,
+                InequalityOp::Le,
+            ));
         }
         for (id, bounds) in growth {
             let record = &self.transitions.loops[id];
@@ -285,9 +275,12 @@ impl Analysis<'_> {
                     .or_insert_with(|| amount.clone());
             }
             for (location, amount) in envelopes {
-                if let Some(charge) =
-                    record.charges.iter().find(|charge| &charge.location == location)
-                {
+                // These append envelopes describe owning children. Scalar
+                // vector backing follows its existing growth policy; its new
+                // snapshot is needed only by the ordered recurrence's sum.
+                if let Some(charge) = record.charges.iter().find(|charge| {
+                    &charge.location == location && contracts::constant(&charge.current) != Some(0)
+                }) {
                     // Isolated loop queries do not retain the executable
                     // length's type bound for an erased integer snapshot.
                     self.growth.loops.entry(*id).or_default().push(crate::ast_util::mk_ineq(
@@ -327,6 +320,112 @@ impl Analysis<'_> {
             self.growth.loops.entry(*id).or_default().extend(record.element_facts.iter().cloned());
         }
         self.inherit_loop_entries()
+    }
+
+    /// Reserve temporary and retained headroom using ordinary entry checks and
+    /// inductive invariants, shared by disjoint and evolving loop summaries.
+    fn reserve_loop_headroom(
+        &mut self,
+        record: &Loop,
+        amount: Expr,
+        scratch: Option<&Expr>,
+    ) -> Result<(), VirErr> {
+        let reserve = contracts::multiply(
+            &record.span,
+            amount,
+            contracts::literal(&record.span, record.size_ceiling.unwrap_or(0)),
+        );
+        let call_ceiling = scratch.cloned().unwrap_or_else(|| contracts::literal(&record.span, 0));
+        let mut local_peak = contracts::literal(&record.span, 0);
+        for cost in &record.local_costs {
+            // Body-local scalar aliases do not exist at the loop head.
+            // Their helper allowances use checked iteration ceilings;
+            // explicit layout charges and stable bounds stay unchanged.
+            let cost = cost.map(&record.span, &|amount| {
+                        let stable = crate::ast_visitor::expr_visitor_check(amount, &mut |scope, value| {
+                            if matches!(&value.x, ExprX::Var(name) if !scope.contains_key(name) && !record.proof_scalars.contains(name)) { Err(()) } else { Ok(()) }
+                        }).is_ok();
+                        Ok(if stable { amount.clone() } else { call_ceiling.clone() })
+                    })?;
+            let selected = cost.select(
+                &record.span,
+                &super::super::footprint::MemorySelection::kind(
+                    super::super::footprint::MemoryKind::host_local(),
+                ),
+            );
+            local_peak = contracts::maximum(&record.span, local_peak, selected);
+        }
+        let reserve = contracts::add(&record.span, reserve, local_peak);
+        let candidates = record
+            .entry_headroom
+            .iter()
+            .map(|candidate| {
+                let ExprX::Binary(BinaryOp::Inequality(InequalityOp::Le), live, bound) =
+                    &candidate.x
+                else {
+                    unreachable!()
+                };
+                crate::ast_util::mk_ineq(
+                    &record.span,
+                    &contracts::add(&record.span, live.clone(), reserve.clone()),
+                    bound,
+                    InequalityOp::Le,
+                )
+            })
+            .collect();
+        let facts = self.freeze_loop_facts(&record.span, candidates)?;
+        for fact in &facts {
+            let check = SpannedTyped::new(
+                &record.span,
+                &crate::ast_util::unit_typ(),
+                ExprX::AssertAssume {
+                    is_assume: false,
+                    expr: fact.clone(),
+                    msg: Some(crate::messages::error(
+                        &record.span,
+                        "memory budget exceeded: cannot reserve heap headroom for loop allocations",
+                    )),
+                },
+            );
+            self.growth
+                .before
+                .entry(record.span.id)
+                .or_default()
+                .push(crate::def::Spanned::new(record.span.clone(), StmtX::Expr(check)));
+        }
+        self.growth.loops.entry(record.span.id).or_default().extend(facts);
+        Ok(())
+    }
+
+    /// Snapshot executable progress separately from forest path algebra.
+    fn loop_progress(&mut self, record: &Loop) -> Result<Option<(Expr, Expr)>, VirErr> {
+        let Some(control) = &record.control else { return Ok(None) };
+        let (left, _) = control.bounds();
+        let current = if control.counter().is_some() {
+            super::super::projections::spec_value(left)?
+        } else if let Some(super::super::transfer::checked::Operation::Length { receiver }) =
+            self.transitions.operation_at(&left.span)
+        {
+            let value = super::super::projections::spec_value(&receiver.source)?;
+            self.owner_length(
+                &record.span,
+                &super::super::heap::Owner {
+                    source: Some((receiver.typ.clone(), value)),
+                    ..Default::default()
+                },
+            )
+        } else {
+            return Ok(None);
+        };
+        let current =
+            SpannedTyped::new(&record.span, &crate::ast_util::int_typ(), current.x.clone());
+        let entry = self.loop_snapshot(&record.span, &current);
+        let completed = if control.counter().is_some() {
+            contracts::subtract(&record.span, current, entry.clone())
+        } else {
+            contracts::subtract(&record.span, entry.clone(), current)
+        };
+        Ok(Some((completed, entry)))
     }
 
     /// A nested query needs facts about its actual entry, not observations from
@@ -415,15 +514,19 @@ impl Analysis<'_> {
         let mut roles = Vec::new();
         for (name, owner) in self.heap.owners.iter().chain(self.heap.borrowed.iter()) {
             owner.visit_paths(&mut vec![], &mut |path, node| {
-                if let Some(elements) = &node.elements {
-                    if elements.precise {
-                        roles.push((
-                            (name.clone(), path.clone()),
-                            elements.states.values().copied().collect::<Vec<_>>(),
-                            node.vector,
-                            self.owner_length(span, node),
-                        ));
-                    }
+                if node.vector.is_some()
+                    || node.elements.as_ref().is_some_and(|elements| elements.precise)
+                {
+                    roles.push((
+                        (name.clone(), path.clone()),
+                        node.elements
+                            .as_ref()
+                            .filter(|elements| elements.precise)
+                            .map(|elements| elements.states.values().copied().collect::<Vec<_>>())
+                            .unwrap_or_default(),
+                        node.vector,
+                        self.owner_length(span, node),
+                    ));
                 }
             });
         }

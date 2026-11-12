@@ -45,6 +45,7 @@ struct Selection {
     presence: (VarIdent, Expr),
 }
 
+#[derive(Clone)]
 struct Trace<'a> {
     layouts: &'a super::super::layout::Layouts,
     functions: &'a HashMap<Fun, Function>,
@@ -78,6 +79,8 @@ struct Trace<'a> {
     loop_calls: Vec<(Span, Expr, Expr)>,
     /// Closed helper workspace ceilings for generated body headroom candidates.
     loop_scratch: HashMap<u64, Expr>,
+    /// Checked allocation ceilings used to prove recurrence charge induction.
+    loop_repetitions: HashMap<u64, Expr>,
     /// Invariant-proposed scalar ceiling; uses are checked at their operations.
     loop_size_ceiling: u64,
     /// Bounds published only when the complete ownership template succeeds.
@@ -117,6 +120,7 @@ pub(super) fn summarize(
         loop_allocations: Vec::new(),
         loop_calls: Vec::new(),
         loop_scratch: HashMap::new(),
+        loop_repetitions: HashMap::new(),
         loop_size_ceiling: 0,
         allocation_checks: Vec::new(),
         loop_transfers: HashMap::new(),
@@ -212,6 +216,7 @@ pub(super) fn summarize(
         growth: trace.loop_growth,
         checks: trace.allocation_checks,
         scratch: trace.loop_scratch,
+        repetitions: trace.loop_repetitions,
         template: Template {
             regions: trace.regions,
             symbols: trace.symbols,

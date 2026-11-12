@@ -1,7 +1,7 @@
 # 5. Borrowed collections and incoming ownership
 
 Builds on tasks [1](complete/01-compose-iteration-operations.md) through
-[4](04-indexed-traversal.md).
+[4](complete/04-indexed-traversal.md).
 
 ## Goal
 
@@ -11,7 +11,8 @@ helper delegation.
 
 ## Current restriction
 
-Existing by-value inputs support consumption and whole-child transfer loops.
+Existing by-value inputs support consuming transformations, transfers, and
+indexed removals at the collection root.
 Extraction through borrowed incoming collections remains blocked in loops.
 Indexed incoming children and indexed replacement in owned inputs also have
 loop restrictions. Forwarding incoming runtime ownership to another helper can

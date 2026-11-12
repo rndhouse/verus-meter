@@ -7,6 +7,7 @@ use crate::resource::memory::loops::Loop;
 
 mod composition;
 mod guards;
+mod indexed;
 
 /// One iteration's disjoint roles and whole-child transfer edges. Applying this
 /// graph to physical forests or original-input regions uses the same trip count.
@@ -33,39 +34,17 @@ fn independent(value: &Expr, name: &VarIdent) -> bool {
 impl Trace<'_> {
     pub(super) fn loop_value(&mut self, span: &Span) -> Option<Value> {
         let record = self.checked.loops.get(&span.id)?.clone();
-        let before = self.state.clone();
-        let used = self.used.clone();
-        let regions = self.regions.clone();
-        let tokens = self.loop_tokens.clone();
-        let roots = self.loop_roots.clone();
-        let inputs = self.loop_inputs.clone();
-        let allocations = self.loop_allocations.clone();
-        let calls = self.loop_calls.clone();
-        let scratch = self.loop_scratch.clone();
-        let size_ceiling = self.loop_size_ceiling;
-        let checks = self.allocation_checks.len();
-        let loop_transfers = self.loop_transfers.clone();
-        let loop_growth = self.loop_growth.clone();
-        let effects = self.effects.len();
-        let depth = self.branch_depth;
+        // Each planner is transactional: a rejected representation must not
+        // publish partial state, observations, or body-proof evidence.
+        let before = self.clone();
         if let Some(value) = self.collection_loop(&record) {
             return Some(value);
         }
-        self.state = before;
-        self.regions = regions;
-        self.loop_tokens = tokens;
-        self.loop_roots = roots;
-        self.loop_inputs = inputs;
-        self.loop_allocations = allocations;
-        self.loop_calls = calls;
-        self.loop_scratch = scratch;
-        self.loop_size_ceiling = size_ceiling;
-        self.allocation_checks.truncate(checks);
-        self.loop_transfers = loop_transfers;
-        self.loop_growth = loop_growth;
-        self.used = used;
-        self.effects.truncate(effects);
-        self.branch_depth = depth;
+        *self = before.clone();
+        if let Some(value) = self.indexed_loop(&record) {
+            return Some(value);
+        }
+        *self = before;
         // Read-only eligibility was classified with the body proof's record.
         if !record.read_only() {
             return None;

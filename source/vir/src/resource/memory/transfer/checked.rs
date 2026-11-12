@@ -167,6 +167,11 @@ pub(in super::super) struct Checked {
 }
 
 impl Checked {
+    /// Read the semantic operation already accepted by body accounting.
+    pub(in super::super) fn operation_at(&self, span: &Span) -> Option<&Operation> {
+        self.operations.get(&span.id)
+    }
+
     pub(in super::super) fn input(&mut self, parameter: usize, path: OwnerPath) {
         assert_eq!(self.regions, 0);
         self.inputs.push((parameter, path));

@@ -611,7 +611,12 @@ pub(super) fn check(
         &analysis.transitions,
     )?;
     if let Some(inferred) = &inferred {
-        analysis.apply_loop_evidence(&inferred.loops, &inferred.growth, &inferred.scratch)?;
+        analysis.apply_loop_evidence(
+            &inferred.loops,
+            &inferred.growth,
+            &inferred.scratch,
+            &inferred.repetitions,
+        )?;
         for (span, condition) in &inferred.checks {
             let check = SpannedTyped::new(
                 span,

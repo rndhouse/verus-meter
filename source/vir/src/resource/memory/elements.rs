@@ -197,6 +197,26 @@ impl Analysis<'_> {
         child: Owner,
         changed: bool,
     ) -> Result<(), VirErr> {
+        if !changed {
+            // A checked read-only loan did not change any descriptor. Restore
+            // its saved forest directly instead of rebuilding it through the
+            // executable value, which would discard frame/count information
+            // and multiply nested selection proofs at loop conditions.
+            self.retire_element_loan(span, &child);
+            self.release_owner_storage(child, span, false);
+            self.growth.after.entry(span.id).or_default().push(super::metadata::expr::assign(
+                span,
+                &elements.records,
+                original,
+            ));
+            self.set_element_records(span, elements, true);
+            for id in elements.states.values() {
+                let bytes = self.growth.elements[*id].bytes.clone();
+                let next = self.growth.after_value(span, &bytes);
+                self.growth.element_updates.entry(span.id).or_default().insert(*id, next);
+            }
+            return Ok(());
+        }
         let uncharged = self.growth.owner_zero_charge(&child);
         self.merge_element_minima(span, elements, &child);
         let mut proofs = Vec::new();
@@ -273,15 +293,7 @@ impl Analysis<'_> {
         ]);
         self.growth.after.entry(span.id).or_default().extend(proofs);
         self.prove_element_frame(span, elements, original, path, child_records);
-        child.visit(&mut |node| {
-            if let Some(elements) = &node.elements {
-                for id in elements.states.values() {
-                    if let Some(updates) = self.growth.element_updates.get_mut(&span.id) {
-                        updates.remove(id);
-                    }
-                }
-            }
-        });
+        self.retire_element_loan(span, &child);
         elements.inputs.extend(child.inputs());
         child.visit(&mut |node| {
             if !node.inputs().is_empty()
@@ -306,6 +318,20 @@ impl Analysis<'_> {
             self.growth.element_updates.entry(span.id).or_default().insert(*id, next);
         }
         Ok(())
+    }
+
+    /// Loan-local child counters must not commit after their temporary owner
+    /// has been retired, independently of whether the loan changed ownership.
+    fn retire_element_loan(&mut self, span: &Span, child: &Owner) {
+        child.visit(&mut |node| {
+            if let Some(elements) = &node.elements {
+                for id in elements.states.values() {
+                    if let Some(updates) = self.growth.element_updates.get_mut(&span.id) {
+                        updates.remove(id);
+                    }
+                }
+            }
+        });
     }
 
     pub(super) fn new_elements(&mut self, span: &Span) -> Elements {

@@ -98,6 +98,8 @@ pub(super) struct Inferred {
     pub(super) checks: Vec<(Span, Expr)>,
     /// Checked helper workspace ceilings with all iteration-local aliases closed.
     pub(super) scratch: HashMap<u64, Expr>,
+    /// Per-visit allocation ceilings for evolving collection recurrences.
+    pub(super) repetitions: HashMap<u64, Expr>,
 }
 
 pub(super) fn summarize(

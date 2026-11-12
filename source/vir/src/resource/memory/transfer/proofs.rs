@@ -47,6 +47,9 @@ pub(super) fn forest(span: &Span, value: &Expr, proofs: &mut Vec<Stmt>) -> Resul
                         "shift_children_facts",
                         args.as_ref().clone(),
                     )),
+                    "iterate" => {
+                        iterated(span, args, proofs)?;
+                    }
                     "generate_children" => {
                         let args = generated(span, args, proofs)?;
                         proofs.push(expr::lemma(span, "generate_children_facts", args.clone()));
@@ -406,4 +409,75 @@ fn generated(span: &Span, args: &Exprs, proofs: &mut Vec<Stmt>) -> Result<Vec<Ex
     let mut args = args.as_ref().clone();
     args[0] = builder;
     Ok(args)
+}
+
+/// Check one ordered recurrence step under the same validity assumption that
+/// the verified iterator establishes for every preceding accumulator.
+fn iterated(span: &Span, args: &Exprs, proofs: &mut Vec<Stmt>) -> Result<(), VirErr> {
+    let ExprX::Closure(binders, body) = &args[0].x else {
+        return Err(super::super::model::unsupported(
+            span,
+            "an ownership recurrence without its checked transition",
+        ));
+    };
+    let (builder, declaration) =
+        expr::local(span, "iteration_step", args[0].typ.clone(), args[0].clone(), Mode::Spec);
+    proofs.push(declaration);
+    let index =
+        SpannedTyped::new(span, &crate::ast_util::int_typ(), ExprX::Var(binders[0].name.clone()));
+    let state = SpannedTyped::new(span, &expr::memory_type(), ExprX::Var(binders[1].name.clone()));
+    let require = crate::ast_util::conjoin(
+        span,
+        &vec![
+            crate::ast_util::mk_ineq(span, &expr::integer(span, 0), &index, InequalityOp::Le),
+            crate::ast_util::mk_ineq(span, &index, &args[2], InequalityOp::Lt),
+            expr::operation(span, "well_formed", vec![state.clone()], crate::ast_util::bool_typ()),
+        ],
+    );
+    let applied = SpannedTyped::new(
+        span,
+        &expr::memory_type(),
+        ExprX::Call {
+            target: CallTarget::FnSpec(builder.clone()),
+            args: Arc::new(vec![index, state]),
+            post_args: None,
+            body: None,
+        },
+    );
+    let ensure =
+        expr::operation(span, "well_formed", vec![applied.clone()], crate::ast_util::bool_typ());
+    let ensure = SpannedTyped::new(
+        span,
+        &crate::ast_util::bool_typ(),
+        ExprX::WithTriggers { triggers: Arc::new(vec![Arc::new(vec![applied])]), body: ensure },
+    );
+    let mut body_proofs = Vec::new();
+    forest(span, body, &mut body_proofs)?;
+    let proof = SpannedTyped::new(
+        span,
+        &crate::ast_util::unit_typ(),
+        ExprX::AssertBy {
+            vars: binders.clone(),
+            require,
+            ensure,
+            proof: crate::ast_util::mk_block(span, body_proofs, None),
+        },
+    );
+    proofs.push(crate::def::Spanned::new(span.clone(), StmtX::Expr(proof)));
+    proofs.push(expr::lemma(
+        span,
+        "iterate_facts",
+        vec![builder, args[1].clone(), args[2].clone()],
+    ));
+    let fuel = SpannedTyped::new(
+        span,
+        &crate::ast_util::unit_typ(),
+        ExprX::Fuel(
+            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "iterate"),
+            simplify::FINITE_GENERATION_LIMIT + 1,
+            false,
+        ),
+    );
+    proofs.push(crate::def::Spanned::new(span.clone(), StmtX::Expr(fuel)));
+    Ok(())
 }

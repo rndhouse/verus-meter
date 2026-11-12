@@ -7,7 +7,7 @@ not promise support for every Rust program or every owning container.
 1. [Compose iteration operations](complete/01-compose-iteration-operations.md) — complete
 2. [Conditional ownership effects](complete/02-conditional-ownership-effects.md) — complete
 3. [Transform children during traversal](complete/03-transform-children.md) — complete
-4. [Indexed traversal and updates](04-indexed-traversal.md)
+4. [Indexed traversal and updates](complete/04-indexed-traversal.md) — complete
 5. [Borrowed collections and incoming ownership](05-borrowed-and-incoming-ownership.md)
 6. [General iteration counts and carried state](06-iteration-counts-and-state.md)
 7. [Other loop forms and early exits](07-loop-forms-and-exits.md)
@@ -22,7 +22,8 @@ conditions and counter thresholds with ordered, exact selection ranges. Roles
 can occupy fixed fields; children can contain nested supported ownership shapes.
 Parametric child transformations preserve nested extraction, replacement, growth,
 release, and nonuniform generated footprints. Leaf-only results retain inferred
-child descriptors. Indexed roles, incoming delegation, broader progress and
+child descriptors. Ordered recurrences extend this to indexed updates, revisits,
+and removal reindexing. Incoming delegation, broader progress/count proofs, and
 control forms remain in the following tasks.
 Local peak proofs support some cases that cannot yet be exported as precise
 ownership summaries.

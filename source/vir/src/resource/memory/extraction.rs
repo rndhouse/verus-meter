@@ -173,6 +173,16 @@ impl Analysis<'_> {
                     self.growth.before.entry(source.span.id).or_default().push(metadata::lemma(
                         &source.span,
                         "remove_partition",
+                        vec![elements.records.clone(), removal.index.clone()],
+                    ));
+                }
+                if !optional && self.growth.loop_depth > 0 {
+                    // Reestablish quantified reservation invariants for the
+                    // shifted survivors. Straight-line proofs need only the
+                    // selected partition, avoiding unrelated indexed views.
+                    self.growth.before.entry(source.span.id).or_default().push(metadata::lemma(
+                        &source.span,
+                        "remove_index_views",
                         vec![elements.records.clone(), removal.index],
                     ));
                 }

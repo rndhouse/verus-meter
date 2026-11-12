@@ -41,8 +41,10 @@ impl Control {
 /// Body accounting and checked operation records remain authoritative.
 #[derive(Clone, Default)]
 struct Effects {
-    /// Direct append receivers cannot use a non-growing entry-byte ceiling.
+    /// Direct appends and retained helper growth invalidate entry-byte ceilings.
     appends: HashSet<LocalPath>,
+    /// Replacements can increase the enclosing runtime child's footprint.
+    replacements: HashSet<LocalPath>,
     /// Assigned locals are checked against the summary's persistent scalar state.
     writes: HashSet<VarIdent>,
     /// Helper templates require runtime-forest classification in the loop proof.
@@ -69,6 +71,9 @@ pub(super) struct Loop {
     /// Literal scalar ceiling proposed by user invariants. It is only a proof
     /// candidate: every use remains checked by the ordinary loop obligations.
     pub(super) size_ceiling: Option<u64>,
+    /// Completed visits and their immutable entry observation. Both their
+    /// nonnegativity and byte bounds remain ordinary inductive candidates.
+    completed: Option<(Expr, Expr)>,
     /// Original regions after all iterations, distinct from first-iteration IDs.
     pub(super) regions: Vec<Region>,
     /// Entry snapshots for local child-charge conservation proofs.
@@ -99,6 +104,8 @@ pub(super) struct Region {
     pub(super) location: LocalPath,
     /// Original region before any iterations, absent for fresh local storage.
     pub(super) entry: Option<usize>,
+    /// Region produced by the checked representative body, before repetition.
+    pub(super) body: usize,
     /// Original region after all iterations, distinct from first-iteration IDs.
     pub(super) exit: usize,
 }
@@ -169,7 +176,12 @@ impl Loop {
                 if !in_body {
                     return Ok::<(), VirErr>(());
                 }
-                if let ExprX::Assign { place, .. } = &expression.x {
+                if let ExprX::Assign { place, typ, .. } = &expression.x {
+                    if layouts.owner(typ) {
+                        if let Some(location) = super::paths::place(place, typ) {
+                            effects.replacements.insert(location);
+                        }
+                    }
                     if let PlaceX::Local(name) = &place.x {
                         effects.writes.insert(name.clone());
                     }
@@ -188,9 +200,35 @@ impl Loop {
                     }
                     if let Some(summary) = summaries.get(fun) {
                         effects.templates |= summary.transfer.is_some();
-                        let changes = !summary.allocations.collections.is_empty()
+                        let changes = !summary.allocations.retained.is_empty()
+                            || !summary.allocations.collections.is_empty()
                             || !summary.allocations.children.is_empty()
                             || !summary.vectors.removals.is_empty();
+                        // A complete recurrence may have no monotone effect
+                        // program. Its checked retained allocations still mark
+                        // enclosing runtime-child byte sums as potentially growing.
+                        for (parameter, changed) in summary.allocations.retained.keys() {
+                            if let Some(argument) = args.get(*parameter) {
+                                if let Some((name, mut path)) = super::paths::expr(
+                                    argument,
+                                    super::paths::referent(&argument.typ),
+                                ) {
+                                    path.extend(changed.iter().cloned());
+                                    effects.appends.insert((name, path));
+                                }
+                            }
+                        }
+                        for (parameter, replaced) in summary.allocations.children.keys() {
+                            if let Some(argument) = args.get(*parameter) {
+                                if let Some((name, mut path)) = super::paths::expr(
+                                    argument,
+                                    super::paths::referent(&argument.typ),
+                                ) {
+                                    path.extend(replaced.iter().cloned());
+                                    effects.replacements.insert((name, path));
+                                }
+                            }
+                        }
                         if let Some(program) =
                             summary.transfer.as_ref().and_then(|template| template.effects.as_ref())
                         {
@@ -210,11 +248,7 @@ impl Loop {
                                 }
                             }
                         }
-                        effects.opaque_helpers |= changes
-                            && summary
-                                .transfer
-                                .as_ref()
-                                .is_none_or(|template| template.effects.is_none());
+                        effects.opaque_helpers |= changes && summary.transfer.is_none();
                     }
                 }
                 Ok(())
@@ -231,6 +265,7 @@ impl Loop {
         }
         Ok(Self {
             size_ceiling,
+            completed: None,
             span: value.span.clone(),
             condition: condition.clone(),
             body: body.clone(),
@@ -248,8 +283,47 @@ impl Loop {
         })
     }
 
-    pub(super) fn appends_to(&self, location: &LocalPath) -> bool {
-        self.effects.appends.contains(location)
+    /// Growth beneath an indexed child changes its parent's byte sum even if
+    /// the parent never appends. Path classes suffice to omit a frame candidate;
+    /// the ordered recurrence still retains the actual runtime index.
+    pub(super) fn grows_children(&self, location: &LocalPath) -> bool {
+        self.effects
+            .appends
+            .iter()
+            .any(|changed| changed == location || nested_runtime_path(location, changed))
+            || self
+                .effects
+                .replacements
+                .iter()
+                .any(|changed| nested_runtime_path(location, changed))
+    }
+
+    /// A replacement can reduce reservations in the selected ownership class.
+    /// It does not change the descriptors of untouched children.
+    pub(super) fn replaces_class(
+        &self,
+        location: &LocalPath,
+        class: &[super::metadata::reservations::Step],
+    ) -> bool {
+        self.effects.replacements.iter().any(|changed| {
+            if changed.0 != location.0 || !changed.1.starts_with(&location.1) {
+                return false;
+            }
+            let suffix = &changed.1[location.1.len()..];
+            if !matches!(suffix.first(), Some(super::heap::OwnerSlot::Element(_))) {
+                return false;
+            }
+            let selected: Vec<_> = suffix[1..]
+                .iter()
+                .map(|slot| match slot {
+                    super::heap::OwnerSlot::Element(_) => {
+                        super::metadata::reservations::Step::Repeated
+                    }
+                    _ => super::metadata::reservations::Step::Fixed(slot.clone()),
+                })
+                .collect();
+            class.starts_with(&selected)
+        })
     }
 
     pub(super) fn uses_templates(&self) -> bool {
@@ -309,4 +383,12 @@ fn local(value: &Expr) -> Option<VarIdent> {
         },
         _ => None,
     }
+}
+
+fn nested_runtime_path(parent: &LocalPath, child: &LocalPath) -> bool {
+    parent.0 == child.0
+        && child.1.starts_with(&parent.1)
+        && child.1[parent.1.len()..]
+            .iter()
+            .any(|slot| matches!(slot, super::heap::OwnerSlot::Element(_)))
 }

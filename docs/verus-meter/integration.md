@@ -130,14 +130,16 @@ ownership summarizer consume that record; the summarizer cannot infer an uncheck
 loop from source syntax. Source observations select proof candidates, while checked
 operations remain authoritative for ownership effects.
 
-Collection loop summaries interpret a representative iteration as disjoint persistent
-roles. [Ordered effects](../../source/vir/src/resource/memory/transfer/effects.rs)
-carry complete forests through direct operations, checked helper programs, and
-completed nested loops. Composition reduces exact whole-child restoration, then
-combines like monotone operations into append, removal, or transfer blocks. Logical
-block widths remain separate from byte costs. Transfers match ordered extraction
-identities and preserve complete child forests; partial routing within a block,
-permutations, changed payloads, and overlapping roles outside restoration reject.
+Loop repetition chooses a representation of the same checked transition.
+[Ordered effects](../../source/vir/src/resource/memory/transfer/effects.rs)
+normalize disjoint monotone roles into ranges, tiles, or generated blocks.
+[Ordered recurrences](../../source/vir/src/resource/memory/transfer/trace/loops/indexed.rs)
+apply the shared evaluator to an evolving forest when roles overlap or use runtime
+paths. Physical roots and original-input regions occupy separate packed slots,
+so repeated visits and removal reindexing see the previous result without mixing
+new allocations into original lifetimes. Bind all iteration symbols, retain
+count-observation read roles, and publish modified borrowed parameters. Rejected
+representations restore the complete evaluator state before another is tried.
 
 [Guarded programs](../../source/vir/src/resource/memory/transfer/trace/loops/guards.rs)
 partition counted iterations at stable scalar thresholds. Each ordered interval
@@ -156,7 +158,10 @@ validity, and indexed-view laws. View laws activate only for requested paths;
 prefix-cut descriptor laws are instantiated at the relevant range expressions.
 This keeps exact forests available without expanding every child in failing-budget
 queries. Temporary identities cannot escape a template, and reservation lower
-bounds remain separate from backing-byte upper bounds.
+bounds remain separate from backing-byte upper bounds. Evolving recurrences
+preserve validity by induction and expose small exact cases for proof automation;
+larger counts retain the same recurrence. Byte induction includes collection
+backing as well as child sums, with checked per-visit allocation ceilings.
 
 Composition retains every intermediate peak check. Local proofs use ordinary
 inductive charge and backing candidates derived from the completed effects. Nested
@@ -183,7 +188,11 @@ extraction precise.
 selected footprint from a precise collection and return its final descriptors.
 Finish nested loans from the inside out, after child updates commit. Pending
 cost proofs precede peak checks; validity proofs follow the operation. Indices
-must remain stable across argument evaluation. Pure projections and `spec_vec_index`
+must remain stable across argument evaluation. Read-only loans restore their
+saved forest and count policy without reconstructing unchanged descriptors.
+Indexed replacement clears affected uniform reservation candidates before body
+analysis, while preserving other classes and all individual descriptors.
+Pure projections and `spec_vec_index`
 avoid repeating executable indexing or its bounds checks.
 
 [Extraction](../../source/vir/src/resource/memory/extraction.rs) transfers storage

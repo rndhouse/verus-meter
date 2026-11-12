@@ -193,32 +193,21 @@ fn disjoint_fixed_roles_transfer_nested_children_with_a_symbolic_count() {
 }
 
 #[test]
-fn unsupported_iteration_dependencies_reject_generous_budgets() {
-    for (name, body, message) in [
-        (
-            "periodic_condition",
-            "if i % 2 == 0 { source.pop(); }",
-            "this executable expression or control-flow exit",
-        ),
-        ("indexed_remove", "source.remove(0);", "no precise helper summary can be inferred"),
-    ] {
-        rejects(
-            name,
-            &format!(
-                "fn f(mut source: Vec<Vec<u32>>, choose: bool) -> Vec<Vec<u32>>
-                    requires source.len() == 2, resources peak(memory) <= 100000 {{
-                    let mut destination = Vec::<Vec<u32>>::with_capacity(2);
-                    let mut i = 0usize;
-                    while i < 2
-                        invariant i <= 2, source.len() >= 2 - i, destination.len() <= i,
-                        decreases 2 - i,
-                    {{ {body} i += 1; }}
-                    destination
-                }}"
-            ),
-            message,
-        );
-    }
+fn periodic_iteration_predicates_remain_unsupported() {
+    rejects(
+        "periodic_condition",
+        "fn f(mut source: Vec<Vec<u32>>) -> Vec<Vec<u32>>
+        requires source.len() == 2, resources peak(memory) <= 100000 {
+        let destination = Vec::<Vec<u32>>::with_capacity(2);
+        let mut i = 0usize;
+        while i < 2
+            invariant i <= 2, source.len() >= 2-i,
+            decreases 2-i,
+        { if i % 2 == 0 { source.pop(); } i += 1; }
+        destination
+    }",
+        "this executable expression or control-flow exit",
+    );
 }
 
 #[test]
@@ -277,20 +266,6 @@ fn ordered_round_trips_preserve_complete_children_and_input_lifetimes() {
             .replace("OPERATIONS", operations)
             .replace("<= 512", "<= 128"),
         "memory budget exceeded",
-    );
-    rejects(
-        "changed_child_order",
-        &code
-            .replace(
-                "OPERATIONS",
-                &operations.replace(
-                    "state.values.push(second); state.values.push(first);",
-                    "state.values.push(first); state.values.push(second);",
-                ),
-            )
-            .replace("COUNT", "2")
-            .replace("BOUND", "100000"),
-        "no precise helper summary can be inferred",
     );
 }
 
@@ -492,27 +467,6 @@ fn transfer_ranges_compose_and_keep_child_order_across_helpers_and_loops() {
         verifies(name, &code.replace("BOUND", "4136"));
         rejects(&format!("{name}_short"), &code.replace("BOUND", "4135"), "memory budget exceeded");
     }
-}
-
-#[test]
-fn changing_nested_collection_bounds_remain_unsupported() {
-    rejects(
-        "changing_nested_count",
-        "fn f(mut source: Vec<Vec<u32>>) -> Vec<Vec<u32>>
-            requires source.len() == 4, resources peak(memory) <= 100000 {
-            let mut destination = Vec::with_capacity(8);
-            let mut i = 0usize;
-            while i < 2 invariant i <= 2, decreases 2-i, {
-                let mut j = 0usize;
-                while j < source.len() invariant j <= source.len(), decreases source.len()-j, {
-                    let child = Vec::<u32>::new(); destination.push(child); j += 1;
-                }
-                source.pop(); i += 1;
-            }
-            destination
-        }",
-        "no precise helper summary can be inferred",
-    );
 }
 
 #[test]

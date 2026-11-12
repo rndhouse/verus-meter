@@ -15,6 +15,7 @@ mod elements;
 mod growth;
 mod heap;
 mod helper_control;
+mod indexed_loops;
 mod incoming_children;
 mod incoming_extraction;
 mod inference;

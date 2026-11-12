@@ -324,6 +324,25 @@ impl Analysis<'_> {
         record: &super::loops::Loop,
     ) -> Result<(), VirErr> {
         record.check_helpers()?;
+        // An indexed replacement can install a smaller allocation on any visit.
+        // Retire only the affected uniform lower-bound candidates before body
+        // analysis; individual descriptors and other ownership classes survive.
+        for (name, owner) in self.heap.owners.iter_mut().chain(self.heap.borrowed.iter_mut()) {
+            let mut paths = Vec::new();
+            owner.visit_paths(&mut vec![], &mut |path, node| {
+                if node.elements.is_some() {
+                    paths.push(path.clone());
+                }
+            });
+            for path in paths {
+                let elements = owner.at_mut(&path).unwrap().elements.as_mut().unwrap();
+                for (class, floor) in &mut elements.minima {
+                    if record.replaces_class(&(name.clone(), path.clone()), class) {
+                        floor.capacity = expr::integer(&record.span, 0);
+                    }
+                }
+            }
+        }
         if !record.uses_templates() {
             return Ok(());
         }
@@ -397,7 +416,7 @@ impl Analysis<'_> {
         let mut counters = Vec::new();
         for (name, owner) in self.heap.owners.iter().chain(self.heap.borrowed.iter()) {
             owner.visit_paths(&mut vec![], &mut |path, node| {
-                if !record.appends_to(&(name.clone(), path.clone())) {
+                if !record.grows_children(&(name.clone(), path.clone())) {
                     if let Some(elements) = &node.elements {
                         if elements.precise {
                             counters.extend(

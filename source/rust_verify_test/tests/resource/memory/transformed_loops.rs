@@ -244,39 +244,23 @@ fn temporary_allocation_peaks_survive_transformation_composition() {
 }
 
 #[test]
-fn unsupported_observations_and_same_role_updates_have_no_fallback() {
-    for (name, code) in [
-        (
-            "payload_capacity",
-            "fn f(mut sizes: Vec<usize>) -> Vec<Vec<u32>>
-            resources peak(memory) <= 100000 {
-            let mut result = Vec::with_capacity(2);
-            while sizes.len() > 0
-                invariant sizes.len() + result.len() == 2,
-                decreases sizes.len(),
-            {
-                let capacity = sizes.pop().unwrap();
-                let child = Vec::with_capacity(capacity); result.push(child);
-            }
-            result
-        }",
-        ),
-        (
-            "leaf_same_role",
-            "fn f() -> Vec<u32> resources peak(memory) <= 100000 {
-            let mut buffers = Vec::with_capacity(2);
-            let a = Vec::<u32>::with_capacity(4); buffers.push(a);
-            let b = Vec::<u32>::with_capacity(8); buffers.push(b);
-            let mut i = 0usize;
-            while i < 2 invariant i <= 2, buffers.len() == 2, decreases 2-i, {
-                let mut child = buffers.pop().unwrap(); child.push(1); buffers.push(child); i += 1;
-            }
-            buffers.pop().unwrap()
-        }",
-        ),
-    ] {
-        rejects(name, code, "no precise helper summary can be inferred");
-    }
+fn unsupported_payload_observations_have_no_fallback() {
+    rejects(
+        "payload_capacity",
+        "fn f(mut sizes: Vec<usize>) -> Vec<Vec<u32>>
+        resources peak(memory) <= 100000 {
+        let mut result = Vec::with_capacity(2);
+        while sizes.len() > 0
+            invariant sizes.len() + result.len() == 2,
+            decreases sizes.len(),
+        {
+            let capacity = sizes.pop().unwrap();
+            let child = Vec::with_capacity(capacity); result.push(child);
+        }
+        result
+    }",
+        "no precise helper summary can be inferred",
+    );
 }
 
 #[test]
