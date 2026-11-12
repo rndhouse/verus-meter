@@ -215,6 +215,86 @@ fn generated_block(span: &Span) -> Expr {
     )
 }
 
+#[test]
+fn block_requests_reuse_shared_nodes_and_distinguish_widths() {
+    let span = span();
+    let depth = 16;
+    let value =
+        shared_sum(&span, expr::prefix(&span, memory(&span), expr::path(&span, [0])), depth);
+    let mut emitter = ForestProofs::new();
+    let mut proofs = Vec::new();
+    for width in [2, 2, 1] {
+        block(&span, &value, &expr::integer(&span, width), &mut proofs, &mut emitter).unwrap();
+    }
+    assert_eq!(emitter.work.blocks, 2 * (depth + 1));
+    assert_eq!(calls(&proofs, "block_bounds_prefix"), 2);
+}
+
+#[test]
+fn retention_requests_reuse_shared_nodes_and_distinguish_cuts() {
+    let span = span();
+    let depth = 16;
+    let source = expr::operation(&span, "runtime", vec![memory(&span)], expr::memory_type());
+    let value = shared_sum(&span, source, depth);
+    let mut emitter = ForestProofs::new();
+    let mut proofs = Vec::new();
+    for length in [2, 2, 1] {
+        retention(&span, &value, &expr::integer(&span, length), &mut proofs, &mut emitter);
+    }
+    assert_eq!(emitter.work.retentions, 2 * (depth + 1));
+    assert_eq!(calls(&proofs, "take_children_runtime"), 2);
+}
+
+#[test]
+fn completed_bound_requests_stay_in_their_proof_scope() {
+    let span = span();
+    let child = expr::prefix(&span, memory(&span), expr::path(&span, [0]));
+    let width = expr::integer(&span, 1);
+    let tile = expr::operation(
+        &span,
+        "tile_children",
+        vec![child.clone(), width.clone(), expr::integer(&span, 1), expr::integer(&span, 0)],
+        expr::memory_type(),
+    );
+    let mut emitter = ForestProofs::new();
+    let mut proofs = Vec::new();
+    emitter.forest(&span, &branches(&span, &tile), &mut proofs).unwrap();
+    assert_eq!(emitter.work.blocks, 2);
+    block(&span, &child, &width, &mut proofs, &mut emitter).unwrap();
+    assert_eq!(emitter.work.blocks, 3);
+    // Neither branch's facts escape, but both can reuse the subsequently
+    // established unconditional bound on a later visit.
+    emitter.forest(&span, &branches(&span, &tile), &mut proofs).unwrap();
+    assert_eq!(emitter.work.blocks, 3);
+}
+
+#[test]
+fn retention_cannot_satisfy_or_cache_an_unsupported_block_request() {
+    let span = span();
+    let value = expr::operation(&span, "runtime", vec![memory(&span)], expr::memory_type());
+    let width = expr::integer(&span, 1);
+    let mut emitter = ForestProofs::new();
+    let mut proofs = Vec::new();
+    retention(&span, &value, &width, &mut proofs, &mut emitter);
+    for _ in 0..2 {
+        assert!(block(&span, &value, &width, &mut proofs, &mut emitter).is_err());
+    }
+}
+
+#[test]
+fn completed_requests_retain_the_forest_behind_their_pointer_key() {
+    let span = span();
+    let value = expr::prefix(&span, memory(&span), expr::path(&span, [0]));
+    let weak = Arc::downgrade(&value);
+    let mut emitter = ForestProofs::new();
+    let mut proofs = Vec::new();
+    block(&span, &value, &expr::integer(&span, 1), &mut proofs, &mut emitter).unwrap();
+    drop(value);
+    assert!(weak.upgrade().is_some());
+    drop(emitter);
+    assert!(weak.upgrade().is_none());
+}
+
 /// Run manually with --ignored --nocapture to compare helper traversal work,
 /// generated statements, and median generation time without timing assertions.
 #[test]

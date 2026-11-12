@@ -78,6 +78,34 @@ struct Scope {
     nodes: HashMap<usize, Expr>,
     /// Pure lemma calls already established in this scope, grouped by callee.
     lemmas: HashMap<Fun, Vec<Exprs>>,
+    /// Completed structural range proofs for a forest and an exact width.
+    blocks: BoundProofs,
+    /// Completed runtime-filter traversals for a forest and an exact cut length.
+    retentions: BoundProofs,
+}
+
+/// A traversal can be reused only for the same forest and scalar bound.
+/// Retaining the forest keeps pointer keys valid across temporary input roots.
+#[derive(Default)]
+struct BoundProofs {
+    /// Forest identity, its retained expression, and completed traversal bounds.
+    values: HashMap<usize, (Expr, Vec<Expr>)>,
+}
+
+impl BoundProofs {
+    fn contains(&self, value: &Expr, bound: &Expr) -> bool {
+        self.values.get(&(Arc::as_ptr(value) as usize)).is_some_and(|(_, bounds)| {
+            bounds.iter().any(|old| simplify::same_expression(old, bound))
+        })
+    }
+
+    fn insert(&mut self, value: &Expr, bound: &Expr) {
+        self.values
+            .entry(Arc::as_ptr(value) as usize)
+            .or_insert_with(|| (value.clone(), Vec::new()))
+            .1
+            .push(bound.clone());
+    }
 }
 
 impl ForestProofs {
@@ -357,6 +385,9 @@ fn block(
     proofs: &mut Vec<Stmt>,
     emitter: &mut ForestProofs,
 ) -> Result<(), VirErr> {
+    if emitter.scopes.iter().any(|scope| scope.blocks.contains(value, width)) {
+        return Ok(());
+    }
     #[cfg(test)]
     {
         emitter.work.blocks += 1;
@@ -443,6 +474,7 @@ fn block(
         }
         _ => return Err(super::super::model::unsupported(span, "this structural ownership block")),
     }
+    emitter.scopes.last_mut().unwrap().blocks.insert(value, width);
     Ok(())
 }
 
@@ -455,6 +487,9 @@ fn retention(
     proofs: &mut Vec<Stmt>,
     emitter: &mut ForestProofs,
 ) {
+    if emitter.scopes.iter().any(|scope| scope.retentions.contains(memory, length)) {
+        return;
+    }
     #[cfg(test)]
     {
         emitter.work.retentions += 1;
@@ -468,6 +503,7 @@ fn retention(
         retention(span, &args[0], length, proofs, emitter);
         retention(span, &args[1], length, proofs, emitter);
     }
+    emitter.scopes.last_mut().unwrap().retentions.insert(memory, length);
 }
 
 /// Prove a builder for an arbitrary in-range iteration. Its bound variable is
