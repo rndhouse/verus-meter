@@ -13,57 +13,70 @@ on algorithmic memory use for a subset of Rust.
 
 ## Examples
 
-A simple example:
+This [example](examples/resource/memory/heap/loops/buffer_collection.rs) copies a
+local array into one heap buffer per iteration. The same `count` input determines
+both the number of iterations and the memory budget:
 
 ```rust
-// Reverse a small buffer using either a copy or a sequence of swaps.
-//
-// The caller keeps paying for the borrowed array. The `if` lets us specify
-// a different memory bound for each reversal strategy.
-fn reverse(values: &mut [u32; 4], use_scratch: bool)
-    resources peak(memory) <= ref_size(values) + value_size(use_scratch) + if use_scratch {
-        value_size([u32; 4])
-    } else {
-        value_size(u32)
-    },
-{
-    if use_scratch {
-        let copy = *values;
-        values[0] = copy[3];
-        values[1] = copy[2];
-        values[2] = copy[1];
-        values[3] = copy[0];
-    } else {
-        let mut saved = values[0];
-        values[0] = values[3];
-        values[3] = saved;
-        saved = values[1];
-        values[1] = values[2];
-        values[2] = saved;
-    }
+type Buffer = [u8; 16];
+
+// Cover the local array, collection, input and counter, all retained buffers,
+// and the pending box handle before it moves into the collection.
+spec fn collection_budget(count: u16) -> nat {
+    let backing = (count as nat) * value_size(Box<Buffer>);
+    let allocations = (count as nat) * value_size(Buffer);
+
+    // The local source array, count input, loop counter, and pending box handle
+    // before it moves into the collection. Heap payloads are counted above.
+    let temporary = value_size(Buffer) + value_size(count) + value_size(u16)
+        + value_size(Box<Buffer>);
+
+    value_size(Vec<Box<Buffer>>) + backing + allocations + temporary
 }
 
-// Reverse two buffers using the memory needed for just one reversal.
-fn main()
-    resources peak(memory) <= value_size([u32; 4]) + peak(reverse),
+// Return one independently allocated copy of the local array per iteration.
+fn collect_buffers(count: u16) -> Vec<Box<Buffer>>
+    resources peak(memory) <= collection_budget(count),
 {
-    {
-        let mut first = [1u32, 2, 3, 4];
-        reverse(&mut first, false);
+    let local = [7u8; 16];
+    let mut buffers = Vec::with_capacity(count as usize);
+    let mut iteration = 0u16;
+    while iteration < count {
+        let buffer = Box::new(local);
+        buffers.push(buffer);
+        iteration += 1;
     }
-    {
-        let mut second = [5u32, 6, 7, 8];
-        reverse(&mut second, true);
-    }
+    buffers
 }
 ```
 
-Each strategy must fit its own allowance in the conditional budget. The caller
-uses `peak(reverse)` to allow for either strategy. Separate scopes let both
-reversals share one overall budget; keeping both buffers alive would exceed it
-and fail verification.
+The memory budget grows with `count`. Verus checks that it holds for every `u16`
+`count`, including zero.
 
-Bounds describe a source-level model, not the compiled program’s actual memory use.
+If we allocate an extra box after each push, it overlaps the retained buffers:
+
+```rust
+buffers.push(buffer);
+let extra = Box::new(local); // Not covered by the declared budget.
+```
+
+Run the [failing version](examples/resource/memory/expected-failures/heap_overlap.rs)
+from the repository root, after [building Verus](BUILD.md):
+
+```console
+$ VERUS_Z3_PATH="$PWD/source/z3" ./source/target-verus/release/verus examples/resource/memory/expected-failures/heap_overlap.rs
+error: conditional memory budget exceeded: cannot prove the required model bytes fit the declared bound
+  --> examples/resource/memory/expected-failures/heap_overlap.rs:35:21
+   |
+26 |     resources peak(memory) <= collection_budget(count),
+   |                               ------------------------
+...
+35 |         let extra = Box::new(local);
+   |                     ^^^^^^^^^^^^^^^
+
+verification results:: 2 verified, 1 errors
+error: aborting due to 1 previous error
+```
 
 Explore the [memory examples](examples/resource/memory/README.md):
 

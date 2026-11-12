@@ -330,9 +330,9 @@ fn overlapping_heap_example_fails_at_second_allocation() {
         &[],
     )
     .unwrap_err();
-    assert_vir_error_msg(err.clone(), "peak 48 bytes exceeds budget 32 bytes");
+    assert_vir_error_msg(err.clone(), "conditional memory budget exceeded");
     assert!(err.errors[0].spans.iter().any(|span| span.is_primary
-        && span.text.iter().any(|line| line.text.contains("let second = Box::new"))));
+        && span.text.iter().any(|line| line.text.contains("let extra = Box::new"))));
 }
 
 test_verify_one_file! {

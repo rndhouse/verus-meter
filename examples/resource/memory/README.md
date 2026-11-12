@@ -33,6 +33,7 @@ Budgets use named storage types and memory formulas. Collection-length bounds
 are included only where needed for memory verification.
 
 - [Batched construction](heap/loops/batched_construction.rs): derive an input-dependent budget while collecting two buffers per batch.
+- [Buffer collection](heap/loops/buffer_collection.rs): compute a memory budget from the requested number of heap buffers while retaining a local array.
 - [For-loop construction](heap/loops/for_construction.rs): collect buffers with an integer range and account for iterator state separately.
 - [Partial transfers](heap/loops/partial_transfers.rs): move batches of children and release the source independently.
 - [Peak overlap](heap/loops/peak_overlap.rs): release extracted work buffers while collecting results within an input-dependent budget.
@@ -62,7 +63,7 @@ operation or checkpoint that exceeds its allowance.
 
 - [Array copy](expected-failures/array_copy.rs): keep a copy without budgeting for its storage.
 - [Checkpoint](expected-failures/checkpoint.rs): assert too small a bound on an earlier peak.
-- [Overlapping allocations](expected-failures/heap_overlap.rs): keep two heap buffers within room for one.
+- [Overlapping allocations](expected-failures/heap_overlap.rs): allocate an extra box beyond an input-dependent collection budget.
 - [Loop allocation overlap](expected-failures/loop_peak_overlap.rs): retain an extracted buffer while reserving its replacement on later iterations.
 - [Returned allocations](expected-failures/heap_returns.rs): retain allocations across repeated helper calls.
 - [Vector growth](expected-failures/vector_growth.rs): grow beyond the reserved buffer without extra allowance.
