@@ -3,6 +3,9 @@
 use super::*;
 use std::sync::Arc;
 
+#[cfg(test)]
+mod tests;
+
 /// Ordered loops retain reindexing inside abstract caller forests. Publish
 /// inverse maps only for those completed outputs and only at requested indices.
 pub(super) fn forest_views(
@@ -11,20 +14,31 @@ pub(super) fn forest_views(
     proofs: &mut Vec<Stmt>,
     ordered: bool,
 ) -> Result<(), VirErr> {
-    forest(span, value, proofs)?;
+    let mut emitter = ForestProofs::new();
+    emitter.forest(span, value, proofs)?;
     if ordered {
-        crate::ast_visitor::expr_visitor_check(value, &mut |scope, value| {
-            if scope.map().is_empty() {
+        use crate::ast_visitor::{VisitorControlFlow, expr_visitor_dfs};
+        let mut visited = std::collections::HashSet::new();
+        if let VisitorControlFlow::Stop(error) = expr_visitor_dfs::<VirErr, _>(
+            value,
+            &mut air::scope_map::ScopeMap::new(),
+            &mut |scope, value| {
+                if !scope.map().is_empty() || !visited.insert(Arc::as_ptr(value) as usize) {
+                    return VisitorControlFlow::Return;
+                }
                 if let Some(args) = simplify::call(value, "remove_index") {
-                    proofs.push(expr::lemma(
+                    emitter.lemma(
                         span,
                         "remove_index_requested_views",
                         args.as_ref().clone(),
-                    ));
+                        proofs,
+                    );
                 }
-            }
-            Ok::<(), VirErr>(())
-        })?;
+                VisitorControlFlow::Recurse
+            },
+        ) {
+            return Err(error);
+        }
     }
     Ok(())
 }
@@ -32,228 +46,301 @@ pub(super) fn forest_views(
 /// Prove the forest expression's validity using the same algebra as local
 /// operations. Conditional branches keep their own arithmetic assumptions.
 pub(super) fn forest(span: &Span, value: &Expr, proofs: &mut Vec<Stmt>) -> Result<(), VirErr> {
-    if let ExprX::If(condition, yes, Some(no)) = &value.x {
-        forest(span, condition, proofs)?;
-        let mut yes_proofs = Vec::new();
-        let mut no_proofs = Vec::new();
-        forest(span, yes, &mut yes_proofs)?;
-        forest(span, no, &mut no_proofs)?;
-        let branch = SpannedTyped::new(
-            span,
-            &crate::ast_util::unit_typ(),
-            ExprX::If(
-                condition.clone(),
-                crate::ast_util::mk_block(span, yes_proofs, None),
-                Some(crate::ast_util::mk_block(span, no_proofs, None)),
-            ),
-        );
-        proofs.push(crate::def::Spanned::new(span.clone(), StmtX::Expr(branch)));
-        return Ok(());
+    ForestProofs::new().forest(span, value, proofs)
+}
+
+/// Facts established for shared expression nodes in this lexical proof scope.
+/// Ancestor facts are available in a branch; branch-local facts cannot escape
+/// to its sibling or parent. Quantified builder proofs start a fresh emitter.
+struct ForestProofs {
+    /// Retain each expression while its pointer identity is cached. Multiple
+    /// roots may contain temporary nodes whose addresses would otherwise recycle.
+    /// The root scope remains present until the emitter is discarded.
+    scopes: Vec<Scope>,
+}
+
+/// Graph visits and pure lemma facts established under one set of assumptions.
+#[derive(Default)]
+struct Scope {
+    /// Shared graph nodes already visited under these assumptions.
+    nodes: HashMap<usize, Expr>,
+    /// Pure lemma calls already established in this scope, grouped by callee.
+    lemmas: HashMap<Fun, Vec<Exprs>>,
+}
+
+impl ForestProofs {
+    fn new() -> Self {
+        Self { scopes: vec![Scope::default()] }
     }
-    match &value.x {
-        ExprX::Unary(_, value) | ExprX::UnaryOpr(_, value) => forest(span, value, proofs)?,
-        ExprX::Binary(_, left, right) => {
-            forest(span, left, proofs)?;
-            forest(span, right, proofs)?;
+
+    fn branch(&mut self, span: &Span, value: &Expr) -> Result<Vec<Stmt>, VirErr> {
+        self.scopes.push(Scope::default());
+        let mut proofs = Vec::new();
+        let result = self.forest(span, value, &mut proofs);
+        self.scopes.pop();
+        result?;
+        Ok(proofs)
+    }
+
+    /// Generated metadata lemmas are pure: identical arguments establish the
+    /// same facts again. Compare within this branch and its ancestors only.
+    fn lemma(&mut self, span: &Span, name: &str, args: Vec<Expr>, proofs: &mut Vec<Stmt>) {
+        let function = expr::function(name);
+        if self.scopes.iter().any(|scope| {
+            scope.lemmas.get(&function).is_some_and(|previous| {
+                previous.iter().any(|old| {
+                    old.len() == args.len()
+                        && old.iter().zip(&args).all(|(a, b)| simplify::same_expression(a, b))
+                })
+            })
+        }) {
+            return;
         }
-        ExprX::Call { target: CallTarget::Fun(_, function, _, _, _), args, .. } => {
-            for arg in args.iter() {
-                forest(span, arg, proofs)?;
+        self.scopes
+            .last_mut()
+            .unwrap()
+            .lemmas
+            .entry(function)
+            .or_default()
+            .push(Arc::new(args.clone()));
+        proofs.push(expr::lemma(span, name, args));
+    }
+
+    fn forest(&mut self, span: &Span, value: &Expr, proofs: &mut Vec<Stmt>) -> Result<(), VirErr> {
+        let key = Arc::as_ptr(value) as usize;
+        if self.scopes.iter().any(|scope| scope.nodes.contains_key(&key)) {
+            return Ok(());
+        }
+        self.scopes.last_mut().unwrap().nodes.insert(key, value.clone());
+        if let ExprX::If(condition, yes, Some(no)) = &value.x {
+            self.forest(span, condition, proofs)?;
+            let yes_proofs = self.branch(span, yes)?;
+            let no_proofs = self.branch(span, no)?;
+            let branch = SpannedTyped::new(
+                span,
+                &crate::ast_util::unit_typ(),
+                ExprX::If(
+                    condition.clone(),
+                    crate::ast_util::mk_block(span, yes_proofs, None),
+                    Some(crate::ast_util::mk_block(span, no_proofs, None)),
+                ),
+            );
+            proofs.push(crate::def::Spanned::new(span.clone(), StmtX::Expr(branch)));
+            return Ok(());
+        }
+        match &value.x {
+            ExprX::Unary(_, value) | ExprX::UnaryOpr(_, value) => {
+                self.forest(span, value, proofs)?
             }
-            let Some(Segment::V(name, _)) = function.path.segments.last() else {
-                return Ok(());
-            };
-            if expr::is_operation(function, name) {
+            ExprX::Binary(_, left, right) => {
+                self.forest(span, left, proofs)?;
+                self.forest(span, right, proofs)?;
+            }
+            ExprX::Call { target: CallTarget::Fun(_, function, _, _, _), args, .. } => {
+                for arg in args.iter() {
+                    self.forest(span, arg, proofs)?;
+                }
                 let Some(Segment::V(name, _)) = function.path.segments.last() else {
                     return Ok(());
                 };
-                match name.as_str() {
-                    "shift_children" => proofs.push(expr::lemma(
-                        span,
-                        "shift_children_facts",
-                        args.as_ref().clone(),
-                    )),
-                    "iterate" => {
-                        iterated(span, args, proofs, true)?;
-                    }
-                    "iterate_closed" => {
-                        closed_iteration(span, args, proofs)?;
-                    }
-                    "generate_children" => {
-                        let args = generated(span, args, proofs)?;
-                        proofs.push(expr::lemma(span, "generate_children_facts", args.clone()));
-                        proofs.push(expr::lemma(span, "generate_children_views", args));
-                    }
-                    "tile_children" => {
-                        block(span, &args[0], &args[1], proofs)?;
-                        proofs.push(expr::lemma(
-                            span,
-                            "tile_children_facts",
-                            args.as_ref().clone(),
-                        ));
-                        proofs.push(expr::lemma(
-                            span,
-                            "tile_children_views",
-                            args.as_ref().clone(),
-                        ));
-                    }
-                    "repeat" => {
-                        proofs.push(expr::lemma(span, "repeat_facts", args.as_ref().clone()))
-                    }
-                    "take_children" => {
-                        retention(span, &args[0], &args[1], proofs);
-                        proofs.push(expr::lemma(span, "take_children_facts", args.as_ref().clone()))
-                    }
-                    "reverse_children" => {
-                        retention(span, &args[0], &args[1], proofs);
-                        retention(span, &args[0], &args[2], proofs);
-                        proofs.push(expr::lemma(
-                            span,
-                            "reverse_children_facts",
-                            args.as_ref().clone(),
-                        ));
-                        proofs.push(expr::lemma(
-                            span,
-                            "reverse_children_views",
-                            args.as_ref().clone(),
-                        ));
-                        proofs.push(expr::lemma(
-                            span,
-                            "reverse_children_cost",
-                            args.as_ref().clone(),
-                        ));
-                    }
-                    "runtime" => {
-                        proofs.push(expr::lemma(
-                            span,
-                            "inspect",
-                            vec![args[0].clone(), expr::path(span, [])],
-                        ));
-                        proofs.push(expr::lemma(span, "runtime_class", args.as_ref().clone()));
-                        proofs.push(expr::lemma(
-                            span,
-                            "cost_runtime_partition",
-                            vec![args[0].clone(), expr::integer(span, 0)],
-                        ));
-                    }
-                    "allocated" => {
-                        proofs.push(expr::lemma(span, "well_formed_record", vec![value.clone()]))
-                    }
-                    "prefix" => {
-                        proofs.push(expr::lemma(span, "runtime_prefix", args.as_ref().clone()));
-                        proofs.push(expr::lemma(span, "descendants_prefix", args.as_ref().clone()));
-                        proofs.push(expr::lemma(span, "well_formed_prefix", args.as_ref().clone()));
-                        let mut args = args.as_ref().clone();
-                        args.push(expr::integer(span, 0));
-                        proofs.push(expr::lemma(span, "cost_prefix", args));
-                    }
-                    "subtree" | "without" => {
-                        if name.as_str() == "subtree" {
-                            proofs.push(expr::lemma(span, "request_path", args.as_ref().clone()));
+                if expr::is_operation(function, name) {
+                    let Some(Segment::V(name, _)) = function.path.segments.last() else {
+                        return Ok(());
+                    };
+                    match name.as_str() {
+                        "shift_children" => {
+                            self.lemma(span, "shift_children_facts", args.as_ref().clone(), proofs)
                         }
-                        if name.as_str() == "without" {
-                            proofs.push(expr::lemma(
+                        "iterate" => {
+                            iterated(span, args, proofs, true, self)?;
+                        }
+                        "iterate_closed" => {
+                            closed_iteration(span, args, proofs, self)?;
+                        }
+                        "generate_children" => {
+                            let args = generated(span, args, proofs, self)?;
+                            self.lemma(span, "generate_children_facts", args.clone(), proofs);
+                            self.lemma(span, "generate_children_views", args, proofs);
+                        }
+                        "tile_children" => {
+                            block(span, &args[0], &args[1], proofs, self)?;
+                            self.lemma(span, "tile_children_facts", args.as_ref().clone(), proofs);
+                            self.lemma(span, "tile_children_views", args.as_ref().clone(), proofs);
+                        }
+                        "repeat" => self.lemma(span, "repeat_facts", args.as_ref().clone(), proofs),
+                        "take_children" => {
+                            retention(span, &args[0], &args[1], proofs, self);
+                            self.lemma(span, "take_children_facts", args.as_ref().clone(), proofs)
+                        }
+                        "reverse_children" => {
+                            retention(span, &args[0], &args[1], proofs, self);
+                            retention(span, &args[0], &args[2], proofs, self);
+                            self.lemma(
                                 span,
-                                "runtime_without_facts",
+                                "reverse_children_facts",
                                 args.as_ref().clone(),
-                            ));
-                            proofs.push(expr::lemma(
+                                proofs,
+                            );
+                            self.lemma(
                                 span,
-                                "partition_without",
+                                "reverse_children_views",
                                 args.as_ref().clone(),
-                            ));
-                            // Removing a child preserves its parent's descriptor.
-                            // Nested pop templates need this root fact to bound
-                            // the retained descendants plus the backing buffer.
-                            proofs.push(expr::lemma(
+                                proofs,
+                            );
+                            self.lemma(
                                 span,
-                                "lookup_without",
-                                vec![args[0].clone(), args[1].clone(), expr::path(span, [])],
-                            ));
+                                "reverse_children_cost",
+                                args.as_ref().clone(),
+                                proofs,
+                            );
                         }
-                        proofs.push(expr::lemma(span, "inspect", args.as_ref().clone()));
-                        let mut args = args.as_ref().clone();
-                        args.push(expr::integer(span, 0));
-                        proofs.push(expr::lemma(span, "cost_partition", args));
-                    }
-                    "lookup" => {
-                        // Composed calls can observe incoming geometry without
-                        // an executable indexed loan to request its view first.
-                        proofs.push(expr::lemma(span, "request_path", args.as_ref().clone()));
-                        if let Some(selected) = simplify::call(&args[0], "subtree") {
-                            proofs.push(expr::lemma(
+                        "runtime" => {
+                            self.lemma(
                                 span,
-                                "lookup_subtree",
-                                vec![selected[0].clone(), selected[1].clone(), args[1].clone()],
-                            ));
+                                "inspect",
+                                vec![args[0].clone(), expr::path(span, [])],
+                                proofs,
+                            );
+                            self.lemma(span, "runtime_class", args.as_ref().clone(), proofs);
+                            self.lemma(
+                                span,
+                                "cost_runtime_partition",
+                                vec![args[0].clone(), expr::integer(span, 0)],
+                                proofs,
+                            );
                         }
-                        proofs.push(expr::lemma(span, "inspect", args.as_ref().clone()));
+                        "allocated" => {
+                            self.lemma(span, "well_formed_record", vec![value.clone()], proofs)
+                        }
+                        "prefix" => {
+                            self.lemma(span, "runtime_prefix", args.as_ref().clone(), proofs);
+                            self.lemma(span, "descendants_prefix", args.as_ref().clone(), proofs);
+                            self.lemma(span, "well_formed_prefix", args.as_ref().clone(), proofs);
+                            let mut args = args.as_ref().clone();
+                            args.push(expr::integer(span, 0));
+                            self.lemma(span, "cost_prefix", args, proofs);
+                        }
+                        "subtree" | "without" => {
+                            if name.as_str() == "subtree" {
+                                self.lemma(span, "request_path", args.as_ref().clone(), proofs);
+                            }
+                            if name.as_str() == "without" {
+                                self.lemma(
+                                    span,
+                                    "runtime_without_facts",
+                                    args.as_ref().clone(),
+                                    proofs,
+                                );
+                                self.lemma(
+                                    span,
+                                    "partition_without",
+                                    args.as_ref().clone(),
+                                    proofs,
+                                );
+                                // Removing a child preserves its parent's descriptor.
+                                // Nested pop templates need this root fact to bound
+                                // the retained descendants plus the backing buffer.
+                                self.lemma(
+                                    span,
+                                    "lookup_without",
+                                    vec![args[0].clone(), args[1].clone(), expr::path(span, [])],
+                                    proofs,
+                                );
+                            }
+                            self.lemma(span, "inspect", args.as_ref().clone(), proofs);
+                            let mut args = args.as_ref().clone();
+                            args.push(expr::integer(span, 0));
+                            self.lemma(span, "cost_partition", args, proofs);
+                        }
+                        "lookup" => {
+                            // Composed calls can observe incoming geometry without
+                            // an executable indexed loan to request its view first.
+                            self.lemma(span, "request_path", args.as_ref().clone(), proofs);
+                            if let Some(selected) = simplify::call(&args[0], "subtree") {
+                                self.lemma(
+                                    span,
+                                    "lookup_subtree",
+                                    vec![selected[0].clone(), selected[1].clone(), args[1].clone()],
+                                    proofs,
+                                );
+                            }
+                            self.lemma(span, "inspect", args.as_ref().clone(), proofs);
+                        }
+                        "remove_index" => {
+                            self.lemma(span, "partition_remove", args.as_ref().clone(), proofs);
+                            self.lemma(span, "remove_partition", args.as_ref().clone(), proofs);
+                            self.lemma(span, "remove_root", args.as_ref().clone(), proofs);
+                        }
+                        "with_root" => {
+                            self.lemma(span, "with_root_facts", args.as_ref().clone(), proofs)
+                        }
+                        "descendants" => {
+                            self.lemma(span, "descendants_facts", args.as_ref().clone(), proofs)
+                        }
+                        "replace" => {
+                            self.lemma(
+                                span,
+                                "inspect",
+                                vec![args[0].clone(), args[1].clone()],
+                                proofs,
+                            );
+                            self.lemma(
+                                span,
+                                "well_formed_prefix",
+                                vec![args[2].clone(), args[1].clone()],
+                                proofs,
+                            );
+                            self.lemma(
+                                span,
+                                "well_formed_add",
+                                vec![
+                                    expr::without(span, args[0].clone(), args[1].clone()),
+                                    expr::prefix(span, args[2].clone(), args[1].clone()),
+                                ],
+                                proofs,
+                            );
+                        }
+                        _ => {}
                     }
-                    "remove_index" => {
-                        proofs.push(expr::lemma(span, "partition_remove", args.as_ref().clone()));
-                        proofs.push(expr::lemma(span, "remove_partition", args.as_ref().clone()));
-                        proofs.push(expr::lemma(span, "remove_root", args.as_ref().clone()));
+                } else if crate::ast_util::types_equal(&value.typ, &expr::memory_type()) {
+                    let Some(Segment::V(name, _)) = function.path.segments.last() else {
+                        return Ok(());
+                    };
+                    match name.as_str() {
+                        "add" => {
+                            self.lemma(span, "runtime_add", args.as_ref().clone(), proofs);
+                            self.lemma(span, "descendants_add", args.as_ref().clone(), proofs);
+                            self.lemma(span, "well_formed_add", args.as_ref().clone(), proofs);
+                            let mut args = args.as_ref().clone();
+                            args.push(expr::integer(span, 0));
+                            self.lemma(span, "cost_add", args, proofs);
+                        }
+                        "push" => {
+                            self.lemma(span, "runtime_push", args.as_ref().clone(), proofs);
+                            self.lemma(span, "descendants_push", args.as_ref().clone(), proofs);
+                            self.lemma(span, "well_formed_push", args.as_ref().clone(), proofs);
+                            let mut args = args.as_ref().clone();
+                            args.push(expr::integer(span, 0));
+                            self.lemma(span, "cost_push", args, proofs);
+                        }
+                        _ => {}
                     }
-                    "with_root" => {
-                        proofs.push(expr::lemma(span, "with_root_facts", args.as_ref().clone()))
-                    }
-                    "descendants" => {
-                        proofs.push(expr::lemma(span, "descendants_facts", args.as_ref().clone()))
-                    }
-                    "replace" => {
-                        proofs.push(expr::lemma(
-                            span,
-                            "inspect",
-                            vec![args[0].clone(), args[1].clone()],
-                        ));
-                        proofs.push(expr::lemma(
-                            span,
-                            "well_formed_prefix",
-                            vec![args[2].clone(), args[1].clone()],
-                        ));
-                        proofs.push(expr::lemma(
-                            span,
-                            "well_formed_add",
-                            vec![
-                                expr::without(span, args[0].clone(), args[1].clone()),
-                                expr::prefix(span, args[2].clone(), args[1].clone()),
-                            ],
-                        ));
-                    }
-                    _ => {}
-                }
-            } else if crate::ast_util::types_equal(&value.typ, &expr::memory_type()) {
-                let Some(Segment::V(name, _)) = function.path.segments.last() else {
-                    return Ok(());
-                };
-                match name.as_str() {
-                    "add" => {
-                        proofs.push(expr::lemma(span, "runtime_add", args.as_ref().clone()));
-                        proofs.push(expr::lemma(span, "descendants_add", args.as_ref().clone()));
-                        proofs.push(expr::lemma(span, "well_formed_add", args.as_ref().clone()));
-                        let mut args = args.as_ref().clone();
-                        args.push(expr::integer(span, 0));
-                        proofs.push(expr::lemma(span, "cost_add", args));
-                    }
-                    "push" => {
-                        proofs.push(expr::lemma(span, "runtime_push", args.as_ref().clone()));
-                        proofs.push(expr::lemma(span, "descendants_push", args.as_ref().clone()));
-                        proofs.push(expr::lemma(span, "well_formed_push", args.as_ref().clone()));
-                        let mut args = args.as_ref().clone();
-                        args.push(expr::integer(span, 0));
-                        proofs.push(expr::lemma(span, "cost_push", args));
-                    }
-                    _ => {}
                 }
             }
+            _ => {}
         }
-        _ => {}
+        Ok(())
     }
-    Ok(())
 }
 
 /// Establish a block's logical index range structurally, independently of bytes.
-fn block(span: &Span, value: &Expr, width: &Expr, proofs: &mut Vec<Stmt>) -> Result<(), VirErr> {
+fn block(
+    span: &Span,
+    value: &Expr,
+    width: &Expr,
+    proofs: &mut Vec<Stmt>,
+    emitter: &mut ForestProofs,
+) -> Result<(), VirErr> {
     let ExprX::Call { target: CallTarget::Fun(_, function, _, _, _), args, .. } = &value.x else {
         return Err(super::super::model::unsupported(
             span,
@@ -271,62 +358,68 @@ fn block(span: &Span, value: &Expr, width: &Expr, proofs: &mut Vec<Stmt>) -> Res
                         "an ownership block without a single runtime index",
                     )
                 })?;
-            proofs.push(expr::lemma(
+            emitter.lemma(
                 span,
                 "block_bounds_prefix",
                 vec![args[0].clone(), path[0].clone(), width.clone()],
-            ));
+                proofs,
+            );
         }
         "add" => {
-            block(span, &args[0], width, proofs)?;
-            block(span, &args[1], width, proofs)?;
-            proofs.push(expr::lemma(
+            block(span, &args[0], width, proofs, emitter)?;
+            block(span, &args[1], width, proofs, emitter)?;
+            emitter.lemma(
                 span,
                 "block_bounds_add",
                 vec![args[0].clone(), args[1].clone(), width.clone()],
-            ));
+                proofs,
+            );
         }
         "shift_children" => {
             let inner = super::super::contracts::subtract(span, width.clone(), args[1].clone());
-            block(span, &args[0], &inner, proofs)?;
-            proofs.push(expr::lemma(
+            block(span, &args[0], &inner, proofs, emitter)?;
+            emitter.lemma(
                 span,
                 "block_bounds_shift",
                 vec![args[0].clone(), inner, args[1].clone()],
-            ));
+                proofs,
+            );
         }
-        "repeat" => proofs.push(expr::lemma(
+        "repeat" => emitter.lemma(
             span,
             "block_bounds_repeat",
             vec![args[0].clone(), args[1].clone(), args[2].clone(), width.clone()],
-        )),
+            proofs,
+        ),
         "generate_children" => {
-            let applied = generated(span, args, proofs)?;
-            proofs.push(expr::lemma(span, "block_bounds_generate", applied));
+            let applied = generated(span, args, proofs, emitter)?;
+            emitter.lemma(span, "block_bounds_generate", applied, proofs);
             let extent = super::super::contracts::add(
                 span,
                 args[3].clone(),
                 super::super::contracts::multiply(span, args[1].clone(), args[2].clone()),
             );
-            proofs.push(expr::lemma(
+            emitter.lemma(
                 span,
                 "block_bounds_weaken",
                 vec![value.clone(), extent, width.clone()],
-            ));
+                proofs,
+            );
         }
         "tile_children" => {
-            block(span, &args[0], &args[1], proofs)?;
-            proofs.push(expr::lemma(span, "block_bounds_tile", args.as_ref().clone()));
+            block(span, &args[0], &args[1], proofs, emitter)?;
+            emitter.lemma(span, "block_bounds_tile", args.as_ref().clone(), proofs);
             let extent = super::super::contracts::add(
                 span,
                 args[3].clone(),
                 super::super::contracts::multiply(span, args[1].clone(), args[2].clone()),
             );
-            proofs.push(expr::lemma(
+            emitter.lemma(
                 span,
                 "block_bounds_weaken",
                 vec![value.clone(), extent, width.clone()],
-            ));
+                proofs,
+            );
         }
         _ => return Err(super::super::model::unsupported(span, "this structural ownership block")),
     }
@@ -335,25 +428,32 @@ fn block(span: &Span, value: &Expr, width: &Expr, proofs: &mut Vec<Stmt>) -> Res
 
 /// Instantiate runtime-filter cuts at the range expressions that use them.
 /// Keeping this law local avoids expanding unrelated counterexample terms.
-fn retention(span: &Span, memory: &Expr, length: &Expr, proofs: &mut Vec<Stmt>) {
+fn retention(
+    span: &Span,
+    memory: &Expr,
+    length: &Expr,
+    proofs: &mut Vec<Stmt>,
+    emitter: &mut ForestProofs,
+) {
     let ExprX::Call { target: CallTarget::Fun(_, function, _, _, _), args, .. } = &memory.x else {
         return;
     };
     if expr::is_operation(function, "runtime") {
-        proofs.push(expr::lemma(
-            span,
-            "take_children_runtime",
-            vec![args[0].clone(), length.clone()],
-        ));
+        emitter.lemma(span, "take_children_runtime", vec![args[0].clone(), length.clone()], proofs);
     } else if *function == crate::fun!(CrateId::Vstd => "seq", "Seq"; "add") {
-        retention(span, &args[0], length, proofs);
-        retention(span, &args[1], length, proofs);
+        retention(span, &args[0], length, proofs, emitter);
+        retention(span, &args[1], length, proofs, emitter);
     }
 }
 
 /// Prove a builder for an arbitrary in-range iteration. Its bound variable is
 /// local to this proof and to the exported specification closure.
-fn generated(span: &Span, args: &Exprs, proofs: &mut Vec<Stmt>) -> Result<Vec<Expr>, VirErr> {
+fn generated(
+    span: &Span,
+    args: &Exprs,
+    proofs: &mut Vec<Stmt>,
+    emitter: &mut ForestProofs,
+) -> Result<Vec<Expr>, VirErr> {
     let ExprX::Closure(binders, body) = &args[0].x else {
         return Err(super::super::model::unsupported(
             span,
@@ -419,8 +519,9 @@ fn generated(span: &Span, args: &Exprs, proofs: &mut Vec<Stmt>) -> Result<Vec<Ex
         ExprX::WithTriggers { triggers: Arc::new(vec![Arc::new(vec![applied])]), body: ensure },
     );
     let mut body_proofs = Vec::new();
-    forest(span, body, &mut body_proofs)?;
-    block(span, body, &args[1], &mut body_proofs)?;
+    let mut body_emitter = ForestProofs::new();
+    body_emitter.forest(span, body, &mut body_proofs)?;
+    block(span, body, &args[1], &mut body_proofs, &mut body_emitter)?;
     let proof = SpannedTyped::new(
         span,
         &crate::ast_util::unit_typ(),
@@ -433,11 +534,12 @@ fn generated(span: &Span, args: &Exprs, proofs: &mut Vec<Stmt>) -> Result<Vec<Ex
     );
     proofs.push(crate::def::Spanned::new(span.clone(), StmtX::Expr(proof)));
     if let Some((slope, intercept)) = affine {
-        proofs.push(expr::lemma(
+        emitter.lemma(
             span,
             "generated_cost_affine",
             vec![builder.clone(), args[2].clone(), slope, intercept],
-        ));
+            proofs,
+        );
     } else {
         let fuel = SpannedTyped::new(
             span,
@@ -457,7 +559,13 @@ fn generated(span: &Span, args: &Exprs, proofs: &mut Vec<Stmt>) -> Result<Vec<Ex
 
 /// Check one ordered recurrence step under the same validity assumption that
 /// the verified iterator establishes for every preceding accumulator.
-fn iterated(span: &Span, args: &Exprs, proofs: &mut Vec<Stmt>, unfold: bool) -> Result<(), VirErr> {
+fn iterated(
+    span: &Span,
+    args: &Exprs,
+    proofs: &mut Vec<Stmt>,
+    unfold: bool,
+    emitter: &mut ForestProofs,
+) -> Result<(), VirErr> {
     let ExprX::Closure(binders, body) = &args[0].x else {
         return Err(super::super::model::unsupported(
             span,
@@ -508,11 +616,7 @@ fn iterated(span: &Span, args: &Exprs, proofs: &mut Vec<Stmt>, unfold: bool) -> 
         },
     );
     proofs.push(crate::def::Spanned::new(span.clone(), StmtX::Expr(proof)));
-    proofs.push(expr::lemma(
-        span,
-        "iterate_facts",
-        vec![builder, args[1].clone(), args[2].clone()],
-    ));
+    emitter.lemma(span, "iterate_facts", vec![builder, args[1].clone(), args[2].clone()], proofs);
     if unfold {
         let fuel = SpannedTyped::new(
             span,
@@ -530,8 +634,13 @@ fn iterated(span: &Span, args: &Exprs, proofs: &mut Vec<Stmt>, unfold: bool) -> 
 
 /// Check the candidate's successor equation at an arbitrary visit before using
 /// the generic closed-form induction. Forest equality retains every descriptor.
-fn closed_iteration(span: &Span, args: &Exprs, proofs: &mut Vec<Stmt>) -> Result<(), VirErr> {
-    iterated(span, args, proofs, false)?;
+fn closed_iteration(
+    span: &Span,
+    args: &Exprs,
+    proofs: &mut Vec<Stmt>,
+    emitter: &mut ForestProofs,
+) -> Result<(), VirErr> {
+    iterated(span, args, proofs, false, emitter)?;
     let ExprX::Closure(step_binders, step_body) = &args[0].x else { unreachable!() };
     let ExprX::Closure(binders, closed_body) = &args[3].x else { unreachable!() };
     let index =
@@ -641,10 +750,10 @@ fn closed_iteration(span: &Span, args: &Exprs, proofs: &mut Vec<Stmt>) -> Result
             )),
         ));
     }
-    forest(span, &raw_next, &mut facts)?;
-    forest(span, &raw_applied, &mut facts)?;
-    forest(span, &applied, &mut facts)?;
-    forest(span, &next, &mut facts)?;
+    let mut forest_proofs = ForestProofs::new();
+    for value in [&raw_next, &raw_applied, &applied, &next] {
+        forest_proofs.forest(span, value, &mut facts)?;
+    }
     let proof = SpannedTyped::new(
         span,
         &crate::ast_util::unit_typ(),
@@ -677,6 +786,6 @@ fn closed_iteration(span: &Span, args: &Exprs, proofs: &mut Vec<Stmt>) -> Result
     let mut arguments = args.as_ref().clone();
     arguments[0] = step;
     arguments[3] = closed;
-    proofs.push(expr::lemma(span, "iterate_closed_facts", arguments));
+    emitter.lemma(span, "iterate_closed_facts", arguments, proofs);
     Ok(())
 }
