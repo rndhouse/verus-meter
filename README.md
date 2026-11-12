@@ -67,12 +67,13 @@ Bounds describe a source-level model, not the compiled program’s actual memory
 
 Explore the [memory examples](examples/resource/memory/README.md):
 
-- **Basics:** [Reuse memory across scopes](examples/resource/memory/basics/storage.rs).
-- **Contracts:** [Budget sections independently](examples/resource/memory/contracts/sections.rs).
-- **Heap:** [Reuse heap buffers](examples/resource/memory/heap/heap.rs).
-- **Vectors:** [Collect values within a budget](examples/resource/memory/vectors/vectors.rs).
-- **Algorithms:** [Verify insertion sort](examples/resource/memory/algorithms/insertion_sort.rs).
-- **Deliberate violations:** [See memory checks reject excess usage](examples/resource/memory/expected-failures).
+- **Basics:** [Scopes, values, and returned buffers](examples/resource/memory/README.md#basics).
+- **Contracts:** [Budgets, formulas, sections, and checkpoints](examples/resource/memory/README.md#contracts).
+- **Heap:** [Allocations and ownership transfers](examples/resource/memory/README.md#heap).
+- **Heap loops:** [Construction, transfers, and allocation overlap](examples/resource/memory/README.md#loops).
+- **Vectors:** [Capacity, growth, and owning elements](examples/resource/memory/README.md#vectors).
+- **Algorithms:** [Sorting within a memory budget](examples/resource/memory/README.md#algorithms).
+- **Deliberate violations:** [Examples that exceed their allowances](examples/resource/memory/README.md#deliberate-violations).
 
 ## Docs
 
