@@ -28,6 +28,8 @@ pub(in super::super) enum Effect {
         location: Location,
         typ: Typ,
         child: Value,
+        /// Original input storage carried by this child, excluding local allocations.
+        original: Expr,
         element: u64,
         grow: bool,
     },
@@ -42,6 +44,20 @@ pub(in super::super) enum Effect {
         typ: Typ,
         memory: Expr,
         length: Expr,
+        minima: Minima,
+        element: u64,
+        grow: bool,
+    },
+    /// An iteration-dependent block, closed over source selections when repeated.
+    GenerateBlock {
+        location: Location,
+        typ: Typ,
+        memory: Expr,
+        original: Expr,
+        length: Expr,
+        binder: VarIdent,
+        /// Each extracted input has a source role and offset in its pop block.
+        inputs: Vec<(VarIdent, Location, Expr)>,
         minima: Minima,
         element: u64,
         grow: bool,
@@ -76,7 +92,8 @@ impl Effect {
     pub(in super::super) fn location(&self) -> Option<&Location> {
         match self {
             Self::Guarded { effect, .. } => effect.location(),
-            Self::TransferBlock { location, .. }
+            Self::GenerateBlock { location, .. }
+            | Self::TransferBlock { location, .. }
             | Self::AppendBlock { location, .. }
             | Self::PopBlock { location, .. }
             | Self::Append { location, .. }
@@ -90,7 +107,8 @@ impl Effect {
         match self {
             Self::Guarded { effect, .. } => effect.root(),
             Self::Mutation(name) | Self::Read(name) => name,
-            Self::TransferBlock { location, .. }
+            Self::GenerateBlock { location, .. }
+            | Self::TransferBlock { location, .. }
             | Self::AppendBlock { location, .. }
             | Self::PopBlock { location, .. }
             | Self::Append { location, .. }
@@ -105,7 +123,10 @@ impl Effect {
     pub(in super::super) fn appends(&self) -> bool {
         match self {
             Self::Guarded { effect, .. } => effect.appends(),
-            Self::Append { .. } | Self::AppendBlock { .. } | Self::TransferBlock { .. } => true,
+            Self::Append { .. }
+            | Self::AppendBlock { .. }
+            | Self::TransferBlock { .. }
+            | Self::GenerateBlock { .. } => true,
             _ => false,
         }
     }
@@ -115,7 +136,7 @@ impl Effect {
     pub(super) fn exportable(&self) -> bool {
         match self {
             Self::Guarded { effect, .. } => effect.exportable(),
-            Self::Mutation(_) | Self::TransferBlock { .. } => false,
+            Self::Mutation(_) | Self::TransferBlock { .. } | Self::GenerateBlock { .. } => false,
             _ => true,
         }
     }
@@ -128,12 +149,19 @@ impl Effect {
                 effect.expressions(visit);
                 None
             }
-            Self::Append { child: Value::Owner(node), .. } => {
+            Self::Append { child: Value::Owner(node), original, .. } => {
                 visit(&node.memory);
+                visit(original);
                 Some(&node.minima)
             }
             Self::AppendBlock { memory, length, minima, .. } => {
                 visit(memory);
+                visit(length);
+                Some(minima)
+            }
+            Self::GenerateBlock { memory, original, length, minima, .. } => {
+                visit(memory);
+                visit(original);
                 visit(length);
                 Some(minima)
             }
@@ -173,14 +201,15 @@ impl Effect {
                 return result;
             }
             // Parameter programs do not export unresolved range endpoints.
-            Self::TransferBlock { .. } => {
+            Self::TransferBlock { .. } | Self::GenerateBlock { .. } => {
                 unreachable!("range endpoints require a checked source role")
             }
             Self::Mutation(name) | Self::Read(name) => {
                 *name = prefix.0.clone();
                 return result;
             }
-            Self::Append { location, child, .. } => {
+            Self::Append { location, child, original, .. } => {
+                *original = substitute(original, values);
                 *child = match child {
                     Value::Owner(Node { origin: Some(index), .. }) => arguments[index].clone(),
                     _ => instantiate_value(child, values),

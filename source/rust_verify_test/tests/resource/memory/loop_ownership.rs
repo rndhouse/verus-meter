@@ -201,16 +201,6 @@ fn unsupported_iteration_dependencies_reject_generous_budgets() {
             "this executable expression or control-flow exit",
         ),
         ("indexed_remove", "source.remove(0);", "no precise helper summary can be inferred"),
-        (
-            "dependent_construction",
-            "source.pop(); let child = Vec::<u32>::with_capacity(i); destination.push(child);",
-            "memory budget predicates currently require immutable Boolean or native integer input parameters",
-        ),
-        (
-            "transformed_payload",
-            "let mut child = source.pop().unwrap(); child.pop(); destination.push(child);",
-            "no precise helper summary can be inferred",
-        ),
     ] {
         rejects(
             name,
@@ -229,20 +219,6 @@ fn unsupported_iteration_dependencies_reject_generous_budgets() {
             message,
         );
     }
-    // Nested extraction creates intermediate input regions. A representative
-    // child token must not escape through those regions, even if the child is
-    // ultimately dropped and never contributes to the returned forest.
-    rejects(
-        "intermediate_region_dependency",
-        "fn f(mut source: Vec<Vec<Box<u32>>>) -> Vec<Vec<Box<u32>>>
-            resources peak(memory) <= 100000 {
-            while source.len() > 0 invariant true, decreases source.len(), {
-                let mut child = source.pop().unwrap(); child.pop(); drop(child);
-            }
-            source
-        }",
-        "no precise helper summary can be inferred",
-    );
 }
 
 #[test]
@@ -519,55 +495,19 @@ fn transfer_ranges_compose_and_keep_child_order_across_helpers_and_loops() {
 }
 
 #[test]
-fn unsupported_block_dependencies_do_not_become_repeated_fresh_children() {
-    for (name, body) in [
-        (
-            "partial_range_routing",
-            "source.pop(); let child = source.pop().unwrap(); destination.push(child);",
-        ),
-        (
-            "reordered_range",
-            "let first = source.pop().unwrap(); let second = source.pop().unwrap(); destination.push(second); destination.push(first);",
-        ),
-        (
-            "changing_nested_count",
-            "let mut j = 0usize;
-            while j < source.len() invariant j <= source.len(), decreases source.len()-j,
-            { let child = Vec::<u32>::new(); destination.push(child); j += 1; }
-            source.pop();",
-        ),
-    ] {
-        rejects(
-            name,
-            &format!(
-                "fn f(mut source: Vec<Vec<u32>>) -> Vec<Vec<u32>>
-            requires source.len() == 4, resources peak(memory) <= 100000 {{
-            let mut destination = Vec::<Vec<u32>>::with_capacity(8);
-            let mut i = 0usize;
-            while i < 2 invariant i <= 2, decreases 2-i,
-            {{ {body} i += 1; }}
-            destination
-        }}"
-            ),
-            "no precise helper summary can be inferred",
-        );
-    }
+fn changing_nested_collection_bounds_remain_unsupported() {
     rejects(
-        "changed_helper_parameter",
-        "fn grow(mut v: Vec<u32>) -> Vec<u32>
-        requires v.len() == 0, resources peak(memory) <= 256 { v.push(1); v }
-        fn f(mut source: Vec<Vec<u32>>) -> Vec<Vec<u32>>
-            requires source.len() == 2,
-                forall|i: int| 0 <= i < source.len() ==> source[i].len() == 0,
-            resources peak(memory) <= 100000 {
-            let mut destination = Vec::<Vec<u32>>::with_capacity(2);
+        "changing_nested_count",
+        "fn f(mut source: Vec<Vec<u32>>) -> Vec<Vec<u32>>
+            requires source.len() == 4, resources peak(memory) <= 100000 {
+            let mut destination = Vec::with_capacity(8);
             let mut i = 0usize;
-            while i < 2 invariant i <= 2, source.len() == 2-i,
-                forall|j: int| 0 <= j < source.len() ==> source[j].len() == 0,
-                decreases 2-i,
-            {
-                let child = source.pop().unwrap(); let child = grow(child);
-                destination.push(child); i += 1;
+            while i < 2 invariant i <= 2, decreases 2-i, {
+                let mut j = 0usize;
+                while j < source.len() invariant j <= source.len(), decreases source.len()-j, {
+                    let child = Vec::<u32>::new(); destination.push(child); j += 1;
+                }
+                source.pop(); i += 1;
             }
             destination
         }",

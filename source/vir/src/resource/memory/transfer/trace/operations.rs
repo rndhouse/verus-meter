@@ -19,7 +19,20 @@ impl Trace<'_> {
                 Some(Value::Unknown)
             }
             Operation::Vector { capacity, element } => {
+                let actual =
+                    contracts::multiply(span, capacity.clone(), contracts::literal(span, element));
                 let capacity = self.scalar(&capacity)?;
+                if self.loop_tokens.is_some() {
+                    self.loop_allocations.push((
+                        span.clone(),
+                        actual,
+                        contracts::multiply(
+                            span,
+                            capacity.clone(),
+                            contracts::literal(span, element),
+                        ),
+                    ));
+                }
                 let memory = expr::push(
                     span,
                     expr::empty(span, expr::record_type()),
@@ -43,6 +56,10 @@ impl Trace<'_> {
             }
             Operation::Box { payload, bytes } => {
                 let child = self.value(&payload)?;
+                if self.loop_tokens.is_some() {
+                    let amount = contracts::literal(span, bytes);
+                    self.loop_allocations.push((span.clone(), amount.clone(), amount));
+                }
                 let mut memory = expr::push(
                     span,
                     expr::empty(span, expr::record_type()),
@@ -79,18 +96,38 @@ impl Trace<'_> {
                 self.effects.push(Effect::Read(location.0));
                 Some(Value::Scalar(property(span, node.memory, "length")))
             }
-            Operation::Push { receiver, child, element, grow, input } => {
+            Operation::Push { receiver, child, element, grow, allocation, input } => {
                 let location = self.checked_location(&receiver)?;
                 let mut node = self.get(span, &location, &receiver.typ)?;
                 node.origin = None;
                 let child = self.value(&child)?;
+                if self.loop_tokens.is_some()
+                    && self.loop_roots.as_ref().is_some_and(|roots| !roots.contains(&location.0))
+                {
+                    if let Some(actual) = allocation {
+                        let candidate = contracts::multiply(
+                            span,
+                            contracts::literal(span, element),
+                            growth::grown_capacity(
+                                span,
+                                contracts::literal(span, self.loop_size_ceiling),
+                                element,
+                            ),
+                        );
+                        self.loop_allocations.push((span.clone(), actual, candidate));
+                    }
+                }
                 let appended = child.clone();
                 let length = property(span, node.memory.clone(), "length");
                 let capacity = property(span, node.memory.clone(), "capacity");
                 let bytes = property(span, node.memory.clone(), "bytes");
-                if let Some(input) = input {
+                let original = if let Some(input) = input {
+                    let original = self.original_child(span, &input)?;
                     self.join_region(span, length.clone(), &input)?;
-                }
+                    original
+                } else {
+                    expr::empty(span, expr::record_type())
+                };
                 let (capacity, bytes) = if grow {
                     // Physical forests contain caller bytes as well as local
                     // replacements, so exact spare capacity can be reused here.
@@ -135,6 +172,7 @@ impl Trace<'_> {
                         location,
                         typ,
                         child: appended,
+                        original,
                         element,
                         grow,
                     });
@@ -153,11 +191,60 @@ impl Trace<'_> {
                     Removal::remove(span, length, self.scalar(index.as_ref()?)?)
                 };
                 let partition = removal.partition(span, node.memory.clone());
-                if let Some(input) = input {
-                    self.partition_region(span, &location, &input, |memory| {
-                        removal.partition(span, memory)
-                    })?;
-                }
+                let token = if optional
+                    && self.branch_depth == 0
+                    && self.loop_tokens.is_some()
+                    && self.loop_roots.as_ref().is_some_and(|roots| roots.contains(&location.0))
+                    && self.layouts.owner(&value.typ)
+                {
+                    let name = VarIdent(
+                        Arc::new("$memory_iteration_child".into()),
+                        VarIdentDisambiguate::VirTemp(span.id),
+                    );
+                    self.loop_tokens.as_mut()?.insert(name.clone());
+                    Some(name)
+                } else {
+                    None
+                };
+                let original = if let Some(input) = input {
+                    let name = token.as_ref().map(|_| {
+                        VarIdent(
+                            Arc::new("$memory_iteration_original".into()),
+                            VarIdentDisambiguate::VirTemp(span.id),
+                        )
+                    });
+                    let selected = name.as_ref().map(|name| {
+                        SpannedTyped::new(span, &expr::memory_type(), ExprX::Var(name.clone()))
+                    });
+                    let witness = self.partition_region_selected(
+                        span,
+                        &location,
+                        &input,
+                        |memory| removal.partition(span, memory),
+                        selected,
+                    )?;
+                    name.map(|name| (name, witness))
+                } else {
+                    None
+                };
+                let tag = if let Some(token) = &token {
+                    let name = VarIdent(
+                        Arc::new("$memory_iteration_presence".into()),
+                        VarIdentDisambiguate::VirTemp(span.id),
+                    );
+                    self.loop_tokens.as_mut()?.insert(name.clone());
+                    self.loop_inputs.insert(
+                        token.clone(),
+                        Selection {
+                            memory: partition.selected.clone(),
+                            original,
+                            presence: (name.clone(), removal.tag.clone()?),
+                        },
+                    );
+                    Some(SpannedTyped::new(span, &int_typ(), ExprX::Var(name)))
+                } else {
+                    removal.tag.clone()
+                };
                 let next = with_root(
                     span,
                     partition.remaining,
@@ -177,21 +264,6 @@ impl Trace<'_> {
                 node.memory = next;
                 let typ = node.typ.clone();
                 self.set(span, &location, node)?;
-                let token = if optional
-                    && self.branch_depth == 0
-                    && self.loop_tokens.is_some()
-                    && self.loop_roots.as_ref().is_some_and(|roots| roots.contains(&location.0))
-                    && self.layouts.owner(&value.typ)
-                {
-                    let name = VarIdent(
-                        Arc::new("$memory_iteration_child".into()),
-                        VarIdentDisambiguate::VirTemp(span.id),
-                    );
-                    self.loop_tokens.as_mut()?.insert(name.clone());
-                    Some(name)
-                } else {
-                    None
-                };
                 if optional && self.branch_depth == 0 {
                     self.effects.pop();
                     self.effects.push(Effect::Pop { location, typ, token: token.clone() });
@@ -216,7 +288,7 @@ impl Trace<'_> {
                             )
                         })
                         .collect();
-                    let tag = removal.tag.expect("pop result tag");
+                    let tag = tag.expect("pop result tag");
                     expr::add(
                         span,
                         expr::push(
@@ -270,12 +342,20 @@ impl Trace<'_> {
                 };
                 Some(Value::Scalar(condition))
             }
-            Operation::IntoSlice { source, element } => {
+            Operation::IntoSlice { source, element, allocation } => {
                 let Value::Owner(mut node) = self.value(&source)? else {
                     return None;
                 };
                 node.origin = None;
                 let length = property(span, node.memory.clone(), "length");
+                if self.loop_tokens.is_some() {
+                    let candidate = contracts::multiply(
+                        span,
+                        contracts::literal(span, element),
+                        contracts::literal(span, self.loop_size_ceiling),
+                    );
+                    self.loop_allocations.push((span.clone(), allocation, candidate));
+                }
                 node.memory = with_root(
                     span,
                     node.memory,
@@ -293,7 +373,14 @@ impl Trace<'_> {
                 Some(Value::Unit)
             }
             Operation::Aggregate { fields, tag } => self.construct(value, fields, tag),
-            Operation::Call { target, args, borrowed, replaced_inputs, .. } => {
+            Operation::Call { target, budget, args, borrowed, replaced_inputs, .. } => {
+                if self.loop_tokens.is_some() {
+                    let candidate = self.scalar(&budget).unwrap_or_else(|| budget.clone());
+                    self.loop_calls.push((span.clone(), budget.clone(), candidate.clone()));
+                    if allocates(&self.summaries.get(&target)?.allocations) {
+                        self.loop_allocations.push((span.clone(), budget, candidate));
+                    }
+                }
                 for replacement in replaced_inputs {
                     if let Some(input) = &replacement.input {
                         let location = self.checked_location(&replacement.destination)?;
@@ -386,4 +473,29 @@ impl Trace<'_> {
         }
         Some(instantiate_value(&template.result, &replacements))
     }
+}
+
+/// Helper allowances bound only allocations introduced in that helper. Input
+/// forests remain separate, including when an input is forwarded or replaced.
+fn allocates(summary: &crate::resource::memory::allocations::AllocationSummary) -> bool {
+    use crate::resource::memory::allocations::ReturnedOwner;
+    fn fresh(owner: &ReturnedOwner) -> bool {
+        match owner {
+            ReturnedOwner::Input { children, replacement, addition, .. } => {
+                replacement.is_some() || addition.is_some() || children.values().any(fresh)
+            }
+            ReturnedOwner::Node { allocation, children, elements } => {
+                allocation
+                    .as_ref()
+                    .is_some_and(|allocation| contracts::constant(&allocation.amount) != Some(0))
+                    || elements.is_some()
+                    || children.values().any(fresh)
+            }
+            ReturnedOwner::Replaced { .. } => true,
+        }
+    }
+    !summary.retained.is_empty()
+        || !summary.children.is_empty()
+        || !summary.collections.is_empty()
+        || summary.returned.as_ref().is_some_and(fresh)
 }

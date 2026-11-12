@@ -72,7 +72,11 @@ impl Analysis<'_> {
         self.storage.record_live(&expr.span)?;
         self.transitions.operation(
             &expr.span,
-            super::transfer::checked::Operation::IntoSlice { source: arg.clone(), element },
+            super::transfer::checked::Operation::IntoSlice {
+                source: arg.clone(),
+                element,
+                allocation: amount.clone(),
+            },
         );
         Ok(Some(Owner {
             geometry: Some(len),

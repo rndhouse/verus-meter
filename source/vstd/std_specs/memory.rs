@@ -183,6 +183,7 @@ pub broadcast group group_metadata_algebra {
     request_prefix,
     request_shift,
     request_tile,
+    request_generate,
     request_reverse,
     request_take,
     remove_add,
@@ -942,6 +943,21 @@ pub broadcast proof fn request_tile(
     reveal(view_requested);
 }
 
+/// A generated slot requests the corresponding child in its iteration block.
+pub broadcast proof fn request_generate(
+    builder: spec_fn(int) -> Seq<Record>,
+    width: int,
+    count: int,
+    start: int,
+    index: int,
+)
+    ensures
+        #[trigger] view_requested(generate_children(builder, width, count, start), index) ==> (width
+            > 0 ==> view_requested(builder((index - start) / width), (index - start) % width)),
+{
+    reveal(view_requested);
+}
+
 /// Reversed slots request their source child through the inverse range map.
 pub broadcast proof fn request_reverse(
     memory: Seq<Record>,
@@ -1365,6 +1381,130 @@ pub proof fn tile_children_facts(block: Seq<Record>, width: int, count: int, sta
     }
 }
 
+/// Generate a complete block for each iteration, preserving nonuniform children.
+/// Logical width describes occupied slots independently of their allocation sizes.
+#[verifier::opaque]
+pub open spec fn generate_children(
+    builder: spec_fn(int) -> Seq<Record>,
+    width: int,
+    count: int,
+    start: int,
+) -> Seq<Record>
+    decreases count,
+{
+    if count <= 0 {
+        Seq::empty()
+    } else {
+        generate_children(builder, width, count - 1, start) + shift_children(
+            builder(count - 1),
+            start + width * (count - 1),
+        )
+    }
+}
+
+/// Sum the actual footprint of every generated block, without a uniform bound.
+#[verifier::opaque]
+pub open spec fn generated_cost(builder: spec_fn(int) -> Seq<Record>, count: int) -> int
+    decreases count,
+{
+    if count <= 0 {
+        0
+    } else {
+        generated_cost(builder, count - 1) + cost(builder(count - 1), 0)
+    }
+}
+
+/// Sum an affine footprint over any number of generated iterations. Doubling
+/// the sum avoids division and preserves an exact integer equality.
+pub proof fn generated_cost_affine(
+    builder: spec_fn(int) -> Seq<Record>,
+    count: int,
+    slope: int,
+    intercept: int,
+)
+    requires
+        count >= 0,
+        forall|k: int| 0 <= k < count ==> cost(#[trigger] builder(k), 0) == slope * k + intercept,
+    ensures
+        2 * generated_cost(builder, count) == slope * count * (count - 1) + 2 * intercept * count,
+    decreases count,
+{
+    reveal_with_fuel(generated_cost, 2);
+    if count > 0 {
+        generated_cost_affine(builder, count - 1, slope, intercept);
+        let previous = generated_cost(builder, count - 1);
+        let current = generated_cost(builder, count);
+        assert(2 * current == slope * count * (count - 1) + 2 * intercept * count)
+            by (nonlinear_arith)
+            requires
+                2 * previous == slope * (count - 1) * (count - 2) + 2 * intercept * (count - 1),
+                current == previous + slope * (count - 1) + intercept,
+        ;
+    } else {
+        assert(slope * count * (count - 1) + 2 * intercept * count == 0) by (nonlinear_arith)
+            requires
+                count == 0,
+        ;
+    }
+}
+
+/// Generation preserves validity and adds the exact costs of different blocks.
+pub proof fn generate_children_facts(
+    builder: spec_fn(int) -> Seq<Record>,
+    width: int,
+    count: int,
+    start: int,
+)
+    requires
+        width >= 0,
+        count >= 0,
+        start >= 0,
+        forall|k: int| 0 <= k < count ==> well_formed(#[trigger] builder(k)),
+        forall|k: int| 0 <= k < count ==> runtime(#[trigger] builder(k)) == builder(k),
+    ensures
+        well_formed(generate_children(builder, width, count, start)),
+        cost(generate_children(builder, width, count, start), 0) == generated_cost(builder, count),
+        runtime(generate_children(builder, width, count, start)) == generate_children(
+            builder,
+            width,
+            count,
+            start,
+        ),
+        nonruntime(generate_children(builder, width, count, start)) == Seq::<Record>::empty(),
+        descendants(generate_children(builder, width, count, start)) == generate_children(
+            builder,
+            width,
+            count,
+            start,
+        ),
+    decreases count,
+{
+    reveal_with_fuel(generate_children, 2);
+    reveal_with_fuel(generated_cost, 2);
+    if count > 0 {
+        generate_children_facts(builder, width, count - 1, start);
+        let block = builder(count - 1);
+        let base = start + width * (count - 1);
+        assert(base >= 0) by (nonlinear_arith)
+            requires
+                start >= 0,
+                width >= 0,
+                count > 0,
+                base == start + width * (count - 1),
+        ;
+        shift_children_facts(block, base);
+        let before = generate_children(builder, width, count - 1, start);
+        let next = shift_children(block, base);
+        well_formed_add(before, next);
+        cost_add(before, next, 0);
+        runtime_add(before, next);
+        runtime_class(next);
+        descendants_add(before, next);
+    } else {
+        cost_empty(0);
+    }
+}
+
 /// Every descriptor in an ordered block belongs to one occupied runtime slot.
 pub open spec fn block_bounds(memory: Seq<Record>, width: int) -> bool
     decreases memory.len(),
@@ -1687,6 +1827,208 @@ pub proof fn tile_children_views(block: Seq<Record>, width: int, count: int, sta
             assert(index == start + width * k + r);
         } else {
             tile_children_outside(block, width, count, start, index);
+        }
+    }
+}
+
+/// Flattened repeated blocks occupy their combined logical extent.
+pub proof fn block_bounds_generate(
+    builder: spec_fn(int) -> Seq<Record>,
+    width: int,
+    count: int,
+    start: int,
+)
+    requires
+        forall|k: int| 0 <= k < count ==> block_bounds(#[trigger] builder(k), width),
+        width >= 0,
+        count >= 0,
+        start >= 0,
+    ensures
+        block_bounds(generate_children(builder, width, count, start), start + width * count),
+    decreases count,
+{
+    reveal_with_fuel(generate_children, 2);
+    if count > 0 {
+        block_bounds_generate(builder, width, count - 1, start);
+        let base = start + width * (count - 1);
+        assert(base >= 0 && base <= start + width * count && base + width == start + width * count)
+            by (nonlinear_arith)
+            requires
+                start >= 0,
+                width >= 0,
+                count > 0,
+                base == start + width * (count - 1),
+        ;
+        block_bounds_weaken(
+            generate_children(builder, width, count - 1, start),
+            base,
+            start + width * count,
+        );
+        block_bounds_shift(builder(count - 1), width, base);
+        block_bounds_add(
+            generate_children(builder, width, count - 1, start),
+            shift_children(builder(count - 1), base),
+            start + width * count,
+        );
+    }
+}
+
+/// Indices outside the repeated block range select an empty forest.
+pub proof fn generate_children_outside(
+    builder: spec_fn(int) -> Seq<Record>,
+    width: int,
+    count: int,
+    start: int,
+    index: int,
+)
+    requires
+        forall|k: int| 0 <= k < count ==> block_bounds(#[trigger] builder(k), width),
+        width >= 0,
+        count >= 0,
+        start >= 0,
+        index < start || index >= start + width * count,
+    ensures
+        subtree(generate_children(builder, width, count, start), seq![index]) == Seq::<
+            Record,
+        >::empty(),
+    decreases count,
+{
+    reveal_with_fuel(generate_children, 2);
+    if count > 0 {
+        let base = start + width * (count - 1);
+        assert(base >= 0 && base <= start + width * count && base + width == start + width * count)
+            by (nonlinear_arith)
+            requires
+                start >= 0,
+                width >= 0,
+                count > 0,
+                base == start + width * (count - 1),
+        ;
+        generate_children_outside(builder, width, count - 1, start, index);
+        shift_children_select(builder(count - 1), width, base, index);
+        block_bounds_empty_selection(builder(count - 1), width, index - base);
+        select_add(
+            generate_children(builder, width, count - 1, start),
+            shift_children(builder(count - 1), base),
+            seq![index],
+        );
+    } else {
+        select_empty(seq![index]);
+    }
+}
+
+/// Select one logical slot without expanding the number of repetitions.
+pub proof fn generate_children_at(
+    builder: spec_fn(int) -> Seq<Record>,
+    width: int,
+    count: int,
+    start: int,
+    iteration: int,
+    offset: int,
+)
+    requires
+        forall|k: int| 0 <= k < count ==> block_bounds(#[trigger] builder(k), width),
+        width > 0,
+        count >= 0,
+        start >= 0,
+        0 <= iteration < count,
+        0 <= offset < width,
+    ensures
+        subtree(
+            generate_children(builder, width, count, start),
+            seq![start + width * iteration + offset],
+        ) == subtree(builder(iteration), seq![offset]),
+    decreases count,
+{
+    reveal_with_fuel(generate_children, 2);
+    let index = start + width * iteration + offset;
+    let base = start + width * (count - 1);
+    assert(base >= 0) by (nonlinear_arith)
+        requires
+            start >= 0,
+            width > 0,
+            count > 0,
+            base == start + width * (count - 1),
+    ;
+    shift_children_select(builder(count - 1), width, base, index);
+    select_add(
+        generate_children(builder, width, count - 1, start),
+        shift_children(builder(count - 1), base),
+        seq![index],
+    );
+    if iteration == count - 1 {
+        assert(index == base + offset) by (nonlinear_arith)
+            requires
+                iteration == count - 1,
+                index == start + width * iteration + offset,
+                base == start + width * (count - 1),
+        ;
+        generate_children_outside(builder, width, count - 1, start, index);
+    } else {
+        generate_children_at(builder, width, count - 1, start, iteration, offset);
+        assert(index - base < 0) by (nonlinear_arith)
+            requires
+                width > 0,
+                0 <= offset < width,
+                iteration < count - 1,
+                index == start + width * iteration + offset,
+                base == start + width * (count - 1),
+        ;
+        block_bounds_empty_selection(builder(count - 1), width, index - base);
+    }
+}
+
+/// Exact indexed views avoid expanding a runtime number of blocks at callers.
+pub proof fn generate_children_views(
+    builder: spec_fn(int) -> Seq<Record>,
+    width: int,
+    count: int,
+    start: int,
+)
+    requires
+        forall|k: int| 0 <= k < count ==> block_bounds(#[trigger] builder(k), width),
+        width >= 0,
+        count >= 0,
+        start >= 0,
+    ensures
+        forall|index: int|
+            #![trigger view_requested(generate_children(builder, width, count, start), index), subtree(generate_children(builder, width, count, start), seq![index])]
+            view_requested(generate_children(builder, width, count, start), index) ==> (subtree(
+                generate_children(builder, width, count, start),
+                seq![index],
+            ) == if width > 0 && start <= index < start + width * count {
+                subtree(builder((index - start) / width), seq![(index - start) % width])
+            } else {
+                Seq::<Record>::empty()
+            }),
+{
+    assert forall|index: int|
+        #![trigger view_requested(generate_children(builder, width, count, start), index), subtree(generate_children(builder, width, count, start), seq![index])]
+        view_requested(generate_children(builder, width, count, start), index) ==> (subtree(
+            generate_children(builder, width, count, start),
+            seq![index],
+        ) == if width > 0 && start <= index < start + width * count {
+            subtree(builder((index - start) / width), seq![(index - start) % width])
+        } else {
+            Seq::<Record>::empty()
+        }) by {
+        if width > 0 && start <= index < start + width * count {
+            let x = index - start;
+            let k = x / width;
+            let r = x % width;
+            crate::arithmetic::div_mod::lemma_fundamental_div_mod(x, width);
+            crate::arithmetic::div_mod::lemma_mod_pos_bound(x, width);
+            assert(0 <= k < count) by (nonlinear_arith)
+                requires
+                    x == width * k + r,
+                    0 <= r < width,
+                    width > 0,
+                    0 <= x < width * count,
+            ;
+            generate_children_at(builder, width, count, start, k, r);
+            assert(index == start + width * k + r);
+        } else {
+            generate_children_outside(builder, width, count, start, index);
         }
     }
 }

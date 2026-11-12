@@ -82,6 +82,8 @@ pub(in super::super) enum Operation {
         element: u64,
         /// False when entry reservations or section protection require spare room.
         grow: bool,
+        /// Replacement allocation observed by local accounting before the push.
+        allocation: Option<Expr>,
         /// Original input regions joined into the receiver by this insertion.
         input: Option<InputJoin>,
     },
@@ -90,7 +92,12 @@ pub(in super::super) enum Operation {
     /// Read cardinality from the checked receiver.
     Length { receiver: Place },
     /// Replace vector backing with length-sized slice backing.
-    IntoSlice { source: Expr, element: u64 },
+    IntoSlice {
+        source: Expr,
+        element: u64,
+        /// New length-sized allocation observed before releasing old backing.
+        allocation: Expr,
+    },
     /// Consume an optional owner and transfer its Contents child.
     Unwrap { source: Expr },
     /// Consume the owner selected by the recorded operand move.
@@ -102,6 +109,8 @@ pub(in super::super) enum Operation {
     /// Apply an already checked helper, including its resolved borrowed places.
     Call {
         target: Fun,
+        /// Instantiated workspace contract; incoming allocations stay external.
+        budget: Expr,
         args: Exprs,
         borrowed: HashMap<usize, Place>,
         modified: std::collections::BTreeSet<usize>,

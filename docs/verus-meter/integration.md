@@ -28,8 +28,9 @@ assertions for normal Verus verification.
 Macro lowering must preserve execution and ghost erasure. Resolve section budget
 names before visiting its declarations, and retain binding scopes for checkpoints.
 Vector growth introduces compiler-owned spec locals after mode checking.
-Register their modes for resolution inference, use fresh AST identities, and
-commit state updates after the executable operation. Generated loop invariants
+Register their modes for resolution inference, including nested specification
+closure bindings used by generated iteration blocks, use fresh AST identities,
+and commit state updates after the executable operation. Generated loop invariants
 must be proved at entry and on back edges. Keep peak checks separate from retained
 allocation effects; caller-owned buffers must stay charged during helper calls.
 Infer reservation requirements bottom-up over the checked call graph. They are

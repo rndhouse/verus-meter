@@ -5,6 +5,9 @@ use super::*;
 use crate::resource::memory::contracts;
 use std::sync::Arc;
 
+/// Expand small finite forests directly; larger counts keep the verified operator.
+pub(super) const FINITE_GENERATION_LIMIT: u32 = 8;
+
 fn call<'a>(value: &'a Expr, name: &str) -> Option<&'a Exprs> {
     let ExprX::Call { target: CallTarget::Fun(_, function, _, _, _), args, .. } = &value.x else {
         return None;
@@ -42,6 +45,7 @@ fn rootless(value: &Expr) -> bool {
         || call(value, "descendants").is_some()
         || call(value, "repeat").is_some()
         || call(value, "tile_children").is_some()
+        || call(value, "generate_children").is_some()
         || call(value, "shift_children").is_some_and(|args| rootless(&args[0]))
         || call(value, "take_children").is_some()
         || call(value, "reverse_children").is_some()
@@ -518,6 +522,46 @@ fn node(value: &Expr) -> Expr {
             ));
         }
     }
+    if let Some(args) = call(value, "generate_children") {
+        if let (ExprX::Closure(binders, body), Some(count)) =
+            (&args[0].x, contracts::constant(&args[2]))
+        {
+            // Small finite callers are ordinary forest expressions. Symbolic
+            // counts keep the verified generator and its indexed view laws.
+            if binders.len() == 1 && (0..=u64::from(FINITE_GENERATION_LIMIT)).contains(&count) {
+                let mut memory = expr::empty(span, expr::record_type());
+                for index in 0..count {
+                    let body = specialize(
+                        body,
+                        &HashMap::from([(
+                            binders[0].name.clone(),
+                            expr::integer(span, index as i128),
+                        )]),
+                    );
+                    let start = contracts::add(
+                        span,
+                        args[3].clone(),
+                        contracts::multiply(
+                            span,
+                            args[1].clone(),
+                            expr::integer(span, index as i128),
+                        ),
+                    );
+                    memory = expr::add(
+                        span,
+                        memory,
+                        expr::operation(
+                            span,
+                            "shift_children",
+                            vec![body, start],
+                            expr::memory_type(),
+                        ),
+                    );
+                }
+                return simplify(&memory);
+            }
+        }
+    }
     if let Some(args) = call(value, "tile_children") {
         if contracts::constant(&args[1]) == Some(1) {
             if let Some(parts) = call(&args[0], "prefix") {
@@ -852,4 +896,66 @@ fn node(value: &Expr) -> Expr {
         _ => false,
     };
     if fold { contracts::simplify(value) } else { value.clone() }
+}
+
+/// Decompose a scalar extent into `slope * index + intercept`. Only algebraic
+/// identities are recognized; arbitrary metadata lookups retain their generator.
+pub(super) fn affine(value: &Expr, index: &VarIdent) -> Option<(Expr, Expr)> {
+    let span = &value.span;
+    if crate::ast_visitor::expr_visitor_check(value, &mut |_, value| {
+        if matches!(&value.x, ExprX::Var(name) if name == index) { Err(()) } else { Ok(()) }
+    })
+    .is_ok()
+    {
+        return Some((expr::integer(span, 0), value.clone()));
+    }
+    if matches!(&value.x, ExprX::Var(name) if name == index) {
+        return Some((expr::integer(span, 1), expr::integer(span, 0)));
+    }
+    let ExprX::Binary(BinaryOp::Arith(op), left, right) = &value.x else {
+        return None;
+    };
+    let (a, b) = affine(left, index)?;
+    let (c, d) = affine(right, index)?;
+    let pair = match op {
+        ArithOp::Add(_) => (contracts::add(span, a, c), contracts::add(span, b, d)),
+        ArithOp::Sub(_) => (contracts::subtract(span, a, c), contracts::subtract(span, b, d)),
+        ArithOp::Mul(_) if contracts::constant(&a) == Some(0) => {
+            (contracts::multiply(span, b.clone(), c), contracts::multiply(span, b, d))
+        }
+        ArithOp::Mul(_) if contracts::constant(&c) == Some(0) => {
+            (contracts::multiply(span, a, d.clone()), contracts::multiply(span, b, d))
+        }
+        _ => return None,
+    };
+    Some((simplify(&pair.0), simplify(&pair.1)))
+}
+
+/// Propose a scalar ceiling for allocation observations of a selected child.
+/// Only proof candidates use this substitution; exported forests retain the
+/// actual descriptor fields. Operation-site obligations prove each candidate.
+pub(super) fn allocation_bound(
+    value: &Expr,
+    tokens: &std::collections::HashSet<VarIdent>,
+    ceiling: u64,
+) -> Expr {
+    crate::ast_visitor::map_expr_visitor(value, &|expression| {
+        if let ExprX::UnaryOpr(UnaryOpr::Field(_), record) = &expression.x {
+            if crate::ast_util::types_equal(&record.typ, &expr::record_type()) {
+                let dependent = crate::ast_visitor::expr_visitor_check(record, &mut |_, value| {
+                    if matches!(&value.x, ExprX::Var(name) if tokens.contains(name)) {
+                        Err(())
+                    } else {
+                        Ok(())
+                    }
+                })
+                .is_err();
+                if dependent {
+                    return Ok::<Expr, VirErr>(contracts::literal(&expression.span, ceiling));
+                }
+            }
+        }
+        Ok::<Expr, VirErr>(expression.clone())
+    })
+    .expect("infallible allocation-bound construction")
 }

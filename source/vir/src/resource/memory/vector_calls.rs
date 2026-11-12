@@ -77,7 +77,8 @@ impl Analysis<'_> {
             let arg = &args[*index];
             let id = self.vector_argument(arg, &callee.x.params[*index].x.typ, path)?;
             let available = self.growth.vectors[id].capacity.clone();
-            let required = contracts::substitute(required, callee, args, &self.stable_scalars)?;
+            let required =
+                contracts::substitute(required, callee, args, &self.allocation_scalars())?;
             self.checks.push((
                 expr.span.clone(),
                 crate::ast_util::mk_ineq(&expr.span, &required, &available, InequalityOp::Le),
@@ -117,7 +118,8 @@ impl Analysis<'_> {
         let c = &expr.span;
         for ((index, path), bound) in &self.summaries[&callee.x.name].allocations.retained.clone() {
             let id = self.vector_argument(&args[*index], &callee.x.params[*index].x.typ, path)?;
-            let bound = super::allocations::instantiate(bound, callee, args, &self.stable_scalars)?;
+            let bound =
+                super::allocations::instantiate(bound, callee, args, &self.allocation_scalars())?;
             if self.growth.section_protected.contains(&id)
                 && super::contracts::constant(&bound.amount) != Some(0)
             {

@@ -6,12 +6,7 @@ use super::*;
 use crate::resource::memory::metadata::operations::{Partition, replace};
 
 impl Trace<'_> {
-    pub(super) fn join_region(
-        &mut self,
-        span: &Span,
-        index: Expr,
-        input: &checked::InputJoin,
-    ) -> Option<()> {
+    pub(super) fn original_child(&self, span: &Span, input: &checked::InputJoin) -> Option<Expr> {
         let mut child = expr::empty(span, expr::record_type());
         for (path, id) in &input.children {
             child = expr::add(
@@ -24,6 +19,16 @@ impl Trace<'_> {
                 ),
             );
         }
+        Some(simplify::simplify(&child))
+    }
+
+    pub(super) fn join_region(
+        &mut self,
+        span: &Span,
+        index: Expr,
+        input: &checked::InputJoin,
+    ) -> Option<()> {
+        let child = self.original_child(span, input)?;
         let parent = match input.previous {
             Some(id) => self.regions.get(&id)?.clone(),
             None => expr::empty(span, expr::record_type()),
@@ -92,6 +97,17 @@ impl Trace<'_> {
         input: &checked::InputSplit,
         partition: impl FnOnce(Expr) -> Partition,
     ) -> Option<()> {
+        self.partition_region_selected(span, location, input, partition, None).map(|_| ())
+    }
+
+    pub(super) fn partition_region_selected(
+        &mut self,
+        span: &Span,
+        location: &Location,
+        input: &checked::InputSplit,
+        partition: impl FnOnce(Expr) -> Partition,
+        selected: Option<Expr>,
+    ) -> Option<Expr> {
         let mut memory = self.regions.get(&input.source)?.clone();
         let mut parents = Vec::new();
         for step in location.2.get(input.depth..)? {
@@ -105,8 +121,10 @@ impl Trace<'_> {
                 replace(span, parent, path, memory)
             });
         self.regions.insert(input.remaining, simplify::simplify(&remaining));
+        let witness = partition.selected;
+        let selected = selected.unwrap_or_else(|| witness.clone());
         for (path, id) in &input.selected {
-            let mut memory = path.iter().fold(partition.selected.clone(), |memory, slot| {
+            let mut memory = path.iter().fold(selected.clone(), |memory, slot| {
                 expr::subtree(span, memory, expr::path(span, [self.layouts.metadata_slot(slot)]))
             });
             for child in input
@@ -122,6 +140,6 @@ impl Trace<'_> {
             }
             self.regions.insert(*id, simplify::simplify(&memory));
         }
-        Some(())
+        Some(witness)
     }
 }

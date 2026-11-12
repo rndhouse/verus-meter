@@ -158,8 +158,8 @@ fn sibling_boxed_slice_summaries_keep_independent_dynamic_charges() {
         fn f(n: usize) requires n <= 4, resources peak(memory) <= BOUND + 2*n {
             let p = make(n); let scratch = [0u8;100];
         }";
-    verifies("nested_slices", &code.replace("BOUND", "236"));
-    rejects("nested_slices_short", &code.replace("BOUND", "235"), "memory budget exceeded");
+    verifies("nested_slices", &code.replace("BOUND", "208"));
+    rejects("nested_slices_short", &code.replace("BOUND", "207"), "memory budget exceeded");
 }
 
 #[test]

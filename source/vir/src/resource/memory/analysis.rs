@@ -80,6 +80,12 @@ pub(super) struct Analysis<'a> {
 }
 
 impl Analysis<'_> {
+    /// Operation-local allocation observations include the current unit counters.
+    /// Persistent contracts still use only immutable function inputs.
+    pub(super) fn allocation_scalars(&self) -> HashSet<VarIdent> {
+        self.stable_scalars.iter().chain(&self.growth.loop_counters).cloned().collect()
+    }
+
     pub(super) fn discard(&mut self, expr: &Expr) -> Result<(), VirErr> {
         let result = self.expr(expr)?;
         self.storage.release(
@@ -605,7 +611,27 @@ pub(super) fn check(
         &analysis.transitions,
     )?;
     if let Some(inferred) = &inferred {
-        analysis.apply_loop_evidence(&inferred.loops, &inferred.growth)?;
+        analysis.apply_loop_evidence(&inferred.loops, &inferred.growth, &inferred.scratch)?;
+        for (span, condition) in &inferred.checks {
+            let check = SpannedTyped::new(
+                span,
+                &crate::ast_util::unit_typ(),
+                ExprX::AssertAssume {
+                    is_assume: false,
+                    expr: condition.clone(),
+                    msg: Some(super::model::unsupported(
+                        span,
+                        "an allocation extent beyond the inferred iteration bound",
+                    )),
+                },
+            );
+            analysis
+                .growth
+                .before
+                .entry(span.id)
+                .or_default()
+                .push(crate::def::Spanned::new(span.clone(), StmtX::Expr(check)));
+        }
     }
     let report = if symbolic_bound.is_some() {
         analysis.storage.finish_conditional()
@@ -621,6 +647,12 @@ pub(super) fn check(
         kind: CheckKind::Function,
     }));
     let summary = super::summary::FunctionSummary {
+        transfer_required: super::transfer::requires_summary(
+            function,
+            layouts,
+            &analysis.transitions,
+            summaries,
+        )?,
         transfer: inferred.map(|inferred| inferred.template),
         vectors: super::vector_calls::VectorSummary {
             removals: input_vectors

@@ -39,13 +39,14 @@ impl Analysis<'_> {
         {
             return Err(unsupported(&expr.span, "this call signature"));
         }
+        let call_scalars = self.allocation_scalars();
         let transfer = self.prepare_transfer_call(expr, callee, args)?;
         self.check_vector_call(expr, callee, args)?;
         let result_size = self.layouts.return_size(&expr.typ, &expr.span)?;
         let bound = super::contracts::instantiate(
             callee,
             args,
-            &self.stable_scalars,
+            &call_scalars,
             self.budgets,
             self.functions,
             self.layouts,
@@ -160,9 +161,7 @@ impl Analysis<'_> {
         for point in profiles {
             let cost = point
                 .cost
-                .map(c, &|cost| {
-                    super::contracts::substitute(cost, callee, args, &self.stable_scalars)
-                })
+                .map(c, &|cost| super::contracts::substitute(cost, callee, args, &call_scalars))
                 .unwrap_or_else(|_| Footprint::allowance(bound.clone()));
             let mut cost = cost.limit(c, bound.clone());
             let mut excluded = external_inputs.clone();
@@ -218,6 +217,7 @@ impl Analysis<'_> {
         self.transitions.operation(
             &expr.span,
             super::transfer::checked::Operation::Call {
+                budget: bound.clone(),
                 target: target.clone(),
                 args: args.clone(),
                 borrowed,

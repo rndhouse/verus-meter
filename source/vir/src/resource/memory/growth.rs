@@ -43,6 +43,8 @@ pub(super) struct VectorState {
 pub(super) struct Growth {
     /// Universal sibling and reservation facts are needed only by reusable bodies.
     pub(super) loop_depth: usize,
+    /// Counted iteration observations admitted in allocation sizes only.
+    pub(super) loop_counters: std::collections::HashSet<VarIdent>,
     /// Only loops composing helper templates need the additional descriptor
     /// classification invariant; direct projections use the existing algebra.
     pub(super) transfer_loops: std::collections::HashSet<u64>,
@@ -377,21 +379,27 @@ pub(crate) fn resolution_modes(
     variables: &mut HashMap<VarIdent, Mode>,
     temporaries: &mut HashMap<u64, Mode>,
 ) {
-    let ExprX::Block(statements, _) = &body.x else { return };
-    for statement in statements.iter() {
-        if let StmtX::Decl { pattern, init, mode: Some((Mode::Spec, _)), .. } = &statement.x {
-            if let PatternX::Var(binding) = &pattern.x {
-                if matches!(binding.name.1, VarIdentDisambiguate::VirTemp(_))
-                    && binding.name.0.starts_with("$memory_")
-                {
-                    variables.insert(binding.name.clone(), Mode::Spec);
-                    if let Some(init) = init {
-                        temporaries.insert(init.span.id, Mode::Spec);
+    let _ = crate::ast_visitor::expr_visitor_check(body, &mut |_, expression| {
+        let ExprX::Block(statements, _) = &expression.x else {
+            return Ok::<(), VirErr>(());
+        };
+        for statement in statements.iter() {
+            if let StmtX::Decl { pattern, init, mode: Some((Mode::Spec, _)), .. } = &statement.x {
+                if let PatternX::Var(binding) = &pattern.x {
+                    if matches!(binding.name.1, VarIdentDisambiguate::VirTemp(_))
+                        && binding.name.0.starts_with("$memory_")
+                    {
+                        variables.insert(binding.name.clone(), Mode::Spec);
+                        temporaries.insert(statement.span.id, Mode::Spec);
+                        if let Some(init) = init {
+                            temporaries.insert(init.span.id, Mode::Spec);
+                        }
                     }
                 }
             }
         }
-    }
+        Ok(())
+    });
 }
 
 /// Every replacement is created while its receiver handle is live. If even the

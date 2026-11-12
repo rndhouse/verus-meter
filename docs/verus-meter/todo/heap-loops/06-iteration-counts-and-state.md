@@ -35,6 +35,9 @@ ownership summary already represents those operations.
   edges; do not assume them from the ownership summary.
 - [ ] Classify changing bounds and data-dependent stopping conditions. Implement
   those with a precise representable relation; explicitly reject the rest.
+- [ ] Broaden checked allocation-envelope inference beyond literal ceilings in
+  invariants, including symbolic bounds and observations inherited from enclosing
+  loops. Keep operation-site extent checks and complete allocation descriptors.
 - [ ] Preserve integer overflow obligations and distinguish loop termination
   proofs from the ownership facts needed to describe completed iterations.
 

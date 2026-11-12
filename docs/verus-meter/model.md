@@ -262,25 +262,44 @@ preserve individual child reservations without additional contract syntax.
 The structural traversal handles fixed children and runtime children separately,
 so supported ownership shapes compose without rules for each nesting combination.
 Loop summaries compose ordered effects on disjoint persistent collections. An
-iteration can append a block of fresh children with an iteration-independent
-footprint, remove several children, or transfer a contiguous
-range of whole children to one destination in extraction order. Direct operations,
-precisely summarized helpers, and completed nested counted loops share these rules.
-Block length counts logical children separately from their allocation bytes.
-The collections can occupy fixed fields of the same owner. Transfers preserve
-each child's complete nested forest, including different capacities. Repeated
-last-element extraction reverses their order at the destination. Counted loops
-use a stable upper bound and unit increment; consuming loops test a popped
-collection's length against a stable lower bound.
-Zero and partial iteration ranges preserve the unconsumed children and backing.
-Ordered extraction followed by restoration of the same whole children can
-compose to an unchanged collection, including through nested counted loops.
-Restoration must preserve child order. Changed payloads, permutations, splitting
-one iteration's extracted block between destinations, and mixing growth with
-removal on the same role within an iteration require additional summary support.
-All intermediate allocation peaks remain
-checked. A pop preserves backing and supplies its previous length as a capacity
-lower bound, so restoring children can reuse those slots.
+iteration can append an ordered block, remove several children, or transform
+selected children before moving them to a destination. Direct operations,
+precisely summarized helpers, and completed nested counted loops use the same
+forest operations. Block length counts logical children independently of bytes;
+collections can occupy fixed fields of the same owner.
+
+A transformed child retains its individual nested allocation descriptors.
+Extraction, fixed-field replacement, buffer growth, conversion to a boxed slice,
+and release compose before insertion or drop. Source and destination child types
+can differ. Ordered blocks can discard selected children or change their output
+order. A generated block describes each iteration separately, including
+nonuniform capacities, and its cost is the sum of those actual forests. Affine
+footprints also have a symbolic sum, without unrolling the iteration count.
+Original-input regions follow the same selection map and exclude fresh storage.
+Temporary iteration symbols are closed before a helper summary is exported.
+Optional results retain each visit's presence tag, including removals after a
+source becomes empty.
+
+Allocation sizes admit native `+`, `-`, and `*` over immutable scalar observations
+and the current counted-loop counter. A bound scalar can also observe a selected
+child's logical length. Executable overflow checks remain in force, and mutable
+observations are captured at the allocation. Body proofs use checked scalar
+ceilings proposed from loop invariants, including per-operation allocation bounds
+and entry headroom for temporary storage and helper work. These proof ceilings do
+not replace individual descriptors. Payload values and scalar dependencies that
+cannot be represented remain unsupported.
+
+Counted loops use a stable upper bound and unit increment; consuming loops test
+a popped collection's length against a stable lower bound. Zero and partial
+ranges preserve unconsumed children and backing. Unchanged whole-child transfers
+use an exact inverse index map, preserving different capacities and reversing
+last-element extraction order at the destination. Ordered extraction followed
+by restoration of the same whole children can reduce to an unchanged collection,
+including through nested counted loops. A changed child repeatedly removed and
+restored to the same role requires the repeated-visit model from indexed updates.
+Every intermediate allocation peak remains checked, including old/new backing
+overlap. A pop preserves backing and supplies its previous length as a capacity
+lower bound, so restoration can reuse those slots.
 Counted loops also support conditional appends, last-element removals, and routing
 an unchanged whole child to alternative destinations. Conditions may use immutable
 scalar parameters or compare the counter itself with scalar thresholds built
@@ -333,21 +352,26 @@ displaced input subtree after evaluating the replacement. Later `remove` and
 separately. Leaf helpers that replace fixed children follow the same rule, with
 the original subtree kept live throughout the leaf call.
 
+Leaf-only results preserve inferred reservation and cardinality descriptors.
+Helpers that traverse internal owning collections require a precise summary even
+when their public result is a leaf owner; forwarding helpers retain that interface.
+
 Missing ownership support is an error even with a generous memory budget. A helper
 whose control flow or value dependencies cannot be represented by a finite ownership
 transformation is unsupported. The loop rules above support local collections and
 collections passed by value. Extraction from borrowed inputs and indexed replacement
 in owned inputs remain unsupported inside loops. Overlapping collection roles
-that cannot reduce to whole-child restoration and ownership changes to a
-transferred payload within an iteration are also unsupported. Incoming extraction
+that cannot reduce to whole-child restoration remain unsupported. Incoming extraction
 and replacement remain unsupported within protected ordinary branches and memory
 sections; checked loop branches can partition supported persistent roles.
 Indexing incoming children inside loops and forwarding an incoming collection
 to another runtime-ownership helper are also unsupported. Indexed
 borrows can call ordinary leaf helpers.
-Helpers may insert an unchanged whole owning argument or forward it unchanged.
-Loop-carried helper effects that lose individual metadata, delegate borrowed
-collection traversal, or return transformed incoming payloads remain unsupported.
+Helpers may insert or forward whole owning arguments and transform supported
+leaf allocations. Loop-carried helper effects that lack a precise transformation
+or delegate borrowed collection traversal remain unsupported. Passing extracted
+original subtrees to helpers with runtime ownership interfaces also remains
+unsupported.
 There is no aggregate ownership fallback or copied parent charge for an unknown child.
 Conservative upper bounds remain valid for byte sizes and peak usage.
 

@@ -71,8 +71,18 @@ impl Analysis<'_> {
         let protection = self.heap.protect();
         self.heap.permit_loop_partitions(&protection.0, &protection.1);
         let first_checkpoint = self.checkpoints.len();
+        let first_cost = self.storage.peak().costs.len();
+        let entry_heap = self.storage.live_expression(&expr.span).select(
+            &expr.span,
+            &super::super::footprint::MemorySelection::kind(
+                super::super::footprint::MemoryKind::host_heap(),
+            ),
+        );
         self.storage.event(&expr.span, "analyze reusable while iteration".into());
         self.growth.loop_depth += 1;
+        let counter = record.control.as_ref().and_then(|control| control.counter()).cloned();
+        let inserted =
+            counter.as_ref().is_some_and(|name| self.growth.loop_counters.insert(name.clone()));
         // Nested loops enter after any number of outer iterations. Their entry
         // candidates cannot reuse the first iteration's finite charge extent.
         self.growth.begin_element_iteration(&elements);
@@ -82,11 +92,19 @@ impl Analysis<'_> {
             self.finish_element_reservations()?;
         }
         self.growth.loop_depth -= 1;
+        if inserted {
+            self.growth.loop_counters.remove(counter.as_ref().unwrap());
+        }
         assert_eq!(self.storage.live(), entry);
         // Every checkpoint may be reached after a previous complete
         // iteration. With reusable storage, one iteration's maximum is
         // the fixed point, including any nested loops or alternatives.
         let iteration_peak = self.storage.peak();
+        record.local_costs =
+            iteration_peak.costs[first_cost..].iter().map(|(_, cost)| cost.clone()).collect();
+        let candidate =
+            crate::ast_util::mk_ineq(&expr.span, &entry_heap, &self.bound, InequalityOp::Le);
+        record.entry_headroom = vec![candidate];
         for checkpoint in &mut self.checkpoints[first_checkpoint..] {
             checkpoint.peak.merge(&iteration_peak);
         }
@@ -165,10 +183,95 @@ impl Analysis<'_> {
         &mut self,
         loops: &std::collections::HashMap<u64, Vec<Transfer>>,
         growth: &std::collections::HashMap<u64, Vec<(super::super::paths::LocalPath, Expr)>>,
+        scratch: &std::collections::HashMap<u64, Expr>,
     ) -> Result<(), VirErr> {
         for (id, transfers) in loops {
-            let record = &self.transitions.loops[id];
+            let record = self.transitions.loops[id].clone();
             self.growth.loops.entry(*id).or_default().extend(record.conservation(transfers));
+            if transfers.iter().any(|transfer| transfer.additional.is_some()) {
+                let mut additions = std::collections::BTreeMap::new();
+                for transfer in transfers {
+                    if let Some(amount) = &transfer.additional {
+                        additions
+                            .entry(transfer.target)
+                            .and_modify(|old: &mut Expr| {
+                                *old =
+                                    contracts::maximum(&record.span, old.clone(), amount.clone());
+                            })
+                            .or_insert_with(|| amount.clone());
+                    }
+                }
+                let amount = additions
+                    .into_values()
+                    .fold(contracts::literal(&record.span, 0), |sum, amount| {
+                        contracts::add(&record.span, sum, amount)
+                    });
+                let reserve = contracts::multiply(
+                    &record.span,
+                    amount,
+                    contracts::literal(&record.span, record.size_ceiling.unwrap_or(0)),
+                );
+                let call_ceiling =
+                    scratch.get(id).cloned().unwrap_or_else(|| contracts::literal(&record.span, 0));
+                let mut local_peak = contracts::literal(&record.span, 0);
+                for cost in &record.local_costs {
+                    // Body-local scalar aliases do not exist at the loop head.
+                    // Their helper allowances use checked iteration ceilings;
+                    // explicit layout charges and stable bounds stay unchanged.
+                    let cost = cost.map(&record.span, &|amount| {
+                        let stable = crate::ast_visitor::expr_visitor_check(amount, &mut |scope, value| {
+                            if matches!(&value.x, ExprX::Var(name) if !scope.contains_key(name) && !record.proof_scalars.contains(name)) { Err(()) } else { Ok(()) }
+                        }).is_ok();
+                        Ok(if stable { amount.clone() } else { call_ceiling.clone() })
+                    })?;
+                    let selected = cost.select(
+                        &record.span,
+                        &super::super::footprint::MemorySelection::kind(
+                            super::super::footprint::MemoryKind::host_local(),
+                        ),
+                    );
+                    local_peak = contracts::maximum(&record.span, local_peak, selected);
+                }
+                let reserve = contracts::add(&record.span, reserve, local_peak);
+                let candidates = record
+                    .entry_headroom
+                    .iter()
+                    .map(|candidate| {
+                        let ExprX::Binary(BinaryOp::Inequality(InequalityOp::Le), live, bound) =
+                            &candidate.x
+                        else {
+                            unreachable!()
+                        };
+                        crate::ast_util::mk_ineq(
+                            &record.span,
+                            &contracts::add(&record.span, live.clone(), reserve.clone()),
+                            bound,
+                            InequalityOp::Le,
+                        )
+                    })
+                    .collect();
+                let facts = self.freeze_loop_facts(&record.span, candidates)?;
+                for fact in &facts {
+                    let check = SpannedTyped::new(
+                        &record.span,
+                        &crate::ast_util::unit_typ(),
+                        ExprX::AssertAssume {
+                            is_assume: false,
+                            expr: fact.clone(),
+                            msg: Some(crate::messages::error(
+                                &record.span,
+                                "memory budget exceeded: cannot reserve heap headroom for loop allocations",
+                            )),
+                        },
+                    );
+                    self.growth
+                        .before
+                        .entry(*id)
+                        .or_default()
+                        .push(crate::def::Spanned::new(record.span.clone(), StmtX::Expr(check)));
+                }
+                self.growth.loops.entry(*id).or_default().extend(facts);
+            }
         }
         for (id, bounds) in growth {
             let record = &self.transitions.loops[id];
@@ -212,45 +315,11 @@ impl Analysis<'_> {
                         &upper,
                         InequalityOp::Le,
                     ));
-                    if let (Some((bytes, entry)), Some((current_capacity, capacity, element))) =
-                        (&charge.backing, &charge.reservation)
-                    {
-                        // An entry reservation stays available as backing grows.
-                        // Without this frame fact, a loop query can pair an
-                        // arbitrary entry capacity with a smaller current one.
-                        self.growth.loops.entry(*id).or_default().push(crate::ast_util::mk_ineq(
-                            &record.span,
-                            capacity,
-                            current_capacity,
-                            InequalityOp::Le,
-                        ));
-                        let replacement = contracts::multiply(
-                            &record.span,
-                            contracts::literal(&record.span, *element),
-                            crate::resource::memory::growth::grown_capacity(
-                                &record.span,
-                                charge.length.0.clone(),
-                                *element,
-                            ),
-                        );
-                        let upper = crate::resource::memory::growth::select(
-                            &record.span,
-                            crate::ast_util::mk_ineq(
-                                &record.span,
-                                &charge.length.0,
-                                capacity,
-                                InequalityOp::Le,
-                            ),
-                            entry.clone(),
-                            contracts::maximum(&record.span, entry.clone(), replacement),
-                        );
-                        self.growth.loops.entry(*id).or_default().push(crate::ast_util::mk_ineq(
-                            &record.span,
-                            bytes,
-                            &upper,
-                            InequalityOp::Le,
-                        ));
-                    }
+                    self.growth
+                        .loops
+                        .entry(*id)
+                        .or_default()
+                        .extend(charge.append_backing(&record.span));
                 }
             }
         }
@@ -444,10 +513,35 @@ impl Loop {
                     )
                 })
             };
+            let mut upper = sum(true);
+            let mut additions = std::collections::BTreeMap::new();
+            for transfer in transfers.iter().filter(|transfer| group.contains(&transfer.source)) {
+                if let Some(additional) = &transfer.additional {
+                    additions
+                        .entry(transfer.target)
+                        .and_modify(|old: &mut Expr| {
+                            *old = contracts::maximum(&self.span, old.clone(), additional.clone());
+                        })
+                        .or_insert_with(|| additional.clone());
+                }
+            }
+            for (target, amount) in additions {
+                let charge = &self.charges[target];
+                let completed = contracts::subtract(
+                    &self.span,
+                    charge.length.0.clone(),
+                    charge.length.1.clone(),
+                );
+                upper = contracts::add(
+                    &self.span,
+                    upper,
+                    contracts::multiply(&self.span, amount, completed),
+                );
+            }
             candidates.push(crate::ast_util::mk_ineq(
                 &self.span,
                 &sum(false),
-                &sum(true),
+                &upper,
                 InequalityOp::Le,
             ));
             if group.len() == 1 {
@@ -467,6 +561,48 @@ impl Loop {
                 }
             }
         }
+        let targets: std::collections::BTreeSet<_> = transfers
+            .iter()
+            .filter(|transfer| transfer.additional.is_some() && transfer.source != transfer.target)
+            .map(|transfer| transfer.target)
+            .collect();
+        for target in targets {
+            let charge = &self.charges[target];
+            candidates.push(crate::ast_util::mk_ineq(
+                &self.span,
+                &contracts::literal(&self.span, 0),
+                &charge.length.1,
+                InequalityOp::Le,
+            ));
+            candidates.extend(charge.append_backing(&self.span));
+        }
         candidates
+    }
+}
+
+impl Charge {
+    /// Entry reservation remains available while append-only backing can grow.
+    /// Retained root bytes are separate from the appended children's charges.
+    fn append_backing(&self, span: &crate::messages::Span) -> Vec<Expr> {
+        let (Some((bytes, entry)), Some((capacity, initial, element))) =
+            (&self.backing, &self.reservation)
+        else {
+            return Vec::new();
+        };
+        let replacement = contracts::multiply(
+            span,
+            contracts::literal(span, *element),
+            crate::resource::memory::growth::grown_capacity(span, self.length.0.clone(), *element),
+        );
+        let upper = crate::resource::memory::growth::select(
+            span,
+            crate::ast_util::mk_ineq(span, &self.length.0, initial, InequalityOp::Le),
+            entry.clone(),
+            contracts::maximum(span, entry.clone(), replacement),
+        );
+        vec![
+            crate::ast_util::mk_ineq(span, initial, capacity, InequalityOp::Le),
+            crate::ast_util::mk_ineq(span, bytes, &upper, InequalityOp::Le),
+        ]
     }
 }

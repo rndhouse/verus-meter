@@ -6,7 +6,7 @@ not promise support for every Rust program or every owning container.
 
 1. [Compose iteration operations](complete/01-compose-iteration-operations.md) — complete
 2. [Conditional ownership effects](complete/02-conditional-ownership-effects.md) — complete
-3. [Transform children during traversal](03-transform-children.md)
+3. [Transform children during traversal](complete/03-transform-children.md) — complete
 4. [Indexed traversal and updates](04-indexed-traversal.md)
 5. [Borrowed collections and incoming ownership](05-borrowed-and-incoming-ownership.md)
 6. [General iteration counts and carried state](06-iteration-counts-and-state.md)
@@ -20,8 +20,10 @@ transfers compose on disjoint persistent roles, including through precise helper
 programs and nested counted loops. Guarded effects also support stable scalar
 conditions and counter thresholds with ordered, exact selection ranges. Roles
 can occupy fixed fields; children can contain nested supported ownership shapes.
-Transformed payloads, indexed roles, incoming delegation, broader control forms,
-and leaf-only interface precision are covered by the remaining tasks.
+Parametric child transformations preserve nested extraction, replacement, growth,
+release, and nonuniform generated footprints. Leaf-only results retain inferred
+child descriptors. Indexed roles, incoming delegation, broader progress and
+control forms remain in the following tasks.
 Local peak proofs support some cases that cannot yet be exported as precise
 ownership summaries.
 

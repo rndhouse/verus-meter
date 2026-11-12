@@ -1,7 +1,7 @@
 # 4. Indexed traversal and updates
 
 Builds on tasks [1](complete/01-compose-iteration-operations.md) through
-[3](03-transform-children.md). Incoming ownership is completed in
+[3](complete/03-transform-children.md). Incoming ownership is completed in
 [task 5](05-borrowed-and-incoming-ownership.md).
 
 ## Goal
@@ -13,7 +13,9 @@ indexed mutation, replacement, and removal with reindexing.
 
 Loop summaries support last-element removal but not general indexed removal or
 updates beneath runtime indices. Persistent collection roles must use fixed
-paths. Incoming-child indexing has an additional explicit loop guard, even for
+paths. Repeatedly popping, changing, and restoring the last child also needs a
+repeated-visit transformation rather than a traversal into a disjoint destination.
+Incoming-child indexing has an additional explicit loop guard, even for
 some reads; that lifetime boundary also requires task 5.
 
 ## Work

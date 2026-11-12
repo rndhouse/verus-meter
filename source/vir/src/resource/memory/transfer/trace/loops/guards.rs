@@ -12,6 +12,8 @@ pub(super) struct Program {
     pub(super) effects: Vec<Effect>,
     /// Exact interval width; all iterations take the same selected program.
     pub(super) count: Expr,
+    /// First counter observation in this interval.
+    pub(super) start: Expr,
     /// Stable decision selecting this whole program for the interval.
     pub(super) condition: Expr,
 }
@@ -32,6 +34,7 @@ pub(super) fn partition(
         return Some(vec![vec![Program {
             effects: effects.to_vec(),
             count,
+            start,
             condition: crate::ast_util::mk_bool(span, true),
         }]]);
     }
@@ -95,7 +98,12 @@ pub(super) fn partition(
                 continue;
             }
             let effects = select(effects, &guards, selection);
-            interval.push(Program { effects, count: width.clone(), condition: selected });
+            interval.push(Program {
+                effects,
+                count: width.clone(),
+                start: low.clone(),
+                condition: selected,
+            });
         }
         programs.push(interval);
         low = high;

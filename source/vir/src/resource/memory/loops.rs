@@ -66,10 +66,19 @@ pub(super) struct Loop {
     pub(super) invariants: LoopInvariants,
     /// Optional closed-count control form, classified once at loop entry.
     pub(super) control: Option<Control>,
+    /// Literal scalar ceiling proposed by user invariants. It is only a proof
+    /// candidate: every use remains checked by the ordinary loop obligations.
+    pub(super) size_ceiling: Option<u64>,
     /// Original regions after all iterations, distinct from first-iteration IDs.
     pub(super) regions: Vec<Region>,
     /// Entry snapshots for local child-charge conservation proofs.
     charges: Vec<Charge>,
+    /// Entry heap and temporary-storage candidates, frozen only when requested
+    /// by a completed transformation and checked before ownership changes.
+    entry_headroom: Vec<Expr>,
+    /// Simultaneous body costs used to bound temporary local storage. Helper
+    /// allowances are specialized only after their iteration observations close.
+    local_costs: Vec<super::footprint::Footprint>,
     /// Shared source classification; consumers do not rescan the body.
     effects: Effects,
     /// State identities and source lengths at this loop, independent of later
@@ -211,7 +220,17 @@ impl Loop {
                 Ok(())
             })?;
         }
+        let mut size_ceiling = None;
+        for invariant in invs.iter() {
+            crate::ast_visitor::expr_visitor_check(&invariant.inv, &mut |_, value| {
+                if let Some(n) = super::contracts::constant(value) {
+                    size_ceiling = Some(size_ceiling.unwrap_or(0).max(n));
+                }
+                Ok::<(), VirErr>(())
+            })?;
+        }
         Ok(Self {
+            size_ceiling,
             span: value.span.clone(),
             condition: condition.clone(),
             body: body.clone(),
@@ -220,6 +239,8 @@ impl Loop {
             effects,
             regions: vec![],
             charges: vec![],
+            entry_headroom: vec![],
+            local_costs: vec![],
             element_ids: vec![],
             element_sources: HashMap::new(),
             proof_scalars: HashSet::new(),
@@ -260,6 +281,7 @@ impl Loop {
         Some(Transfer {
             source: self.charges.iter().position(|charge| &charge.location == source)?,
             target: self.charges.iter().position(|charge| &charge.location == target)?,
+            additional: None,
         })
     }
 }
@@ -273,6 +295,9 @@ pub(super) struct Transfer {
     source: usize,
     /// Index of the destination role in that same table.
     target: usize,
+    /// Proved per-append ceiling for allocations introduced while transforming
+    /// a child. Original input storage remains in the conservation group.
+    pub(super) additional: Option<Expr>,
 }
 
 fn local(value: &Expr) -> Option<VarIdent> {

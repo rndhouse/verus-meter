@@ -67,10 +67,10 @@ fn returned_input_retains_descendant_changes() {
         fn f() resources peak(memory) <= BOUND {
             let p = P { v: Vec::new() }; let q = wrap(p); let scratch = [0u8;80];
         }";
-    verifies("nested_returned_effect", &code.replace("BOUND", "192"));
+    verifies("nested_returned_effect", &code.replace("BOUND", "128"));
     rejects(
         "nested_returned_effect_short",
-        &code.replace("BOUND", "191"),
+        &code.replace("BOUND", "127"),
         "memory budget exceeded",
     );
 }
@@ -207,8 +207,8 @@ fn small_composite_handle_cannot_hide_retained_growth() {
         }";
     // The parameter's inline handle is 8, so a 16-byte replacement fits its
     // 24-byte budget and must remain charged when the composite is returned.
-    verifies("small_composite_growth", &code.replace("BOUND", "88"));
-    rejects("small_composite_growth_short", &code.replace("BOUND", "87"), "memory budget exceeded");
+    verifies("small_composite_growth", &code.replace("BOUND", "80"));
+    rejects("small_composite_growth_short", &code.replace("BOUND", "79"), "memory budget exceeded");
 }
 
 #[test]

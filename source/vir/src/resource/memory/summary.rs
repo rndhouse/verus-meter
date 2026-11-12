@@ -5,6 +5,8 @@
 pub(super) struct FunctionSummary {
     /// Physical-ownership transformation, required for runtime ownership interfaces.
     pub(super) transfer: Option<super::transfer::Template>,
+    /// Owning runtime operations require this interface even behind leaf returns.
+    pub(super) transfer_required: bool,
     /// Container-independent ownership, byte sizes, and retained replacements.
     pub(super) allocations: super::allocations::AllocationSummary,
     /// Vector-specific reservation requirements and result capacity facts.

@@ -101,7 +101,7 @@ pub(super) fn blocks(
     let mut result: Vec<Effect> = Vec::new();
     for effect in effects {
         let effect = match effect {
-            Effect::Append { location, typ, child, element, grow } => {
+            Effect::Append { location, typ, child, element, grow, .. } => {
                 let (memory, minima) = match &child {
                     Value::Owner(node)
                         if tokens.iter().any(|token| !independent(&node.memory, token)) =>
@@ -176,6 +176,83 @@ pub(super) fn blocks(
     Some(result)
 }
 
+/// Build a parametric block when children depend on this iteration's selections
+/// or scalar observations. Source offsets preserve ordered repeated removals.
+pub(super) fn generators(
+    span: &Span,
+    effects: Vec<Effect>,
+    tokens: &HashSet<VarIdent>,
+    binder: &VarIdent,
+    layouts: &crate::resource::memory::layout::Layouts,
+    selections: &HashMap<VarIdent, Selection>,
+) -> Option<Vec<Effect>> {
+    let mut offsets = HashMap::<_, Expr>::new();
+    let mut inputs = Vec::new();
+    for effect in &effects {
+        if let Effect::Pop { location, token, .. } = effect {
+            let offset = offsets
+                .entry((location.0.clone(), location.1.clone()))
+                .or_insert_with(|| expr::integer(span, 0));
+            if let Some(token) = token {
+                inputs.push((token.clone(), location.clone(), offset.clone()));
+            }
+            *offset = contracts::add(span, offset.clone(), expr::integer(span, 1));
+        }
+    }
+    let mut result = Vec::new();
+    for effect in effects {
+        let effect = match effect {
+            Effect::Append { location, typ, child, original, element, grow } => {
+                let (memory, mut minima) = match child {
+                    Value::Owner(node) => {
+                        (expr::prefix(span, node.memory, expr::path(span, [0])), node.minima)
+                    }
+                    _ if layouts.owning_elements(&typ) => return None,
+                    _ => (expr::empty(span, expr::record_type()), Minima::new()),
+                };
+                // Uniform proof floors must hold across all visits. Varying
+                // capacities remain in each child's complete descriptor.
+                minima.retain(|_, floor| {
+                    independent(&floor.capacity, binder)
+                        && tokens.iter().all(|token| independent(&floor.capacity, token))
+                });
+                let selected = inputs
+                    .iter()
+                    .filter(|(token, _, _)| {
+                        !independent(&memory, token)
+                            || selections.get(token).is_some_and(|selection| {
+                                !independent(&memory, &selection.presence.0)
+                            })
+                    })
+                    .cloned()
+                    .collect();
+                Effect::GenerateBlock {
+                    location,
+                    typ,
+                    memory,
+                    original: expr::prefix(span, original, expr::path(span, [0])),
+                    length: expr::integer(span, 1),
+                    binder: binder.clone(),
+                    inputs: selected,
+                    minima,
+                    element,
+                    grow,
+                }
+            }
+            Effect::Pop { location, typ, .. } => {
+                Effect::PopBlock { location, typ, amount: expr::integer(span, 1), flows: None }
+            }
+            Effect::Identity { .. } => effect,
+            // Completed ranges have identities for whole ranges, not individual children.
+            _ => return None,
+        };
+        if let Some(effect) = merge(span, &mut result, effect)? {
+            result.push(effect);
+        }
+    }
+    Some(result)
+}
+
 pub(super) fn shift(span: &Span, memory: Expr, start: Expr) -> Expr {
     expr::operation(span, "shift_children", vec![memory, start], expr::memory_type())
 }
@@ -208,6 +285,50 @@ fn merge(span: &Span, result: &mut [Effect], effect: Effect) -> Option<Option<Ef
             return None;
         }
         match (&mut result[index], &effect) {
+            (
+                Effect::GenerateBlock {
+                    memory,
+                    original,
+                    length,
+                    binder,
+                    inputs,
+                    minima,
+                    element,
+                    grow,
+                    ..
+                },
+                Effect::GenerateBlock {
+                    memory: next,
+                    original: next_original,
+                    length: width,
+                    binder: next_binder,
+                    inputs: next_inputs,
+                    minima: floors,
+                    element: size,
+                    grow: permission,
+                    ..
+                },
+            ) if binder == next_binder && element == size && grow == permission => {
+                *memory = simplify::simplify(&expr::add(
+                    span,
+                    memory.clone(),
+                    shift(span, next.clone(), length.clone()),
+                ));
+                *original = simplify::simplify(&expr::add(
+                    span,
+                    original.clone(),
+                    shift(span, next_original.clone(), length.clone()),
+                ));
+                *length = simplify::simplify(&contracts::add(span, length.clone(), width.clone()));
+                for input in next_inputs {
+                    if !inputs.iter().any(|(token, _, _)| token == &input.0) {
+                        inputs.push(input.clone());
+                    }
+                }
+                join_minima(span, minima, floors);
+                return Some(None);
+            }
+
             (
                 Effect::AppendBlock { memory, length, minima, element, grow, .. },
                 Effect::AppendBlock {

@@ -18,10 +18,58 @@ impl Analysis<'_> {
         function: &Function,
         args: &Exprs,
     ) -> Result<Option<Prepared>, VirErr> {
-        if !super::required(function, self.layouts)? {
-            return Ok(None);
+        let required = self.summaries[&function.x.name].transfer_required;
+        let summary = &self.summaries[&function.x.name];
+        // A leaf return can be selected from an internal runtime forest. Use
+        // its inferred descriptor whenever the caller supplies complete owners.
+        // Incoming partial views still use their checked native interface.
+        if !required {
+            let mut types = vec![function.x.outer_ret.x.typ.clone()];
+            let mut observes_geometry = false;
+            while let Some(typ) = types.pop() {
+                observes_geometry |= self.layouts.cardinality(&typ);
+                if self.layouts.owner(&typ) {
+                    types.extend(self.layouts.owned_children(&typ, &value.span)?.into_values());
+                }
+            }
+            // Fixed allocation trees already retain their exact byte extents.
+            // Variable reservations and cardinality need descriptor specialization.
+            if !observes_geometry {
+                return Ok(None);
+            }
+            if !self.layouts.owner(&function.x.outer_ret.x.typ) || summary.transfer.is_none() {
+                return Ok(None);
+            }
+            for (argument, parameter) in args.iter().zip(function.x.params.iter()) {
+                if parameter.x.mode != Mode::Exec {
+                    continue;
+                }
+                let typ = self.layouts.borrowed_owner(&parameter.x.typ).unwrap_or(&parameter.x.typ);
+                if !self.layouts.owner(typ) {
+                    continue;
+                }
+                let precise = super::super::paths::expr(argument, typ)
+                    .and_then(|(name, path)| {
+                        if self.heap.borrowed.contains_key(&name)
+                            || self.growth.section_owners.contains(&name)
+                        {
+                            return None;
+                        }
+                        self.heap.root(&name).and_then(|root| root.at(&path))
+                    })
+                    .is_some_and(|owner| {
+                        let mut complete = owner.inputs().is_empty();
+                        owner.visit(&mut |node| {
+                            complete &= node.view == super::super::metadata::View::Complete
+                        });
+                        complete
+                    });
+                if !precise {
+                    return Ok(None);
+                }
+            }
         }
-        let template = self.summaries[&function.x.name].transfer.clone().ok_or_else(|| {
+        let template = summary.transfer.clone().ok_or_else(|| {
             unsupported(&value.span, "a runtime ownership call without a precise helper summary")
         })?;
         // Determine eligibility without changing accounting or scheduling proofs.
@@ -200,6 +248,9 @@ impl Analysis<'_> {
     }
 
     fn transfer_scalar_snapshot(&mut self, span: &Span, initial: Expr) -> Expr {
+        if matches!(initial.x, ExprX::Const(_)) {
+            return initial;
+        }
         let (value, declaration) =
             expr::local(span, "call_scalar", initial.typ.clone(), initial.clone(), Mode::Spec);
         let StmtX::Decl { pattern, mode, els, assert_irrefutable, .. } = &declaration.x else {
@@ -380,11 +431,48 @@ impl Analysis<'_> {
         let mut owner = self.owner_from_metadata(
             span,
             &node.typ,
-            node.memory,
+            node.memory.clone(),
             super::super::metadata::View::Complete,
             false,
         )?;
         self.install_owner_minima(&mut owner, &node.minima);
+        self.preserve_transfer_extents(span, &node.typ, node.memory, &mut owner)?;
         Ok(owner)
+    }
+
+    /// Keep structurally known byte constants available to body charge bounds.
+    /// Serializing the same forest into proof locals must not turn a known
+    /// allocation extent into an opaque, loop-local upper-bound expression.
+    fn preserve_transfer_extents(
+        &mut self,
+        span: &Span,
+        typ: &Typ,
+        memory: Expr,
+        owner: &mut Owner,
+    ) -> Result<(), VirErr> {
+        let mut local = memory.clone();
+        for (slot, child_type) in self.layouts.owned_children(typ, span)? {
+            let path = expr::path(span, [self.layouts.metadata_slot(&slot)]);
+            let child = expr::subtree(span, memory.clone(), path.clone());
+            self.preserve_transfer_extents(
+                span,
+                &child_type,
+                child,
+                owner.children.get_mut(&slot).expect("adopted fixed owner"),
+            )?;
+            local = expr::without(span, local, path);
+        }
+        if self.layouts.owning_elements(typ) {
+            local = expr::operation(span, "nonruntime", vec![local], expr::memory_type());
+        }
+        let amount = simplify::simplify(&expr::cost(span, local, expr::integer(span, 0)));
+        if super::super::contracts::constant(&amount).is_some() {
+            owner.extent = Some(amount.clone());
+            if let Some(id) = owner.vector {
+                self.growth.vectors[id].backing.initial_bytes = amount.clone();
+                self.growth.vectors[id].backing.floor = amount;
+            }
+        }
+        Ok(())
     }
 }

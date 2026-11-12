@@ -94,6 +94,10 @@ pub(super) struct Inferred {
     pub(super) loops: HashMap<u64, Vec<super::loops::Transfer>>,
     /// Fresh append costs used as ordinary inductive length envelopes.
     pub(super) growth: HashMap<u64, Vec<(super::paths::LocalPath, Expr)>>,
+    /// Ordinary operation-site bounds supporting newly retained loop storage.
+    pub(super) checks: Vec<(Span, Expr)>,
+    /// Checked helper workspace ceilings with all iteration-local aliases closed.
+    pub(super) scratch: HashMap<u64, Expr>,
 }
 
 pub(super) fn summarize(
@@ -105,7 +109,7 @@ pub(super) fn summarize(
     checked: &Checked,
 ) -> Result<Option<Inferred>, VirErr> {
     let template = trace::summarize(function, layouts, functions, summaries, modes, checked);
-    if template.is_none() && required(function, layouts)? {
+    if template.is_none() && requires_summary(function, layouts, checked, summaries)? {
         return Err(super::model::unsupported(
             &function.span,
             "this runtime ownership transformation; no precise helper summary can be inferred",
@@ -139,6 +143,31 @@ pub(super) fn required(
         }
     }
     Ok(false)
+}
+
+/// Internal runtime ownership must retain its precise interface when a helper
+/// returns a leaf owner or forwards another such helper's result.
+pub(super) fn requires_summary(
+    function: &Function,
+    layouts: &super::layout::Layouts,
+    checked: &Checked,
+    summaries: &HashMap<Fun, super::summary::FunctionSummary>,
+) -> Result<bool, VirErr> {
+    if required(function, layouts)? {
+        return Ok(true);
+    }
+    if !layouts.owner(&function.x.outer_ret.x.typ) {
+        return Ok(false);
+    }
+    Ok(checked.operations.values().any(|operation| match operation {
+        checked::Operation::Push { receiver, .. }
+        | checked::Operation::Remove { receiver, .. }
+        | checked::Operation::Length { receiver } => layouts.owning_elements(&receiver.typ),
+        checked::Operation::Call { target, .. } => {
+            summaries.get(target).is_some_and(|summary| summary.transfer_required)
+        }
+        _ => false,
+    }))
 }
 
 fn substitute(value: &Expr, values: &HashMap<VarIdent, Expr>) -> Expr {

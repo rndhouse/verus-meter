@@ -17,6 +17,8 @@ struct Iteration {
     transfers: HashMap<usize, usize>,
     /// Nonnegative number of completed iterations.
     count: Expr,
+    /// Counter observation at the beginning of this interval.
+    start: Expr,
 }
 
 fn independent(value: &Expr, name: &VarIdent) -> bool {
@@ -36,6 +38,12 @@ impl Trace<'_> {
         let regions = self.regions.clone();
         let tokens = self.loop_tokens.clone();
         let roots = self.loop_roots.clone();
+        let inputs = self.loop_inputs.clone();
+        let allocations = self.loop_allocations.clone();
+        let calls = self.loop_calls.clone();
+        let scratch = self.loop_scratch.clone();
+        let size_ceiling = self.loop_size_ceiling;
+        let checks = self.allocation_checks.len();
         let loop_transfers = self.loop_transfers.clone();
         let loop_growth = self.loop_growth.clone();
         let effects = self.effects.len();
@@ -47,6 +55,12 @@ impl Trace<'_> {
         self.regions = regions;
         self.loop_tokens = tokens;
         self.loop_roots = roots;
+        self.loop_inputs = inputs;
+        self.loop_allocations = allocations;
+        self.loop_calls = calls;
+        self.loop_scratch = scratch;
+        self.loop_size_ceiling = size_ceiling;
+        self.allocation_checks.truncate(checks);
         self.loop_transfers = loop_transfers;
         self.loop_growth = loop_growth;
         self.used = used;
@@ -108,6 +122,11 @@ impl Trace<'_> {
         let effect_start = self.effects.len();
         let depth = self.branch_depth;
         self.branch_depth = 0;
+        let outer_inputs = std::mem::take(&mut self.loop_inputs);
+        let outer_allocations = std::mem::take(&mut self.loop_allocations);
+        let outer_calls = std::mem::take(&mut self.loop_calls);
+        let outer_ceiling =
+            std::mem::replace(&mut self.loop_size_ceiling, record.size_ceiling.unwrap_or(0));
         let outer_tokens = self.loop_tokens.replace(HashSet::new());
         let outer_roots = self.loop_roots.replace(before.values.keys().cloned().collect());
         self.value(&record.body)?;
@@ -146,13 +165,20 @@ impl Trace<'_> {
         for interval in programs {
             let mut phase = Vec::new();
             for program in interval {
-                let effects = composition::blocks(
-                    span,
-                    composition::compose(program.effects),
-                    &tokens,
-                    &binder,
-                    self.layouts,
-                )?;
+                let effects = composition::compose(program.effects);
+                let effects =
+                    composition::blocks(span, effects.clone(), &tokens, &binder, self.layouts)
+                        .filter(|effects| transfer_edges(effects).is_some())
+                        .or_else(|| {
+                            composition::generators(
+                                span,
+                                effects,
+                                &tokens,
+                                &binder,
+                                self.layouts,
+                                &self.loop_inputs,
+                            )
+                        })?;
                 if bound_effects.iter().any(|effect| {
                     !matches!(effect, Effect::Read(name)
                     if effects.iter().all(|effect| effect.root() != name))
@@ -178,16 +204,16 @@ impl Trace<'_> {
                         return None;
                     }
                 }
-                phase.push((effects, program.count, program.condition));
+                phase.push((effects, program.count, program.start, program.condition));
             }
             blocks.push(phase);
         }
         // An identity frame bound is valid only if every selected program leaves
         // that role unchanged. Alternative transfers share conservation groups.
-        for (effects, _, _) in blocks.iter().flatten() {
+        for (effects, _, _, _) in blocks.iter().flatten() {
             for effect in effects {
                 if let Effect::Identity { location, .. } = effect {
-                    if blocks.iter().flatten().flat_map(|(effects, _, _)| effects).all(|other| {
+                    if blocks.iter().flatten().flat_map(|(effects, _, _, _)| effects).all(|other| {
                         matches!(other, Effect::Identity { .. })
                             || other
                                 .location()
@@ -219,11 +245,11 @@ impl Trace<'_> {
             let mut joined = entry.clone();
             let mut joined_original = entry_original.clone();
             let mut completed = Vec::new();
-            for (effects, count, condition) in phase {
+            for (effects, count, interval_start, condition) in phase {
                 self.state = entry.clone();
                 let mut selected_original = entry_original.clone();
                 let first_effect = self.effects.len();
-                self.apply_program(record, effects, count, &mut selected_original)?;
+                self.apply_program(record, effects, count, interval_start, &mut selected_original)?;
                 let effects = self.effects.split_off(first_effect);
                 completed.extend(effects.into_iter().map(|effect| {
                     if matches!(condition.x, ExprX::Const(Constant::Bool(true))) {
@@ -251,15 +277,32 @@ impl Trace<'_> {
         // Intermediate identities are first-iteration peak witnesses, just as
         // for unconditional loops. Their total original storage cannot increase
         // on later visits. Loop exits instead retain the complete interval map.
-        let replacements = HashMap::from([(binder.clone(), start.clone())]);
-        for memory in self.regions.values_mut() {
-            if !independent(memory, &binder) {
-                *memory = substitute(memory, &replacements);
+        let mut replacements = HashMap::from([(binder.clone(), start.clone())]);
+        for (token, selection) in &self.loop_inputs {
+            replacements.insert(token.clone(), selection.memory.clone());
+            replacements.insert(selection.presence.0.clone(), selection.presence.1.clone());
+            if let Some((token, witness)) = &selection.original {
+                replacements.insert(token.clone(), witness.clone());
             }
+        }
+        // A nested extraction witness can refer to earlier tokens. Resolve them
+        // in order until each first-iteration region is closed over caller inputs.
+        for _ in 0..replacements.len() {
+            let previous = replacements.clone();
+            for witness in replacements.values_mut() {
+                *witness = substitute(witness, &previous);
+            }
+        }
+        for memory in self.regions.values_mut() {
+            *memory = substitute(memory, &replacements);
         }
         for region in &record.regions {
             self.regions.insert(region.exit, original.get(&region.location)?.clone());
         }
+        self.loop_inputs = outer_inputs;
+        self.loop_allocations = outer_allocations;
+        self.loop_calls = outer_calls;
+        self.loop_size_ceiling = outer_ceiling;
         self.used.insert((checked::Kind::Loop, span.id));
         if let Some(counter) = counter {
             self.state.values.insert(counter, Value::Scalar(contracts::maximum(span, start, end)));
@@ -277,6 +320,7 @@ impl Trace<'_> {
         record: &Loop,
         effects: Vec<Effect>,
         count: Expr,
+        start: Expr,
         original: &mut BTreeMap<crate::resource::memory::paths::LocalPath, Expr>,
     ) -> Option<()> {
         let span = &record.span;
@@ -296,6 +340,7 @@ impl Trace<'_> {
             let typ = match &effect {
                 Effect::TransferBlock { typ, .. }
                 | Effect::AppendBlock { typ, .. }
+                | Effect::GenerateBlock { typ, .. }
                 | Effect::PopBlock { typ, .. }
                 | Effect::Identity { typ, .. } => typ,
                 _ => return None,
@@ -304,9 +349,10 @@ impl Trace<'_> {
             roles.push((effect, node));
         }
         let entry_original = original.clone();
-        let transfers = transfer_edges(&roles)?;
-        let iteration = Iteration { roles, transfers, count };
-        let Iteration { roles, transfers, count } = &iteration;
+        let transfers =
+            transfer_edges(&roles.iter().map(|(effect, _)| effect.clone()).collect::<Vec<_>>())?;
+        let iteration = Iteration { roles, transfers, count, start };
+        let Iteration { roles, transfers, count, start } = &iteration;
         // Return structural relationships. The shared record resolves endpoints,
         // and the body proof layer constructs conservation inequalities later.
         for (target, source) in transfers {
@@ -319,10 +365,74 @@ impl Trace<'_> {
             self.loop_transfers.entry(span.id).or_default().push(transfer);
         }
         for (effect, _) in roles {
-            if let Effect::AppendBlock { location, memory, .. } = effect {
+            if let Effect::GenerateBlock { location, inputs, .. } = effect {
+                for (_, source, _) in inputs {
+                    let mut transfer = record.transfer(
+                        &(source.0.clone(), source.1.clone()),
+                        &(location.0.clone(), location.1.clone()),
+                    )?;
+                    if let Effect::GenerateBlock { binder, .. } = effect {
+                        let mut additional = expr::integer(span, 0);
+                        for (site, actual, candidate) in &self.loop_allocations {
+                            let bound =
+                                self.extent_bound(candidate, binder, record, start, count)?;
+                            self.allocation_checks.push((
+                                site.clone(),
+                                mk_ineq(site, actual, &bound, InequalityOp::Le),
+                            ));
+                            additional = contracts::add(span, additional, bound);
+                        }
+                        for (site, actual, candidate) in &self.loop_calls {
+                            let bound =
+                                self.extent_bound(candidate, binder, record, start, count)?;
+                            self.allocation_checks.push((
+                                site.clone(),
+                                mk_ineq(site, actual, &bound, InequalityOp::Le),
+                            ));
+                            self.loop_scratch
+                                .entry(span.id)
+                                .and_modify(|old| {
+                                    *old = contracts::maximum(span, old.clone(), bound.clone());
+                                })
+                                .or_insert(bound);
+                        }
+                        transfer.additional = Some(simplify::simplify(&additional));
+                    }
+                    self.loop_transfers.entry(span.id).or_default().push(transfer);
+                }
+            }
+        }
+        for (effect, _) in roles {
+            let envelope = match effect {
+                Effect::AppendBlock { location, memory, .. } => Some((location, memory.clone())),
+                Effect::GenerateBlock { location, memory, binder, inputs, .. }
+                    if inputs.is_empty() =>
+                {
+                    Some((
+                        location,
+                        substitute(
+                            memory,
+                            &HashMap::from([(
+                                binder.clone(),
+                                record
+                                    .size_ceiling
+                                    .map(|n| contracts::literal(span, n))
+                                    .unwrap_or_else(|| {
+                                        contracts::add(span, start.clone(), count.clone())
+                                    }),
+                            )]),
+                        ),
+                    ))
+                }
+                _ => None,
+            };
+            if let Some((location, memory)) = envelope {
                 let mut valid = true;
-                let _ = crate::ast_visitor::expr_visitor_check(memory, &mut |_, value| {
+                let _ = crate::ast_visitor::expr_visitor_check(&memory, &mut |scope, value| {
                     if let ExprX::Var(name) = &value.x {
+                        if scope.contains_key(name) {
+                            return Ok::<(), VirErr>(());
+                        }
                         valid &= self.proof_values.contains_key(name);
                     }
                     Ok::<(), VirErr>(())
@@ -381,14 +491,26 @@ impl Trace<'_> {
                         self.layouts.owning_elements(&node.typ),
                     );
                 }
-                Effect::AppendBlock { memory, length: width, minima, element, grow, .. } => {
-                    let added = composition::tile(
-                        span,
-                        memory.clone(),
-                        width.clone(),
-                        count.clone(),
-                        length.clone(),
-                    );
+                Effect::AppendBlock { memory, length: width, minima, element, grow, .. }
+                | Effect::GenerateBlock { memory, length: width, minima, element, grow, .. } => {
+                    let added = if matches!(effect, Effect::GenerateBlock { .. }) {
+                        self.generated(
+                            span,
+                            effect,
+                            &iteration,
+                            &entry_original,
+                            false,
+                            length.clone(),
+                        )?
+                    } else {
+                        composition::tile(
+                            span,
+                            memory.clone(),
+                            width.clone(),
+                            count.clone(),
+                            length.clone(),
+                        )
+                    };
                     node.memory = expr::add(span, node.memory, added);
                     let floors = minima
                         .iter()
@@ -485,17 +607,29 @@ impl Trace<'_> {
                             grow: *grow,
                         })
                     }
-                    Effect::AppendBlock { memory, length, minima, element, grow, .. } => {
+                    Effect::AppendBlock { memory, length, minima, element, grow, .. }
+                    | Effect::GenerateBlock { memory, length, minima, element, grow, .. } => {
                         Some(Effect::AppendBlock {
                             location: location.clone(),
                             typ: initial.typ.clone(),
-                            memory: composition::tile(
-                                span,
-                                memory.clone(),
-                                length.clone(),
-                                count.clone(),
-                                expr::integer(span, 0),
-                            ),
+                            memory: if matches!(effect, Effect::GenerateBlock { .. }) {
+                                self.generated(
+                                    span,
+                                    effect,
+                                    &iteration,
+                                    &entry_original,
+                                    false,
+                                    expr::integer(span, 0),
+                                )?
+                            } else {
+                                composition::tile(
+                                    span,
+                                    memory.clone(),
+                                    length.clone(),
+                                    count.clone(),
+                                    expr::integer(span, 0),
+                                )
+                            },
                             length: simplify::simplify(&contracts::multiply(
                                 span,
                                 length.clone(),
@@ -523,6 +657,122 @@ impl Trace<'_> {
         Some(())
     }
 
+    /// Close a proof ceiling over immutable body observations. Actual allocation
+    /// and call extents must prove this bound at their executable operation.
+    fn extent_bound(
+        &self,
+        candidate: &Expr,
+        binder: &VarIdent,
+        record: &Loop,
+        start: &Expr,
+        count: &Expr,
+    ) -> Option<Expr> {
+        let mut values = self.proof_values.clone();
+        values.insert(
+            binder.clone(),
+            record
+                .size_ceiling
+                .map(|n| contracts::literal(&record.span, n))
+                .unwrap_or_else(|| contracts::add(&record.span, start.clone(), count.clone())),
+        );
+        let candidate = simplify::allocation_bound(
+            candidate,
+            &self.loop_inputs.keys().cloned().collect(),
+            record.size_ceiling.unwrap_or(0),
+        );
+        let bound = substitute(&candidate, &values);
+        crate::ast_visitor::expr_visitor_check(&bound, &mut |scope, value| {
+            if matches!(&value.x, ExprX::Var(name) if !scope.contains_key(name)
+                && !self.proof_values.values().any(|value| matches!(&value.x, ExprX::Var(var) if var == name))) { Err(()) } else { Ok(()) }
+        }).ok()?;
+        Some(bound)
+    }
+
+    /// Close the iteration body over each selected source child. The physical
+    /// source supplies geometry even when its original-input region is empty.
+    fn generated(
+        &self,
+        span: &Span,
+        effect: &Effect,
+        iteration: &Iteration,
+        regions: &BTreeMap<crate::resource::memory::paths::LocalPath, Expr>,
+        original: bool,
+        base: Expr,
+    ) -> Option<Expr> {
+        let Effect::GenerateBlock {
+            memory, original: input_memory, length, binder, inputs, ..
+        } = effect
+        else {
+            return None;
+        };
+        let name = VarIdent(
+            Arc::new("$memory_generated_index".into()),
+            VarIdentDisambiguate::VirTemp(
+                crate::resource::memory::accounting::Accounting::fresh_allocation(),
+            ),
+        );
+        let index = SpannedTyped::new(span, &int_typ(), ExprX::Var(name.clone()));
+        let mut replacements = HashMap::from([(
+            binder.clone(),
+            contracts::add(span, iteration.start.clone(), index.clone()),
+        )]);
+        for (token, source, offset) in inputs {
+            let (effect, initial) = iteration.roles.iter().find(|(effect, _)| {
+                effect
+                    .location()
+                    .is_some_and(|location| location.0 == source.0 && location.1 == source.1)
+            })?;
+            let Effect::PopBlock { amount, .. } = effect else {
+                return None;
+            };
+            let selected = contracts::subtract(
+                span,
+                contracts::subtract(
+                    span,
+                    property(span, initial.memory.clone(), "length"),
+                    contracts::multiply(span, amount.clone(), index.clone()),
+                ),
+                contracts::add(span, offset.clone(), expr::integer(span, 1)),
+            );
+            let path = expr::push(span, expr::path(span, []), selected.clone());
+            replacements
+                .insert(token.clone(), expr::subtree(span, initial.memory.clone(), path.clone()));
+            if let Some(selection) = self.loop_inputs.get(token) {
+                replacements.insert(
+                    selection.presence.0.clone(),
+                    choice(
+                        span,
+                        mk_ineq(span, &expr::integer(span, 0), &selected, InequalityOp::Le),
+                        expr::integer(span, 1),
+                        expr::integer(span, 0),
+                    ),
+                );
+            }
+            if let Some(Selection { original: Some((original_token, _)), .. }) =
+                self.loop_inputs.get(token)
+            {
+                let source_original = regions
+                    .get(&(source.0.clone(), source.1.clone()))
+                    .cloned()
+                    .unwrap_or_else(|| expr::empty(span, expr::record_type()));
+                replacements
+                    .insert(original_token.clone(), expr::subtree(span, source_original, path));
+            }
+        }
+        let body = substitute(if original { input_memory } else { memory }, &replacements);
+        let builder = SpannedTyped::new(
+            span,
+            &Arc::new(TypX::SpecFn(Arc::new(vec![int_typ()]), expr::memory_type())),
+            ExprX::Closure(Arc::new(vec![Arc::new(VarBinderX { name, a: int_typ() })]), body),
+        );
+        Some(simplify::simplify(&expr::operation(
+            span,
+            "generate_children",
+            vec![builder, length.clone(), iteration.count.clone(), base],
+            expr::memory_type(),
+        )))
+    }
+
     /// Original lifetime regions exclude all allocations created in this frame.
     /// Apply the same graph and index map used for complete physical forests.
     fn loop_region(
@@ -532,12 +782,24 @@ impl Trace<'_> {
         iteration: &Iteration,
         regions: &BTreeMap<crate::resource::memory::paths::LocalPath, Expr>,
     ) -> Option<Expr> {
-        let Iteration { roles, transfers, count } = iteration;
+        let Iteration { roles, transfers, count, .. } = iteration;
         let (effect, initial) = &roles[index];
         let location = effect.location()?;
         let original = regions.get(&(location.0.clone(), location.1.clone()))?.clone();
         let remaining = match effect {
             Effect::Identity { .. } | Effect::AppendBlock { .. } => original.clone(),
+            Effect::GenerateBlock { .. } => expr::add(
+                span,
+                original.clone(),
+                self.generated(
+                    span,
+                    effect,
+                    iteration,
+                    regions,
+                    true,
+                    property(span, initial.memory.clone(), "length"),
+                )?,
+            ),
             Effect::PopBlock { amount, .. } => {
                 let removed = contracts::multiply(span, count.clone(), amount.clone());
                 let length = contracts::maximum(
@@ -603,12 +865,12 @@ fn reverse_range(span: &Span, memory: Expr, end: Expr, count: Expr, base: Expr) 
 /// Flow identities are created together with matching source/destination counts;
 /// equality of their ordered lists proves that no child is dropped, duplicated
 /// or routed through a different range when batching operations or inner loops.
-fn transfer_edges(roles: &[(Effect, Node)]) -> Option<HashMap<usize, usize>> {
+fn transfer_edges(roles: &[Effect]) -> Option<HashMap<usize, usize>> {
     let mut transfers = HashMap::new();
     let mut consumed = HashSet::new();
-    for (index, (effect, _)) in roles.iter().enumerate() {
+    for (index, effect) in roles.iter().enumerate() {
         if let Effect::TransferBlock { source, flows, .. } = effect {
-            let source = roles.iter().position(|(effect, _)| {
+            let source = roles.iter().position(|effect| {
                 matches!(effect,
                 Effect::PopBlock { location, flows: Some(taken), .. }
                     if location.0 == source.0 && location.1 == source.1 && taken == flows)
@@ -619,7 +881,7 @@ fn transfer_edges(roles: &[(Effect, Node)]) -> Option<HashMap<usize, usize>> {
             transfers.insert(index, source);
         }
     }
-    if roles.iter().enumerate().any(|(index, (effect, _))| {
+    if roles.iter().enumerate().any(|(index, effect)| {
         matches!(effect, Effect::PopBlock { flows: Some(_), .. }) && !consumed.contains(&index)
     }) {
         return None;

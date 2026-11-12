@@ -16,7 +16,7 @@ pub(in super::super) fn validate(
     layouts: &Layouts,
     summary: &FunctionSummary,
 ) -> Result<(), VirErr> {
-    if !super::required(function, layouts)? {
+    if !summary.transfer_required {
         return Ok(());
     }
     let template = summary.transfer.as_ref().ok_or_else(|| {

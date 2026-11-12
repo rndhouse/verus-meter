@@ -79,10 +79,22 @@ impl Analysis<'_> {
         let capacity = match (attrs.resource_intrinsic, args.as_slice()) {
             (Some(ResourceIntrinsic::VecNew), []) => contracts::literal(&expr.span, 0),
             (Some(ResourceIntrinsic::VecWithCapacity), [arg]) => {
-                contracts::quantity(arg, &self.stable_scalars)?
+                contracts::allocation_quantity(arg, &self.allocation_scalars())?
             }
             _ => return Err(unsupported(&expr.span, "this vector constructor")),
         };
+        let checked_capacity = capacity.clone();
+        let mut changing = false;
+        crate::ast_visitor::expr_visitor_check(&capacity, &mut |_, expression| {
+            if let ExprX::Var(name) = &expression.x {
+                changing |= self.growth.loop_counters.contains(name);
+            }
+            Ok::<(), VirErr>(())
+        })?;
+        // A mutable counter's allocation extent belongs to this call, not to
+        // the counter's next value after the iteration advances.
+        let capacity =
+            if changing { self.allocation_snapshot(&expr.span, capacity) } else { capacity };
         let cost = contracts::multiply(
             &expr.span,
             contracts::literal(&expr.span, self.layouts.vector_element(&expr.typ, &expr.span)?),
@@ -135,7 +147,7 @@ impl Analysis<'_> {
         self.transitions.operation(
             &expr.span,
             super::transfer::checked::Operation::Vector {
-                capacity: owner.capacity.clone().unwrap(),
+                capacity: checked_capacity,
                 element: self.layouts.vector_element(&expr.typ, &expr.span)?,
             },
         );
@@ -259,6 +271,7 @@ impl Analysis<'_> {
         {
             return Err(unsupported(&expr.span, "borrowing slice views of owning vectors"));
         }
+        let mut allocation = None;
         if intrinsic == Some(ResourceIntrinsic::VecPush) {
             if args.len() != 2 {
                 return Err(unsupported(&expr.span, "this vector push"));
@@ -301,6 +314,7 @@ impl Analysis<'_> {
                     state.element,
                     state.backing.input_bytes.is_none(),
                 );
+                allocation = Some(extra.clone());
                 // Reserve the replacement before releasing the old buffer. A lower
                 // bound may underestimate real capacity, so this can overcount growth.
                 self.storage.replacement_peak(
@@ -381,6 +395,7 @@ impl Analysis<'_> {
                 child: args[1].clone(),
                 element: self.growth.vectors[state_id].element,
                 grow,
+                allocation,
                 input,
             }),
             Some(ResourceIntrinsic::VecPop | ResourceIntrinsic::VecRemove) => {

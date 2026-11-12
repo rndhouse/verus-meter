@@ -33,6 +33,18 @@ struct State {
     written: HashSet<VarIdent>,
 }
 
+/// First-visit witnesses for one selected child and its optional presence.
+/// Repetition substitutes both the payload forest and the per-visit tag.
+#[derive(Clone)]
+struct Selection {
+    /// Complete physical child selected on the representative visit.
+    memory: Expr,
+    /// Original input region, independently of newly introduced storage.
+    original: Option<(VarIdent, Expr)>,
+    /// Temporary presence symbol and its first-visit zero-or-one witness.
+    presence: (VarIdent, Expr),
+}
+
 struct Trace<'a> {
     layouts: &'a super::super::layout::Layouts,
     functions: &'a HashMap<Fun, Function>,
@@ -58,6 +70,18 @@ struct Trace<'a> {
     /// Only persistent roles need range tokens; temporary construction keeps
     /// its concrete forest so it can compose as fresh output.
     loop_roots: Option<HashSet<VarIdent>>,
+    /// Concrete first-iteration witnesses close intermediate lifetime regions.
+    loop_inputs: HashMap<VarIdent, Selection>,
+    /// Allocation-site observations and candidate extents for this iteration.
+    loop_allocations: Vec<(Span, Expr, Expr)>,
+    /// Helper workspace observations, including calls with no escaping allocation.
+    loop_calls: Vec<(Span, Expr, Expr)>,
+    /// Closed helper workspace ceilings for generated body headroom candidates.
+    loop_scratch: HashMap<u64, Expr>,
+    /// Invariant-proposed scalar ceiling; uses are checked at their operations.
+    loop_size_ceiling: u64,
+    /// Bounds published only when the complete ownership template succeeds.
+    allocation_checks: Vec<(Span, Expr)>,
     /// Structural transfers from completed loop graphs. No proof expressions
     /// are constructed here; evidence is published only with a complete template.
     loop_transfers: HashMap<u64, Vec<super::super::loops::Transfer>>,
@@ -89,6 +113,12 @@ pub(super) fn summarize(
         branch_depth: 0,
         loop_tokens: None,
         loop_roots: None,
+        loop_inputs: HashMap::new(),
+        loop_allocations: Vec::new(),
+        loop_calls: Vec::new(),
+        loop_scratch: HashMap::new(),
+        loop_size_ceiling: 0,
+        allocation_checks: Vec::new(),
         loop_transfers: HashMap::new(),
         loop_growth: HashMap::new(),
         proof_values: HashMap::new(),
@@ -140,9 +170,11 @@ pub(super) fn summarize(
     // Unused scalar arguments need no snapshot or additional representability restriction.
     let mut names = HashSet::new();
     let mut collect = |value: &Expr| {
-        let _ = crate::ast_visitor::expr_visitor_check(value, &mut |_, value| {
+        let _ = crate::ast_visitor::expr_visitor_check(value, &mut |scope, value| {
             if let ExprX::Var(name) = &value.x {
-                names.insert(name.clone());
+                if !scope.contains_key(name) {
+                    names.insert(name.clone());
+                }
             }
             Ok::<(), VirErr>(())
         });
@@ -178,6 +210,8 @@ pub(super) fn summarize(
     Some(Inferred {
         loops: trace.loop_transfers,
         growth: trace.loop_growth,
+        checks: trace.allocation_checks,
+        scratch: trace.loop_scratch,
         template: Template {
             regions: trace.regions,
             symbols: trace.symbols,
@@ -198,8 +232,11 @@ impl Trace<'_> {
     ) -> Option<Vec<(usize, Effect)>> {
         let closed = |value: &Expr| {
             let mut closed = true;
-            let _ = crate::ast_visitor::expr_visitor_check(value, &mut |_, value| {
+            let _ = crate::ast_visitor::expr_visitor_check(value, &mut |scope, value| {
                 if let ExprX::Var(name) = &value.x {
+                    if scope.contains_key(name) {
+                        return Ok::<(), VirErr>(());
+                    }
                     closed &= self.symbols.iter().any(|symbol| {
                         &symbol.name == name && matches!(symbol.input, Input::Scalar(_))
                     });

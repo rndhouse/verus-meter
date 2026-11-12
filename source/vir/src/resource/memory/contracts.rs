@@ -312,6 +312,33 @@ pub(super) fn lower(
     Ok(simplify(&SpannedTyped::new(&expr.span, &int_typ(), x)))
 }
 
+/// Allocation extents can use pure native arithmetic over admitted observations.
+/// Overflow remains checked on the original executable expression; the erased
+/// allocation state records its mathematical value at that operation.
+pub(super) fn allocation_quantity(
+    expr: &Expr,
+    allowed: &HashSet<VarIdent>,
+) -> Result<Expr, VirErr> {
+    let ExprX::Binary(BinaryOp::Arith(op), left, right) = &expr.x else {
+        return quantity(expr, allowed);
+    };
+    let op = match op {
+        ArithOp::Add(_) => ArithOp::Add(OverflowBehavior::Allow),
+        ArithOp::Sub(_) => ArithOp::Sub(OverflowBehavior::Allow),
+        ArithOp::Mul(_) => ArithOp::Mul(OverflowBehavior::Allow),
+        _ => return quantity(expr, allowed),
+    };
+    Ok(SpannedTyped::new(
+        &expr.span,
+        &expr.typ,
+        ExprX::Binary(
+            BinaryOp::Arith(op),
+            allocation_quantity(left, allowed)?,
+            allocation_quantity(right, allowed)?,
+        ),
+    ))
+}
+
 pub(super) fn quantity(expr: &Expr, allowed: &HashSet<VarIdent>) -> Result<Expr, VirErr> {
     if !matches!(&*expr.typ, TypX::Int(IntRange::U(8 | 16 | 32 | 64) | IntRange::USize)) {
         return Err(error(
