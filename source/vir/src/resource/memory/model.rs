@@ -5,7 +5,7 @@ use crate::messages::{Span, error};
 use serde::{Deserialize, Serialize};
 use vir_macros::ToDebugSNode;
 
-pub(super) const MODEL_NAME: &str = "source-values-v36-64";
+pub(super) const MODEL_NAME: &str = "source-values-v37-64";
 pub(super) const WORD_BYTES: u64 = 8;
 
 /// Current source-storage contract. This unreleased format has no legacy variants.
@@ -21,6 +21,11 @@ pub(super) fn unsupported(span: &Span, what: &str) -> VirErr {
 
 pub(super) fn unit(typ: &Typ) -> bool {
     matches!(&**typ, TypX::Datatype(Dt::Tuple(0), _, _))
+}
+
+/// Rust's bottom type has no normal result storage; its exit carries any value.
+pub(super) fn diverging(typ: &Typ) -> bool {
+    matches!(&**typ, TypX::Decorate(TypDecoration::Never, _, _))
 }
 
 /// Native integer widths share one policy across layouts, operators and contracts.

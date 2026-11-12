@@ -21,6 +21,7 @@
 //! `call_graph` discovers executable edges, orders callees, and rejects cycles;
 //! `execution` shares proof/spec boundaries with accounting; `summary` keeps
 //! checked call facts together; `lifetime` tracks moved values;
+//! `control` propagates lexical exits with detached results and path histories;
 //! `values` handles Option arms;
 //! `construction` accounts for aggregate initialization; `analysis`, `places`,
 //! and `calls` interpret other supported executable VIR. This
@@ -39,6 +40,7 @@ mod calls;
 mod children;
 mod construction;
 mod contracts;
+mod control;
 mod elements;
 mod execution;
 mod extraction;
@@ -116,6 +118,7 @@ pub fn check_crate(
         if checked.symbolic_bound.is_some()
             || !checked.obligations.is_empty()
             || !checked.checks.is_empty()
+            || !checked.growth.single_visit_loops.is_empty()
         {
             let updated = symbolic::instrument(
                 function,

@@ -157,8 +157,8 @@ of Rust's physical representation. `Some`, `None`, by-value
 match binding gets its own slot for that arm. Verus still requires proof that
 `unwrap` receives `Some`. See [using a popped value](../../examples/resource/memory/basics/options.rs).
 
-Returning references, borrowed temporary results, match guards,
-and explicit early `return` remain unsupported.
+Returning references, borrowed temporary results, and match guards remain
+unsupported. Early returns follow the exit rules below.
 
 ## Fixed-size heap objects
 
@@ -313,6 +313,41 @@ shrinking lengths that saturate at zero also remains unsupported: saturation can
 change their relative stride. Arithmetic around shrinking-length progress also
 needs a richer checked relation. Native overflow and termination obligations
 remain separate from resource progress proofs.
+
+### Loop forms and exits
+
+`break`, `continue`, and `return` carry their live storage and ownership through
+the scopes they leave. Locals in those scopes are released; an owning result
+stays allocated. Exited paths retain their peak history but do not contribute
+live storage or earlier peaks to an unrelated continuing path. Loop exits also
+retain the peaks of preceding completed iterations. Memory sections compose
+their declared allowance on every exit and retain any escaping result separately.
+Direct result moves reconnect their inline lifetime to the enclosing section's
+ledger. Evaluating an exit result cannot drop or otherwise spend an enclosing
+owner's release credit inside the section; such operations remain unsupported.
+
+Loops with no local back edge use Verus's existing nonisolated proof form, with
+its no-back-edge flag. This preserves their actual entry state through nested
+and labelled exits, including value-producing breaks. Reusable loops keep their
+ordinary inductive proofs. Head-only facts are not exported past a partial visit;
+exact completed-count exit predicates are proved on all admitted head breaks.
+
+Precise counted ownership summaries admit effect-free inequality guards at the
+loop head. A guard can refine the same counter comparison as a while condition,
+or supply the stopping comparison for an unconditional `loop`. Multiple matching
+boundaries intersect. Current-loop continuations can skip work under the stable
+scalar flags and counter thresholds supported by conditional iteration effects;
+the complete visit must still establish its checked scalar progress. Incoming
+allocation regions and complete child forests survive these transformations.
+
+Value-producing breaks in reusable loops, partial-visit exits that change fixed
+ownership roles or original input regions, and unrepresentable stopping counts
+remain unsupported. Runtime ownership interfaces still require precise summaries.
+Different exits may return the same owning proof state, including a collection
+with branch-dependent children, or matching fresh fixed allocation layouts; different
+returned vector states and frozen descriptors cannot share a byte-only result.
+Exits inside operands or call arguments are also unsupported. `for` and iterator
+state are a separate, currently unsupported source form.
 
 Zero and partial ranges preserve unconsumed children and backing. Unchanged
 whole-child transfers use an exact inverse index map, preserving different
@@ -564,9 +599,10 @@ body. See [ownership transfer](../../examples/resource/memory/heap/ownership.rs)
 Returned vectors preserve their reservations, including capacities supplied through
 immutable scalar inputs. Callers can use them to prove subsequent pushes fit.
 See [a vector factory](../../examples/resource/memory/vectors/vector_returns.rs).
-For now, fresh returned capacities must depend only on literals or immutable inputs,
-and owning results must follow a single tail-expression path. Conditional ownership
-returns and owners inside `Option` remain unsupported.
+For now, fresh returned capacities must depend only on literals or immutable inputs.
+Owning results can follow a tail expression or a supported explicit exit. Direct
+conditional owning expressions remain unsupported; early returns use the exit
+rules above.
 
 ## Dividing work into sections
 
@@ -645,16 +681,17 @@ Checked functions must be safe, nongeneric, and have a verified body.
 The supported subset includes `bool`, all native integers, fixed integer arrays,
 concrete structs, `Option` values with supported payloads, fixed-size boxes, boxed slices,
 vectors with supported growth, and references/slices of supported non-owning values,
-indexing, branches, while loops, and calls to checked functions in the same crate. Integer addition,
+indexing, branches, supported while/unconditional loops and exits, and calls to
+checked functions in the same crate. Integer addition,
 subtraction, multiplication, and signed negation retain Verus's overflow checks.
 See the [integer example](../../examples/resource/memory/basics/integers.rs).
 
 `char`, floating-point types, other heap-owning types, destructors, enums other
 than `Option`, generic structs, recursion, closures, and cross-crate calls are
 not supported. Structs with ghost/tracked or reference fields are also
-excluded. Destructuring outside supported Option patterns, casts, division, and
-explicit `return`, `break`, or
-`continue` also remain unsupported. An unsupported construct produces an error rather
+excluded. Destructuring outside supported Option patterns, division, and casts
+other than supported value-preserving integer widening remain unsupported.
+Loop and exit restrictions are described above. An unsupported construct produces an error rather
 than silently receiving a zero cost.
 
 A failure identifies the declaration, call, or checkpoint that cannot fit its

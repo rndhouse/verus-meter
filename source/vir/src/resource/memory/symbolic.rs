@@ -226,10 +226,26 @@ pub(super) fn instrument(
             }
             let mut checks = growth.before.get(&expr.span.id).cloned().unwrap_or_default();
             let mut rewritten = expr.clone();
-            if let ExprX::Loop { invs, .. } = &mut Arc::make_mut(&mut rewritten).x {
+            if let ExprX::Loop {
+                invs,
+                loop_isolation,
+                known_no_back_edge,
+                allow_complex_invariants,
+                ..
+            } = &mut Arc::make_mut(&mut rewritten).x
+            {
+                if growth.single_visit_loops.contains(&expr.span.id) {
+                    *loop_isolation = false;
+                    *known_no_back_edge = true;
+                    *allow_complex_invariants = true;
+                }
                 if let Some(additional) = growth.loops.get(&expr.span.id) {
                     Arc::make_mut(invs).extend(additional.iter().map(|inv| LoopInvariant {
-                        kind: LoopInvariantKind::InvariantAndEnsures,
+                        kind: if growth.exiting_loops.contains(&expr.span.id) {
+                            LoopInvariantKind::InvariantExceptBreak
+                        } else {
+                            LoopInvariantKind::InvariantAndEnsures
+                        },
                         inv: {
                             let statement =
                                 Spanned::new(inv.span.clone(), StmtX::Expr(inv.clone()));
@@ -241,6 +257,20 @@ pub(super) fn instrument(
                             inv.clone()
                         },
                     }));
+                }
+                if let Some(additional) = growth.loop_ensures.get(&expr.span.id) {
+                    for inv in additional {
+                        let statement = Spanned::new(inv.span.clone(), StmtX::Expr(inv.clone()));
+                        let statement =
+                            crate::ast_visitor::map_stmt_spans(&statement, &mut |span| {
+                                fresh_span(span)
+                            });
+                        let StmtX::Expr(inv) = &statement.x else { unreachable!() };
+                        Arc::make_mut(invs).push(LoopInvariant {
+                            kind: LoopInvariantKind::Ensures,
+                            inv: inv.clone(),
+                        });
+                    }
                 }
             }
             if let ExprX::Call { args, .. } = &expr.x {

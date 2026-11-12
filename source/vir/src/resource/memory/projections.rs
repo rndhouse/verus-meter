@@ -59,6 +59,9 @@ pub(super) fn spec_value(value: &Expr) -> Result<Expr, VirErr> {
         }
         ExprX::Const(_) | ExprX::Var(_) => return Ok(value.clone()),
         ExprX::Unary(op, inner) => ExprX::Unary(*op, spec_value(inner)?),
+        ExprX::If(condition, yes, Some(no)) => {
+            ExprX::If(spec_value(condition)?, spec_value(yes)?, Some(spec_value(no)?))
+        }
         ExprX::Binary(op, left, right) => {
             // Preserve values (including explicit truncation), while leaving
             // overflow checks on the original executable index.

@@ -10,7 +10,8 @@ not promise support for every Rust program or every owning container.
 4. [Indexed traversal and updates](complete/04-indexed-traversal.md) — complete
 5. [Borrowed collections and incoming ownership](complete/05-borrowed-and-incoming-ownership.md) — complete
 6. [General iteration counts and carried state](complete/06-iteration-counts-and-state.md) — complete
-7. [Other loop forms and early exits](07-loop-forms-and-exits.md)
+7. [Loop exits and unconditional loops](complete/07-loop-forms-and-exits.md) — complete
+8. [For loops and iterator state](08-for-loops-and-iterators.md)
 
 ## Starting point
 
@@ -30,8 +31,11 @@ Shared progress supports literal integer strides, countdowns, moving scalar
 bounds, checked collection lengths, and carried scalar exits. Symbolic allocation
 bounds and nested counts compose with the same ownership effects. Stationary
 updates can use complete forest induction beyond the finite proof window.
-Other loop forms and exits remain in task 7. Local peak proofs support some cases
-that cannot yet be exported as precise ownership summaries.
+Lexical exits preserve scope cleanup, result ownership, and peak history.
+Representable head breaks and continuations reuse counted summaries; loops
+without a local back edge retain their actual entry state. `for` and iterator
+support belongs to task 8. Local peak proofs support some cases that cannot yet
+be exported as precise ownership summaries.
 
 ## Rules for every task
 

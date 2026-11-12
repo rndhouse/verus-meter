@@ -15,6 +15,13 @@ pub(super) struct Value {
     pub(super) parameter: Option<usize>,
 }
 
+impl Value {
+    /// Unreachable expressions do not manufacture a value or allocation charge.
+    pub(super) fn unit() -> Self {
+        Self { bytes: 0, origins: Default::default(), ids: Default::default(), parameter: None }
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct Profile {
     pub(super) cost: super::footprint::Footprint,
@@ -98,7 +105,21 @@ impl Analysis<'_> {
     }
 
     pub(super) fn produce(&mut self, expr: &Expr) -> Result<Value, VirErr> {
-        if unit(&expr.typ) {
+        if let ExprX::NeverToAny(inner) = &expr.x {
+            self.discard(inner)?;
+            if self.flow.reachable {
+                return Err(unsupported(
+                    &expr.span,
+                    "a diverging expression with reachable fallthrough",
+                ));
+            }
+            return Ok(Value::unit());
+        }
+        if matches!(expr.x, ExprX::Return(_) | ExprX::BreakOrContinue { .. }) {
+            self.discard(expr)?;
+            return Ok(Value::unit());
+        }
+        if unit(&expr.typ) || matches!(&*expr.typ, TypX::Decorate(TypDecoration::Never, _, _)) {
             self.discard(expr)?;
             return Ok(Value {
                 bytes: 0,
@@ -108,13 +129,29 @@ impl Analysis<'_> {
             });
         }
         match &expr.x {
+            ExprX::Loop { .. } => {
+                self.analyze_loop(expr)?;
+                return if self.flow.reachable {
+                    self.produced.take().ok_or_else(|| {
+                        unsupported(&expr.span, "a loop without a produced exit value")
+                    })
+                } else {
+                    Ok(Value::unit())
+                };
+            }
             ExprX::If(cond, yes, Some(no)) => {
-                return self
-                    .conditional(expr, cond, yes, Some(no), true)?
-                    .ok_or_else(|| unsupported(&expr.span, "missing conditional result"));
+                let result = self.conditional(expr, cond, yes, Some(no), true)?;
+                return if self.flow.reachable {
+                    result.ok_or_else(|| unsupported(&expr.span, "missing conditional result"))
+                } else {
+                    Ok(Value::unit())
+                };
             }
             ExprX::Match(scrutinee, arms, _) => {
                 self.option_match(expr, scrutinee, arms, true)?;
+                if !self.flow.reachable {
+                    return Ok(Value::unit());
+                }
                 return self
                     .produced
                     .take()
@@ -122,6 +159,9 @@ impl Analysis<'_> {
             }
             ExprX::Block(stmts, tail) => {
                 self.block_new(expr, stmts, tail)?;
+                if !self.flow.reachable {
+                    return Ok(Value::unit());
+                }
                 return self
                     .produced
                     .take()
@@ -173,11 +213,17 @@ impl Analysis<'_> {
     }
 }
 
+/// Path-local state shared by ordinary branches and pending lexical exits.
 #[derive(Clone)]
 pub(super) struct BranchState {
-    storage: super::accounting::Accounting,
-    slots: std::collections::HashMap<VarIdent, Value>,
-    heap: super::heap::Heap,
+    /// Live charges and the peak history that can precede this path.
+    pub(super) storage: super::accounting::Accounting,
+    /// Inline lifetimes still owned by source bindings.
+    pub(super) slots: std::collections::HashMap<VarIdent, Value>,
+    /// Separately allocated ownership, including borrowed proof states.
+    pub(super) heap: super::heap::Heap,
+    /// Whether this snapshot has an ordinary continuing path.
+    pub(super) reachable: bool,
 }
 impl Value {
     pub(super) fn merge(&mut self, other: &Self) {
@@ -196,6 +242,7 @@ impl Analysis<'_> {
             storage: self.storage.clone(),
             slots: self.slots.clone(),
             heap: self.heap.clone(),
+            reachable: self.flow.reachable,
         }
     }
     pub(super) fn restore_branch(&mut self, state: &BranchState) {
@@ -203,6 +250,7 @@ impl Analysis<'_> {
         self.storage.set_peak(state.storage.peak());
         self.slots = state.slots.clone();
         self.heap = state.heap.clone();
+        self.flow.reachable = state.reachable;
         self.produced = None;
         self.result_owner = None;
     }
@@ -327,17 +375,30 @@ impl Analysis<'_> {
             None
         };
         let mut yes_state = self.branch_state();
+        if !yes_state.reachable {
+            result = None;
+        }
         self.restore_branch(&entry);
         if let Some(no) = no {
             if new_value {
                 let value = self.produce(no)?;
-                result.as_mut().unwrap().merge(&value);
+                if self.flow.reachable {
+                    if let Some(result) = &mut result {
+                        result.merge(&value);
+                    } else {
+                        result = Some(value);
+                    }
+                }
             } else {
                 self.initialize_expr(no)?;
             }
         }
-        self.join_conditional_inputs(&expr.span, &mut yes_state)?;
-        self.join_branch(&yes_state)?;
+        if yes_state.reachable && self.flow.reachable {
+            self.join_conditional_inputs(&expr.span, &mut yes_state)?;
+            self.join_branch(&yes_state)?;
+        } else if yes_state.reachable {
+            self.restore_branch(&yes_state);
+        }
         self.heap.unprotect(protection);
         Ok(result)
     }

@@ -68,7 +68,7 @@ impl Trace<'_> {
         let outer_calls = std::mem::take(&mut self.loop_calls);
         let ceiling = self.size_bound(record);
         let outer_ceiling = std::mem::replace(&mut self.loop_size_ceiling, Some(ceiling));
-        self.value(&record.body)?;
+        self.iteration(record)?;
         let (count, stride) = self.finish_progress(record, &progress)?;
         let effects = self.effects.split_off(effect_start);
         self.record_progress(record, &progress, stride, &effects);

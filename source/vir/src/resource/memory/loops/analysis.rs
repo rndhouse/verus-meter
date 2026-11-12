@@ -100,13 +100,64 @@ impl Analysis<'_> {
         self.growth.begin_element_iteration(&elements, &zero);
         self.discard(&record.condition)?;
         record.completed = self.loop_progress(&mut record)?;
+        let head = self.branch_state();
+        let first_exit = self.flow.exits.len();
         self.discard(&record.body)?;
+        let mut breaks = Vec::new();
+        let mut continues = Vec::new();
+        for edge in self.flow.exits.split_off(first_exit) {
+            use super::super::control::Target;
+            match &edge.target {
+                Target::Break(label) if label == &record.label => breaks.push(edge),
+                Target::Continue(label) if label == &record.label => continues.push(edge),
+                _ => self.flow.exits.push(edge),
+            }
+        }
+        // Head breaks observe an unchanged loop-head state, so its checked
+        // invariants also hold on those exits. A partial visit or an outer exit
+        // must not export completed-visit relationships as exit facts.
+        if breaks.iter().any(|edge| !record.head_breaks.contains(&edge.span.id))
+            || self.flow.exits.len() > first_exit
+        {
+            self.growth.exiting_loops.insert(expr.span.id);
+        }
+        for edge in &continues {
+            if self.flow.reachable {
+                self.join_exit(&edge.span, &edge.state)?;
+            } else {
+                self.restore_branch(&edge.state);
+            }
+            if let Some((ordinal, _)) = &record.completed {
+                self.growth.before.entry(edge.span.id).or_default().push(
+                    super::super::metadata::expr::assign(
+                        &edge.span,
+                        ordinal,
+                        contracts::add(
+                            &edge.span,
+                            ordinal.clone(),
+                            contracts::literal(&edge.span, 1),
+                        ),
+                    ),
+                );
+            }
+        }
+        record.single_visit = !self.flow.reachable;
+        if record.single_visit {
+            self.growth.single_visit_loops.insert(expr.span.id);
+            self.restore_branch(&head);
+        }
         if !nested {
             self.finish_element_reservations()?;
         }
         self.growth.loop_depth -= 1;
         for counter in inserted {
             self.growth.loop_counters.remove(&counter);
+        }
+        if record.single_visit {
+            self.heap.unprotect(protection.clone());
+            self.finish_loop_exits(expr, &record, &head, breaks, protection)?;
+            self.transitions.loops.insert(expr.span.id, record);
+            return Ok(());
         }
         self.growth.carried_scalars.extend(
             record.scalar_steps.keys().filter(|name| self.slots.contains_key(*name)).cloned(),
@@ -116,6 +167,26 @@ impl Analysis<'_> {
         // iteration. With reusable storage, one iteration's maximum is
         // the fixed point, including any nested loops or alternatives.
         let iteration_peak = self.storage.peak();
+        for edge in breaks.iter_mut().chain(self.flow.exits[first_exit..].iter_mut()) {
+            let mut peak = edge.state.storage.peak();
+            peak.merge(&iteration_peak);
+            edge.state.storage.set_peak(peak);
+        }
+        if breaks.iter().any(|edge| edge.owner.is_some() || edge.value.bytes != 0) {
+            return Err(super::super::model::unsupported(
+                &expr.span,
+                "value-producing breaks in reusable loops without a checked result transformation",
+            ));
+        }
+        if !super::super::control::compatible_heap(&self.heap, &head.heap)
+            && (breaks.iter().any(|edge| !record.head_breaks.contains(&edge.span.id))
+                || self.flow.exits.len() > first_exit)
+        {
+            return Err(super::super::model::unsupported(
+                &expr.span,
+                "partial loop exits after changing fixed ownership roles or original input regions",
+            ));
+        }
         record.local_costs =
             iteration_peak.costs[first_cost..].iter().map(|(_, cost)| cost.clone()).collect();
         let candidate =
@@ -124,7 +195,7 @@ impl Analysis<'_> {
         for checkpoint in &mut self.checkpoints[first_checkpoint..] {
             checkpoint.peak.merge(&iteration_peak);
         }
-        self.heap.unprotect(protection);
+        self.heap.unprotect(protection.clone());
         record.regions = self.finish_loop_inputs(&expr.span, loop_inputs)?;
         let mut frame_invariants = Vec::new();
         for (id, pushes, floor) in vector_entry {
@@ -189,7 +260,57 @@ impl Analysis<'_> {
             );
             self.transitions.loops.get_mut(&id).unwrap().element_facts = facts;
         }
+        // A head guard can fire after any number of complete visits. Reuse the
+        // completed head's role identities, including its loop-exit input
+        // regions, rather than the representative first visit's old regions.
+        let completed_head = self.branch_state();
+        for edge in &mut breaks {
+            if record.head_breaks.contains(&edge.span.id) {
+                let peak = edge.state.storage.peak();
+                edge.state = completed_head.clone();
+                edge.state.storage.set_peak(peak);
+            }
+        }
+        self.finish_loop_exits(expr, &record, &head, breaks, protection)?;
         self.transitions.loops.insert(expr.span.id, record);
+        Ok(())
+    }
+
+    /// A false head condition and explicit breaks are distinct normal exits.
+    /// Returns and exits targeting an enclosing label continue unwinding.
+    fn finish_loop_exits(
+        &mut self,
+        expr: &Expr,
+        record: &Loop,
+        head: &super::super::lifetime::BranchState,
+        breaks: Vec<super::super::control::Edge>,
+        protection: (std::collections::HashSet<VarIdent>, std::collections::HashSet<VarIdent>),
+    ) -> Result<(), VirErr> {
+        let mut result = if record.conditional {
+            if record.single_visit {
+                self.restore_branch(head);
+            }
+            Some(super::super::lifetime::Value::unit())
+        } else {
+            None
+        };
+        let mut owner = None;
+        self.flow.reachable = result.is_some();
+        for mut edge in breaks {
+            edge.state.heap.unprotect(protection.clone());
+            if let Some(result) = &mut result {
+                self.join_exit(&edge.span, &edge.state)?;
+                result.merge(&edge.value);
+                owner = super::super::control::merge_result(&expr.span, owner, edge.owner)?;
+            } else {
+                self.restore_branch(&edge.state);
+                result = Some(edge.value);
+                owner = edge.owner;
+            }
+        }
+        self.heap.unprotect(protection);
+        self.produced = result;
+        self.result_owner = owner;
         Ok(())
     }
 
@@ -566,6 +687,15 @@ impl Analysis<'_> {
             );
             let bound = super::progress::count(span, gap, evidence.stride);
             record.visits_bound = Some(bound.clone());
+            if !record.head_breaks.is_empty() {
+                // Verus cannot assume the negated while condition after a
+                // break. Check the completed count on all real exits instead.
+                self.growth
+                    .loop_ensures
+                    .entry(*id)
+                    .or_default()
+                    .push(crate::ast_util::mk_eq(span, ordinal, &bound));
+            }
             let mut facts = vec![
                 crate::ast_util::mk_ineq(
                     span,
@@ -692,6 +822,9 @@ impl Analysis<'_> {
         parents.sort_by_key(|(size, _, _)| std::cmp::Reverse(*size));
         for (_, parent, child) in parents {
             let record = &records[&child];
+            if record.single_visit {
+                continue;
+            }
             let mut immutable = self
                 .growth
                 .loop_entry
@@ -728,7 +861,7 @@ impl Analysis<'_> {
                     ));
                 }
             }
-            let facts = self.growth.loops[&parent].clone();
+            let facts = self.growth.loops.get(&parent).cloned().unwrap_or_default();
             let facts = self.freeze_loop_facts(&record.span, facts)?;
             self.growth.loops.entry(child).or_default().extend(facts);
             for charge in &record.charges {

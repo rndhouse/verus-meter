@@ -12,29 +12,61 @@ impl Trace<'_> {
         let value = self.place_value(source, &source.typ)?;
         self.branch_depth += 1;
         let before = self.state.clone();
+        let outer = self.path.clone();
+        let mut remaining = crate::ast_util::mk_bool(span, true);
+        let mut all_continue = true;
         let mut branches = Vec::new();
         for arm in arms.iter() {
             if !matches!(&arm.x.guard.x, ExprX::Const(Constant::Bool(true))) {
                 return None;
             }
             self.state = before.clone();
+            self.reachable = true;
+            let first_exit = self.exits.len();
+            let first_effect = self.effects.len();
             let mut locals = Vec::new();
             let condition = self.pattern(&arm.x.pattern, value.clone(), &mut locals)?;
+            let condition = exits::and(span, remaining.clone(), condition.clone());
+            self.path = exits::and(span, outer.clone(), condition.clone());
             let result = self.value(&arm.x.body)?;
-            for name in locals {
-                self.state.values.remove(&name);
-                self.state.written.remove(&name);
+            for edge in &mut self.exits[first_exit..] {
+                for name in &locals {
+                    edge.state.values.remove(name);
+                    edge.state.definitions.remove(name);
+                    edge.state.written.remove(name);
+                }
             }
-            branches.push((condition, self.state.clone(), result));
+            for name in &locals {
+                self.state.values.remove(name);
+                self.state.definitions.remove(name);
+                self.state.written.remove(name);
+            }
+            self.guard_effects(first_effect, &condition);
+            all_continue &= self.reachable;
+            if self.reachable {
+                branches.push((self.path.clone(), self.state.clone(), result));
+            }
+            remaining = exits::and(span, remaining, exits::not(span, condition));
         }
         // Exhaustiveness is already checked by Rust. Earlier arms keep their
         // source order, including wildcard arms and nested optional patterns.
-        let (_, mut state, mut result) = branches.pop()?;
+        let Some((mut path, mut state, mut result)) = branches.pop() else {
+            self.reachable = false;
+            self.branch_depth -= 1;
+            return Some(Value::Unit);
+        };
         while let Some((condition, yes, value)) = branches.pop() {
             state = Self::join_state(span, condition.clone(), yes, state)?;
-            result = Self::join_value(span, condition, &value, &result)?;
+            result = Self::join_value(span, condition.clone(), &value, &result)?;
+            path = simplify::simplify(&SpannedTyped::new(
+                span,
+                &bool_typ(),
+                ExprX::Logical(LogicalOp::Or, path, condition),
+            ));
         }
         self.state = state;
+        self.reachable = true;
+        self.path = if all_continue { outer } else { path };
         self.branch_depth -= 1;
         Some(result)
     }

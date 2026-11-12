@@ -6,6 +6,7 @@
 //! Unrepresentable effects fail inference; runtime ownership interfaces then
 //! report unsupported instead of exporting a byte-only approximation.
 
+mod exits;
 mod loops;
 mod operations;
 mod patterns;
@@ -50,6 +51,10 @@ struct Selection {
 
 #[derive(Clone)]
 struct Trace<'a> {
+    /// Continuing path and deferred exits use the same symbolic forest states.
+    reachable: bool,
+    path: Expr,
+    exits: Vec<exits::Edge>,
     layouts: &'a super::super::layout::Layouts,
     functions: &'a HashMap<Fun, Function>,
     summaries: &'a HashMap<Fun, super::super::summary::FunctionSummary>,
@@ -113,6 +118,9 @@ pub(super) fn summarize(
     checked: &Checked,
 ) -> Option<Inferred> {
     let mut trace = Trace {
+        reachable: true,
+        path: crate::ast_util::mk_bool(&function.span, true),
+        exits: Vec::new(),
         layouts,
         functions,
         summaries,
@@ -166,6 +174,11 @@ pub(super) fn summarize(
     }
     trace.initialize_regions(function)?;
     let result = trace.value(function.x.body.as_ref()?)?;
+    let result = trace.finish_exits(
+        &function.span,
+        result,
+        &crate::resource::memory::control::Target::Return,
+    )?;
     if !checked.covered(&trace.used) {
         return None;
     }
@@ -601,11 +614,18 @@ impl Trace<'_> {
     }
 
     fn block(&mut self, span: &Span, statements: &Stmts, tail: &Option<Expr>) -> Option<Value> {
+        let first_exit = self.exits.len();
+        let block_path = self.path.clone();
         let mut locals = self.checked.scopes.get(&span.id).cloned().unwrap_or_default();
         if !locals.is_empty() {
             self.used.insert((checked::Kind::Scope, span.id));
         }
         for statement in statements.iter() {
+            if !self.reachable {
+                break;
+            }
+            let path = self.path.clone();
+            let first_effect = self.effects.len();
             match &statement.x {
                 StmtX::Expr(value) => {
                     self.value(value)?;
@@ -622,26 +642,50 @@ impl Trace<'_> {
                     } else {
                         Value::Unknown
                     };
-                    if binding.user_mut == Some(false)
-                        && contracts::scalar(&binding.typ)
-                        && let Some(init) = init
-                    {
-                        let init = crate::ast_util::place_to_spec_expr(init);
-                        if let Ok(definition) = super::super::projections::spec_value(&init) {
-                            self.state.definitions.insert(binding.name.clone(), definition);
+                    if self.reachable {
+                        if binding.user_mut == Some(false)
+                            && contracts::scalar(&binding.typ)
+                            && let Some(init) = init
+                        {
+                            let init = crate::ast_util::place_to_spec_expr(init);
+                            if let Ok(definition) = super::super::projections::spec_value(&init) {
+                                self.state.definitions.insert(binding.name.clone(), definition);
+                            }
                         }
-                    }
-                    if !locals.contains(&binding.name) {
-                        if matches!(value, Value::Owner(_)) {
-                            return None;
+                        if !locals.contains(&binding.name) {
+                            if matches!(value, Value::Owner(_)) {
+                                return None;
+                            }
+                            locals.push(binding.name.clone());
                         }
-                        locals.push(binding.name.clone());
+                        self.state.values.insert(binding.name.clone(), value);
                     }
-                    self.state.values.insert(binding.name.clone(), value);
                 }
             }
+            // Initializer exits still finish this statement's guarded effects;
+            // the next visit to the statement loop handles unreachable suffixes.
+            if !simplify::same_expression(&path, &block_path) {
+                self.guard_effects(first_effect, &path);
+            }
         }
-        let value = if let Some(tail) = tail { self.value(tail)? } else { Value::Unit };
+        let path = self.path.clone();
+        let first_effect = self.effects.len();
+        let value = if self.reachable
+            && let Some(tail) = tail
+        {
+            self.value(tail)?
+        } else {
+            Value::Unit
+        };
+        if !simplify::same_expression(&path, &block_path) {
+            self.guard_effects(first_effect, &path);
+        }
+        for edge in &mut self.exits[first_exit..] {
+            for local in &locals {
+                edge.state.values.remove(local);
+                edge.state.definitions.remove(local);
+            }
+        }
         for local in locals {
             self.state.values.remove(&local);
             self.state.definitions.remove(&local);
@@ -804,6 +848,22 @@ impl Trace<'_> {
             }
             ExprX::Call { .. } => None,
             ExprX::Loop { .. } => self.loop_value(span),
+            ExprX::NeverToAny(inner) => self.value(inner),
+            ExprX::Return(value) | ExprX::BreakOrContinue { value, .. } => {
+                let target = self.checked.exits.get(&span.id)?.clone();
+                self.used.insert((checked::Kind::Exit, span.id));
+                let result = if let Some(value) = value { self.value(value)? } else { Value::Unit };
+                if self.reachable {
+                    self.exits.push(exits::Edge {
+                        target,
+                        condition: self.path.clone(),
+                        state: self.state.clone(),
+                        result,
+                    });
+                    self.reachable = false;
+                }
+                Some(Value::Unit)
+            }
             _ => None,
         }
     }
@@ -843,15 +903,32 @@ impl Trace<'_> {
         no: &Option<Expr>,
     ) -> Option<Value> {
         let before = self.state.clone();
+        let outer = self.path.clone();
+        self.path = exits::and(span, outer.clone(), condition.clone());
         let effect_start = self.effects.len();
         let yes_value = self.value(yes)?;
         let yes = self.state.clone();
+        let yes_reachable = self.reachable;
+        let yes_path = self.path.clone();
         let yes_effects = self.effects.split_off(effect_start);
         self.state = before;
+        self.reachable = true;
+        self.path = exits::and(span, outer.clone(), exits::not(span, condition.clone()));
         let no_value = if let Some(no) = no { self.value(no)? } else { Value::Unit };
         let no = self.state.clone();
         let no_effects = self.effects.split_off(effect_start);
-        self.state = Self::join_state(span, condition.clone(), yes, no)?;
+        self.state = match (yes_reachable, self.reachable) {
+            (true, true) => Self::join_state(span, condition.clone(), yes, no)?,
+            (true, false) => yes,
+            _ => no,
+        };
+        let no_reachable = self.reachable;
+        if yes_reachable && no_reachable {
+            self.path = outer;
+        } else if yes_reachable {
+            self.path = yes_path;
+        }
+        self.reachable |= yes_reachable;
         for (selected, effects) in [(true, yes_effects), (false, no_effects)] {
             self.effects.extend(effects.into_iter().map(|effect| Effect::Guarded {
                 condition: condition.clone(),
@@ -870,7 +947,12 @@ impl Trace<'_> {
                 self.regions.insert(join.result, simplify::simplify(&memory));
             }
         }
-        Self::join_value(span, condition, &yes_value, &no_value)
+        match (yes_reachable, no_reachable) {
+            (true, true) => Self::join_value(span, condition, &yes_value, &no_value),
+            (true, false) => Some(yes_value),
+            (false, true) => Some(no_value),
+            (false, false) => Some(Value::Unit),
+        }
     }
 
     fn join_state(span: &Span, condition: Expr, yes: State, no: State) -> Option<State> {

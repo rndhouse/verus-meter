@@ -10,6 +10,7 @@ mod checkpoints;
 mod children;
 mod conditional;
 mod conditional_loops;
+mod control_flow;
 mod element_transfers;
 mod elements;
 mod growth;

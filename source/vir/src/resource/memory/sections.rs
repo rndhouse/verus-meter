@@ -34,8 +34,9 @@ impl Analysis<'_> {
         self.growth.section_protected.extend(self.heap.vectors());
         let outer_bound =
             std::mem::replace(&mut self.bound, super::contracts::literal(contract_span, budget));
+        let first_exit = self.flow.exits.len();
         self.block_contents(expr, stmts, tail)?;
-        self.heap.unprotect(protection);
+        self.heap.unprotect(protection.clone());
         self.bound = outer_bound;
         self.growth.section_protected = protected;
         self.growth.protected_elements = protected_elements;
@@ -61,6 +62,27 @@ impl Analysis<'_> {
         // The parent relies on the declared contract, including slack, rather
         // than the implementation's measured peak. Siblings reuse this allowance.
         self.storage.section_allowance(contract_span, budget)?;
+        for edge in &mut self.flow.exits[first_exit..] {
+            let local = std::mem::replace(&mut edge.state.storage, self.storage.clone());
+            edge.state.storage.retain_section_exit(&local, &edge.span)?;
+            for (name, value) in &parent_slots {
+                if !edge.state.slots.contains_key(name)
+                    && edge.value.origins.is_disjoint(&value.ids)
+                {
+                    edge.state.storage.release_values(&value.ids);
+                }
+            }
+            if let Some(id) = edge.state.storage.resume_value(
+                &edge.span,
+                &edge.value.ids,
+                &edge.value.origins,
+                edge.value.bytes,
+            )? {
+                edge.value.ids.insert(id);
+                edge.value.origins.insert(id);
+            }
+            edge.state.heap.unprotect(protection.clone());
+        }
         // A value originating outside the section belongs to the outer budget.
         // If the section consumed it, it must not remain live afterward.
         for (name, value) in parent_slots {

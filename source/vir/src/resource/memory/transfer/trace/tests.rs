@@ -13,6 +13,9 @@ fn with_trace(checked: &Checked, test: impl FnOnce(&mut Trace<'_>)) {
     let summaries = HashMap::new();
     let modes = HashMap::new();
     test(&mut Trace {
+        reachable: true,
+        path: crate::ast_util::mk_bool(&span(0), true),
+        exits: Vec::new(),
         layouts: &layouts,
         functions: &functions,
         summaries: &summaries,

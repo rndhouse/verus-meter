@@ -177,10 +177,13 @@ pub(super) enum Kind {
     Pattern,
     Scope,
     Loop,
+    Exit,
 }
 
 #[derive(Default)]
 pub(in super::super) struct Checked {
+    /// Exit destinations accepted by lexical lifetime accounting.
+    pub(in super::super) exits: HashMap<u64, crate::resource::memory::control::Target>,
     /// Shared loop structure and boundaries, published after body accounting.
     pub(in super::super) loops: HashMap<u64, crate::resource::memory::loops::Loop>,
     /// Conditional lifetime joins accepted by branch accounting.
@@ -295,5 +298,6 @@ impl Checked {
             && self.patterns.keys().all(|id| used.contains(&(Kind::Pattern, *id)))
             && self.scopes.keys().all(|id| used.contains(&(Kind::Scope, *id)))
             && self.loops.keys().all(|id| used.contains(&(Kind::Loop, *id)))
+            && self.exits.keys().all(|id| used.contains(&(Kind::Exit, *id)))
     }
 }

@@ -32,9 +32,30 @@ fn independent(value: &Expr, name: &VarIdent) -> bool {
     !found
 }
 
+/// Identity evidence must cover every allocation role an ordered effect can
+/// mutate. Runtime read dependencies alone do not change the role's charge.
+fn touches(effect: &Effect, role: &crate::resource::memory::paths::LocalPath) -> bool {
+    let overlap = |place: &Location| {
+        place.0 == role.0 && (place.1.starts_with(&role.1) || role.1.starts_with(&place.1))
+    };
+    match effect {
+        Effect::Read(_) | Effect::Identity { .. } => false,
+        Effect::Guarded { effect, .. } => touches(effect, role),
+        Effect::Mutation(name) => name == &role.0,
+        Effect::TransferBlock { location, source, .. } => overlap(location) || overlap(source),
+        Effect::GenerateBlock { location, inputs, .. } => {
+            overlap(location) || inputs.iter().any(|(_, source, _)| overlap(source))
+        }
+        _ => effect.location().is_some_and(overlap),
+    }
+}
+
 impl Trace<'_> {
     pub(super) fn loop_value(&mut self, span: &Span) -> Option<Value> {
         let record = self.checked.loops.get(&span.id)?.clone();
+        if record.single_visit {
+            return self.single_visit(&record);
+        }
         // Each planner is transactional: a rejected representation must not
         // publish partial state, observations, or body-proof evidence.
         let before = self.clone();
@@ -80,7 +101,7 @@ impl Trace<'_> {
         let outer_ceiling = std::mem::replace(&mut self.loop_size_ceiling, Some(ceiling));
         let outer_tokens = self.loop_tokens.replace(HashSet::new());
         let outer_roots = self.loop_roots.replace(before.values.keys().cloned().collect());
-        self.value(&record.body)?;
+        self.iteration(record)?;
         let tokens = std::mem::replace(&mut self.loop_tokens, outer_tokens).unwrap();
         self.loop_roots = outer_roots;
         self.branch_depth = depth;
@@ -152,22 +173,21 @@ impl Trace<'_> {
             blocks.push(phase);
         }
         self.record_prefix_lengths(record, &persistent, &tokens, &binder)?;
-        // An identity frame bound is valid only if every selected program leaves
-        // that role unchanged. Alternative transfers share conservation groups.
-        for (effects, _, _, _) in blocks.iter().flatten() {
-            for effect in effects {
-                if let Effect::Identity { location, .. } = effect {
-                    if blocks.iter().flatten().flat_map(|(effects, _, _, _)| effects).all(|other| {
-                        matches!(other, Effect::Identity { .. })
-                            || other
-                                .location()
-                                .is_none_or(|other| other.0 != location.0 || other.1 != location.1)
-                    }) {
-                        let role = (location.0.clone(), location.1.clone());
-                        if let Some(transfer) = record.transfer(&role, &role) {
-                            self.loop_transfers.entry(span.id).or_default().push(transfer);
-                        }
-                    }
+        // Frame every persistent role left unchanged by every selected program,
+        // including empty selections after conditional helper effects close.
+        // Sources of transfers count as mutations as well as their destinations.
+        for role in record.length_roles() {
+            if blocks
+                .iter()
+                .flatten()
+                .filter(|(_, _, _, condition)| {
+                    !matches!(condition.x, ExprX::Const(Constant::Bool(false)))
+                })
+                .flat_map(|(effects, _, _, _)| effects)
+                .all(|effect| !touches(effect, role))
+            {
+                if let Some(transfer) = record.transfer(role, role) {
+                    self.loop_transfers.entry(span.id).or_default().push(transfer);
                 }
             }
         }

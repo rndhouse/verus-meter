@@ -127,6 +127,9 @@ pub(super) struct Point {
 
 #[derive(Clone)]
 pub(super) struct Accounting {
+    /// Whole-scope high water is independent of the history on continuing paths.
+    /// Restoring a branch must not erase peaks on an edge that already exited.
+    observed_peak: u128,
     paths: Vec<Live>,
     points: Vec<Point>,
     peak_costs: Vec<(Span, Footprint)>,
@@ -137,6 +140,7 @@ pub(super) struct Accounting {
 impl Accounting {
     pub(super) fn new(span: &Span, budget: u64) -> Self {
         Self {
+            observed_peak: 0,
             paths: vec![Live::default()],
             points: Vec::new(),
             peak_costs: Vec::new(),
@@ -156,6 +160,66 @@ impl Accounting {
     }
     pub(super) fn restore_live(&mut self, other: &Self) {
         self.paths = other.paths.clone();
+    }
+    /// A terminating section edge may retain its result beyond the section.
+    /// Compose only live charges here; the section's history is represented in
+    /// the parent by its declared allowance, just as on normal completion.
+    pub(super) fn retain_section_exit(&mut self, other: &Self, span: &Span) -> Result<(), VirErr> {
+        let mut paths = Vec::new();
+        for parent in &self.paths {
+            for local in &other.paths {
+                let mut path = parent.clone();
+                for (kind, amount) in &local.fixed {
+                    let sum = path.fixed.entry(kind.clone()).or_default();
+                    *sum = sum
+                        .checked_add(*amount)
+                        .ok_or_else(|| unsupported(span, "storage totals exceeding u64"))?;
+                }
+                path.dynamic.extend(local.dynamic.clone());
+                path.values.extend(local.values.clone());
+                path.inputs.extend(local.inputs.iter().copied());
+                if paths.len() >= 1024 {
+                    return Err(unsupported(
+                        span,
+                        "more than 1024 section-exit ownership alternatives",
+                    ));
+                }
+                paths.push(path);
+            }
+        }
+        self.paths = paths;
+        Ok(())
+    }
+
+    /// A move from an enclosing region cannot transfer its inline charge until
+    /// that region's ledger is restored. Reconnect missing result identities
+    /// per path; locally charged alternatives already have their own identities.
+    pub(super) fn resume_value(
+        &mut self,
+        span: &Span,
+        ids: &HashSet<u64>,
+        origins: &HashSet<u64>,
+        bytes: u64,
+    ) -> Result<Option<u64>, VirErr> {
+        if bytes == 0 {
+            return Ok(None);
+        }
+        let mut restored = None;
+        for path in &mut self.paths {
+            if ids.iter().any(|id| path.values.contains_key(id)) {
+                continue;
+            }
+            let source =
+                origins.iter().find(|id| path.values.contains_key(id)).copied().ok_or_else(
+                    || unsupported(span, "a section exit value without a charged source lifetime"),
+                )?;
+            let charge = path.values.remove(&source).unwrap();
+            assert_eq!(charge.amount, bytes, "moves preserve size");
+            let id = *restored
+                .get_or_insert_with(|| NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+            path.values.insert(id, charge);
+        }
+        Ok(restored)
     }
     pub(super) fn join_live(&mut self, other: &Self) -> Result<(), VirErr> {
         for path in &other.paths {
@@ -263,6 +327,7 @@ impl Accounting {
                 .ok_or_else(|| unsupported(span, "storage totals exceeding u64"))?;
         }
         let live = self.live();
+        self.observed_peak = self.observed_peak.max(u128::from(live));
         if u128::from(live) > self.report.peak {
             self.report.peak = live.into();
             self.peak_span = span.clone();
@@ -450,6 +515,7 @@ impl Accounting {
     }
 
     pub(super) fn finish_conditional(mut self) -> MemoryReport {
+        self.report.peak = self.report.peak.max(self.observed_peak);
         self.paths.clear();
         self.report.conditional = true;
         self.report
@@ -460,6 +526,7 @@ impl Accounting {
     }
 
     fn finish_scope(mut self, scope_span: &Span, exit: &str) -> MemoryReport {
+        self.report.peak = self.report.peak.max(self.observed_peak);
         self.paths.clear();
         self.event(scope_span, exit.into());
         self.report

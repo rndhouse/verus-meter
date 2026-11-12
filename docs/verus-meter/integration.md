@@ -151,6 +151,19 @@ locals from pure source initializers. Do not infer logical postconditions from a
 callee's implementation. Prove and preserve these equalities in isolated queries;
 never reuse a first-visit definition depending on enclosing mutable state.
 
+Lexical exit edges in [control.rs](../../source/vir/src/resource/memory/control.rs)
+carry live storage and detached results separately from continuing branches.
+Unwind each scope once, restore section accounting on escaping edges, and retain
+the inline lifetime identity of results moved from the enclosing region. Keep
+enclosing owner protection during effectful exit-result evaluation. Retain
+earlier completed visits' peaks on loop exits. Rebase accepted head exits onto
+the completed head's input-region identities. Single-visit loop records use
+Verus's existing nonisolated/no-back-edge proof form; do not invent induction
+facts for them. Partial visits cannot export head-only facts. Completed-count
+exit predicates are ordinary loop ensures, proved at all accepted exits.
+Forest tracing consumes checked exit destinations, keeps suffix effects under
+their surviving path guards, and rejects unrepresentable exit dependencies.
+
 Entry snapshots are immutable within a loop invocation. Reuse equivalent length
 observations and preserve existing snapshots when freezing headroom facts;
 recapturing them would separate progress from charge conservation in isolated

@@ -6,6 +6,7 @@
 //! different loop shape or invent effects from unchecked syntax.
 
 mod analysis;
+mod exits;
 pub(super) mod progress;
 
 use super::{layout::Layouts, model, paths::LocalPath, summary::FunctionSummary};
@@ -51,6 +52,17 @@ struct Effects {
 /// One loop's shared structure, proof snapshots, and original-input boundary.
 #[derive(Clone)]
 pub(super) struct Loop {
+    /// Compiler-resolved destination of breaks and continues for this loop.
+    pub(super) label: Label,
+    /// Whether the source can finish by observing a false head condition.
+    pub(super) conditional: bool,
+    /// A checked body with no fallthrough or continue edge executes at most once.
+    pub(super) single_visit: bool,
+    /// Repetition omits only classified, effect-free head guards. Body accounting
+    /// still visits their source exits and checks every operation before them.
+    pub(super) iteration_body: Expr,
+    /// Head breaks whose predicates close the checked iteration boundary.
+    pub(super) head_breaks: Vec<u64>,
     /// Source identity used by both proof instrumentation and summary coverage.
     pub(super) span: Span,
     /// Executable condition, accounted before each body execution.
@@ -157,10 +169,11 @@ impl Loop {
         summaries: &HashMap<Fun, FunctionSummary>,
     ) -> Result<Self, VirErr> {
         let ExprX::Loop {
-            cond: Some(condition),
+            cond,
             body,
             invs,
-            source: LoopSource::Loop,
+            label,
+            source: LoopSource::Loop | LoopSource::BreakableBlock,
             is_for_loop: false,
             atomic_call: false,
             ..
@@ -171,12 +184,7 @@ impl Loop {
                 "this executable expression or control-flow exit",
             ));
         };
-        if !model::unit(&value.typ) {
-            return Err(model::unsupported(
-                &value.span,
-                "this executable expression or control-flow exit",
-            ));
-        }
+        let condition = cond.clone().unwrap_or_else(|| crate::ast_util::mk_bool(&value.span, true));
         let control = match &condition.x {
             ExprX::Binary(BinaryOp::Inequality(comparison), start, end) => Some(Control {
                 start: start.clone(),
@@ -186,8 +194,9 @@ impl Loop {
             }),
             _ => None,
         };
+        let (control, iteration_body, head_breaks) = exits::head_breaks(body, label, control);
         let mut effects = Effects::default();
-        for (region, in_body) in [(condition, false), (body, true)] {
+        for (region, in_body) in [(&condition, false), (body, true)] {
             crate::ast_visitor::expr_visitor_check(region, &mut |_, expression| {
                 effects.ownership |= layouts.owner(&expression.typ)
                     || matches!(expression.x, ExprX::Call { .. } | ExprX::Return(_));
@@ -295,6 +304,11 @@ impl Loop {
         }
         let scalar_steps = progress::scalar_steps(body);
         Ok(Self {
+            label: label.clone(),
+            conditional: cond.is_some(),
+            single_visit: false,
+            iteration_body,
+            head_breaks,
             scalar_steps,
             progress: None,
             nested: false,

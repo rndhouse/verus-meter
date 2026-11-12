@@ -230,11 +230,6 @@ fn unsupported_return_shapes() {
         "reference return values",
     );
     rejects(
-        "early_return",
-        "fn f() -> u32 resources peak(memory) <= 4 { return 7; }",
-        "executable expression or control-flow exit",
-    );
-    rejects(
         "guarded_match",
         "fn f(o: Option<u32>) -> u32 resources peak(memory) <= 100 { match o { Some(n) if n > 0 => n, _ => 0 } }",
         "Option match guards",

@@ -43,6 +43,15 @@ pub(super) struct VectorState {
 
 #[derive(Default)]
 pub(super) struct Growth {
+    /// Structurally checked loops with no local back edge use Verus's existing
+    /// nonisolated, no-back-edge proof form and retain their actual entry facts.
+    pub(super) single_visit_loops: std::collections::HashSet<u64>,
+    /// Explicit exits invalidate head-only facts on break edges. Other loop
+    /// instrumentation keeps its established invariant-and-ensures behavior.
+    pub(super) exiting_loops: std::collections::HashSet<u64>,
+    /// Checked exit predicates are proved on normal completion and every break,
+    /// independently of the invariants maintained only at loop heads.
+    pub(super) loop_ensures: HashMap<u64, Vec<Expr>>,
     /// Universal sibling and reservation facts are needed only by reusable bodies.
     pub(super) loop_depth: usize,
     /// Counted iteration observations admitted in allocation sizes only.

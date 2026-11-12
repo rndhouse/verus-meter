@@ -10,6 +10,10 @@ use crate::ast::*;
 
 impl Analysis<'_> {
     pub(super) fn value_into(&mut self, expr: &Expr) -> Result<bool, VirErr> {
+        if super::model::diverging(&expr.typ) {
+            self.discard(expr)?;
+            return Ok(true);
+        }
         if self.option_operation(expr, true)?.is_some() {
             return Ok(true);
         }
@@ -33,6 +37,7 @@ impl Analysis<'_> {
             return Ok(Some(result));
         }
         if !unit(&expr.typ)
+            && !super::model::diverging(&expr.typ)
             && matches!(&expr.x, ExprX::Match(..) | ExprX::Block(..) | ExprX::If(..))
         {
             let value = self.produce(expr)?;
@@ -209,7 +214,9 @@ impl Analysis<'_> {
         if !self.layouts.option(&scrutinee.typ) {
             return Err(unsupported(&expr.span, "matches other than by-value Option matches"));
         }
-        self.layouts.return_size(&expr.typ, &expr.span)?;
+        if !super::model::diverging(&expr.typ) {
+            self.layouts.return_size(&expr.typ, &expr.span)?;
+        }
         if self.layouts.owner(&expr.typ) {
             return Err(unsupported(&expr.span, "conditional heap ownership results"));
         }
@@ -239,6 +246,7 @@ impl Analysis<'_> {
             0
         };
         let protection = self.heap.protect();
+        let first_exit = self.flow.exits.len();
         let entry = self.branch_state();
         let mut joined = None;
         let mut result: Option<super::lifetime::Value> = None;
@@ -247,6 +255,7 @@ impl Analysis<'_> {
                 return Err(unsupported(&arm.span, "Option match guards"));
             }
             self.restore_branch(&entry);
+            let arm_exits = self.flow.exits.len();
             let mut slots = Vec::new();
             self.option_pattern(&arm.x.pattern, &scrutinee.typ, &mut slots, option_owner.clone())?;
             // Bindings exist throughout the arm, including its guard/body.
@@ -268,26 +277,41 @@ impl Analysis<'_> {
             }
             if new_value {
                 let value = self.produce(&arm.x.body)?;
-                if let Some(result) = &mut result {
-                    result.merge(&value);
-                } else {
-                    result = Some(value);
+                if self.flow.reachable {
+                    if let Some(result) = &mut result {
+                        result.merge(&value);
+                    } else {
+                        result = Some(value);
+                    }
                 }
             } else if super::model::unit(&arm.x.body.typ) {
                 self.discard(&arm.x.body)?;
             } else {
                 self.initialize_expr(&arm.x.body)?;
             }
-            for (name, _) in slots.iter().rev() {
-                self.drop_owner(name, &arm.span)?;
-                if let Some(value) = self.slots.remove(name) {
-                    self.release_value(value, &arm.span);
+            let locals =
+                slots.iter().map(|(name, _)| (arm.span.clone(), name.clone())).collect::<Vec<_>>();
+            self.cleanup_scope(&locals, arm_exits);
+            if self.flow.reachable {
+                if let Some(joined) = &joined {
+                    self.join_branch(joined)?;
                 }
+                joined = Some(self.branch_state());
             }
-            if let Some(joined) = &joined {
-                self.join_branch(joined)?;
-            }
-            joined = Some(self.branch_state());
+        }
+        if let Some(joined) = joined {
+            self.restore_branch(&joined);
+        } else {
+            self.flow.reachable = false;
+        }
+        for edge in &mut self.flow.exits[first_exit..] {
+            edge.state.storage.release(
+                &expr.span,
+                MemoryKind::host_local(),
+                scratch,
+                "match input consumed on exit",
+            );
+            edge.state.heap.unprotect(protection.clone());
         }
         self.produced = result;
         self.storage.release(&expr.span, MemoryKind::host_local(), scratch, "match input consumed");

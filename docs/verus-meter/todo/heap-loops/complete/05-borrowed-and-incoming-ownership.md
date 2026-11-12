@@ -33,8 +33,9 @@ Ordered loop outputs expose requested inverse removal views for later caller
 extraction. Ordinary branches, optional-match protection, and memory-section
 restrictions remain in force. Missing geometry, unsupported ownership shapes,
 and unsupported control or scalar dependencies reject. Broader progress/count
-proofs remain in [task 6](06-iteration-counts-and-state.md), and other loop
-forms remain in [task 7](../07-loop-forms-and-exits.md).
+proofs are covered by [task 6](06-iteration-counts-and-state.md). Loop exits and
+unconditional forms are covered by [task 7](07-loop-forms-and-exits.md);
+`for` and iterator support remains in [task 8](../08-for-loops-and-iterators.md).
 
 ## Work
 

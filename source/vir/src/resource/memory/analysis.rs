@@ -39,6 +39,8 @@ pub(super) struct Checkpoint {
 
 /// One function's evolving ownership state and already checked callee facts.
 pub(super) struct Analysis<'a> {
+    /// Reachable fallthrough and pending lexical exits share one lifetime model.
+    pub(super) flow: super::control::Flow,
     /// Executable ownership transitions accepted by this body's accounting.
     pub(super) transitions: super::transfer::Checked,
     /// Live named values, including their identities across moves.
@@ -112,7 +114,9 @@ impl Analysis<'_> {
         if let Some(stmt) = stmts.first() {
             if let StmtX::Expr(marker) = &stmt.x {
                 if let ExprX::ResourceSection(budget) = &marker.x {
-                    if !unit(&expr.typ) {
+                    if !unit(&expr.typ)
+                        && !matches!(&*expr.typ, TypX::Decorate(TypDecoration::Never, _, _))
+                    {
                         return Err(unsupported(&expr.span, "value-returning memory sections"));
                     }
                     return self.section(expr, &marker.span, budget, &stmts[1..], tail);
@@ -150,8 +154,12 @@ impl Analysis<'_> {
     ) -> Result<(), VirErr> {
         let mut locals = Vec::new();
         let mut owned_locals = Vec::new();
+        let first_exit = self.flow.exits.len();
         self.storage.event(&expr.span, "enter lexical scope".into());
         for stmt in stmts.iter() {
+            if !self.flow.reachable {
+                break;
+            }
             match &stmt.x {
                 StmtX::Expr(e) => self.discard(e)?,
                 StmtX::Decl { pattern, init, els, .. } => {
@@ -192,6 +200,9 @@ impl Analysis<'_> {
                     } else {
                         self.fresh_value(&stmt.span, &binding.typ)?
                     };
+                    if !self.flow.reachable {
+                        break;
+                    }
                     self.slots.insert(binding.name.clone(), value);
                     if self.layouts.owner(&binding.typ) {
                         owned_locals.push(binding.name.clone());
@@ -210,7 +221,7 @@ impl Analysis<'_> {
                 }
             }
         }
-        if let Some(tail) = tail {
+        if let Some(tail) = tail.as_ref().filter(|_| self.flow.reachable) {
             if new_value {
                 self.produced = Some(self.produce(tail)?);
             } else if destination {
@@ -222,12 +233,7 @@ impl Analysis<'_> {
         if !owned_locals.is_empty() {
             self.transitions.scope(&expr.span, owned_locals);
         }
-        for (span, name) in locals.into_iter().rev() {
-            self.drop_owner(&name, &span)?;
-            if let Some(value) = self.slots.remove(&name) {
-                self.release_value(value, &span);
-            }
-        }
+        self.cleanup_scope(&locals, first_exit);
         self.storage.event(&expr.span, "exit lexical scope".into());
         Ok(())
     }
@@ -235,12 +241,32 @@ impl Analysis<'_> {
     /// Evaluate source expressions. Only a standalone aggregate leaves a storage
     /// charge; scalar/reference operations introduce no implicit objects.
     pub(super) fn expr(&mut self, expr: &Expr) -> Result<u64, VirErr> {
+        match &expr.x {
+            ExprX::NeverToAny(inner) => return self.expr(inner),
+            ExprX::Return(value) => {
+                self.exit(expr, super::control::Target::Return, value.as_ref())?;
+                return Ok(0);
+            }
+            ExprX::BreakOrContinue { label, is_break, value } => {
+                let target = if *is_break {
+                    super::control::Target::Break(label.clone())
+                } else {
+                    super::control::Target::Continue(label.clone())
+                };
+                self.exit(expr, target, value.as_ref())?;
+                return Ok(0);
+            }
+            _ => {}
+        }
         if let Some(owner) = self.extracted_owner(expr, true)? {
             self.release_owner(owner, &expr.span);
             return Ok(0);
         }
         if self.layouts.owner(&expr.typ) {
             let value = self.produce(expr)?;
+            if !self.flow.reachable {
+                return Ok(0);
+            }
             let owner = self.result_owner.take().expect("produced owner");
             self.release_owner(owner, &expr.span);
             return self.expression_value(value, &expr.span);
@@ -407,13 +433,19 @@ impl Analysis<'_> {
                 self.access(place, typ)?;
                 return Ok(0);
             }
-            ExprX::If(cond, then_expr, else_expr) if unit(&expr.typ) => {
+            ExprX::If(cond, then_expr, else_expr)
+                if unit(&expr.typ) || super::model::diverging(&expr.typ) =>
+            {
                 self.conditional(expr, cond, then_expr, else_expr.as_ref(), false)?;
                 return Ok(0);
             }
             ExprX::Loop { .. } => {
                 self.analyze_loop(expr)?;
-                return Ok(0);
+                return if let Some(value) = self.produced.take() {
+                    self.expression_value(value, &expr.span)
+                } else {
+                    Ok(0)
+                };
             }
             _ => {
                 return Err(unsupported(
@@ -494,7 +526,9 @@ pub(super) fn check(
     let modes = modes.ok_or_else(|| {
         unsupported(&function.span, "functions without execution-mode information")
     })?;
+    super::control::validate(body, &modes.var_modes)?;
     let mut analysis = Analysis {
+        flow: Default::default(),
         transitions: Default::default(),
         slots: HashMap::new(),
         produced: None,
@@ -586,6 +620,7 @@ pub(super) fn check(
     })?;
 
     let result = analysis.produce(body)?;
+    let result = analysis.finish_returns(&function.span, result)?;
     let return_parameter = result.parameter;
     let zero_charges = analysis.growth.zero_charges();
     let zero_forests = analysis.growth.zero_forests();

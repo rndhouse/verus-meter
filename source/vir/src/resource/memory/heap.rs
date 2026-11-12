@@ -185,6 +185,11 @@ impl Owner {
 }
 
 impl Heap {
+    /// A terminating edge may consume protected owners because it cannot rejoin
+    /// the region's continuing paths. Lexical cleanup retains ordinary charges.
+    pub(super) fn exit_protection(&mut self) -> (HashSet<VarIdent>, HashSet<VarIdent>) {
+        (std::mem::take(&mut self.protected), std::mem::take(&mut self.partitions))
+    }
     pub(super) fn root(&self, name: &VarIdent) -> Option<&Owner> {
         self.owners.get(name).or_else(|| self.borrowed.get(name))
     }
@@ -501,14 +506,6 @@ impl Analysis<'_> {
             self.storage.release_dynamic(id);
         }
         self.storage.release(span, owner.kind, owner.bytes, "drop heap object");
-    }
-
-    pub(super) fn drop_owner(&mut self, name: &VarIdent, span: &Span) -> Result<(), VirErr> {
-        if self.heap.owners.contains_key(name) {
-            let owner = self.heap.take(name, span)?;
-            self.release_owner(owner, span);
-        }
-        Ok(())
     }
 
     pub(super) fn heap_expr(&mut self, expr: &Expr) -> Result<Option<u64>, VirErr> {

@@ -123,10 +123,10 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] explicit_return_is_rejected verus_code! {
+    #[test] explicit_unit_return verus_code! {
         use vstd::prelude::*;
         fn example() resources peak(memory) <= 0 { return; }
-    } => Err(err) => assert_vir_error_msg(err, "does not support this executable expression or control-flow exit")
+    } => Ok(())
 }
 
 test_verify_one_file! {
@@ -285,12 +285,12 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] breaks_are_rejected verus_code! {
+    #[test] immediate_break verus_code! {
         use vstd::prelude::*;
         fn example(condition: bool) resources peak(memory) <= 1000 {
             while condition decreases 1int, { break; }
         }
-    } => Err(err) => assert_vir_error_msg(err, "does not support this executable expression or control-flow exit")
+    } => Ok(())
 }
 
 test_verify_one_file! {
