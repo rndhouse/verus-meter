@@ -167,8 +167,8 @@ fn guarded_helpers_compose_through_nested_loops_and_keep_branch_peaks() {
 }
 
 #[test]
-fn payload_and_computed_counter_predicates_reject_without_aggregate_fallback() {
-    for (name, condition) in [("payload", "child.len() > 0"), ("computed_counter", "i + 1 < 2")] {
+fn payload_and_nonlinear_counter_predicates_reject_without_aggregate_fallback() {
+    for (name, condition) in [("payload", "child.len() > 0"), ("nonlinear_counter", "i * i < 2")] {
         rejects(
             name,
             &format!(

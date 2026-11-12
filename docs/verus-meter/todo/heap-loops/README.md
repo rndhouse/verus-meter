@@ -9,7 +9,7 @@ not promise support for every Rust program or every owning container.
 3. [Transform children during traversal](complete/03-transform-children.md) — complete
 4. [Indexed traversal and updates](complete/04-indexed-traversal.md) — complete
 5. [Borrowed collections and incoming ownership](complete/05-borrowed-and-incoming-ownership.md) — complete
-6. [General iteration counts and carried state](06-iteration-counts-and-state.md)
+6. [General iteration counts and carried state](complete/06-iteration-counts-and-state.md) — complete
 7. [Other loop forms and early exits](07-loop-forms-and-exits.md)
 
 ## Starting point
@@ -24,10 +24,14 @@ Parametric child transformations preserve nested extraction, replacement, growth
 release, and nonuniform generated footprints. Leaf-only results retain inferred
 child descriptors. Ordered recurrences extend this to indexed updates, revisits,
 and removal reindexing. Owned and borrowed incoming collections compose through
-helper delegation with separate original lifetimes and local charges. Broader
-progress/count proofs and control forms remain in the following tasks.
-Local peak proofs support some cases that cannot yet be exported as precise
-ownership summaries.
+helper delegation with separate original lifetimes and local charges.
+
+Shared progress supports literal integer strides, countdowns, moving scalar
+bounds, checked collection lengths, and carried scalar exits. Symbolic allocation
+bounds and nested counts compose with the same ownership effects. Stationary
+updates can use complete forest induction beyond the finite proof window.
+Other loop forms and exits remain in task 7. Local peak proofs support some cases
+that cannot yet be exported as precise ownership summaries.
 
 ## Rules for every task
 

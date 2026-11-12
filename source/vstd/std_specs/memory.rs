@@ -1573,6 +1573,69 @@ pub proof fn iterate_facts(
     }
 }
 
+/// Pointwise multiplication facts for symbolic per-visit allocation envelopes.
+/// These keep ordinary loop queries independent of global nonlinear rewriting.
+pub proof fn product_bounds(amount: int, completed: int, total: int)
+    requires
+        amount >= 0,
+        0 <= completed <= total,
+    ensures
+        amount * completed <= amount * total,
+        amount * (completed + 1) == amount * completed + amount,
+        completed < total ==> amount * completed + amount <= amount * total,
+        amount * total == total * amount,
+{
+    assert(amount * completed <= amount * total) by (nonlinear_arith)
+        requires
+            amount >= 0,
+            0 <= completed <= total,
+    ;
+    assert(amount * (completed + 1) == amount * completed + amount) by (nonlinear_arith);
+    assert(completed < total ==> amount * completed + amount <= amount * total) by (nonlinear_arith)
+        requires
+            amount >= 0,
+            0 <= completed <= total,
+    ;
+    assert(amount * total == total * amount) by (nonlinear_arith);
+}
+
+/// The exact recurrence with an additional proposed closed form as proof input.
+/// The candidate never defines the returned forest.
+#[verifier::opaque]
+pub open spec fn iterate_closed(
+    step: spec_fn(int, Seq<Record>) -> Seq<Record>,
+    initial: Seq<Record>,
+    count: int,
+    closed: spec_fn(int) -> Seq<Record>,
+) -> Seq<Record> {
+    iterate(step, initial, count)
+}
+
+/// Prove a complete closed forest by its base and successor equations. The
+/// induction does not depend on a finite unfolding window or a byte substitute.
+pub proof fn iterate_closed_facts(
+    step: spec_fn(int, Seq<Record>) -> Seq<Record>,
+    initial: Seq<Record>,
+    count: int,
+    closed: spec_fn(int) -> Seq<Record>,
+)
+    requires
+        count >= 0,
+        closed(0) == initial,
+        forall|i: int| 0 <= i < count ==> closed(i + 1) == #[trigger] step(i, closed(i)),
+    ensures
+        iterate_closed(step, initial, count, closed) == closed(count),
+        iterate_closed(step, initial, count, closed) == iterate(step, initial, count),
+    decreases count,
+{
+    reveal(iterate_closed);
+    reveal_with_fuel(iterate, 2);
+    if count > 0 {
+        iterate_closed_facts(step, initial, count - 1, closed);
+        assert(closed(count) == step(count - 1, closed(count - 1)));
+    }
+}
+
 /// Generate a complete block for each iteration, preserving nonuniform children.
 /// Logical width describes occupied slots independently of their allocation sizes.
 #[verifier::opaque]
@@ -2242,6 +2305,7 @@ pub open spec fn take_children(memory: Seq<Record>, length: int) -> Seq<Record>
 }
 
 /// Retaining a range never increases storage and preserves its child views.
+/// An empty range releases every child without unfolding individual descriptors.
 pub proof fn take_children_facts(memory: Seq<Record>, length: int)
     requires well_formed(memory),
     ensures well_formed(take_children(memory, length)),
@@ -2249,6 +2313,7 @@ pub proof fn take_children_facts(memory: Seq<Record>, length: int)
         runtime(take_children(memory, length)) == take_children(memory, length),
         nonruntime(take_children(memory, length)) == Seq::<Record>::empty(),
         descendants(take_children(memory, length)) == take_children(memory, length),
+        length <= 0 ==> take_children(memory, length) == Seq::<Record>::empty(),
         forall|index: int| #[trigger] subtree(take_children(memory, length), seq![index]) ==
             if 0 <= index < length { subtree(memory, seq![index]) } else { Seq::<Record>::empty() },
     decreases memory.len(),

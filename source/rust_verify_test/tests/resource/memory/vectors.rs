@@ -242,12 +242,10 @@ fn runtime_loop_reuses_allocations() {
 }
 
 #[test]
-fn loop_needs_evidence_for_capacity() {
-    rejects(
-        "loop_no_length_invariant",
-        "fn f() resources peak(memory) <= 48 { let mut v = Vec::<u32>::with_capacity(4); let mut i: usize = 0; while i < 4 invariant i <= 4, decreases 4 - i, { v.push(1); i = i + 1; } }",
-        "memory budget exceeded",
-    );
+fn loops_derive_length_evidence_for_capacity() {
+    let code = "fn f() resources peak(memory) <= BOUND { let mut v = Vec::<u32>::with_capacity(4); let mut i: usize = 0; while i < 4 invariant i <= 4, decreases 4 - i, { v.push(1); i = i + 1; } }";
+    verifies("derived_loop_length", &code.replace("BOUND", "48"));
+    rejects("derived_loop_length_short", &code.replace("BOUND", "47"), "memory budget exceeded");
 }
 
 #[test]

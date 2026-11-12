@@ -47,9 +47,12 @@ pub(super) struct Growth {
     pub(super) loop_depth: usize,
     /// Counted iteration observations admitted in allocation sizes only.
     pub(super) loop_counters: std::collections::HashSet<VarIdent>,
-    /// Only loops composing helper templates need the additional descriptor
-    /// classification invariant; direct projections use the existing algebra.
-    pub(super) transfer_loops: std::collections::HashSet<u64>,
+    /// Function-wide demand for runtime-child classification across loops.
+    /// A forest built directly in a loop may be consumed by a later helper.
+    pub(super) runtime_classification: bool,
+    /// Completed scalar translations can supply later allocation observations.
+    /// Actual quantities are still snapshotted and checked at each operation.
+    pub(super) carried_scalars: std::collections::HashSet<VarIdent>,
     /// Owners paid by an enclosing section cannot supply local release credits.
     pub(super) section_owners: std::collections::HashSet<VarIdent>,
     /// Activate proof algebra at each operation, including inside isolated loop queries.
@@ -60,6 +63,9 @@ pub(super) struct Growth {
     /// Shared entry snapshots let loop frame and sum bounds refer to the same
     /// immutable proof values, including in isolated loop verification queries.
     pub(super) loop_entry: HashMap<u64, HashMap<VarIdent, Expr>>,
+    /// Repeated logical observations share one snapshot at a loop invocation.
+    /// Progress and length induction must not forget their common entry value.
+    pub(super) loop_observations: HashMap<u64, Vec<(Expr, Expr)>>,
     /// All states have function-wide proof scope; executable ownership controls charges.
     pub(super) vectors: Vec<VectorState>,
     /// Independent sums of runtime child allocations, grouped by memory kind.

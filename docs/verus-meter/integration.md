@@ -130,6 +130,22 @@ ownership summarizer consume that record; the summarizer cannot infer an uncheck
 loop from source syntax. Source observations select proof candidates, while checked
 operations remain authoritative for ownership effects.
 
+[Shared progress](../../source/vir/src/resource/memory/loops/progress.rs) proposes
+constant integer translations and comparison gaps independently of ownership
+repetition. The [checked evaluator](../../source/vir/src/resource/memory/transfer/trace/loops/progress.rs)
+validates the entire visit before publishing counts, scalar exits, or logical
+length candidates. The body proof counts actual back edges in erased state and
+proves those candidates at entry and on back edges. Conditional ownership uses
+the same selected interval programs to describe completed prefix lengths.
+Native overflow and loop termination remain ordinary executable obligations.
+
+Entry snapshots are immutable within a loop invocation. Reuse equivalent length
+observations and preserve existing snapshots when freezing headroom facts;
+recapturing them would separate progress from charge conservation in isolated
+queries. Nested loops must not reuse a persistent role's first outer-visit length
+as their own entry constant. Unchanged scalar condition operands retain their
+relationship to their entry snapshots.
+
 Loop repetition chooses a representation of the same checked transition.
 [Ordered effects](../../source/vir/src/resource/memory/transfer/effects.rs)
 normalize disjoint monotone roles into ranges, tiles, or generated blocks.
@@ -160,8 +176,16 @@ This keeps exact forests available without expanding every child in failing-budg
 queries. Temporary identities cannot escape a template, and reservation lower
 bounds remain separate from backing-byte upper bounds. Evolving recurrences
 preserve validity by induction and expose small exact cases for proof automation;
-larger counts retain the same recurrence. Byte induction includes collection
+larger counts retain the same recurrence. Stationary overwrites and affine
+record updates may propose a complete closed forest. Check its base and successor
+equalities, then use the verified closed-forest induction; keep structural
+unfolding local to that equation proof. Byte induction includes collection
 backing as well as child sums, with checked per-visit allocation ceilings.
+Symbolic ceilings use invariant observations and interval arithmetic; completed
+nested counts contribute to the containing visit. Pointwise multiplication facts
+relate symbolic per-visit bounds to reserved headroom without activating global
+nonlinear rewriting. Empty retained ranges expose an empty forest directly,
+without unfolding each discarded child.
 
 Composition retains every intermediate peak check. Local proofs use ordinary
 inductive charge and backing candidates derived from the completed effects. Nested
@@ -252,9 +276,12 @@ inverse removal views at use sites, keeping these laws dormant for ordinary call
 Missing geometry or ownership metadata remains unsupported. Never copy a parent
 charge to stand in for an unknown child.
 
-Loop proofs preserve forest validity and sums, immutable entry facts, and inferred
-reservation candidates indexed by fixed and repeated ownership steps. Every
-candidate is checked at loop entry and on back edges. Preserve zero local charge
+Loop proofs preserve forest validity, sums, immutable entry facts, and inferred
+reservation candidates indexed by fixed and repeated ownership steps. Functions
+that export ownership or call templates also preserve runtime-child
+classification across their producing loops, including directly built
+collections used by later helpers. Keep those classification proofs local.
+Every candidate is checked at loop entry and on back edges. Preserve zero local charge
 only with an explicit zero invariant for an unchanged or shrinking collection;
 possible backing growth invalidates first-visit zero shortcuts. Loop-carried helper effects
 that would invalidate precision are unsupported. Shared ownership still needs

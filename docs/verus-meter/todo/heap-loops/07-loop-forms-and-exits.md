@@ -1,8 +1,8 @@
 # 7. Other loop forms and early exits
 
 Builds on tasks [1](complete/01-compose-iteration-operations.md) through
-[6](06-iteration-counts-and-state.md). This also touches general resource control
-flow, beyond collection ownership summaries.
+[6](complete/06-iteration-counts-and-state.md). This also touches general resource
+control flow, beyond collection ownership summaries.
 
 ## Goal
 

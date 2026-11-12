@@ -110,7 +110,9 @@ impl Trace<'_> {
                             contracts::literal(span, element),
                             growth::grown_capacity(
                                 span,
-                                contracts::literal(span, self.loop_size_ceiling),
+                                self.loop_size_ceiling
+                                    .clone()
+                                    .unwrap_or_else(|| expr::integer(span, 0)),
                                 element,
                             ),
                         );
@@ -359,7 +361,7 @@ impl Trace<'_> {
                     let candidate = contracts::multiply(
                         span,
                         contracts::literal(span, element),
-                        contracts::literal(span, self.loop_size_ceiling),
+                        self.loop_size_ceiling.clone().unwrap_or_else(|| expr::integer(span, 0)),
                     );
                     self.loop_allocations.push((span.clone(), allocation, candidate));
                 }

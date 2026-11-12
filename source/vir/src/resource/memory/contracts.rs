@@ -141,6 +141,19 @@ pub(super) fn simplify(expr: &Expr) -> Expr {
                                 ExprX::Const(Constant::Int(a * b)),
                             );
                         }
+                        BinaryOp::Arith(ArithOp::EuclideanDiv(_))
+                            if b > &num_bigint::BigInt::from(0) =>
+                        {
+                            let mut quotient = a / b;
+                            if a % b < num_bigint::BigInt::from(0) {
+                                quotient -= 1;
+                            }
+                            return SpannedTyped::new(
+                                &expr.span,
+                                &expr.typ,
+                                ExprX::Const(Constant::Int(quotient)),
+                            );
+                        }
                         BinaryOp::Eq(_) => a == b,
                         BinaryOp::Ne => a != b,
                         BinaryOp::Inequality(InequalityOp::Le) => a <= b,

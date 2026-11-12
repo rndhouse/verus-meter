@@ -30,7 +30,8 @@ pub(in super::super) fn integer(span: &Span, n: i128) -> Expr {
     SpannedTyped::new(span, &int_typ(), ExprX::Const(const_int_from_i128(n)))
 }
 
-fn function(name: &str) -> Fun {
+/// Canonical identity shared by generated calls and scoped definition reveals.
+pub(in super::super) fn function(name: &str) -> Fun {
     let mut path = crate::path!(CrateId::Vstd => "std_specs", "memory").as_ref().clone();
     Arc::make_mut(&mut path.segments).push(Segment::V(Arc::new(name.into()), 0));
     Arc::new(FunX { path: Arc::new(path) })

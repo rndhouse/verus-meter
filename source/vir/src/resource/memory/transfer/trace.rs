@@ -77,6 +77,9 @@ struct Trace<'a> {
     loop_inputs: HashMap<VarIdent, Selection>,
     /// Allocation-site observations and candidate extents for this iteration.
     loop_allocations: Vec<(Span, Expr, Expr)>,
+    /// Retained-growth candidates for completed nested loops, proved by the
+    /// containing visit's ordinary byte induction rather than a synthetic site.
+    loop_nested: Vec<Expr>,
     /// Helper workspace observations, including calls with no escaping allocation.
     loop_calls: Vec<(Span, Expr, Expr)>,
     /// Closed helper workspace ceilings for generated body headroom candidates.
@@ -84,12 +87,14 @@ struct Trace<'a> {
     /// Checked allocation ceilings used to prove recurrence charge induction.
     loop_repetitions: HashMap<u64, Expr>,
     /// Invariant-proposed scalar ceiling; uses are checked at their operations.
-    loop_size_ceiling: u64,
+    loop_size_ceiling: Option<Expr>,
     /// Bounds published only when the complete ownership template succeeds.
     allocation_checks: Vec<(Span, Expr)>,
     /// Structural transfers from completed loop graphs. No proof expressions
     /// are constructed here; evidence is published only with a complete template.
     loop_transfers: HashMap<u64, Vec<super::super::loops::Transfer>>,
+    /// Checked visit counts and scalar/length proof candidates.
+    loop_progress: HashMap<u64, super::super::loops::progress::Evidence>,
     /// Per-role append envelopes, expressed in ordinary immutable inputs.
     loop_growth: HashMap<u64, Vec<(super::super::paths::LocalPath, Expr)>>,
     /// Convert immutable symbolic inputs back into body-proof observations.
@@ -121,12 +126,14 @@ pub(super) fn summarize(
         loop_roots: None,
         loop_inputs: HashMap::new(),
         loop_allocations: Vec::new(),
+        loop_nested: Vec::new(),
         loop_calls: Vec::new(),
         loop_scratch: HashMap::new(),
         loop_repetitions: HashMap::new(),
-        loop_size_ceiling: 0,
+        loop_size_ceiling: None,
         allocation_checks: Vec::new(),
         loop_transfers: HashMap::new(),
+        loop_progress: HashMap::new(),
         loop_growth: HashMap::new(),
         proof_values: HashMap::new(),
     };
@@ -233,6 +240,7 @@ pub(super) fn summarize(
     let ordered = !trace.loop_repetitions.is_empty() || checked.operations.values().any(|operation| matches!(operation, checked::Operation::Call { target, .. } if summaries.get(target).and_then(|summary| summary.transfer.as_ref()).is_some_and(|template| template.ordered)));
     Some(Inferred {
         loops: trace.loop_transfers,
+        progress: trace.loop_progress,
         growth: trace.loop_growth,
         checks: trace.allocation_checks,
         scratch: trace.loop_scratch,

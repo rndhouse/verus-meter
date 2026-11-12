@@ -83,7 +83,12 @@ impl Analysis<'_> {
     /// Operation-local allocation observations include the current unit counters.
     /// Persistent contracts still use only immutable function inputs.
     pub(super) fn allocation_scalars(&self) -> HashSet<VarIdent> {
-        self.stable_scalars.iter().chain(&self.growth.loop_counters).cloned().collect()
+        self.stable_scalars
+            .iter()
+            .chain(&self.growth.loop_counters)
+            .chain(&self.growth.carried_scalars)
+            .cloned()
+            .collect()
     }
 
     pub(super) fn discard(&mut self, expr: &Expr) -> Result<(), VirErr> {
@@ -509,6 +514,7 @@ pub(super) fn check(
         return Err(unsupported(&function.span, "ghost or tracked return values"));
     }
     layouts.return_size(&f.outer_ret.x.typ, &function.span)?;
+
     let capacities = super::inference::infer(
         function,
         layouts,
@@ -560,6 +566,20 @@ pub(super) fn check(
     }
     analysis.mark_borrowed_origins(function)?;
     let symbolic_bound = super::symbolic::function_bound(function, budgets, functions, layouts)?;
+
+    // Validate input ownership layouts before traversing them for proof demand.
+    // Classification is needed at ownership interfaces, including an internal
+    // collection from which a fixed owner is extracted, and at template calls.
+    analysis.growth.runtime_classification =
+        layouts.owner(&f.outer_ret.x.typ) || super::transfer::required(function, layouts)?;
+    crate::ast_visitor::expr_visitor_check(body, &mut |_, value| {
+        if let ExprX::Call { target: CallTarget::Fun(_, fun, _, _, _), .. } = &value.x {
+            analysis.growth.runtime_classification |=
+                summaries.get(fun).is_some_and(|summary| summary.transfer.is_some());
+        }
+        Ok::<(), VirErr>(())
+    })?;
+
     let result = analysis.produce(body)?;
     let return_parameter = result.parameter;
     let zero_charges = analysis.growth.zero_charges();
@@ -613,6 +633,7 @@ pub(super) fn check(
         &analysis.transitions,
     )?;
     if let Some(inferred) = &inferred {
+        analysis.apply_progress_evidence(&inferred.progress);
         analysis.apply_loop_evidence(
             &inferred.loops,
             &inferred.growth,

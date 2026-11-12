@@ -8,6 +8,7 @@ use crate::resource::memory::loops::Loop;
 mod composition;
 mod guards;
 mod indexed;
+mod progress;
 
 /// One iteration's disjoint roles and whole-child transfer edges. Applying this
 /// graph to physical forests or original-input regions uses the same trip count.
@@ -60,84 +61,57 @@ impl Trace<'_> {
 
     fn collection_loop(&mut self, record: &Loop) -> Option<Value> {
         let span = &record.span;
-        let control = record.control.as_ref()?;
-        let (left, right) = control.bounds();
-        let counter = control.counter().cloned();
-        let counted = counter.is_some();
         let before = self.state.clone();
-        let start = self.scalar(left)?;
-        if record.writes().any(|name| {
-            before.values.contains_key(name)
-                && !matches!(before.values[name], Value::Owner(_))
-                && Some(name) != counter.as_ref()
-        }) {
-            return None;
-        }
         let binder = VarIdent(
             Arc::new("$memory_transfer_iteration".into()),
             VarIdentDisambiguate::VirTemp(span.id),
         );
-        if let Some(counter) = &counter {
-            self.state.values.insert(
-                counter.clone(),
-                Value::Scalar(SpannedTyped::new(span, &left.typ, ExprX::Var(binder.clone()))),
-            );
-        }
-        let bound_start = self.effects.len();
-        let end = self.scalar(right)?;
-        let bound_effects = self.effects.split_off(bound_start);
-        if !independent(&end, &binder) {
-            return None;
-        }
-        let count = contracts::maximum(
-            span,
-            expr::integer(span, 0),
-            contracts::subtract(
-                span,
-                if counted { end.clone() } else { start.clone() },
-                if counted { start.clone() } else { end.clone() },
-            ),
-        );
+        let progress = self.begin_progress(record, binder.clone())?;
+        let start = expr::integer(span, 0);
+        let bound_effects = progress.stable_reads.clone();
         let effect_start = self.effects.len();
         let depth = self.branch_depth;
         self.branch_depth = 0;
         let outer_inputs = std::mem::take(&mut self.loop_inputs);
         let outer_allocations = std::mem::take(&mut self.loop_allocations);
+        let mut outer_nested = std::mem::take(&mut self.loop_nested);
         let outer_calls = std::mem::take(&mut self.loop_calls);
-        let outer_ceiling =
-            std::mem::replace(&mut self.loop_size_ceiling, record.size_ceiling.unwrap_or(0));
+        let ceiling = self.size_bound(record);
+        let outer_ceiling = std::mem::replace(&mut self.loop_size_ceiling, Some(ceiling));
         let outer_tokens = self.loop_tokens.replace(HashSet::new());
         let outer_roots = self.loop_roots.replace(before.values.keys().cloned().collect());
         self.value(&record.body)?;
         let tokens = std::mem::replace(&mut self.loop_tokens, outer_tokens).unwrap();
         self.loop_roots = outer_roots;
         self.branch_depth = depth;
+        let (count, stride) = self.finish_progress(record, &progress)?;
         let effects = self.effects.split_off(effect_start);
+        self.record_progress(record, &progress, stride, &effects);
+        // A condition length with a checked induction relation may itself
+        // change. Its entry observation still determines the count, including
+        // reversed consuming comparisons such as `0 < source.len()`.
+        let length_progress = |source: &Expr| {
+            if let Some(checked::Operation::Length { receiver }) =
+                self.checked.operations.get(&source.span.id)
+            {
+                self.loop_progress[&span.id].lengths.contains_key(&receiver.location)
+            } else {
+                false
+            }
+        };
+        let control = record.control.as_ref()?;
+        let left_progress = length_progress(&control.start);
+        let right_progress = length_progress(&control.end);
         let persistent: Vec<_> = effects
             .into_iter()
             .filter(|effect| before.values.contains_key(effect.root()))
             .collect();
-        if counted {
-            let Value::Scalar(next) = self.state.values.get(counter.as_ref()?)? else {
-                return None;
-            };
-            let ExprX::Binary(BinaryOp::Arith(ArithOp::Add(OverflowBehavior::Allow)), a, b) =
-                &next.x
-            else {
-                return None;
-            };
-            if !matches!(&a.x, ExprX::Var(name) if *name == binder)
-                || contracts::constant(b) != Some(1)
-            {
-                return None;
-            }
-        }
         let programs = guards::partition(
             span,
             &persistent,
             &binder,
-            if counted { start.clone() } else { expr::integer(span, 0) },
-            count,
+            start.clone(),
+            count.clone(),
             &self.proof_values,
         )?;
         let mut blocks = Vec::new();
@@ -158,28 +132,18 @@ impl Trace<'_> {
                                 &self.loop_inputs,
                             )
                         })?;
-                if bound_effects.iter().any(|effect| {
-                    !matches!(effect, Effect::Read(name)
-                    if effects.iter().all(|effect| effect.root() != name))
-                }) {
-                    return None;
-                }
-                if !counted {
-                    let checked::Operation::Length { receiver } =
-                        self.checked.operations.get(&left.span.id)?.clone()
-                    else {
-                        return None;
-                    };
-                    let tested = self.checked_location(&receiver)?;
-                    let progresses = effects.iter().any(|effect| match effect {
-                        Effect::PopBlock { location, amount, .. } => {
-                            location.0 == tested.0
-                                && location.1 == tested.1
-                                && contracts::constant(amount) == Some(1)
-                        }
-                        _ => false,
-                    });
-                    if !progresses {
+                for (checked_length, reads) in
+                    [(left_progress, &progress.left_reads), (right_progress, &bound_effects)]
+                {
+                    // Computed metadata can look affine at a concrete first
+                    // visit while a later visit saturates. Moving observations
+                    // without this checked relation need the parametric planner.
+                    if !checked_length
+                        && reads.iter().any(|effect| {
+                            !matches!(effect, Effect::Read(name)
+                            if effects.iter().all(|effect| effect.root() != name))
+                        })
+                    {
                         return None;
                     }
                 }
@@ -187,6 +151,7 @@ impl Trace<'_> {
             }
             blocks.push(phase);
         }
+        self.record_prefix_lengths(record, &persistent, &tokens, &binder)?;
         // An identity frame bound is valid only if every selected program leaves
         // that role unchanged. Alternative transfers share conservation groups.
         for (effects, _, _, _) in blocks.iter().flatten() {
@@ -278,17 +243,19 @@ impl Trace<'_> {
         for region in &record.regions {
             self.regions.insert(region.exit, original.get(&region.location)?.clone());
         }
+        if self.loop_tokens.is_some() {
+            outer_nested.push(self.nested_growth(record, &binder, &count, &HashSet::new())?);
+        }
         self.loop_inputs = outer_inputs;
+        self.loop_nested = outer_nested;
         self.loop_allocations = outer_allocations;
         self.loop_calls = outer_calls;
         self.loop_size_ceiling = outer_ceiling;
         self.used.insert((checked::Kind::Loop, span.id));
-        if let Some(counter) = counter {
-            self.state.values.insert(counter, Value::Scalar(contracts::maximum(span, start, end)));
-        }
+        self.complete_progress(record, &progress, &count);
         // A containing iteration must see observations used by this loop's
         // count; it cannot repeat a count that depends on another changing role.
-        self.effects.extend(bound_effects);
+        self.effects.extend(progress.reads);
         Some(Value::Unit)
     }
 
@@ -646,20 +613,16 @@ impl Trace<'_> {
         start: &Expr,
         count: &Expr,
     ) -> Option<Expr> {
-        let mut values = self.proof_values.clone();
-        values.insert(
-            binder.clone(),
-            record
-                .size_ceiling
-                .map(|n| contracts::literal(&record.span, n))
-                .unwrap_or_else(|| contracts::add(&record.span, start.clone(), count.clone())),
-        );
+        let span = &record.span;
+        let ceiling = self.loop_size_ceiling.clone().unwrap_or_else(|| expr::integer(span, 0));
         let candidate = simplify::allocation_bound(
             candidate,
             &self.loop_inputs.keys().cloned().collect(),
-            record.size_ceiling.unwrap_or(0),
+            &ceiling,
         );
-        let bound = substitute(&candidate, &values);
+        let upper = contracts::add(span, start.clone(), count.clone());
+        let bound = progress::interval_upper(&candidate, binder, start, &upper)?;
+        let bound = substitute(&bound, &self.proof_values);
         crate::ast_visitor::expr_visitor_check(&bound, &mut |scope, value| {
             if matches!(&value.x, ExprX::Var(name) if !scope.contains_key(name)
                 && !self.proof_values.values().any(|value| matches!(&value.x, ExprX::Var(var) if var == name))) { Err(()) } else { Ok(()) }

@@ -135,7 +135,7 @@ fn rewrite(value: &Expr, values: Option<&HashMap<VarIdent, Expr>>) -> Expr {
 
 /// Structural equality for pure expressions used by forest maps and joins.
 /// Unknown forms stay distinct; this never asks the solver or guesses an index.
-pub(super) fn same_expression(a: &Expr, b: &Expr) -> bool {
+pub(in super::super) fn same_expression(a: &Expr, b: &Expr) -> bool {
     if Arc::ptr_eq(a, b) {
         return true;
     }
@@ -266,6 +266,9 @@ fn node(value: &Expr) -> Expr {
                 if contracts::constant(right) == Some(0) =>
             {
                 return left.clone();
+            }
+            ArithOp::Add(OverflowBehavior::Allow) if contracts::constant(left) == Some(0) => {
+                return right.clone();
             }
             ArithOp::Mul(OverflowBehavior::Allow)
                 if contracts::constant(right) == Some(0)
@@ -1056,7 +1059,7 @@ pub(super) fn affine(value: &Expr, index: &VarIdent) -> Option<(Expr, Expr)> {
 pub(super) fn allocation_bound(
     value: &Expr,
     tokens: &std::collections::HashSet<VarIdent>,
-    ceiling: u64,
+    ceiling: &Expr,
 ) -> Expr {
     crate::ast_visitor::map_expr_visitor(value, &|expression| {
         if let ExprX::UnaryOpr(UnaryOpr::Field(_), record) = &expression.x {
@@ -1070,7 +1073,7 @@ pub(super) fn allocation_bound(
                 })
                 .is_err();
                 if dependent {
-                    return Ok::<Expr, VirErr>(contracts::literal(&expression.span, ceiling));
+                    return Ok::<Expr, VirErr>(ceiling.clone());
                 }
             }
         }
@@ -1089,6 +1092,15 @@ pub(super) fn finite_iteration(
     count: Expr,
     window: Option<u64>,
 ) -> Expr {
+    let large = contracts::constant(&count)
+        .map_or(window.is_none_or(|n| n > u64::from(FINITE_GENERATION_LIMIT)), |n| {
+            n > u64::from(FINITE_GENERATION_LIMIT)
+        });
+    if large {
+        if let Some(closed) = super::iteration::closed(span, &builder, &initial, &count) {
+            return closed;
+        }
+    }
     let make = |count| {
         expr::operation(
             span,

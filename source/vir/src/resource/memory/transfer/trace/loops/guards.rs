@@ -139,8 +139,8 @@ fn select(effects: &[Effect], guards: &[Expr], selection: usize) -> Vec<Effect> 
 }
 
 /// Stable expressions may use immutable scalar inputs. A varying comparison
-/// must compare the counter itself with one such expression; Boolean combinations
-/// inherit their finite cuts. Arithmetic on the counter and payload tests reject.
+/// may compare affine counter expressions with one such expression; Boolean
+/// combinations inherit their finite cuts. Nonlinear and payload tests reject.
 fn boundaries(
     value: &Expr,
     binder: &VarIdent,
@@ -171,12 +171,50 @@ fn boundaries(
             boundaries(no, binder, stable, cuts)
         }
         ExprX::Binary(op @ (BinaryOp::Eq(_) | BinaryOp::Ne | BinaryOp::Inequality(_)), a, b) => {
+            let direct = matches!(&a.x, ExprX::Var(name) if name == binder)
+                || matches!(&b.x, ExprX::Var(name) if name == binder);
+            if !direct {
+                let (a_slope, a_offset) = simplify::affine(a, binder)?;
+                let (b_slope, b_offset) = simplify::affine(b, binder)?;
+                let slope =
+                    crate::resource::memory::loops::progress::difference(&a_slope, &b_slope)?;
+                if slope == 0 {
+                    return None;
+                }
+                let intercept = contracts::subtract(span, a_offset, b_offset);
+                boundaries(&intercept, binder, stable, cuts)?;
+                let threshold = if slope > 0 {
+                    contracts::subtract(span, expr::integer(span, 0), intercept)
+                } else {
+                    intercept
+                };
+                let magnitude = slope.checked_abs()?;
+                let ceil = |value| {
+                    crate::resource::memory::loops::progress::ceil_div(span, value, magnitude)
+                };
+                let lower = ceil(threshold.clone());
+                let upper = ceil(contracts::add(span, threshold, expr::integer(span, 1)));
+                match op {
+                    BinaryOp::Eq(_) | BinaryOp::Ne => {
+                        cuts.push(lower);
+                        cuts.push(upper);
+                    }
+                    BinaryOp::Inequality(op) => {
+                        let inclusive = matches!(
+                            (slope > 0, op),
+                            (true, InequalityOp::Le | InequalityOp::Gt)
+                                | (false, InequalityOp::Lt | InequalityOp::Ge)
+                        );
+                        cuts.push(if inclusive { upper } else { lower });
+                    }
+                    _ => unreachable!(),
+                }
+                return Some(());
+            }
             let (threshold, reverse) = if matches!(&a.x, ExprX::Var(name) if name == binder) {
                 (b, false)
-            } else if matches!(&b.x, ExprX::Var(name) if name == binder) {
-                (a, true)
             } else {
-                return None;
+                (a, true)
             };
             if !independent(threshold, binder) {
                 return None;
@@ -224,67 +262,75 @@ mod tests {
         let no = name("no");
         let counter =
             SpannedTyped::new(&span, &crate::ast_util::int_typ(), ExprX::Var(binder.clone()));
-        for reverse in [false, true] {
-            for threshold in [-2, 0, 2, 4, 7] {
-                for op in [
-                    BinaryOp::Eq(Mode::Exec),
-                    BinaryOp::Ne,
-                    BinaryOp::Inequality(InequalityOp::Lt),
-                    BinaryOp::Inequality(InequalityOp::Le),
-                    BinaryOp::Inequality(InequalityOp::Gt),
-                    BinaryOp::Inequality(InequalityOp::Ge),
-                ] {
-                    let threshold = expr::integer(&span, threshold);
-                    let (a, b) = if reverse {
-                        (threshold.clone(), counter.clone())
-                    } else {
-                        (counter.clone(), threshold.clone())
-                    };
-                    let condition = SpannedTyped::new(&span, &bool_typ(), ExprX::Binary(op, a, b));
-                    let effects = vec![
-                        Effect::Guarded {
-                            condition: condition.clone(),
-                            selected: true,
-                            effect: Box::new(Effect::Mutation(yes.clone())),
-                        },
-                        Effect::Guarded {
-                            condition: condition.clone(),
-                            selected: false,
-                            effect: Box::new(Effect::Mutation(no.clone())),
-                        },
-                    ];
-                    let programs = partition(
-                        &span,
-                        &effects,
-                        &binder,
-                        expr::integer(&span, 0),
-                        expr::integer(&span, 4),
-                        &HashMap::new(),
-                    )
-                    .unwrap();
-                    let actual: Vec<_> = programs
-                        .iter()
-                        .flatten()
-                        .flat_map(|program| {
-                            std::iter::repeat_n(
-                                program.effects[0].root() == &yes,
-                                contracts::constant(&program.count).unwrap() as usize,
-                            )
-                        })
-                        .collect();
-                    let expected: Vec<_> = (0..4)
-                        .map(|index| {
-                            let condition = contracts::simplify(&substitute(
-                                &condition,
-                                &HashMap::from([(binder.clone(), expr::integer(&span, index))]),
-                            ));
-                            let ExprX::Const(Constant::Bool(selected)) = condition.x else {
-                                panic!("constant comparison");
-                            };
-                            selected
-                        })
-                        .collect();
-                    assert_eq!(actual, expected, "direction {reverse}, operator {op:?}");
+        for (slope, offset) in [(1, 0), (2, 1), (-2, 7)] {
+            let counter = simplify::simplify(&contracts::add(
+                &span,
+                expr::integer(&span, offset),
+                contracts::multiply(&span, expr::integer(&span, slope), counter.clone()),
+            ));
+            for reverse in [false, true] {
+                for threshold in [-2, 0, 2, 4, 7] {
+                    for op in [
+                        BinaryOp::Eq(Mode::Exec),
+                        BinaryOp::Ne,
+                        BinaryOp::Inequality(InequalityOp::Lt),
+                        BinaryOp::Inequality(InequalityOp::Le),
+                        BinaryOp::Inequality(InequalityOp::Gt),
+                        BinaryOp::Inequality(InequalityOp::Ge),
+                    ] {
+                        let threshold = expr::integer(&span, threshold);
+                        let (a, b) = if reverse {
+                            (threshold.clone(), counter.clone())
+                        } else {
+                            (counter.clone(), threshold.clone())
+                        };
+                        let condition =
+                            SpannedTyped::new(&span, &bool_typ(), ExprX::Binary(op, a, b));
+                        let effects = vec![
+                            Effect::Guarded {
+                                condition: condition.clone(),
+                                selected: true,
+                                effect: Box::new(Effect::Mutation(yes.clone())),
+                            },
+                            Effect::Guarded {
+                                condition: condition.clone(),
+                                selected: false,
+                                effect: Box::new(Effect::Mutation(no.clone())),
+                            },
+                        ];
+                        let programs = partition(
+                            &span,
+                            &effects,
+                            &binder,
+                            expr::integer(&span, 0),
+                            expr::integer(&span, 4),
+                            &HashMap::new(),
+                        )
+                        .unwrap();
+                        let actual: Vec<_> = programs
+                            .iter()
+                            .flatten()
+                            .flat_map(|program| {
+                                std::iter::repeat_n(
+                                    program.effects[0].root() == &yes,
+                                    contracts::constant(&program.count).unwrap() as usize,
+                                )
+                            })
+                            .collect();
+                        let expected: Vec<_> = (0..4)
+                            .map(|index| {
+                                let condition = contracts::simplify(&substitute(
+                                    &condition,
+                                    &HashMap::from([(binder.clone(), expr::integer(&span, index))]),
+                                ));
+                                let ExprX::Const(Constant::Bool(selected)) = condition.x else {
+                                    panic!("constant comparison");
+                                };
+                                selected
+                            })
+                            .collect();
+                        assert_eq!(actual, expected, "direction {reverse}, operator {op:?}");
+                    }
                 }
             }
         }

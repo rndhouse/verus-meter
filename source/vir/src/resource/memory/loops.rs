@@ -6,34 +6,29 @@
 //! different loop shape or invent effects from unchecked syntax.
 
 mod analysis;
+pub(super) mod progress;
 
 use super::{layout::Layouts, model, paths::LocalPath, summary::FunctionSummary};
 use crate::ast::*;
 use crate::messages::Span;
 use std::collections::{HashMap, HashSet};
 
-/// Control forms with a closed iteration count in the current ownership model.
-/// Other loops may still have valid body proofs without an exportable summary.
+/// A comparison observation; the checked iteration determines its progress.
 #[derive(Clone)]
-pub(super) enum Control {
-    /// Candidate `counter < end` form; summary evaluation checks unit progress.
-    Counted { counter: VarIdent, start: Expr, end: Expr },
-    /// Candidate `length > end` form; checked operations must pop that receiver.
-    Consuming { start: Expr, end: Expr },
+pub(super) struct Control {
+    /// Left-hand scalar or collection length, observed at the loop head.
+    pub(super) start: Expr,
+    /// Right-hand observation, which may also have a checked affine transition.
+    pub(super) end: Expr,
+    /// Comparison direction and whether its boundary is included.
+    pub(super) comparison: InequalityOp,
+    /// A direct scalar observation, used to admit allocation-size expressions.
+    counter: Option<VarIdent>,
 }
 
 impl Control {
     pub(super) fn counter(&self) -> Option<&VarIdent> {
-        match self {
-            Self::Counted { counter, .. } => Some(counter),
-            Self::Consuming { .. } => None,
-        }
-    }
-
-    pub(super) fn bounds(&self) -> (&Expr, &Expr) {
-        match self {
-            Self::Counted { start, end, .. } | Self::Consuming { start, end } => (start, end),
-        }
+        self.counter.as_ref()
     }
 }
 
@@ -47,8 +42,6 @@ struct Effects {
     replacements: HashSet<LocalPath>,
     /// Assigned locals are checked against the summary's persistent scalar state.
     writes: HashSet<VarIdent>,
-    /// Helper templates require runtime-forest classification in the loop proof.
-    templates: bool,
     /// Helper effects whose iteration metadata is not yet representable.
     opaque_helpers: bool,
     /// Calls, owner expressions, or returns prevent a read-only summary.
@@ -71,6 +64,17 @@ pub(super) struct Loop {
     /// Literal scalar ceiling proposed by user invariants. It is only a proof
     /// candidate: every use remains checked by the ordinary loop obligations.
     pub(super) size_ceiling: Option<u64>,
+    /// Stable symbolic quantities proposed by invariant comparisons. Allocation
+    /// sites must prove these ceilings; they never replace complete descriptors.
+    pub(super) size_candidates: Vec<Expr>,
+    /// Syntactic scalar transition candidates, validated by the checked evaluator.
+    pub(super) scalar_steps: HashMap<VarIdent, (Typ, i128)>,
+    /// Entry snapshots and visit ordinal used only by ordinary proof obligations.
+    pub(super) progress: Option<progress::Observation>,
+    /// Entry forests of nested loops may already reflect earlier outer visits.
+    pub(super) nested: bool,
+    /// Closed visit ceiling, retained only with accepted progress evidence.
+    visits_bound: Option<Expr>,
     /// Completed visits and their immutable entry observation. Both their
     /// nonnegativity and byte bounds remain ordinary inductive candidates.
     completed: Option<(Expr, Expr)>,
@@ -128,6 +132,25 @@ struct Charge {
 }
 
 impl Loop {
+    /// Immutable body observations may close entry facts without referring to
+    /// a scalar that changes during the loop.
+    pub(super) fn stable_scalar(&self, name: &VarIdent) -> bool {
+        self.proof_scalars.contains(name)
+    }
+
+    /// Fixed collection roles whose logical lengths have entry snapshots.
+    pub(super) fn length_roles(&self) -> impl Iterator<Item = &LocalPath> {
+        self.charges.iter().map(|charge| &charge.location)
+    }
+
+    /// Immutable proof observation for a role's length at this loop invocation.
+    pub(super) fn entry_length(&self, path: &LocalPath) -> Option<Expr> {
+        self.charges
+            .iter()
+            .find(|charge| &charge.location == path)
+            .map(|charge| charge.length.1.clone())
+    }
+
     pub(super) fn new(
         value: &Expr,
         layouts: &Layouts,
@@ -155,17 +178,12 @@ impl Loop {
             ));
         }
         let control = match &condition.x {
-            ExprX::Binary(BinaryOp::Inequality(op), start, end) => match op {
-                InequalityOp::Lt => local(start).map(|counter| Control::Counted {
-                    counter,
-                    start: start.clone(),
-                    end: end.clone(),
-                }),
-                InequalityOp::Gt => {
-                    Some(Control::Consuming { start: start.clone(), end: end.clone() })
-                }
-                _ => None,
-            },
+            ExprX::Binary(BinaryOp::Inequality(comparison), start, end) => Some(Control {
+                start: start.clone(),
+                end: end.clone(),
+                comparison: *comparison,
+                counter: local(start),
+            }),
             _ => None,
         };
         let mut effects = Effects::default();
@@ -199,7 +217,6 @@ impl Loop {
                         }
                     }
                     if let Some(summary) = summaries.get(fun) {
-                        effects.templates |= summary.transfer.is_some();
                         let changes = !summary.allocations.retained.is_empty()
                             || !summary.allocations.collections.is_empty()
                             || !summary.allocations.children.is_empty()
@@ -255,16 +272,35 @@ impl Loop {
             })?;
         }
         let mut size_ceiling = None;
+        let mut size_candidates = Vec::new();
         for invariant in invs.iter() {
-            crate::ast_visitor::expr_visitor_check(&invariant.inv, &mut |_, value| {
+            crate::ast_visitor::expr_visitor_check(&invariant.inv, &mut |scope, value| {
                 if let Some(n) = super::contracts::constant(value) {
                     size_ceiling = Some(size_ceiling.unwrap_or(0).max(n));
+                }
+                if let ExprX::Binary(BinaryOp::Inequality(op), left, right) = &value.x {
+                    let candidate = match op {
+                        InequalityOp::Lt | InequalityOp::Le => right,
+                        InequalityOp::Gt | InequalityOp::Ge => left,
+                    };
+                    let stable = crate::ast_visitor::expr_visitor_check(candidate, &mut |_, value| {
+                        if matches!(&value.x, ExprX::Var(name) if scope.contains_key(name) || effects.writes.contains(name)) { Err(()) } else { Ok(()) }
+                    }).is_ok();
+                    if stable {
+                        size_candidates.push(candidate.clone());
+                    }
                 }
                 Ok::<(), VirErr>(())
             })?;
         }
+        let scalar_steps = progress::scalar_steps(body);
         Ok(Self {
+            scalar_steps,
+            progress: None,
+            nested: false,
+            visits_bound: None,
             size_ceiling,
+            size_candidates,
             completed: None,
             span: value.span.clone(),
             condition: condition.clone(),
@@ -329,10 +365,6 @@ impl Loop {
                 .collect();
             class.starts_with(&selected)
         })
-    }
-
-    pub(super) fn uses_templates(&self) -> bool {
-        self.effects.templates
     }
 
     pub(super) fn check_helpers(&self) -> Result<(), VirErr> {

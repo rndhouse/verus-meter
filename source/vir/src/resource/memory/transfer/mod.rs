@@ -10,6 +10,7 @@ mod calls;
 pub(super) mod checked;
 mod consistency;
 pub(super) mod effects;
+mod iteration;
 mod origins;
 mod proofs;
 pub(super) mod simplify;
@@ -100,6 +101,8 @@ pub(super) struct Template {
 /// A complete ownership template and structural evidence for local loop proofs.
 /// Nothing is published if any part of template inference fails.
 pub(super) struct Inferred {
+    /// Checked progress and logical length relationships for body induction.
+    pub(super) progress: HashMap<u64, super::loops::progress::Evidence>,
     /// Physical ownership transformation substituted by callers.
     pub(super) template: Template,
     /// Whole-child transfer relationships, resolved against checked loop roles.

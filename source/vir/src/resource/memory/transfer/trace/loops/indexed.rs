@@ -12,44 +12,15 @@ impl Trace<'_> {
     /// forest, allowing transfers between roots without losing their provenance.
     pub(super) fn indexed_loop(&mut self, record: &Loop) -> Option<Value> {
         let span = &record.span;
-        let control = record.control.as_ref()?;
-        let counter = control.counter().cloned();
-        if counter.is_none()
-            && !matches!(
-                self.checked.operations.get(&control.bounds().0.span.id),
-                Some(checked::Operation::Length { .. })
-            )
-        {
-            return None;
-        }
-        let (left, right) = control.bounds();
         let before = self.state.clone();
-        if record.writes().any(|name| {
-            before.values.contains_key(name)
-                && !matches!(before.values[name], Value::Owner(_))
-                && Some(name) != counter.as_ref()
-        }) {
-            return None;
-        }
-        let effect_start = self.effects.len();
-        let start = self.scalar(left)?;
-        let end = self.scalar(right)?;
-        let count_effects = self.effects.split_off(effect_start);
-        let count = contracts::maximum(
-            span,
-            expr::integer(span, 0),
-            contracts::subtract(
-                span,
-                if counter.is_some() { end.clone() } else { start.clone() },
-                if counter.is_some() { start.clone() } else { end.clone() },
-            ),
-        );
+        let start = expr::integer(span, 0);
         let ordinal = fresh(span, "iteration_ordinal", int_typ());
         let state = fresh(span, "iteration_state", expr::memory_type());
         let ExprX::Var(ordinal_name) = &ordinal.x else { unreachable!() };
         let ExprX::Var(state_name) = &state.x else { unreachable!() };
-        let binder = fresh(span, "iteration_counter", left.typ.clone());
+        let binder = fresh(span, "iteration_counter", int_typ());
         let ExprX::Var(binder_name) = &binder.x else { unreachable!() };
+        let mut progress = self.begin_progress(record, binder_name.clone())?;
         let mut roots: Vec<_> = before
             .values
             .iter()
@@ -84,52 +55,23 @@ impl Trace<'_> {
                 self.regions.insert(id, select(span, state.clone(), slot));
             }
         }
-        if let Some(counter) = &counter {
-            self.state.values.insert(counter.clone(), Value::Scalar(binder.clone()));
-        }
-        let symbolic_end = self.scalar(right)?;
-        let symbolic_start = self.scalar(left)?;
-        self.effects.truncate(effect_start);
+        self.refresh_progress(record, &mut progress)?;
+        let count_effects = progress.reads.clone();
+        let effect_start = self.effects.len();
         let outer_tokens = self.loop_tokens.replace(HashSet::new());
         // Every owner is already parametric over the accumulator. Pop needs no
         // separate selection token, while allocation observations remain active.
         let outer_roots = self.loop_roots.replace(HashSet::new());
         let outer_inputs = std::mem::take(&mut self.loop_inputs);
         let outer_allocations = std::mem::take(&mut self.loop_allocations);
+        let mut outer_nested = std::mem::take(&mut self.loop_nested);
         let outer_calls = std::mem::take(&mut self.loop_calls);
-        let outer_ceiling =
-            std::mem::replace(&mut self.loop_size_ceiling, record.size_ceiling.unwrap_or(0));
+        let ceiling = self.size_bound(record);
+        let outer_ceiling = std::mem::replace(&mut self.loop_size_ceiling, Some(ceiling));
         self.value(&record.body)?;
-        if let Some(counter) = &counter {
-            let Value::Scalar(next) = self.state.values.get(counter)? else { return None };
-            let ExprX::Binary(BinaryOp::Arith(ArithOp::Add(OverflowBehavior::Allow)), a, b) =
-                &next.x
-            else {
-                return None;
-            };
-            if !matches!(&a.x, ExprX::Var(name) if name == binder_name)
-                || contracts::constant(b) != Some(1)
-            {
-                return None;
-            }
-        } else {
-            let next = self.scalar(left)?;
-            let expected = contracts::maximum(
-                span,
-                expr::integer(span, 0),
-                contracts::subtract(span, symbolic_start, expr::integer(span, 1)),
-            );
-            if !simplify::same_expression(&next, &simplify::simplify(&expected)) {
-                return None;
-            }
-        }
-        // Compare parametric observations, not merely their first-visit values:
-        // coincidental equality at entry does not establish a stable trip count.
-        let after_end = self.scalar(right)?;
-        if !simplify::same_expression(&after_end, &symbolic_end) {
-            return None;
-        }
+        let (count, stride) = self.finish_progress(record, &progress)?;
         let effects = self.effects.split_off(effect_start);
+        self.record_progress(record, &progress, stride, &effects);
         let persistent: Vec<_> = effects
             .iter()
             .filter(|effect| before.values.contains_key(effect.root()))
@@ -141,7 +83,7 @@ impl Trace<'_> {
             span,
             &persistent,
             binder_name,
-            if counter.is_some() { start.clone() } else { expr::integer(span, 0) },
+            start.clone(),
             count.clone(),
             &self.proof_values,
         )?;
@@ -153,12 +95,19 @@ impl Trace<'_> {
             let candidate = simplify::allocation_bound(
                 candidate,
                 &observations,
-                record.size_ceiling.unwrap_or(0),
+                &self.loop_size_ceiling.clone().unwrap_or_else(|| expr::integer(span, 0)),
             );
             let bound = self.extent_bound(&candidate, binder_name, record, &start, &count)?;
             self.allocation_checks
                 .push((site.clone(), mk_ineq(site, actual, &bound, InequalityOp::Le)));
             added = contracts::add(span, added, bound);
+        }
+        for amount in &self.loop_nested {
+            added = contracts::add(
+                span,
+                added,
+                self.extent_bound(amount, binder_name, record, &start, &count)?,
+            );
         }
         // An unreachable body needs no retained headroom at loop entry.
         // Its ordinary operation checks and back-edge obligations are vacuous.
@@ -170,7 +119,7 @@ impl Trace<'_> {
             let candidate = simplify::allocation_bound(
                 candidate,
                 &observations,
-                record.size_ceiling.unwrap_or(0),
+                &self.loop_size_ceiling.clone().unwrap_or_else(|| expr::integer(span, 0)),
             );
             let bound = self.extent_bound(&candidate, binder_name, record, &start, &count)?;
             self.allocation_checks
@@ -226,8 +175,13 @@ impl Trace<'_> {
                 body,
             ),
         );
-        let completed =
-            simplify::finite_iteration(span, builder, initial.clone(), count, record.size_ceiling);
+        let completed = simplify::finite_iteration(
+            span,
+            builder,
+            initial.clone(),
+            count.clone(),
+            record.size_ceiling,
+        );
         // Earlier lifetime IDs remain first-visit peak witnesses. Exit IDs use
         // the full recurrence, including shifted or repeatedly selected children.
         let first =
@@ -259,15 +213,22 @@ impl Trace<'_> {
             self.state.written.insert(name.clone());
             self.effects.push(Effect::Mutation(name));
         }
-        if let Some(counter) = counter {
-            self.state.values.insert(counter, Value::Scalar(contracts::maximum(span, start, end)));
-        }
+        self.complete_progress(record, &progress, &count);
         // A containing range planner must still see the count's read roles.
         // Repeating a completed inner loop cannot freeze a changing observation.
         self.effects.extend(count_effects);
         self.loop_tokens = outer_tokens;
         self.loop_roots = outer_roots;
+        if self.loop_tokens.is_some() {
+            outer_nested.push(self.nested_growth(
+                record,
+                binder_name,
+                &count,
+                &HashSet::from([state_name.clone()]),
+            )?);
+        }
         self.loop_inputs = outer_inputs;
+        self.loop_nested = outer_nested;
         self.loop_allocations = outer_allocations;
         self.loop_calls = outer_calls;
         self.loop_size_ceiling = outer_ceiling;

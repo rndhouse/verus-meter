@@ -74,7 +74,10 @@ pub(super) fn forest(span: &Span, value: &Expr, proofs: &mut Vec<Stmt>) -> Resul
                         args.as_ref().clone(),
                     )),
                     "iterate" => {
-                        iterated(span, args, proofs)?;
+                        iterated(span, args, proofs, true)?;
+                    }
+                    "iterate_closed" => {
+                        closed_iteration(span, args, proofs)?;
                     }
                     "generate_children" => {
                         let args = generated(span, args, proofs)?;
@@ -454,7 +457,7 @@ fn generated(span: &Span, args: &Exprs, proofs: &mut Vec<Stmt>) -> Result<Vec<Ex
 
 /// Check one ordered recurrence step under the same validity assumption that
 /// the verified iterator establishes for every preceding accumulator.
-fn iterated(span: &Span, args: &Exprs, proofs: &mut Vec<Stmt>) -> Result<(), VirErr> {
+fn iterated(span: &Span, args: &Exprs, proofs: &mut Vec<Stmt>, unfold: bool) -> Result<(), VirErr> {
     let ExprX::Closure(binders, body) = &args[0].x else {
         return Err(super::super::model::unsupported(
             span,
@@ -510,15 +513,170 @@ fn iterated(span: &Span, args: &Exprs, proofs: &mut Vec<Stmt>) -> Result<(), Vir
         "iterate_facts",
         vec![builder, args[1].clone(), args[2].clone()],
     ));
-    let fuel = SpannedTyped::new(
+    if unfold {
+        let fuel = SpannedTyped::new(
+            span,
+            &crate::ast_util::unit_typ(),
+            ExprX::Fuel(
+                crate::fun!(CrateId::Vstd => "std_specs", "memory"; "iterate"),
+                simplify::FINITE_GENERATION_LIMIT + 1,
+                false,
+            ),
+        );
+        proofs.push(crate::def::Spanned::new(span.clone(), StmtX::Expr(fuel)));
+    }
+    Ok(())
+}
+
+/// Check the candidate's successor equation at an arbitrary visit before using
+/// the generic closed-form induction. Forest equality retains every descriptor.
+fn closed_iteration(span: &Span, args: &Exprs, proofs: &mut Vec<Stmt>) -> Result<(), VirErr> {
+    iterated(span, args, proofs, false)?;
+    let ExprX::Closure(step_binders, step_body) = &args[0].x else { unreachable!() };
+    let ExprX::Closure(binders, closed_body) = &args[3].x else { unreachable!() };
+    let index =
+        SpannedTyped::new(span, &crate::ast_util::int_typ(), ExprX::Var(binders[0].name.clone()));
+    let successor =
+        crate::resource::memory::contracts::add(span, index.clone(), expr::integer(span, 1));
+    let (closed, declaration) =
+        expr::local(span, "closed_forest", args[3].typ.clone(), args[3].clone(), Mode::Spec);
+    proofs.push(declaration);
+    let (step, declaration) =
+        expr::local(span, "closed_step", args[0].typ.clone(), args[0].clone(), Mode::Spec);
+    proofs.push(declaration);
+    let current = SpannedTyped::new(
+        span,
+        &expr::memory_type(),
+        ExprX::Call {
+            target: CallTarget::FnSpec(closed.clone()),
+            args: Arc::new(vec![index.clone()]),
+            post_args: None,
+            body: None,
+        },
+    );
+    let stepped = SpannedTyped::new(
+        span,
+        &expr::memory_type(),
+        ExprX::Call {
+            target: CallTarget::FnSpec(step.clone()),
+            args: Arc::new(vec![index.clone(), current]),
+            post_args: None,
+            body: None,
+        },
+    );
+    let requested = SpannedTyped::new(
+        span,
+        &expr::memory_type(),
+        ExprX::Call {
+            target: CallTarget::FnSpec(closed.clone()),
+            args: Arc::new(vec![successor.clone()]),
+            post_args: None,
+            body: None,
+        },
+    );
+
+    let next = substitute(closed_body, &HashMap::from([(binders[0].name.clone(), successor)]));
+    let applied = substitute(
+        step_body,
+        &HashMap::from([
+            (step_binders[0].name.clone(), index.clone()),
+            (step_binders[1].name.clone(), closed_body.clone()),
+        ]),
+    );
+    let raw = |value: &Expr, values: &HashMap<VarIdent, Expr>| {
+        crate::ast_visitor::map_expr_visitor_env(
+            value,
+            &mut air::scope_map::ScopeMap::new(),
+            &mut (),
+            &|_, scope, value| {
+                Ok::<_, VirErr>(if let ExprX::Var(name) = &value.x {
+                    if !scope.contains_key(name) {
+                        values.get(name).cloned().unwrap_or_else(|| value.clone())
+                    } else {
+                        value.clone()
+                    }
+                } else {
+                    value.clone()
+                })
+            },
+            &|_, _, stmt| Ok(vec![stmt.clone()]),
+            &|_, typ| Ok(typ.clone()),
+            &|_, _, place| Ok(place.clone()),
+            &|_, _, pattern| Ok(pattern.clone()),
+        )
+    };
+    let raw_next = raw(
+        closed_body,
+        &HashMap::from([(
+            binders[0].name.clone(),
+            crate::resource::memory::contracts::add(span, index.clone(), expr::integer(span, 1)),
+        )]),
+    )?;
+    let raw_applied = raw(
+        step_body,
+        &HashMap::from([
+            (step_binders[0].name.clone(), index.clone()),
+            (step_binders[1].name.clone(), closed_body.clone()),
+        ]),
+    )?;
+    let mut facts = Vec::new();
+    // The induction ranges over arbitrary visit counts. Its finite descriptor
+    // constructors still need their structural definitions at the successor
+    // equation; keep this unfolding inside the equation proof, away from
+    // caller budget queries and the opaque iteration operator.
+    let mut records = 0u32;
+    crate::ast_visitor::expr_visitor_check(closed_body, &mut |_, value| {
+        if simplify::call(value, "allocated").is_some() {
+            records = records.saturating_add(1);
+        }
+        Ok::<(), VirErr>(())
+    })?;
+    for operation in ["prefix", "subtree", "without"] {
+        facts.push(crate::def::Spanned::new(
+            span.clone(),
+            StmtX::Expr(SpannedTyped::new(
+                span,
+                &crate::ast_util::unit_typ(),
+                ExprX::Fuel(expr::function(operation), records.saturating_add(2), false),
+            )),
+        ));
+    }
+    forest(span, &raw_next, &mut facts)?;
+    forest(span, &raw_applied, &mut facts)?;
+    forest(span, &applied, &mut facts)?;
+    forest(span, &next, &mut facts)?;
+    let proof = SpannedTyped::new(
         span,
         &crate::ast_util::unit_typ(),
-        ExprX::Fuel(
-            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "iterate"),
-            simplify::FINITE_GENERATION_LIMIT + 1,
-            false,
-        ),
+        ExprX::AssertBy {
+            vars: binders.clone(),
+            require: crate::ast_util::conjoin(
+                span,
+                &vec![
+                    crate::ast_util::mk_ineq(
+                        span,
+                        &expr::integer(span, 0),
+                        &index,
+                        InequalityOp::Le,
+                    ),
+                    crate::ast_util::mk_ineq(span, &index, &args[2], InequalityOp::Lt),
+                ],
+            ),
+            ensure: SpannedTyped::new(
+                span,
+                &crate::ast_util::bool_typ(),
+                ExprX::WithTriggers {
+                    triggers: Arc::new(vec![Arc::new(vec![stepped.clone()])]),
+                    body: crate::ast_util::mk_eq(span, &requested, &stepped),
+                },
+            ),
+            proof: crate::ast_util::mk_block(span, facts, None),
+        },
     );
-    proofs.push(crate::def::Spanned::new(span.clone(), StmtX::Expr(fuel)));
+    proofs.push(crate::def::Spanned::new(span.clone(), StmtX::Expr(proof)));
+    let mut arguments = args.as_ref().clone();
+    arguments[0] = step;
+    arguments[3] = closed;
+    proofs.push(expr::lemma(span, "iterate_closed_facts", arguments));
     Ok(())
 }

@@ -147,8 +147,38 @@ impl Analysis<'_> {
     }
 
     pub(super) fn loop_snapshot(&mut self, span: &Span, value: &Expr) -> Expr {
+        // An entry snapshot is immutable during this loop invocation. Freezing
+        // it again would lose its identity in isolated loop queries, separating
+        // progress, conservation, and the reserved allocation headroom.
+        let frozen = self.growth.loop_entry.get(&span.id).is_some_and(|entries| {
+            entries
+                .values()
+                .any(|snapshot| super::transfer::simplify::same_expression(snapshot, value))
+        }) || self.growth.loop_observations.get(&span.id).is_some_and(|entries| {
+            entries
+                .iter()
+                .any(|(_, snapshot)| super::transfer::simplify::same_expression(snapshot, value))
+        });
+        if frozen {
+            return value.clone();
+        }
         let ExprX::Var(name) = &value.x else {
-            return self.allocation_snapshot(span, value.clone());
+            if let Some((_, snapshot)) =
+                self.growth.loop_observations.get(&span.id).and_then(|values| {
+                    values.iter().find(|(observation, _)| {
+                        super::transfer::simplify::same_expression(observation, value)
+                    })
+                })
+            {
+                return snapshot.clone();
+            }
+            let snapshot = self.allocation_snapshot(span, value.clone());
+            self.growth
+                .loop_observations
+                .entry(span.id)
+                .or_default()
+                .push((value.clone(), snapshot.clone()));
+            return snapshot;
         };
         if self.stable_scalars.contains(name)
             && self.slots.contains_key(name)
@@ -344,12 +374,14 @@ impl Analysis<'_> {
                 }
             }
         }
-        if !record.uses_templates() {
+        // Demand is function-wide: a directly built collection may be passed
+        // to a helper after this loop. Purely local accounting needs no extra
+        // classification proof or structural rewrites in its loop queries.
+        if !self.growth.runtime_classification {
             return Ok(());
         }
         let span = &record.span;
         let body = &record.body;
-        self.growth.transfer_loops.insert(span.id);
         for owner in self.heap.owners.values().chain(self.heap.borrowed.values()) {
             owner.visit(&mut |node| {
                 if let Some(elements) = &node.elements {
@@ -377,7 +409,7 @@ impl Analysis<'_> {
             owner.visit(&mut |node| {
                 if let Some(elements) = &node.elements {
                     if elements.precise {
-                        if self.growth.transfer_loops.contains(&span.id) {
+                        if self.growth.runtime_classification {
                             invariants.push(crate::ast_util::mk_eq(
                                 span,
                                 &expr::operation(

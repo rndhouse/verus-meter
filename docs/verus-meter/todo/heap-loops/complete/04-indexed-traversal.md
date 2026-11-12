@@ -30,7 +30,7 @@ observations must be stable for a parametric iteration. Pure scalar arithmetic
 and representable metadata observations can select indices; unsupported payload
 values, additional persistent scalar writes, or effects during index evaluation
 reject. Exact finite normalization assists small counts. Broader symbolic cost
-and view induction remains in [task 6](../06-iteration-counts-and-state.md).
+and view induction remains in [task 6](06-iteration-counts-and-state.md).
 
 Indexed incoming children, borrowed incoming extraction in loops, and incoming
 runtime-helper delegation are covered by [task 5](05-borrowed-and-incoming-ownership.md).

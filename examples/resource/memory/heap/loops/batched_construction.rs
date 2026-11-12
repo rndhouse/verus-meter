@@ -31,17 +31,14 @@ fn allocate_buffer() -> Buffer
     Vec::with_capacity(8)
 }
 
-// Build four buffers in two batches within the construction budget.
-// The length bound connects loop progress to the amount of live heap storage.
+// Build four buffers in two batches within the construction budget. The checker
+// derives the collection length from the two appends in each completed batch.
 fn main()
     resources peak(memory) <= construction_budget(4, 4) + peak(allocate_buffer),
 {
     let mut buffers = Vec::<Buffer>::with_capacity(4);
     let mut batch = 0usize;
-    while batch < 2
-        invariant
-            buffers.len() == 2 * batch,
-    {
+    while batch < 2 {
         let first = allocate_buffer();
         buffers.push(first);
         let second = allocate_buffer();

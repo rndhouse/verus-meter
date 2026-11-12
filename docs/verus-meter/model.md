@@ -233,10 +233,12 @@ element storage without duplicating the children's allocations. Dropping the
 collection releases both its buffer and all accumulated child storage. Conversion
 to a boxed slice transfers the same child sums.
 
-Ordinary loop invariants provide the logical length bound. Generated, checked
-invariants relate direct insertions to that length and bound the accumulated
-child bytes. Helper interfaces involving runtime owning children require a
-precise ownership transformation; a byte bound alone is insufficient.
+Checked iteration effects generate supported scalar and collection-length
+invariants, including multiple appends and branch-selected prefixes. Other
+logical relationships still need ordinary loop invariants. Generated, checked
+invariants also bound the accumulated child bytes. Helper interfaces involving
+runtime owning children require a precise ownership transformation; a byte bound
+alone is insufficient.
 See [owning collections](../../examples/resource/memory/vectors/owning_collections.rs).
 
 Indexed elements support reads, scalar mutation, growth, and replacement, both
@@ -281,19 +283,30 @@ Optional results retain each visit's presence tag, including removals after a
 source becomes empty.
 
 Allocation sizes admit native `+`, `-`, and `*` over immutable scalar observations
-and the current counted-loop counter. A bound scalar can also observe a selected
-child's logical length. Executable overflow checks remain in force, and mutable
-observations are captured at the allocation. Body proofs use checked scalar
-ceilings proposed from loop invariants, including per-operation allocation bounds
-and entry headroom for temporary storage and helper work. These proof ceilings do
-not replace individual descriptors. Payload values and scalar dependencies that
-cannot be represented remain unsupported.
+and supported loop-carried integer locals. A bound scalar can also observe a
+selected child's logical length. Executable overflow checks remain in force,
+and mutable observations are captured at the allocation. Body proofs use checked scalar
+ceilings proposed from symbolic loop-invariant bounds and visit intervals,
+including per-operation allocation bounds and entry headroom for temporary
+storage and helper work. Nested visits preserve their actual outer-state counts.
+These proof ceilings do not replace individual descriptors. Payload values and
+scalar dependencies that cannot be represented remain unsupported.
 
-Counted loops use a stable upper bound and unit increment; consuming loops test
-a collection's length against a stable lower bound, with one removal per visit. Zero and partial
-ranges preserve unconsumed children and backing. Unchanged whole-child transfers
-use an exact inverse index map, preserving different capacities and reversing
-last-element extraction order at the destination. Ordered extraction followed
+A shared comparison-gap model handles strict and inclusive comparisons in both
+directions, literal integer strides, countdowns, and supported collection-length
+changes. Both comparison operands may change if their relative gap closes by a
+positive constant. Several removals per visit include a partial last block.
+Additional integer locals may have constant additive translations; their exit
+values remain available after the loop. Zero visits preserve the entry state.
+Nontranslation and payload-dependent progress remain unsupported. Comparing two
+shrinking lengths that saturate at zero also remains unsupported: saturation can
+change their relative stride. Arithmetic around shrinking-length progress also
+needs a richer checked relation. Native overflow and termination obligations
+remain separate from resource progress proofs.
+
+Zero and partial ranges preserve unconsumed children and backing. Unchanged
+whole-child transfers use an exact inverse index map, preserving different
+capacities and reversing last-element extraction order at the destination. Ordered extraction followed
 by restoration of the same whole children can reduce to an unchanged collection,
 including through nested counted loops.
 
@@ -306,6 +319,10 @@ leaf helpers, including helpers containing a completed recurrence. Untouched
 subtrees retain their descriptors. Replacing a class of children retires uniform
 reservation candidates that the new allocations might not satisfy; individual
 reservations remain in the descriptors. Read-only loans restore the saved forest.
+Stationary-path overwrites and affine descriptor updates can expose complete
+closed forests for larger counts, with checked base and successor equations and
+a generic induction. Other recurrences retain their exact representation and
+need further proof support; finite unfolding is not an ownership approximation.
 
 Indices can use supported pure scalar arithmetic and metadata observations.
 Bounds and overflow checks still apply to the executable operations. A trip-count
@@ -320,8 +337,8 @@ overlap. A pop preserves backing and supplies its previous length as a capacity
 lower bound, so restoration can reuse those slots.
 Counted loops also support conditional appends, last-element removals, and routing
 an unchanged whole child to alternative destinations. Conditions may use immutable
-scalar parameters or compare the counter itself with scalar thresholds built
-from those inputs and constants, combined with `!`, `&&`, and `||`.
+scalar parameters or compare affine counter expressions with scalar thresholds
+built from those inputs and constants, combined with `!`, `&&`, and `||`.
 Thresholds partition the iterations
 into ordered ranges with exact widths; each range selects a complete ownership
 program. Empty selections preserve the entry forest. Children retain their
@@ -329,10 +346,10 @@ individual capacities and order across the selected ranges. Persistent fixed
 ownership slots must agree at branch joins; iteration-local children can move
 into different destinations when both branches consume them.
 
-Payload-dependent decisions and arithmetic on the counter in selection predicates
-remain unsupported. Every represented branch program must satisfy the block
-composition rules; relationships between separate decisions are not solved to
-rescue incompatible programs. Symbolic expansion is bounded to six distinct
+Payload-dependent decisions and nonlinear counter predicates remain unsupported.
+Every represented branch program must satisfy the block composition rules;
+relationships between separate decisions are not solved to rescue incompatible
+programs. Symbolic expansion is bounded to six distinct
 decisions and sixteen threshold boundaries. These limits reject explicitly rather
 than discarding child metadata.
 
@@ -390,8 +407,7 @@ its checked partitions at intermediate peaks and final outputs. Wrapping an
 incoming owner in a fresh struct or box preserves this distinction. Incoming
 extraction and replacement remain unsupported within protected ordinary branches
 and memory sections; checked loop branches can partition supported persistent roles.
-Broader iteration counts, scalar state transitions, and control forms retain the
-limits described above.
+Other scalar recurrences and control forms retain the limits described above.
 There is no aggregate ownership fallback or copied parent charge for an unknown child.
 Conservative upper bounds remain valid for byte sizes and peak usage.
 
@@ -450,7 +466,8 @@ When only a capacity minimum is known, the checker conservatively considers
 possible growth using the current length. It tracks the reservation minimum
 separately from the retained-byte upper bound. Branches preserve their allocation
 states, and loops receive compiler-generated, proof-checked memory invariants;
-ordinary loop invariants still need to bound lengths relevant to growth.
+ordinary loop invariants supply relationships outside the generated progress and
+length classes.
 
 `pop` retains backing storage. Moves transfer its charge and dropping releases
 it. For non-owning elements, length, indexing, popping, and borrowing elements
