@@ -149,7 +149,7 @@ still require separate storage. These are source-level rules, independent of
 compiler optimizations.
 
 See [returned buffers](../../examples/resource/memory/basics/returns.rs)
-and [retaining too many results](../../examples/resource/memory/expected-failures/returned_buffers.rs).
+and [retaining too many allocations](../../examples/resource/memory/expected-failures/heap_returns.rs).
 
 `Option<T>` costs one tag byte plus `value_size(T)` in either variant, regardless
 of Rust's physical representation. `Some`, `None`, by-value

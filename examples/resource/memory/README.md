@@ -65,5 +65,4 @@ operation or checkpoint that exceeds its allowance.
 - [Overlapping allocations](expected-failures/heap_overlap.rs): keep two heap buffers within room for one.
 - [Loop allocation overlap](expected-failures/loop_peak_overlap.rs): retain an extracted buffer while reserving its replacement on later iterations.
 - [Returned allocations](expected-failures/heap_returns.rs): retain allocations across repeated helper calls.
-- [Returned buffers](expected-failures/returned_buffers.rs): keep more results than the budget allows.
 - [Vector growth](expected-failures/vector_growth.rs): grow beyond the reserved buffer without extra allowance.

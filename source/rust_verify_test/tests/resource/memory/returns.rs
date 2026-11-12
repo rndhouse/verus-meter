@@ -1,5 +1,4 @@
 use super::support::{rejects, verifies};
-use crate::common::*;
 use crate::verify_one_file;
 
 #[test]
@@ -313,18 +312,6 @@ fn returned_value_examples() {
         &["--compile"],
     )
     .unwrap();
-    let err = verify_one_file(
-        "returned_buffers",
-        include_str!(
-            "../../../../../examples/resource/memory/expected-failures/returned_buffers.rs"
-        )
-        .into(),
-        &[],
-    )
-    .unwrap_err();
-    assert_vir_error_msg(err.clone(), "peak 32 bytes exceeds budget 16 bytes");
-    assert!(err.errors.iter().flat_map(|e| &e.spans).any(|s| s.is_primary
-        && s.text.iter().any(|line| line.text.contains("let second = make_buffer()"))));
 }
 
 #[test]
