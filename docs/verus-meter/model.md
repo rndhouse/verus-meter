@@ -25,10 +25,11 @@ bounds. See [contract examples](../../examples/resource/memory/README.md#contrac
 
 ## What the guarantee covers
 
-The model counts source values and separately owned allocations using a fixed
-64-bit size policy. It does not measure the compiled program's physical stack,
-allocator overhead, fragmentation, or resident memory. Struct sizes add their
-fields without ABI padding; ghost and proof state contribute no runtime storage.
+The model calculates storage sizes for source values and separately owned
+allocations assuming a 64-bit target. It does not measure the compiled program's
+physical stack, allocator overhead, fragmentation, or resident memory. Struct
+sizes add their fields without ABI padding; ghost and proof state contribute no
+runtime storage.
 
 - Parameters, local slots, owning handles, and modeled temporaries count while
   live. Moves transfer ownership; copies require additional storage. Scope exit
