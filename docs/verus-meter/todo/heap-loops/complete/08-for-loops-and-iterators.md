@@ -37,7 +37,7 @@ ownership summaries. Standard generated iterator invariants remain required.
 - [x] Compose precise iteration effects with task 7's break, continue, return,
   and nested or labelled exit cleanup.
 - [x] Check frontend, macro, erasure, and verification boundaries according to
-  the integration guide.
+  [project instructions](../../../../../AGENTS.md).
 
 ## Completion criteria
 
@@ -56,4 +56,3 @@ resulting source subset rather than claiming support for all iterators.
 - [Iterator layouts and operations](../../../../../source/vir/src/resource/memory/iterators.rs)
 - [For-loop adaptation](../../../../../source/vir/src/resource/memory/for_loops.rs)
 - [Iterator regressions](../../../../../source/rust_verify_test/tests/resource/memory/for_loops.rs)
-- [Integration boundaries](../../../integration.md)

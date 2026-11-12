@@ -20,7 +20,7 @@ when useful; keep raw logs and build output in ignored disposable locations.
 ## Project layout and conventions
 
 This is a Verus fork. Read `README.md`, `BUILD.md`, and
-`docs/verus-meter/integration.md` for the memory model's integration boundaries.
+`docs/verus-meter/model.md` for the memory contract semantics and supported scope.
 The Cargo workspace is `source/`; run workspace commands there with the pinned
 toolchain in `rust-toolchain.toml`.
 
@@ -71,8 +71,11 @@ cargo test --release -p rust_verify_test --test examples resource_ -- --test-thr
 ```
 
 Build the verifier before running integration tests so they exercise the changed
-code. Follow `docs/verus-meter/integration.md` for broader checks when modifying
-syntax, macros, frontend integration, or upgrading upstream.
+code. For syntax, macro, frontend, or upstream changes, also check the affected
+parser/prettyprinter packages and upstream regressions for references, arrays,
+modes, erasure, iterators, and function contracts. Rebuild the full verifier and
+standard library after upstream upgrades; memory tests alone do not establish
+upstream compatibility.
 
 For Rust code, dependencies, or build tooling changes, run appropriate tests,
 formatting checks, and Clippy for the affected packages and targets. For public API

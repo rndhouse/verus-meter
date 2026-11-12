@@ -60,8 +60,7 @@ caller-visible ownership after the loop, zero iterations, and insufficient
 budgets. Preserve explicit rejection tests for unsupported transformations even
 when their budgets are generous. Avoid a test matrix of every nesting spelling.
 
-Follow [AGENTS.md](../../../../AGENTS.md) and the
-[integration guide](../../integration.md) for checks and commits. Update the
+Follow [AGENTS.md](../../../../AGENTS.md) for checks and commits. Update the
 [memory model](../../model.md) as behavior changes. Mark task checkboxes complete
 only after implementation and relevant verification; keep investigation logs in
 Git history rather than these task documents.

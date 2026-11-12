@@ -39,7 +39,7 @@ than substituting aggregate ownership. Supported iterators are covered by task 8
 - [x] Admit unconditional loops and value-producing breaks where the exit
   transformation is representable.
 - [x] Check frontend, macro, and verification boundaries according to the
-  integration guide; do not build a parallel loop accounting implementation.
+  project instructions; do not build a parallel loop accounting implementation.
 
 ## Completion criteria
 
@@ -59,4 +59,3 @@ resulting source subset, including inherited Verus loop restrictions. Supported
 - [Exit regressions](../../../../../source/rust_verify_test/tests/resource/memory/control_flow.rs)
 - [Storage and exit tests](../../../../../source/rust_verify_test/tests/resource/memory/storage.rs)
 - [Loop checkpoint tests](../../../../../source/rust_verify_test/tests/resource/memory/checkpoints.rs)
-- [Integration boundaries](../../../integration.md)
