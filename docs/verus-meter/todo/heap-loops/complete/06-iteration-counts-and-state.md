@@ -47,8 +47,8 @@ wrappers around shrinking-length progress need a richer checked relation. They
 reject when a precise ownership summary is required, as do other unsupported
 scalar dependencies. This task does not provide arbitrary recurrence inference.
 Termination checking remains separate. Loop exits and unconditional forms are
-covered by [task 7](07-loop-forms-and-exits.md); `for` and iterator support
-remains in [task 8](../08-for-loops-and-iterators.md).
+covered by [task 7](07-loop-forms-and-exits.md); supported `for` iterators are
+covered by [task 8](08-for-loops-and-iterators.md).
 
 ## Work
 

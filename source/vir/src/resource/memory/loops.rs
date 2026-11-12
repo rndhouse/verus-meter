@@ -52,6 +52,8 @@ struct Effects {
 /// One loop's shared structure, proof snapshots, and original-input boundary.
 #[derive(Clone)]
 pub(super) struct Loop {
+    /// Existing for-loop lowering, when successful visits advance an iterator.
+    pub(super) iterator: Option<super::for_loops::ForLoop>,
     /// Compiler-resolved destination of breaks and continues for this loop.
     pub(super) label: Label,
     /// Whether the source can finish by observing a false head condition.
@@ -174,7 +176,7 @@ impl Loop {
             invs,
             label,
             source: LoopSource::Loop | LoopSource::BreakableBlock,
-            is_for_loop: false,
+            is_for_loop,
             atomic_call: false,
             ..
         } = &value.x
@@ -185,6 +187,11 @@ impl Loop {
             ));
         };
         let condition = cond.clone().unwrap_or_else(|| crate::ast_util::mk_bool(&value.span, true));
+        let iterator = if *is_for_loop {
+            Some(super::for_loops::ForLoop::new(body, invs, label)?)
+        } else {
+            None
+        };
         let control = match &condition.x {
             ExprX::Binary(BinaryOp::Inequality(comparison), start, end) => Some(Control {
                 start: start.clone(),
@@ -194,7 +201,20 @@ impl Loop {
             }),
             _ => None,
         };
-        let (control, iteration_body, head_breaks) = exits::head_breaks(body, label, control);
+        let (control, iteration_body, head_breaks) = if let Some(iterator) = &iterator {
+            (
+                Some(Control {
+                    start: iterator.position.clone(),
+                    end: iterator.length.clone(),
+                    comparison: InequalityOp::Lt,
+                    counter: None,
+                }),
+                iterator.successful_body(body)?,
+                vec![iterator.exhaustion],
+            )
+        } else {
+            exits::head_breaks(body, label, control)
+        };
         let mut effects = Effects::default();
         for (region, in_body) in [(&condition, false), (body, true)] {
             crate::ast_visitor::expr_visitor_check(region, &mut |_, expression| {
@@ -304,6 +324,7 @@ impl Loop {
         }
         let scalar_steps = progress::scalar_steps(body);
         Ok(Self {
+            iterator,
             label: label.clone(),
             conditional: cond.is_some(),
             single_visit: false,

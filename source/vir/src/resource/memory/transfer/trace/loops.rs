@@ -370,31 +370,52 @@ impl Trace<'_> {
         }
         for (effect, _) in roles {
             let envelope = match effect {
-                Effect::AppendBlock { location, memory, .. } => Some((location, memory.clone())),
+                Effect::AppendBlock { location, memory, .. } => {
+                    Some((location, memory.clone(), None))
+                }
                 Effect::GenerateBlock { location, memory, binder, inputs, .. }
                     if inputs.is_empty() =>
                 {
                     Some((
                         location,
-                        substitute(
-                            memory,
-                            &HashMap::from([(
-                                binder.clone(),
-                                record
-                                    .size_ceiling
-                                    .map(|n| contracts::literal(span, n))
-                                    .unwrap_or_else(|| {
-                                        contracts::add(span, start.clone(), count.clone())
-                                    }),
-                            )]),
-                        ),
+                        memory.clone(),
+                        (!independent(memory, binder)).then_some(binder),
                     ))
                 }
                 _ => None,
             };
-            if let Some((location, memory)) = envelope {
+            if let Some((location, memory, binder)) = envelope {
+                // A generated child's extent can decrease or change direction.
+                // Arithmetic costs supply interval candidates. When forest
+                // algebra hides the arithmetic, instantiate both boundaries to
+                // propose a closed ceiling. Entry and back-edge proofs establish
+                // that ceiling over every visit; the forest itself stays exact.
+                let (candidate, validation) = if let Some(binder) = binder {
+                    let cost =
+                        simplify::simplify(&expr::cost(span, memory, expr::integer(span, 0)));
+                    let upper = record
+                        .size_ceiling
+                        .map(|n| contracts::literal(span, n))
+                        .unwrap_or_else(|| contracts::add(span, start.clone(), count.clone()));
+                    let amount = progress::interval_upper(&cost, binder, start, &upper)
+                        .unwrap_or_else(|| {
+                            let at = |ordinal| {
+                                simplify::simplify(&substitute(
+                                    &cost,
+                                    &HashMap::from([(binder.clone(), ordinal)]),
+                                ))
+                            };
+                            contracts::maximum(span, at(start.clone()), at(upper))
+                        });
+                    (amount.clone(), amount)
+                } else {
+                    // Keep invariant blocks in the same closed forest form as
+                    // other uniform appends; premature cost expansion can expose
+                    // unnecessary forest quantifiers to the inductive query.
+                    (expr::cost(span, memory.clone(), expr::integer(span, 0)), memory)
+                };
                 let mut valid = true;
-                let _ = crate::ast_visitor::expr_visitor_check(&memory, &mut |scope, value| {
+                let _ = crate::ast_visitor::expr_visitor_check(&validation, &mut |scope, value| {
                     if let ExprX::Var(name) = &value.x {
                         if scope.contains_key(name) {
                             return Ok::<(), VirErr>(());
@@ -406,10 +427,7 @@ impl Trace<'_> {
                 if !valid {
                     return None;
                 }
-                let amount = simplify::simplify(&substitute(
-                    &expr::cost(span, memory.clone(), expr::integer(span, 0)),
-                    &self.proof_values,
-                ));
+                let amount = simplify::simplify(&substitute(&candidate, &self.proof_values));
                 self.loop_growth
                     .entry(span.id)
                     .or_default()

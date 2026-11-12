@@ -88,7 +88,11 @@ pub(super) fn validate(
                     self.structural = structural;
                     Ok(())
                 }
-                ExprX::Block(..) | ExprX::NeverToAny(_) => self.visit_expr_rec(value),
+                ExprX::Block(..)
+                | ExprX::NeverToAny(_)
+                | ExprX::UnaryOpr(UnaryOpr::LoopIsolationBoundary(_), _) => {
+                    self.visit_expr_rec(value)
+                }
                 ExprX::ReadPlace(place, _) if matches!(place.x, PlaceX::Temporary(_)) => {
                     self.visit_expr_rec(value)
                 }

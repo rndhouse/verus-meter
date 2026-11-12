@@ -8,7 +8,7 @@ control flow, beyond collection ownership summaries.
 
 Reuse the checked loop model for unconditional loops and explicitly account for
 ownership and peak usage on every exit edge. Iterator lowering and `for` support
-belong to [task 8](../08-for-loops-and-iterators.md).
+are covered by [task 8](08-for-loops-and-iterators.md).
 
 ## Supported boundary
 
@@ -28,7 +28,7 @@ Reusable value breaks, unrepresentable stopping counts, partial exits that chang
 fixed ownership roles or original regions, and operand-level exits remain
 unsupported. Returned owning alternatives require compatible proof-state
 identities and frozen descriptors. These restrictions reject explicitly rather
-than substituting aggregate ownership. Iterator support remains in task 8.
+than substituting aggregate ownership. Supported iterators are covered by task 8.
 
 ## Work
 
@@ -47,8 +47,8 @@ Tests cover early termination, skipped iterations, nested exits, returned owning
 values, and cleanup of temporary allocations. Equivalent supported while and
 unconditional-loop traversals preserve caller-visible ownership and peak bounds.
 Unsupported exit dependencies have explicit rejection tests. Document the
-resulting source subset, including inherited Verus loop restrictions. `for` and
-iterator classes remain unsupported until task 8.
+resulting source subset, including inherited Verus loop restrictions. Supported
+`for` iterators are covered separately by task 8.
 
 ## Starting points
 

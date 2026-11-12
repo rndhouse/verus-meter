@@ -75,10 +75,18 @@ impl Trace<'_> {
     pub(super) fn begin_progress(&mut self, record: &Loop, binder: VarIdent) -> Option<Progress> {
         let control = record.control.as_ref()?;
         let first = self.effects.len();
-        let left = self.scalar(&control.start)?;
+        let left = if record.iterator.is_some() {
+            self.progress_bounds(record)?.0
+        } else {
+            self.scalar(&control.start)?
+        };
         let right_start = self.effects.len();
         let left_reads = self.effects[first..right_start].to_vec();
-        let right = self.scalar(&control.end)?;
+        let right = if record.iterator.is_some() {
+            self.progress_bounds(record)?.1
+        } else {
+            self.scalar(&control.end)?
+        };
         let stable_reads = self.effects[right_start..].to_vec();
         let bounds = (left, right);
         let definitions = self
@@ -128,7 +136,8 @@ impl Trace<'_> {
                 Value::Scalar(at(&record.span, initial.clone(), *step, ordinal.clone())),
             );
         }
-        let head = (self.scalar(&control.start)?, self.scalar(&control.end)?);
+        self.bind_iterator_progress(record, ordinal)?;
+        let head = self.progress_bounds(record)?;
         let reads = self.effects.split_off(first);
         Some(Progress {
             binder,
@@ -151,9 +160,8 @@ impl Trace<'_> {
         record: &Loop,
         progress: &mut Progress,
     ) -> Option<()> {
-        let control = record.control.as_ref()?;
         let first = self.effects.len();
-        progress.head = (self.scalar(&control.start)?, self.scalar(&control.end)?);
+        progress.head = self.progress_bounds(record)?;
         self.effects.truncate(first);
         progress.head_lengths = self.progress_lengths(record);
         Some(())
@@ -203,7 +211,7 @@ impl Trace<'_> {
         }
         let control = record.control.as_ref()?;
         let first = self.effects.len();
-        let after = (self.scalar(&control.start)?, self.scalar(&control.end)?);
+        let after = self.progress_bounds(record)?;
         self.effects.truncate(first);
         let delta = |after: &Expr, before: &Expr| {
             difference(&simplify::simplify(after), &simplify::simplify(before))
@@ -243,6 +251,13 @@ impl Trace<'_> {
 
     /// Install scalar exit values after the ownership planner restores entry state.
     pub(super) fn complete_progress(&mut self, record: &Loop, progress: &Progress, count: &Expr) {
+        // The native iterator is moved into the loop wrapper and cannot escape.
+        // Its symbolic position still matters to containing checked visits.
+        if let Some(iterator) = &record.iterator {
+            if let Some(Value::Iterator(sequence)) = self.state.values.get_mut(&iterator.receiver) {
+                sequence.position = count.clone();
+            }
+        }
         for (name, (initial, step)) in &progress.scalars {
             self.state.values.insert(
                 name.clone(),

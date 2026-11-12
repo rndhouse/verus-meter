@@ -33,6 +33,7 @@ Budgets use named storage types and memory formulas. Collection-length bounds
 are included only where needed for memory verification.
 
 - [Batched construction](heap/loops/batched_construction.rs): derive an input-dependent budget while collecting two buffers per batch.
+- [For-loop construction](heap/loops/for_construction.rs): collect buffers with an integer range and account for iterator state separately.
 - [Partial transfers](heap/loops/partial_transfers.rs): move batches of children and release the source independently.
 - [Peak overlap](heap/loops/peak_overlap.rs): release extracted work buffers while collecting results within an input-dependent budget.
 

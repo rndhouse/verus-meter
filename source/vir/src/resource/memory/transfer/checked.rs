@@ -104,6 +104,8 @@ pub(in super::super) struct Assignment {
 /// One executable ownership rule, with layout decisions supplied by accounting.
 #[derive(Clone)]
 pub(in super::super) enum Operation {
+    /// A finite iterator operation accepted by its layout and operation adapter.
+    Iterator(crate::resource::memory::iterators::Operation),
     /// Allocate a buffer using the checked capacity and inline element size.
     Vector { capacity: Expr, element: u64 },
     /// Allocate a fixed payload; an owning payload is nested under Contents.

@@ -11,7 +11,7 @@ not promise support for every Rust program or every owning container.
 5. [Borrowed collections and incoming ownership](complete/05-borrowed-and-incoming-ownership.md) — complete
 6. [General iteration counts and carried state](complete/06-iteration-counts-and-state.md) — complete
 7. [Loop exits and unconditional loops](complete/07-loop-forms-and-exits.md) — complete
-8. [For loops and iterator state](08-for-loops-and-iterators.md)
+8. [For loops and iterator state](complete/08-for-loops-and-iterators.md) — complete
 
 ## Starting point
 
@@ -33,9 +33,10 @@ bounds and nested counts compose with the same ownership effects. Stationary
 updates can use complete forest induction beyond the finite proof window.
 Lexical exits preserve scope cleanup, result ownership, and peak history.
 Representable head breaks and continuations reuse counted summaries; loops
-without a local back edge retain their actual entry state. `for` and iterator
-support belongs to task 8. Local peak proofs support some cases that cannot yet
-be exported as precise ownership summaries.
+without a local back edge retain their actual entry state. Task 8 integrates
+finite scalar `for` iterators with this same model and explicit iterator layouts.
+Local peak proofs support some cases that cannot yet be exported as precise
+ownership summaries.
 
 ## Rules for every task
 

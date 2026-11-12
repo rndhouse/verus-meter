@@ -45,9 +45,11 @@ mod elements;
 mod execution;
 mod extraction;
 mod footprint;
+mod for_loops;
 mod growth;
 mod heap;
 mod inference;
+mod iterators;
 mod layout;
 mod lifetime;
 mod loops;
@@ -92,6 +94,11 @@ pub fn check_crate(
     option: Option<Dt>,
     fresh_span: &dyn Fn(&Span) -> Span,
 ) -> Result<Vec<(Span, MemoryReport)>, VirErr> {
+    for function in functions.iter_mut() {
+        let empty = HashMap::new();
+        let modes = modes.get(&function.x.name).map(|modes| &modes.var_modes).unwrap_or(&empty);
+        *function = for_loops::prepare(function, modes, fresh_span)?;
+    }
     let function_map = functions.iter().map(|f| (f.x.name.clone(), f.clone())).collect();
     let layouts = layout::Layouts::new(datatypes, global_allocator, vector, option);
     let budgets = budget::resolve(functions, &function_map, &layouts)?;

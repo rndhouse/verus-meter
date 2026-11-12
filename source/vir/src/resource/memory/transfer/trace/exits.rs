@@ -38,6 +38,8 @@ impl Trace<'_> {
     ) -> Option<()> {
         let first_exit = self.exits.len();
         let outer = self.path.clone();
+        let active = self.active_iterator.clone();
+        self.active_iterator = record.iterator.as_ref().map(|iterator| iterator.receiver.clone());
         self.path = crate::ast_util::mk_bool(&record.span, true);
         for id in &record.head_breaks {
             if self.checked.exits.get(id) != Some(&Target::Break(record.label.clone())) {
@@ -57,6 +59,7 @@ impl Trace<'_> {
             return None;
         }
         self.path = outer;
+        self.active_iterator = active;
         Some(())
     }
     /// Effects after a conditional exit execute only on its surviving path.
@@ -113,7 +116,11 @@ impl Trace<'_> {
     ) -> Option<Value> {
         let span = &record.span;
         let outer = self.path.clone();
-        let condition = if record.conditional {
+        let conditional = record.conditional || record.iterator.is_some();
+        let condition = if record.iterator.is_some() {
+            let (position, length) = self.progress_bounds(record)?;
+            crate::ast_util::mk_ineq(span, &position, &length, InequalityOp::Lt)
+        } else if record.conditional {
             self.scalar(&record.condition)?
         } else {
             crate::ast_util::mk_bool(span, true)
@@ -123,8 +130,16 @@ impl Trace<'_> {
         let entry = self.state.clone();
         self.path = and(span, outer.clone(), condition.clone());
         let first_effect = self.effects.len();
-        self.value(&record.body)?;
-        if record.conditional {
+        let active = self.active_iterator.clone();
+        self.active_iterator = record.iterator.as_ref().map(|iterator| iterator.receiver.clone());
+        if let Some(iterator) = &record.iterator {
+            self.used.insert((checked::Kind::Exit, iterator.exhaustion));
+            self.value(&record.iteration_body)?;
+        } else {
+            self.value(&record.body)?;
+        }
+        self.active_iterator = active;
+        if conditional {
             self.guard_effects(first_effect, &condition);
         }
         // A checked single visit has no normal back edge. Only breaks produce
@@ -133,7 +148,7 @@ impl Trace<'_> {
             return None;
         }
         let result = self.finish_exits(span, Value::Unit, &Target::Break(record.label.clone()))?;
-        let result = if record.conditional {
+        let result = if conditional {
             let normal_path = and(span, outer, not(span, condition.clone()));
             let value = if self.reachable {
                 Self::join_value(span, condition.clone(), &result, &Value::Unit)?

@@ -15,7 +15,9 @@ pub(crate) fn call(
     id: DefId,
     rust_item: Option<RustItem>,
 ) -> Option<ResourceIntrinsic> {
-    if let Some(intrinsic) = option_intrinsic(tcx, id) {
+    if let Some(intrinsic) = iterator_intrinsic(tcx, id, rust_item) {
+        Some(intrinsic)
+    } else if let Some(intrinsic) = option_intrinsic(tcx, id) {
         Some(intrinsic)
     } else if let Some(intrinsic) = vec_intrinsic(tcx, id) {
         Some(intrinsic)
@@ -25,6 +27,46 @@ pub(crate) fn call(
         Some(ResourceIntrinsic::HeapDrop)
     } else {
         (tcx.lang_items().slice_len_fn() == Some(id)).then_some(ResourceIntrinsic::SliceLen)
+    }
+}
+
+/// Resolve iterator operations by their defining trait or concrete wrapper.
+/// A method with the same source spelling on a different type is not intrinsic.
+fn iterator_intrinsic(
+    tcx: TyCtxt<'_>,
+    id: DefId,
+    rust_item: Option<RustItem>,
+) -> Option<ResourceIntrinsic> {
+    use ResourceIntrinsic::*;
+    if rust_item == Some(RustItem::IntoIterFn) {
+        return Some(IteratorInto);
+    }
+    if tcx.trait_of_assoc(id) == tcx.get_diagnostic_item(rustc_span::Symbol::intern("Iterator"))
+        && tcx.trait_of_assoc(id).is_some()
+    {
+        return match tcx.item_name(id).as_str() {
+            "rev" => Some(IteratorRev),
+            "take" => Some(IteratorTake),
+            "skip" => Some(IteratorSkip),
+            _ => None,
+        };
+    }
+    let imp = tcx.impl_of_assoc(id)?;
+    if tcx.trait_impl_of_assoc(imp).is_some() {
+        return None;
+    }
+    let TyKind::Adt(adt, _) = tcx.type_of(imp).skip_binder().kind() else {
+        return None;
+    };
+    if crate::verus_items::def_id_to_stable_rust_path(tcx, adt.did()).as_deref()
+        != Some("vstd::std_specs::iter::VerusForLoopWrapper")
+    {
+        return None;
+    }
+    match tcx.item_name(id).as_str() {
+        "new" => Some(IteratorWrap),
+        "next" => Some(IteratorNext),
+        _ => None,
     }
 }
 

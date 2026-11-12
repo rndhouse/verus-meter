@@ -12,6 +12,7 @@ impl Trace<'_> {
         let span = &value.span;
         use checked::Operation;
         match operation {
+            Operation::Iterator(operation) => self.iterator_operation(value, operation),
             Operation::Evaluate { args } => {
                 for argument in args.iter() {
                     self.value(argument)?;

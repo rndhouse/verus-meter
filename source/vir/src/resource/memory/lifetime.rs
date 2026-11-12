@@ -105,6 +105,9 @@ impl Analysis<'_> {
     }
 
     pub(super) fn produce(&mut self, expr: &Expr) -> Result<Value, VirErr> {
+        if let ExprX::UnaryOpr(UnaryOpr::LoopIsolationBoundary(_), inner) = &expr.x {
+            return self.produce(inner);
+        }
         if let ExprX::NeverToAny(inner) = &expr.x {
             self.discard(inner)?;
             if self.flow.reachable {

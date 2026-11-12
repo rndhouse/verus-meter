@@ -164,6 +164,25 @@ exit predicates are ordinary loop ensures, proved at all accepted exits.
 Forest tracing consumes checked exit destinations, keeps suffix effects under
 their surviving path guards, and rejects unrepresentable exit dependencies.
 
+[For-loop adaptation](../../source/vir/src/resource/memory/for_loops.rs) retains
+Verus's executable wrapper, next call, exhaustion branch, and ordinary proofs.
+Normalize its irrefutable wrapper binding and unit body binding only across the
+same execution boundaries as accounting. The shared loop record supplies a
+successful-visit view to ownership repetition; it must consume the checked next
+operation and exhaustion edge. Prove count candidates against the real wrapper
+index and sequence length. Within a containing for body, inherited head facts
+refer to its pre-advance ghost snapshot, not the already advanced wrapper.
+
+[Iterator rules](../../source/vir/src/resource/memory/iterators.rs) separate
+native inline layouts from finite scalar sequences. Compiler datatype and call
+identities select the rules. Adapter composition preserves exact selection and
+order, including empty sequences. Preserve source order for range field
+initializers, and keep earlier arguments charged while later ones execute.
+Do not extend these rules to borrowed or owning iterators without
+their explicit yield, retained-storage, and cleanup model. Bound generated child
+costs over the complete ordinal interval; substituting its final endpoint is
+insufficient for decreasing sizes.
+
 Entry snapshots are immutable within a loop invocation. Reuse equivalent length
 observations and preserve existing snapshots when freezing headroom facts;
 recapturing them would separate progress from charge conservation in isolated

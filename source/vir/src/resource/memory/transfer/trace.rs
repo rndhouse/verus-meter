@@ -7,6 +7,7 @@
 //! report unsupported instead of exporting a byte-only approximation.
 
 mod exits;
+mod iterators;
 mod loops;
 mod operations;
 mod patterns;
@@ -51,6 +52,8 @@ struct Selection {
 
 #[derive(Clone)]
 struct Trace<'a> {
+    /// Only a checked successful visit can specialize next to Some(item).
+    active_iterator: Option<VarIdent>,
     /// Continuing path and deferred exits use the same symbolic forest states.
     reachable: bool,
     path: Expr,
@@ -118,6 +121,7 @@ pub(super) fn summarize(
     checked: &Checked,
 ) -> Option<Inferred> {
     let mut trace = Trace {
+        active_iterator: None,
         reachable: true,
         path: crate::ast_util::mk_bool(&function.span, true),
         exits: Vec::new(),
@@ -233,6 +237,11 @@ pub(super) fn summarize(
     }
     if let Value::Scalar(value) = &result {
         collect(value);
+    }
+    if let Value::Iterator(sequence) = &result {
+        collect(&sequence.first);
+        collect(&sequence.count);
+        collect(&sequence.position);
     }
     trace.regions.retain(|id, _| *id >= checked.inputs.len());
     for region in trace.regions.values() {
@@ -634,31 +643,38 @@ impl Trace<'_> {
                     if super::super::execution::ignored_statement(statement, self.modes) {
                         continue;
                     }
-                    let PatternX::Var(binding) = &pattern.x else {
-                        return None;
-                    };
-                    let value = if let Some(init) = init {
-                        self.place_value(init, &binding.typ)?
+                    if matches!(pattern.x, PatternX::Wildcard) && contracts::scalar(&pattern.typ) {
+                        if let Some(init) = init {
+                            self.place_value(init, &pattern.typ)?;
+                        }
                     } else {
-                        Value::Unknown
-                    };
-                    if self.reachable {
-                        if binding.user_mut == Some(false)
-                            && contracts::scalar(&binding.typ)
-                            && let Some(init) = init
-                        {
-                            let init = crate::ast_util::place_to_spec_expr(init);
-                            if let Ok(definition) = super::super::projections::spec_value(&init) {
-                                self.state.definitions.insert(binding.name.clone(), definition);
+                        let PatternX::Var(binding) = &pattern.x else {
+                            return None;
+                        };
+                        let value = if let Some(init) = init {
+                            self.place_value(init, &binding.typ)?
+                        } else {
+                            Value::Unknown
+                        };
+                        if self.reachable {
+                            if binding.user_mut == Some(false)
+                                && contracts::scalar(&binding.typ)
+                                && let Some(init) = init
+                            {
+                                let init = crate::ast_util::place_to_spec_expr(init);
+                                if let Ok(definition) = super::super::projections::spec_value(&init)
+                                {
+                                    self.state.definitions.insert(binding.name.clone(), definition);
+                                }
                             }
-                        }
-                        if !locals.contains(&binding.name) {
-                            if matches!(value, Value::Owner(_)) {
-                                return None;
+                            if !locals.contains(&binding.name) {
+                                if matches!(value, Value::Owner(_)) {
+                                    return None;
+                                }
+                                locals.push(binding.name.clone());
                             }
-                            locals.push(binding.name.clone());
+                            self.state.values.insert(binding.name.clone(), value);
                         }
-                        self.state.values.insert(binding.name.clone(), value);
                     }
                 }
             }
@@ -759,6 +775,7 @@ impl Trace<'_> {
             }
         }
         match &value.x {
+            ExprX::UnaryOpr(UnaryOpr::LoopIsolationBoundary(_), inner) => self.value(inner),
             ExprX::Const(_) => Some(Value::Scalar(value.clone())),
             ExprX::Var(name) => {
                 if self.layouts.owner(&value.typ) {
@@ -988,6 +1005,14 @@ impl Trace<'_> {
 
     fn join_value(span: &Span, condition: Expr, yes: &Value, no: &Value) -> Option<Value> {
         Some(match (yes, no) {
+            (Value::Iterator(yes), Value::Iterator(no)) if yes.step == no.step => {
+                Value::Iterator(crate::resource::memory::iterators::Sequence {
+                    first: choice(span, condition.clone(), yes.first.clone(), no.first.clone()),
+                    count: choice(span, condition.clone(), yes.count.clone(), no.count.clone()),
+                    position: choice(span, condition, yes.position.clone(), no.position.clone()),
+                    step: yes.step,
+                })
+            }
             (Value::Owner(yes), Value::Owner(no)) => {
                 let mut minima = yes.minima.clone();
                 join_minima(span, &mut minima, &no.minima);

@@ -319,6 +319,7 @@ impl Layouts {
         visiting: &mut HashSet<Dt>,
     ) -> Result<u64, VirErr> {
         match &**typ {
+            _ if super::iterators::kind(typ).is_some() => super::iterators::size(typ, span),
             _ if self.option(typ) => {
                 let payload = self.option_payload(typ, span)?;
                 self.size_inner(payload, span, visiting)?

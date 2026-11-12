@@ -1050,6 +1050,18 @@ pub enum ResourceIntrinsic {
     OptionIsSome,
     OptionIsNone,
     OptionUnwrap,
+    /// Resolved IntoIterator conversion; the memory adapter checks its type.
+    IteratorInto,
+    /// Construct Verus's existing for-loop wrapper around a supported iterator.
+    IteratorWrap,
+    /// Advance the concrete for-loop wrapper through its verified next contract.
+    IteratorNext,
+    /// Reverse a supported finite iterator through the standard Iterator trait.
+    IteratorRev,
+    /// Limit a supported iterator's selection with one native counter.
+    IteratorTake,
+    /// Discard a prefix of a supported iterator with one native counter.
+    IteratorSkip,
     /// Type-only memory query, resolved before ordinary function checking.
     ValueSize,
     /// Size of the reference itself, excluding its referent.

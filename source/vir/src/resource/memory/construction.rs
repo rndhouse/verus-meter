@@ -98,6 +98,32 @@ impl Analysis<'_> {
         destination: bool,
     ) -> Result<Option<u64>, VirErr> {
         let fields: Vec<&Expr> = match &expr.x {
+            ExprX::Ctor(name, variant, fields, None)
+                if super::iterators::kind(&expr.typ) == Some(super::iterators::Kind::Range) =>
+            {
+                self.layouts.size(&expr.typ, &expr.span)?;
+                let TypX::Datatype(result, types, _) = &*expr.typ else { unreachable!() };
+                let start = fields.iter().find(|field| field.name.as_str() == "start");
+                let end = fields.iter().find(|field| field.name.as_str() == "end");
+                let (Some(start), Some(end)) = (start, end) else {
+                    return Err(unsupported(&expr.span, "this range constructor"));
+                };
+                if name != result
+                    || variant.as_str() != "Range"
+                    || fields.len() != 2
+                    || !crate::ast_util::types_equal(&start.a.typ, &types[0])
+                    || !crate::ast_util::types_equal(&end.a.typ, &types[0])
+                {
+                    return Err(unsupported(&expr.span, "this range constructor"));
+                }
+                self.transitions.operation(
+                    &expr.span,
+                    super::transfer::checked::Operation::Iterator(
+                        super::iterators::Operation::Range { fields: fields.clone() },
+                    ),
+                );
+                fields.iter().map(|field| &field.a).collect()
+            }
             ExprX::Ctor(_, variant, fields, None) if self.layouts.option(&expr.typ) => {
                 let payload = self.layouts.option_payload(&expr.typ, &expr.span)?;
                 match (variant.as_str(), fields.as_slice()) {

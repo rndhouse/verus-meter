@@ -346,8 +346,35 @@ remain unsupported. Runtime ownership interfaces still require precise summaries
 Different exits may return the same owning proof state, including a collection
 with branch-dependent children, or matching fresh fixed allocation layouts; different
 returned vector states and frozen descriptors cannot share a byte-only result.
-Exits inside operands or call arguments are also unsupported. `for` and iterator
-state are a separate, currently unsupported source form.
+Exits inside operands or call arguments are also unsupported.
+
+`for` supports finite half-open native integer ranges, including signed bounds,
+and compositions of the standard `rev`, `skip`, and `take` adapters where Rust
+and Verus support the combination. The range stores two bounds; `skip` and `take`
+each add one `usize` counter. Reversal adds no fields. The Verus wrapper retains
+the native iterator; its ghost index, snapshot, and history add no runtime
+storage. Iterator setup, argument overlap, next results, and yielded bindings
+are charged independently of the collection being built. A scalar `_` pattern
+evaluates its initializer without introducing a named slot. See
+[for-loop construction](../../examples/resource/memory/heap/loops/for_construction.rs).
+Checked iterator factories preserve their scalar state through call summaries;
+ordinary logical postconditions still need to establish the count used by a
+caller's Verus proof.
+
+Successful visits use the same checked effects, finite counts, and heap proofs
+as while loops. The actual wrapper index and exhaustion contract check those
+counts. Nested loop queries use Verus's saved pre-advance wrapper snapshot for
+facts about the containing visit's head. Continues preserve supported guarded
+effects, and single-visit breaks preserve conditional output forests. Partial
+early exits still require a representable stopping transformation before a
+runtime ownership interface can export a summary; local cleanup alone cannot
+provide that summary.
+
+Inclusive ranges, borrowed or owning element iterators, and other adapters remain
+unsupported. Iterator state without a precise producing operation cannot supply
+a runtime ownership summary. For loops must retain the standard generated Verus
+iterator invariants. Unknown iterator classes never inherit the scalar range's
+zero-heap rule.
 
 Zero and partial ranges preserve unconsumed children and backing. Unchanged
 whole-child transfers use an exact inverse index map, preserving different
@@ -681,7 +708,7 @@ Checked functions must be safe, nongeneric, and have a verified body.
 The supported subset includes `bool`, all native integers, fixed integer arrays,
 concrete structs, `Option` values with supported payloads, fixed-size boxes, boxed slices,
 vectors with supported growth, and references/slices of supported non-owning values,
-indexing, branches, supported while/unconditional loops and exits, and calls to
+indexing, branches, supported while/unconditional/for loops and exits, and calls to
 checked functions in the same crate. Integer addition,
 subtraction, multiplication, and signed negation retain Verus's overflow checks.
 See the [integer example](../../examples/resource/memory/basics/integers.rs).

@@ -70,6 +70,8 @@ pub(super) struct Node {
 
 #[derive(Clone)]
 pub(super) enum Value {
+    /// A supported finite scalar iterator; it owns no descriptor forest.
+    Iterator(super::iterators::Sequence),
     Owner(Node),
     Scalar(Expr),
     Unit,
@@ -211,6 +213,12 @@ fn instantiate_node(node: &Node, values: &HashMap<VarIdent, Expr>) -> Node {
 
 fn instantiate_value(value: &Value, values: &HashMap<VarIdent, Expr>) -> Value {
     match value {
+        Value::Iterator(sequence) => Value::Iterator(super::iterators::Sequence {
+            first: substitute(&sequence.first, values),
+            count: substitute(&sequence.count, values),
+            position: substitute(&sequence.position, values),
+            step: sequence.step,
+        }),
         Value::Owner(node) => Value::Owner(instantiate_node(node, values)),
         Value::Scalar(value) => Value::Scalar(substitute(value, values)),
         _ => value.clone(),

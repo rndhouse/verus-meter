@@ -166,6 +166,22 @@ impl Analysis<'_> {
                     if super::execution::ignored_statement(stmt, &self.var_modes) {
                         continue;
                     }
+                    if matches!(pattern.x, PatternX::Wildcard)
+                        && super::contracts::scalar(&pattern.typ)
+                        && els.is_none()
+                        && let Some(init) = init
+                    {
+                        // A discarded scalar item evaluates its initializer but
+                        // creates no named value lifetime, including in `for _`.
+                        let scratch = self.read(init, &pattern.typ)?;
+                        self.storage.release(
+                            &stmt.span,
+                            MemoryKind::host_local(),
+                            scratch,
+                            "discarded scalar initializer",
+                        );
+                        continue;
+                    }
                     let PatternX::Var(binding) = &pattern.x else {
                         return Err(unsupported(
                             &stmt.span,
@@ -242,6 +258,7 @@ impl Analysis<'_> {
     /// charge; scalar/reference operations introduce no implicit objects.
     pub(super) fn expr(&mut self, expr: &Expr) -> Result<u64, VirErr> {
         match &expr.x {
+            ExprX::UnaryOpr(UnaryOpr::LoopIsolationBoundary(_), inner) => return self.expr(inner),
             ExprX::NeverToAny(inner) => return self.expr(inner),
             ExprX::Return(value) => {
                 self.exit(expr, super::control::Target::Return, value.as_ref())?;

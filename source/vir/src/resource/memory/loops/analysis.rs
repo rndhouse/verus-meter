@@ -606,7 +606,12 @@ impl Analysis<'_> {
                 super::super::projections::spec_value(value).ok()
             }
         };
-        let (Some(left), Some(right)) = (observe(&control.start), observe(&control.end)) else {
+        let observations = if record.iterator.is_some() {
+            (Some(control.start.clone()), Some(control.end.clone()))
+        } else {
+            (observe(&control.start), observe(&control.end))
+        };
+        let (Some(left), Some(right)) = observations else {
             return Ok(None);
         };
         let left = SpannedTyped::new(&record.span, &crate::ast_util::int_typ(), left.x.clone());
@@ -764,6 +769,14 @@ impl Analysis<'_> {
                     )
                 }
             };
+            if let Some(iterator) = &record.iterator {
+                facts.push(crate::ast_util::mk_eq(
+                    span,
+                    &iterator.position,
+                    &translated(&observation.bounds.0, 1),
+                ));
+                facts.push(crate::ast_util::mk_eq(span, &iterator.length, &observation.bounds.1));
+            }
             for (name, (current, initial)) in &observation.scalars {
                 let (_, step) = &record.scalar_steps[name];
                 facts.push(crate::ast_util::mk_eq(span, current, &translated(initial, *step)));
@@ -862,6 +875,11 @@ impl Analysis<'_> {
                 }
             }
             let facts = self.growth.loops.get(&parent).cloned().unwrap_or_default();
+            let facts = if let Some(iterator) = &records[&parent].iterator {
+                facts.iter().map(|fact| iterator.body_fact(fact)).collect::<Result<_, _>>()?
+            } else {
+                facts
+            };
             let facts = self.freeze_loop_facts(&record.span, facts)?;
             self.growth.loops.entry(child).or_default().extend(facts);
             for charge in &record.charges {
