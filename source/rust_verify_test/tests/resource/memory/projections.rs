@@ -246,3 +246,50 @@ fn original_index_bounds_are_still_checked() {
         "precondition not satisfied",
     );
 }
+
+/// A reserved push changes child geometry without changing its allocation.
+/// A later helper's loop must see that new length and retain its produced box.
+#[test]
+fn reserved_helper_pushes_preserve_child_geometry() {
+    let code = r#"fn append(v: &mut Vec<u32>)
+    requires old(v).len() < 2,
+    ensures final(v).len() == old(v).len() + 1,
+    resources peak(memory) <= 12,
+{ v.push(7); }
+fn forward(v: &mut Vec<u32>)
+    requires old(v).len() < 2,
+    ensures final(v).len() == old(v).len() + 1,
+    resources peak(memory) <= 24,
+{ append(v); }
+fn make(mut v: Vec<Vec<u32>>) -> (r: Vec<Box<[u8;1024]>>)
+    requires v.len() == 1, v[0].len() == 1,
+    ensures r.len() == 1,
+    resources peak(memory) <= 4096,
+{
+    let child = v.pop().unwrap();
+    let mut out = Vec::<Box<[u8;1024]>>::with_capacity(1);
+    let mut i = 0usize;
+    while i < child.len()
+        invariant child.len() == 1, i <= 1, out.len() == i,
+        decreases 1-i,
+    {
+        let child = Box::new([0u8;1024]); out.push(child); i += 1;
+    }
+    out
+}
+fn f() resources peak(memory) <= BOUND {
+    let mut outer = Vec::<Vec<u32>>::with_capacity(1);
+    let child = Vec::<u32>::with_capacity(2); outer.push(child);
+    OPERATION(&mut outer[0]);
+    let result = make(outer);
+    let scratch = [0u8;8192];
+}
+"#;
+    // After the call, the 24-byte result handle, one 8-byte element slot,
+    // its 1024-byte allocation, and the 8192-byte local array overlap.
+    for operation in ["append", "forward"] {
+        let code = code.replace("OPERATION", operation);
+        verifies(operation, &code.replace("BOUND", "9248"));
+        rejects(&format!("{operation}_short"), &code.replace("BOUND", "9247"), "memory budget exceeded");
+    }
+}

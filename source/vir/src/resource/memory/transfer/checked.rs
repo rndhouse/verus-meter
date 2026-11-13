@@ -276,6 +276,11 @@ impl Checked {
         self.scopes.insert(span.id, locals);
     }
 
+    /// Logical owner changes matter even when they allocate no new bytes.
+    pub(super) fn mutates(&self, name: &VarIdent) -> bool {
+        self.mutations.iter().any(|(root, _)| root == name)
+    }
+
     pub(in super::super) fn revision(&self) -> usize {
         self.mutations.len()
     }

@@ -241,11 +241,7 @@ impl Analysis<'_> {
                 borrowed,
                 replaced_inputs,
                 origins,
-                modified: super::transfer::modified_parameters(
-                    callee,
-                    self.layouts,
-                    &self.summaries[target],
-                ),
+                modified: self.summaries[target].modified_parameters.clone(),
             },
         );
         self.calls.push((target.clone(), expr.span.clone()));

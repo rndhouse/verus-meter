@@ -732,6 +732,11 @@ pub(super) fn check(
         kind: CheckKind::Function,
     }));
     let summary = super::summary::FunctionSummary {
+        modified_parameters: super::transfer::modified_parameters(
+            &function.x.params,
+            layouts,
+            &analysis.transitions,
+        ),
         transfer_required: super::transfer::requires_summary(
             function,
             layouts,

@@ -3,6 +3,9 @@
 /// Call-composition facts established together by a checked function body.
 #[derive(Clone)]
 pub(super) struct FunctionSummary {
+    /// Borrowed owner roots changed by checked operations, including logical
+    /// length changes that retain the same allocation and reservation.
+    pub(super) modified_parameters: std::collections::BTreeSet<usize>,
     /// Physical-ownership transformation, required for runtime ownership interfaces.
     pub(super) transfer: Option<super::transfer::Template>,
     /// Owning runtime operations require this interface even behind leaf returns.
