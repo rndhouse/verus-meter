@@ -5,12 +5,20 @@
 //! template is exported only after every recorded transition is consumed.
 //! Unrepresentable effects fail inference; runtime ownership interfaces then
 //! report unsupported instead of exporting a byte-only approximation.
+//!
+//! This module owns trace state, summary export, and coverage validation. Input
+//! modeling, checked places, expression evaluation, and branch joins live beside
+//! the operation, loop, pattern, exit, and provenance adapters.
 
+mod branches;
+mod evaluation;
 mod exits;
+mod inputs;
 mod iterators;
 mod loops;
 mod operations;
 mod patterns;
+mod places;
 mod provenance;
 
 #[cfg(test)]
@@ -29,12 +37,15 @@ use std::sync::Arc;
 
 use super::effects::{Effect, Location};
 
+/// Persistent symbolic bindings and scalar definitions on one continuing path.
 #[derive(Clone, Default)]
 struct State {
+    /// Traced values of live local and parameter bindings.
     values: HashMap<VarIdent, Value>,
     /// Pure source initializers for immutable scalar bindings. Keeping their
     /// actual definitions avoids inventing logical postconditions for callees.
     definitions: BTreeMap<VarIdent, Expr>,
+    /// Owner bindings changed along this path, including borrowed parameters.
     written: HashSet<VarIdent>,
 }
 
@@ -50,23 +61,32 @@ struct Selection {
     presence: (VarIdent, Expr),
 }
 
+/// One checked body visit and the evidence needed to export its ownership effects.
 #[derive(Clone)]
 struct Trace<'a> {
     /// Only a checked successful visit can specialize next to Some(item).
     active_iterator: Option<VarIdent>,
     /// Continuing path and deferred exits use the same symbolic forest states.
     reachable: bool,
+    /// Guard selecting the continuing path.
     path: Expr,
+    /// Detached return, break, and continue states awaiting their destination.
     exits: Vec<exits::Edge>,
+    /// Supported inline layouts and ownership projections.
     layouts: &'a super::super::layout::Layouts,
+    /// Function declarations used by checked call composition.
     functions: &'a HashMap<Fun, Function>,
+    /// Resource and ownership summaries for resolved callees.
     summaries: &'a HashMap<Fun, super::super::summary::FunctionSummary>,
+    /// Binding modes used to exclude erased proof and specification code.
     modes: &'a HashMap<VarIdent, Mode>,
     /// Authoritative operation decisions made by body accounting.
     checked: &'a Checked,
     /// Whole-body coverage, including branches and representative loop bodies.
     used: HashSet<(checked::Kind, u64)>,
+    /// Persistent bindings on the current continuing path.
     state: State,
+    /// Caller observations permitted as free symbols in exported templates.
     symbols: Vec<Symbol>,
     /// A local view must never infer physical capacity from zero local bytes.
     complete: Option<Expr>,
@@ -112,6 +132,7 @@ struct Trace<'a> {
     proof_values: HashMap<VarIdent, Expr>,
 }
 
+/// Export a template only after checking transition coverage and closing its symbols.
 pub(super) fn summarize(
     function: &Function,
     layouts: &super::super::layout::Layouts,
@@ -342,732 +363,5 @@ impl Trace<'_> {
             effects.push((index, effect.clone()));
         }
         Some(effects)
-    }
-
-    /// Fixed ownership is finite even when runtime children have unbounded
-    /// depth. Keep the fixed descriptors explicit so composing helpers does
-    /// not repeatedly select scalar properties from an opaque whole forest.
-    fn input_memory(
-        &mut self,
-        span: &Span,
-        parameter: usize,
-        typ: &Typ,
-        forest: &Expr,
-        path: &mut Vec<OwnerSlot>,
-    ) -> Option<Expr> {
-        let mut property =
-            |field| self.symbol(span, Input::Property(parameter, path.clone(), field), int_typ());
-        let bytes = property("bytes");
-        let capacity = property("capacity");
-        let length = property("length");
-        let mut memory = expr::push(
-            span,
-            expr::empty(span, expr::record_type()),
-            allocated(span, bytes, capacity, length),
-        );
-        for (slot, child) in self.layouts.owned_children(typ, span).ok()? {
-            path.push(slot.clone());
-            let child = self.input_memory(span, parameter, &child, forest, path)?;
-            path.pop();
-            memory = expr::add(
-                span,
-                memory,
-                expr::prefix(span, child, expr::path(span, [self.layouts.metadata_slot(&slot)])),
-            );
-        }
-        if self.layouts.owning_elements(typ) {
-            let selected = path.iter().fold(forest.clone(), |memory, slot| {
-                expr::subtree(span, memory, expr::path(span, [self.layouts.metadata_slot(slot)]))
-            });
-            memory = expr::add(
-                span,
-                memory,
-                expr::operation(span, "runtime", vec![selected], expr::memory_type()),
-            );
-        }
-        Some(memory)
-    }
-
-    /// The same template supports full caller forests and local charge views.
-    fn completeness(&mut self, span: &Span) -> Expr {
-        if let Some(value) = &self.complete {
-            return value.clone();
-        }
-        let value = self.symbol(span, Input::Complete, bool_typ());
-        let ExprX::Var(name) = &value.x else { unreachable!() };
-        self.proof_values.insert(name.clone(), crate::ast_util::mk_bool(span, false));
-        self.complete = Some(value.clone());
-        value
-    }
-
-    /// Fresh root extents are complete even when their children contain inputs.
-    /// Keep view-dependent capacity branches out of fully local allocations.
-    fn complete_for(&mut self, span: &Span, values: &[Expr]) -> Expr {
-        let mut partial = false;
-        for value in values {
-            let _ = crate::ast_visitor::expr_visitor_check(value, &mut |scope, value| {
-                if let ExprX::Var(name) = &value.x {
-                    if !scope.contains_key(name) {
-                        partial |= crate::ast_util::types_equal(&value.typ, &expr::memory_type())
-                            || self.symbols.iter().any(|symbol| {
-                                &symbol.name == name
-                                    && matches!(
-                                        symbol.input,
-                                        Input::Forest(_) | Input::Property(_, _, "bytes")
-                                    )
-                            });
-                    }
-                }
-                Ok::<(), VirErr>(())
-            });
-        }
-        if partial { self.completeness(span) } else { crate::ast_util::mk_bool(span, true) }
-    }
-
-    fn symbol(&mut self, span: &Span, input: Input, typ: Typ) -> Expr {
-        let name = VarIdent(
-            Arc::new("$memory_transfer_input".into()),
-            VarIdentDisambiguate::VirTemp(super::super::accounting::Accounting::fresh_allocation()),
-        );
-        self.symbols.push(Symbol { name: name.clone(), input });
-        SpannedTyped::new(span, &typ, ExprX::Var(name))
-    }
-
-    fn input_minima(
-        &mut self,
-        span: &Span,
-        parameter: usize,
-        typ: &Typ,
-        path: &mut Vec<Step>,
-        result: &mut Minima,
-    ) -> Option<()> {
-        if self.layouts.vector(typ) {
-            let capacity = self.symbol(span, Input::Minimum(parameter, path.clone()), int_typ());
-            result.insert(
-                path.clone(),
-                Floor { capacity, element: self.layouts.vector_element(typ, span).ok()? },
-            );
-        }
-        for (slot, child) in self.layouts.owned_children(typ, span).ok()? {
-            path.push(Step::Fixed(slot));
-            self.input_minima(span, parameter, &child, path, result)?;
-            path.pop();
-        }
-        if let Some(child) = self.element_type(typ) {
-            if self.layouts.owner(&child) {
-                path.push(Step::Repeated);
-                self.input_minima(span, parameter, &child, path, result)?;
-                path.pop();
-            }
-        }
-        Some(())
-    }
-
-    fn element_type(&self, typ: &Typ) -> Option<Typ> {
-        if self.layouts.vector(typ) {
-            let TypX::Datatype(_, types, _) = &**typ else {
-                return None;
-            };
-            return types.first().cloned();
-        }
-        if let TypX::Decorate(TypDecoration::Box, _, inner) = &**typ {
-            if let TypX::Primitive(Primitive::Slice, types) = &**inner {
-                return types.first().cloned();
-            }
-        }
-        None
-    }
-
-    fn scalar(&mut self, value: &Expr) -> Option<Expr> {
-        match self.value(value)? {
-            Value::Scalar(value) => Some(value),
-            _ => None,
-        }
-    }
-
-    fn indices_expr(&mut self, value: &Expr, result: &mut HashMap<u64, Expr>) -> Option<()> {
-        if let Some(args) = super::super::paths::vector_index(value) {
-            self.indices_expr(&args[0], result)?;
-            result.insert(value.span.id, self.scalar(&args[1])?);
-        } else {
-            match &value.x {
-                ExprX::ReadPlace(place, _)
-                | ExprX::BorrowMut(place)
-                | ExprX::TwoPhaseBorrowMut(place) => self.indices_place(place, result)?,
-                ExprX::UnaryOpr(UnaryOpr::Field(_), base)
-                | ExprX::Unary(UnaryOp::MutRefCurrent, base) => self.indices_expr(base, result)?,
-                _ => {}
-            }
-        }
-        Some(())
-    }
-
-    fn indices_place(&mut self, place: &Place, result: &mut HashMap<u64, Expr>) -> Option<()> {
-        match &place.x {
-            PlaceX::Temporary(value) => self.indices_expr(value, result)?,
-            PlaceX::Field(_, base) | PlaceX::DerefMut(base) => self.indices_place(base, result)?,
-            PlaceX::Index(base, index, _, _) => {
-                self.indices_place(base, result)?;
-                result.insert(place.span.id, self.scalar(index)?);
-            }
-            _ => {}
-        }
-        Some(())
-    }
-
-    fn checked_location(&mut self, place: &checked::Place) -> Option<Location> {
-        let (name, path) = &place.location;
-        let mut indices = HashMap::new();
-        self.indices_expr(&place.source, &mut indices)?;
-        let expressions = path
-            .iter()
-            .map(|slot| match slot {
-                OwnerSlot::Element(id) => indices.get(id).cloned(),
-                _ => Some(expr::integer(&place.source.span, self.layouts.metadata_slot(slot))),
-            })
-            .collect::<Option<Vec<_>>>()?;
-        Some((name.clone(), path.clone(), expressions))
-    }
-
-    fn path(span: &Span, steps: &[Expr]) -> Expr {
-        steps.iter().fold(expr::path(span, []), |path, step| expr::push(span, path, step.clone()))
-    }
-
-    fn class(path: &[OwnerSlot]) -> Vec<Step> {
-        path.iter()
-            .map(|slot| match slot {
-                OwnerSlot::Element(_) => Step::Repeated,
-                _ => Step::Fixed(slot.clone()),
-            })
-            .collect()
-    }
-
-    fn get(&self, span: &Span, location: &Location, typ: &Typ) -> Option<Node> {
-        let Value::Owner(root) = self.state.values.get(&location.0)? else {
-            return None;
-        };
-        let class = Self::class(&location.1);
-        let minima = root
-            .minima
-            .iter()
-            .filter_map(|(path, floor)| {
-                path.strip_prefix(class.as_slice()).map(|rest| (rest.to_vec(), floor.clone()))
-            })
-            .collect();
-        // Select one ownership edge at a time, matching the finite projection
-        // algebra used by local borrows. A repeated edge can then expose the
-        // fixed layout below it without flattening arbitrary composite paths.
-        let memory = location.2.iter().fold(root.memory.clone(), |memory, step| {
-            expr::subtree(span, memory, Self::path(span, std::slice::from_ref(step)))
-        });
-        Some(Node {
-            origin: if location.1.is_empty() { root.origin } else { None },
-            typ: typ.clone(),
-            memory,
-            minima,
-        })
-    }
-
-    fn set(&mut self, span: &Span, location: &Location, child: Node) -> Option<()> {
-        self.effects.push(Effect::Mutation(location.0.clone()));
-        if location.1.is_empty() {
-            self.state.values.insert(location.0.clone(), Value::Owner(child));
-        } else {
-            let Value::Owner(root) = self.state.values.get_mut(&location.0)? else {
-                return None;
-            };
-            root.origin = None;
-            let mut parents = Vec::new();
-            let mut selected = root.memory.clone();
-            for step in &location.2 {
-                let path = Self::path(span, std::slice::from_ref(step));
-                parents.push((selected.clone(), path.clone()));
-                selected = expr::subtree(span, selected, path);
-            }
-            root.memory = parents.into_iter().rev().fold(child.memory, |memory, (parent, path)| {
-                super::super::metadata::operations::replace(span, parent, path, memory)
-            });
-            let class = Self::class(&location.1);
-            if !class.iter().any(|step| matches!(step, Step::Repeated)) {
-                root.minima.retain(|path, _| !path.starts_with(&class));
-            }
-            let child = child
-                .minima
-                .into_iter()
-                .map(|(path, floor)| (class.iter().cloned().chain(path).collect(), floor))
-                .collect();
-            join_minima(span, &mut root.minima, &child);
-        }
-        self.state.written.insert(location.0.clone());
-        Some(())
-    }
-
-    fn take(&mut self, span: &Span, location: &Location, typ: &Typ) -> Option<Node> {
-        let child = self.get(span, location, typ)?;
-        if location.1.is_empty() {
-            self.effects.push(Effect::Mutation(location.0.clone()));
-            self.state.values.remove(&location.0);
-        } else {
-            self.set(
-                span,
-                location,
-                Node {
-                    origin: None,
-                    typ: typ.clone(),
-                    memory: expr::empty(span, expr::record_type()),
-                    minima: Minima::new(),
-                },
-            )?;
-        }
-        Some(child)
-    }
-
-    fn block(&mut self, span: &Span, statements: &Stmts, tail: &Option<Expr>) -> Option<Value> {
-        let first_exit = self.exits.len();
-        let block_path = self.path.clone();
-        let mut locals = self.checked.scopes.get(&span.id).cloned().unwrap_or_default();
-        if !locals.is_empty() {
-            self.used.insert((checked::Kind::Scope, span.id));
-        }
-        for statement in statements.iter() {
-            if !self.reachable {
-                break;
-            }
-            let path = self.path.clone();
-            let first_effect = self.effects.len();
-            match &statement.x {
-                StmtX::Expr(value) => {
-                    self.value(value)?;
-                }
-                StmtX::Decl { pattern, init, .. } => {
-                    if super::super::execution::ignored_statement(statement, self.modes) {
-                        continue;
-                    }
-                    if matches!(pattern.x, PatternX::Wildcard) && contracts::scalar(&pattern.typ) {
-                        if let Some(init) = init {
-                            self.place_value(init, &pattern.typ)?;
-                        }
-                    } else {
-                        let PatternX::Var(binding) = &pattern.x else {
-                            return None;
-                        };
-                        let value = if let Some(init) = init {
-                            self.place_value(init, &binding.typ)?
-                        } else {
-                            Value::Unknown
-                        };
-                        if self.reachable {
-                            if binding.user_mut == Some(false)
-                                && contracts::scalar(&binding.typ)
-                                && let Some(init) = init
-                            {
-                                let init = crate::ast_util::place_to_spec_expr(init);
-                                if let Ok(definition) = super::super::projections::spec_value(&init)
-                                {
-                                    self.state.definitions.insert(binding.name.clone(), definition);
-                                }
-                            }
-                            if !locals.contains(&binding.name) {
-                                if matches!(value, Value::Owner(_)) {
-                                    return None;
-                                }
-                                locals.push(binding.name.clone());
-                            }
-                            self.state.values.insert(binding.name.clone(), value);
-                        }
-                    }
-                }
-            }
-            // Initializer exits still finish this statement's guarded effects;
-            // the next visit to the statement loop handles unreachable suffixes.
-            if !simplify::inspect::same_expression(&path, &block_path) {
-                self.guard_effects(first_effect, &path);
-            }
-        }
-        let path = self.path.clone();
-        let first_effect = self.effects.len();
-        let value = if self.reachable
-            && let Some(tail) = tail
-        {
-            self.value(tail)?
-        } else {
-            Value::Unit
-        };
-        if !simplify::inspect::same_expression(&path, &block_path) {
-            self.guard_effects(first_effect, &path);
-        }
-        for edge in &mut self.exits[first_exit..] {
-            for local in &locals {
-                edge.state.values.remove(local);
-                edge.state.definitions.remove(local);
-            }
-        }
-        for local in locals {
-            self.state.values.remove(&local);
-            self.state.definitions.remove(&local);
-        }
-        Some(value)
-    }
-
-    fn place_value(&mut self, place: &Place, typ: &Typ) -> Option<Value> {
-        if let PlaceX::Temporary(value) = &place.x {
-            return self.value(value);
-        }
-        if let Some(transition) = self.checked.moves.get(&place.span.id).cloned() {
-            self.used.insert((checked::Kind::Move, place.span.id));
-            let location = self.checked_location(&transition)?;
-            return Some(Value::Owner(self.take(&place.span, &location, &transition.typ)?));
-        }
-        if self.layouts.owner(typ) {
-            return None;
-        }
-        // A scalar read through a box does not consume the outer owner. Its
-        // value may be irrelevant to ownership inference, but its actual result
-        // type must govern this decision rather than the enclosing place type.
-        if let PlaceX::Local(name) = &place.x {
-            return Some(match self.state.values.get(name) {
-                Some(Value::Owner(_)) => Value::Unknown,
-                value => value.cloned().unwrap_or(Value::Unknown),
-            });
-        }
-        self.place_effects(place)?;
-        Some(Value::Unknown)
-    }
-
-    fn place_effects(&mut self, place: &Place) -> Option<()> {
-        match &place.x {
-            PlaceX::Temporary(value) => {
-                self.value(value)?;
-            }
-            PlaceX::Field(_, base) | PlaceX::DerefMut(base) => self.place_effects(base)?,
-            PlaceX::Index(base, index, _, _) => {
-                self.place_effects(base)?;
-                self.value(index)?;
-            }
-            PlaceX::Local(_) => {}
-            _ => return None,
-        }
-        Some(())
-    }
-
-    fn value(&mut self, value: &Expr) -> Option<Value> {
-        let span = &value.span;
-        if let Some(inner) = super::super::model::widening_integer_cast(value) {
-            let inner = self.scalar(inner)?;
-            return Some(Value::Scalar(SpannedTyped::new(span, &value.typ, inner.x.clone())));
-        }
-        if super::super::execution::ignored_expression(value)
-            || matches!(
-                &value.x,
-                ExprX::ResourceAssert(_)
-                    | ExprX::ResourceAssertCurrent(_)
-                    | ExprX::ResourceSection(_)
-            )
-        {
-            return Some(Value::Unit);
-        }
-        if let Some(operation) = self.checked.operations.get(&span.id).cloned() {
-            // Temporary wrappers may share a call's source span. Dispatch only
-            // at the executable operation, so its operands are evaluated once.
-            if matches!(&value.x, ExprX::Call { .. } | ExprX::Ctor(..)) {
-                self.used.insert((checked::Kind::Operation, span.id));
-                return self.operation(value, operation);
-            }
-        }
-        match &value.x {
-            ExprX::UnaryOpr(UnaryOpr::LoopIsolationBoundary(_), inner) => self.value(inner),
-            ExprX::Const(_) => Some(Value::Scalar(value.clone())),
-            ExprX::Var(name) => {
-                if self.layouts.owner(&value.typ) {
-                    None
-                } else {
-                    Some(self.state.values.get(name).cloned().unwrap_or(Value::Unknown))
-                }
-            }
-            ExprX::ReadPlace(place, _) => self.place_value(place, &value.typ),
-            ExprX::Block(statements, tail) => self.block(span, statements, tail),
-            ExprX::If(condition, yes, no) => self.branch(span, condition, yes, no),
-            ExprX::Match(scrutinee, arms, _) => self.match_value(span, scrutinee, arms),
-            ExprX::Logical(op, left, right) => {
-                let condition = self.scalar(left)?;
-                let constant = crate::ast_util::mk_bool(span, *op != LogicalOp::And);
-                if *op == LogicalOp::Or {
-                    self.branch_from(span, condition, &constant, &Some(right.clone()))
-                } else {
-                    self.branch_from(span, condition, right, &Some(constant))
-                }
-            }
-            ExprX::Assign { place, rhs, op, typ, .. } => {
-                let value = self.value(rhs)?;
-                if let Some(transition) = self.checked.assignments.get(&place.span.id).cloned() {
-                    self.used.insert((checked::Kind::Assign, place.span.id));
-                    let Value::Owner(child) = value else {
-                        return None;
-                    };
-                    let location = self.checked_location(&transition.destination)?;
-                    if let Some(input) = &transition.input {
-                        self.replace_region(span, &location, input)?;
-                    }
-                    self.set(span, &location, child)?;
-                } else if self.layouts.owner(typ) {
-                    return None;
-                } else if let PlaceX::Local(name) = &place.x {
-                    let value = if let (Some(op), Value::Scalar(right)) = (op, &value) {
-                        let Value::Scalar(left) = self.state.values.get(name)? else {
-                            return None;
-                        };
-                        Value::Scalar(Self::binary(
-                            span,
-                            *op,
-                            left.clone(),
-                            right.clone(),
-                            &rhs.typ,
-                        ))
-                    } else {
-                        value
-                    };
-                    self.state.values.insert(name.clone(), value);
-                } else {
-                    return None;
-                }
-                Some(Value::Unit)
-            }
-            ExprX::Binary(op, left, right) => {
-                let left = self.scalar(left)?;
-                let right = self.scalar(right)?;
-                Some(Value::Scalar(Self::binary(span, *op, left, right, &value.typ)))
-            }
-            ExprX::Unary(op, operand) => {
-                let operand = self.scalar(operand)?;
-                Some(Value::Scalar(SpannedTyped::new(span, &value.typ, ExprX::Unary(*op, operand))))
-            }
-            ExprX::UnaryOpr(op, operand) if contracts::scalar(&value.typ) => {
-                let operand = self.scalar(operand)?;
-                Some(Value::Scalar(SpannedTyped::new(
-                    span,
-                    &value.typ,
-                    ExprX::UnaryOpr(op.clone(), operand),
-                )))
-            }
-            ExprX::Ctor(..) if self.layouts.owner(&value.typ) => None,
-            ExprX::Ctor(Dt::Tuple(0), _, fields, None) if fields.is_empty() => Some(Value::Unit),
-            ExprX::Ctor(_, _, fields, None) => {
-                for field in fields.iter() {
-                    self.value(&field.a)?;
-                }
-                Some(Value::Unknown)
-            }
-            ExprX::ArrayLiteral(elements) => {
-                for element in elements.iter() {
-                    self.value(element)?;
-                }
-                Some(Value::Unknown)
-            }
-            ExprX::Call { .. } => None,
-            ExprX::Loop { .. } => self.loop_value(span),
-            ExprX::NeverToAny(inner) => self.value(inner),
-            ExprX::Return(value) | ExprX::BreakOrContinue { value, .. } => {
-                let target = self.checked.exits.get(&span.id)?.clone();
-                self.used.insert((checked::Kind::Exit, span.id));
-                let result = if let Some(value) = value { self.value(value)? } else { Value::Unit };
-                if self.reachable {
-                    self.exits.push(exits::Edge {
-                        target,
-                        condition: self.path.clone(),
-                        state: self.state.clone(),
-                        result,
-                    });
-                    self.reachable = false;
-                }
-                Some(Value::Unit)
-            }
-            _ => None,
-        }
-    }
-
-    fn binary(span: &Span, op: BinaryOp, left: Expr, right: Expr, typ: &Typ) -> Expr {
-        let op = match op {
-            BinaryOp::Arith(ArithOp::Add(OverflowBehavior::Error(_))) => {
-                BinaryOp::Arith(ArithOp::Add(OverflowBehavior::Allow))
-            }
-            BinaryOp::Arith(ArithOp::Sub(OverflowBehavior::Error(_))) => {
-                BinaryOp::Arith(ArithOp::Sub(OverflowBehavior::Allow))
-            }
-            BinaryOp::Arith(ArithOp::Mul(OverflowBehavior::Error(_))) => {
-                BinaryOp::Arith(ArithOp::Mul(OverflowBehavior::Allow))
-            }
-            _ => op,
-        };
-        SpannedTyped::new(span, typ, ExprX::Binary(op, left, right))
-    }
-
-    fn branch(
-        &mut self,
-        span: &Span,
-        condition: &Expr,
-        yes: &Expr,
-        no: &Option<Expr>,
-    ) -> Option<Value> {
-        let condition = self.scalar(condition)?;
-        self.branch_from(span, condition, yes, no)
-    }
-
-    fn branch_from(
-        &mut self,
-        span: &Span,
-        condition: Expr,
-        yes: &Expr,
-        no: &Option<Expr>,
-    ) -> Option<Value> {
-        let before = self.state.clone();
-        let outer = self.path.clone();
-        self.path = exits::and(span, outer.clone(), condition.clone());
-        let effect_start = self.effects.len();
-        let yes_value = self.value(yes)?;
-        let yes = self.state.clone();
-        let yes_reachable = self.reachable;
-        let yes_path = self.path.clone();
-        let yes_effects = self.effects.split_off(effect_start);
-        self.state = before;
-        self.reachable = true;
-        self.path = exits::and(span, outer.clone(), exits::not(span, condition.clone()));
-        let no_value = if let Some(no) = no { self.value(no)? } else { Value::Unit };
-        let no = self.state.clone();
-        let no_effects = self.effects.split_off(effect_start);
-        self.state = match (yes_reachable, self.reachable) {
-            (true, true) => Self::join_state(span, condition.clone(), yes, no)?,
-            (true, false) => yes,
-            _ => no,
-        };
-        let no_reachable = self.reachable;
-        if yes_reachable && no_reachable {
-            self.path = outer;
-        } else if yes_reachable {
-            self.path = yes_path;
-        }
-        self.reachable |= yes_reachable;
-        for (selected, effects) in [(true, yes_effects), (false, no_effects)] {
-            self.effects.extend(effects.into_iter().map(|effect| Effect::Guarded {
-                condition: condition.clone(),
-                selected,
-                effect: Box::new(effect),
-            }));
-        }
-        if let Some(joins) = self.checked.branches.get(&span.id) {
-            self.used.insert((checked::Kind::Branch, span.id));
-            for join in joins {
-                let memory = |id: Option<usize>| match id {
-                    Some(id) => self.regions.get(&id).cloned(),
-                    None => Some(expr::empty(span, expr::record_type())),
-                };
-                let memory = choice(span, condition.clone(), memory(join.yes)?, memory(join.no)?);
-                self.regions.insert(join.result, simplify::simplify(&memory));
-            }
-        }
-        match (yes_reachable, no_reachable) {
-            (true, true) => Self::join_value(span, condition, &yes_value, &no_value),
-            (true, false) => Some(yes_value),
-            (false, true) => Some(no_value),
-            (false, false) => Some(Value::Unit),
-        }
-    }
-
-    fn join_state(span: &Span, condition: Expr, yes: State, no: State) -> Option<State> {
-        if let ExprX::Const(Constant::Bool(selected)) = condition.x {
-            return Some(if selected { yes } else { no });
-        }
-        if yes.values.keys().collect::<HashSet<_>>() != no.values.keys().collect::<HashSet<_>>() {
-            return None;
-        }
-        let values = yes
-            .values
-            .iter()
-            .map(|(name, left)| {
-                Some((
-                    name.clone(),
-                    Self::join_value(span, condition.clone(), left, &no.values[name])?,
-                ))
-            })
-            .collect::<Option<_>>()?;
-        let definitions = yes
-            .definitions
-            .into_iter()
-            .filter(|(name, definition)| {
-                no.definitions
-                    .get(name)
-                    .is_some_and(|other| simplify::inspect::same_expression(definition, other))
-            })
-            .collect();
-        let mut written = yes.written;
-        written.extend(no.written);
-        Some(State { values, definitions, written })
-    }
-
-    fn join_value(span: &Span, condition: Expr, yes: &Value, no: &Value) -> Option<Value> {
-        Some(match (yes, no) {
-            (Value::Iterator(yes), Value::Iterator(no)) if yes.step == no.step => {
-                Value::Iterator(crate::resource::memory::iterators::Sequence {
-                    first: choice(span, condition.clone(), yes.first.clone(), no.first.clone()),
-                    count: choice(span, condition.clone(), yes.count.clone(), no.count.clone()),
-                    position: choice(span, condition, yes.position.clone(), no.position.clone()),
-                    step: yes.step,
-                })
-            }
-            (Value::Owner(yes), Value::Owner(no)) => {
-                let mut minima = yes.minima.clone();
-                join_minima(span, &mut minima, &no.minima);
-                Value::Owner(Node {
-                    origin: if yes.origin == no.origin { yes.origin } else { None },
-                    typ: yes.typ.clone(),
-                    memory: choice(span, condition, yes.memory.clone(), no.memory.clone()),
-                    minima,
-                })
-            }
-            (Value::Scalar(yes), Value::Scalar(no)) => {
-                Value::Scalar(choice(span, condition, yes.clone(), no.clone()))
-            }
-            (Value::Unit, Value::Unit) => Value::Unit,
-            (Value::Unknown, _) | (_, Value::Unknown) => Value::Unknown,
-            _ => return None,
-        })
-    }
-
-    fn construct(
-        &mut self,
-        value: &Expr,
-        fields: Vec<(Expr, Option<OwnerSlot>)>,
-        tag: u64,
-    ) -> Option<Value> {
-        let span = &value.span;
-        let mut memory = expr::push(
-            span,
-            expr::empty(span, expr::record_type()),
-            allocated(
-                span,
-                expr::integer(span, 0),
-                expr::integer(span, 0),
-                expr::integer(span, i128::from(tag)),
-            ),
-        );
-        let mut minima = Minima::new();
-        for (field, slot) in fields {
-            let value = self.value(&field)?;
-            if let Some(slot) = slot {
-                let Value::Owner(child) = value else { return None };
-                memory = expr::add(
-                    span,
-                    memory,
-                    expr::prefix(
-                        span,
-                        child.memory,
-                        expr::path(span, [self.layouts.metadata_slot(&slot)]),
-                    ),
-                );
-                minima.extend(child.minima.into_iter().map(|(path, floor)| {
-                    (std::iter::once(Step::Fixed(slot.clone())).chain(path).collect(), floor)
-                }));
-            }
-        }
-        Some(Value::Owner(Node { origin: None, typ: value.typ.clone(), memory, minima }))
     }
 }
