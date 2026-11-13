@@ -4,6 +4,8 @@ Verus Meter is an experimental fork of [Verus](https://github.com/verus-lang/ver
 that adds resource contracts for Rust. It currently supports proofs of upper bounds
 on algorithmic memory use for a subset of Rust.
 
+Verus Meter uses a source-level accounting model to verify memory bounds in bytes. It does not guarantee exact physical memory usage.
+
 ## Why
 
 - Prove peak memory bounds across all permitted inputs.
