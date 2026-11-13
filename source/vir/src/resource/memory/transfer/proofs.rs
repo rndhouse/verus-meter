@@ -32,7 +32,7 @@ pub(super) fn forest_views(
                 if !scope.map().is_empty() || !visited.insert(Arc::as_ptr(value) as usize) {
                     return VisitorControlFlow::Return;
                 }
-                if let Some(args) = simplify::call(value, "remove_index") {
+                if let Some(args) = simplify::inspect::call(value, "remove_index") {
                     emitter.lemma(
                         span,
                         "remove_index_requested_views",
@@ -204,7 +204,7 @@ impl ForestProofs {
                             // Composed calls can observe incoming geometry without
                             // an executable indexed loan to request its view first.
                             self.lemma(span, "request_path", args.as_ref().clone(), proofs);
-                            if let Some(selected) = simplify::call(&args[0], "subtree") {
+                            if let Some(selected) = simplify::inspect::call(&args[0], "subtree") {
                                 self.lemma(
                                     span,
                                     "lookup_subtree",

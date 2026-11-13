@@ -19,7 +19,7 @@ pub(super) fn closed(span: &Span, step: &Expr, initial: &Expr, count: &Expr) -> 
     );
     let visits = SpannedTyped::new(span, &crate::ast_util::int_typ(), ExprX::Var(name.clone()));
     let lifted = crate::ast_visitor::map_expr_visitor(body, &|value| {
-        if let Some(args) = simplify::call(value, "allocated") {
+        if let Some(args) = simplify::inspect::call(value, "allocated") {
             if !independent(&args[0], ordinal) || !independent(&args[0], state) {
                 return Err(super::super::model::unsupported(
                     &value.span,
@@ -53,7 +53,7 @@ pub(super) fn closed(span: &Span, step: &Expr, initial: &Expr, count: &Expr) -> 
             "generate_children",
             "tile_children",
         ] {
-            if simplify::call(value, operation).is_some() {
+            if simplify::inspect::call(value, operation).is_some() {
                 return Err(super::super::model::unsupported(
                     &value.span,
                     "a nonstationary descriptor recurrence",
@@ -61,7 +61,7 @@ pub(super) fn closed(span: &Span, step: &Expr, initial: &Expr, count: &Expr) -> 
             }
         }
         for operation in ["subtree", "without", "prefix", "replace"] {
-            if let Some(args) = simplify::call(value, operation) {
+            if let Some(args) = simplify::inspect::call(value, operation) {
                 if !independent(&args[1], ordinal) || !independent(&args[1], state) {
                     return Err(super::super::model::unsupported(
                         &value.span,
@@ -128,7 +128,7 @@ fn numeric(value: &Expr, state: &VarIdent, ordinal: &VarIdent, visits: &Expr) ->
         if let ExprX::UnaryOpr(UnaryOpr::Field(_), record) = &value.x {
             if crate::ast_util::types_equal(&record.typ, &expr::record_type())
                 && !independent(value, state)
-                && !observations.iter().any(|old| simplify::same_expression(old, value))
+                && !observations.iter().any(|old| simplify::inspect::same_expression(old, value))
             {
                 observations.push(value.clone());
             }
@@ -147,7 +147,7 @@ fn numeric(value: &Expr, state: &VarIdent, ordinal: &VarIdent, visits: &Expr) ->
     let token =
         SpannedTyped::new(&value.span, &crate::ast_util::int_typ(), ExprX::Var(name.clone()));
     let value = crate::ast_visitor::map_expr_visitor(value, &|value| {
-        Ok::<_, VirErr>(if simplify::same_expression(value, observation) {
+        Ok::<_, VirErr>(if simplify::inspect::same_expression(value, observation) {
             token.clone()
         } else {
             value.clone()
@@ -157,7 +157,7 @@ fn numeric(value: &Expr, state: &VarIdent, ordinal: &VarIdent, visits: &Expr) ->
     if !independent(&value, state) {
         return None;
     }
-    let (slope, offset) = simplify::affine(&value, &name)?;
+    let (slope, offset) = simplify::bounds::affine(&value, &name)?;
     if contracts::constant(&slope) != Some(1) || !independent(&offset, ordinal) {
         return None;
     }

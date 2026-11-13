@@ -323,7 +323,7 @@ fn compatible(a: &Owner, b: &Owner) -> bool {
     fn expression(a: &Option<Expr>, b: &Option<Expr>) -> bool {
         match (a, b) {
             (None, None) => true,
-            (Some(a), Some(b)) => super::transfer::simplify::same_expression(a, b),
+            (Some(a), Some(b)) => super::transfer::simplify::inspect::same_expression(a, b),
             _ => false,
         }
     }
@@ -343,7 +343,7 @@ fn compatible(a: &Owner, b: &Owner) -> bool {
                 a.view == b.view
                     && a.states == b.states
                     && a.inputs == b.inputs
-                    && super::transfer::simplify::same_expression(&a.records, &b.records)
+                    && super::transfer::simplify::inspect::same_expression(&a.records, &b.records)
             }
             _ => false,
         }

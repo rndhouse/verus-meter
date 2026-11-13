@@ -680,7 +680,7 @@ impl Trace<'_> {
             }
             // Initializer exits still finish this statement's guarded effects;
             // the next visit to the statement loop handles unreachable suffixes.
-            if !simplify::same_expression(&path, &block_path) {
+            if !simplify::inspect::same_expression(&path, &block_path) {
                 self.guard_effects(first_effect, &path);
             }
         }
@@ -693,7 +693,7 @@ impl Trace<'_> {
         } else {
             Value::Unit
         };
-        if !simplify::same_expression(&path, &block_path) {
+        if !simplify::inspect::same_expression(&path, &block_path) {
             self.guard_effects(first_effect, &path);
         }
         for edge in &mut self.exits[first_exit..] {
@@ -995,7 +995,7 @@ impl Trace<'_> {
             .filter(|(name, definition)| {
                 no.definitions
                     .get(name)
-                    .is_some_and(|other| simplify::same_expression(definition, other))
+                    .is_some_and(|other| simplify::inspect::same_expression(definition, other))
             })
             .collect();
         let mut written = yes.written;

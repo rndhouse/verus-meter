@@ -268,7 +268,7 @@ fn with_root(
 }
 
 fn choice(span: &Span, condition: Expr, yes: Expr, no: Expr) -> Expr {
-    if simplify::same_expression(&yes, &no) {
+    if simplify::inspect::same_expression(&yes, &no) {
         return yes;
     }
     simplify::simplify(&SpannedTyped::new(

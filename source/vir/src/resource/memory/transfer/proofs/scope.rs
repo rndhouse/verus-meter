@@ -55,7 +55,7 @@ struct BoundProofs {
 impl BoundProofs {
     fn contains(&self, value: &Expr, bound: &Expr) -> bool {
         self.values.get(&(Arc::as_ptr(value) as usize)).is_some_and(|(_, bounds)| {
-            bounds.iter().any(|old| simplify::same_expression(old, bound))
+            bounds.iter().any(|old| simplify::inspect::same_expression(old, bound))
         })
     }
 
@@ -102,7 +102,10 @@ impl ForestProofs {
             scope.lemmas.get(&function).is_some_and(|previous| {
                 previous.iter().any(|old| {
                     old.len() == args.len()
-                        && old.iter().zip(&args).all(|(a, b)| simplify::same_expression(a, b))
+                        && old
+                            .iter()
+                            .zip(&args)
+                            .all(|(a, b)| simplify::inspect::same_expression(a, b))
                 })
             })
         }) {

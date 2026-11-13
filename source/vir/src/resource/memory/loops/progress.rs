@@ -64,7 +64,9 @@ pub(in super::super) fn difference(after: &Expr, before: &Expr) -> Option<i128> 
             }
             _ => {
                 if let Some((_, coefficient)) = terms.iter_mut().find(|(term, _)| {
-                    crate::resource::memory::transfer::simplify::same_expression(term, value)
+                    crate::resource::memory::transfer::simplify::inspect::same_expression(
+                        term, value,
+                    )
                 }) {
                     *coefficient = coefficient.checked_add(sign)?;
                 } else {

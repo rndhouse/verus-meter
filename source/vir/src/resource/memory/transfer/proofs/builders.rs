@@ -47,7 +47,7 @@ pub(super) fn generated(
             body: None,
         },
     );
-    let affine = simplify::affine(
+    let affine = simplify::bounds::affine(
         &simplify::simplify(&expr::cost(span, body.clone(), expr::integer(span, 0))),
         &binders[0].name,
     );
@@ -111,7 +111,7 @@ pub(super) fn generated(
             &crate::ast_util::unit_typ(),
             ExprX::Fuel(
                 expr::function("generated_cost"),
-                simplify::FINITE_GENERATION_LIMIT + 1,
+                simplify::collections::FINITE_GENERATION_LIMIT + 1,
                 false,
             ),
         );
@@ -186,7 +186,11 @@ pub(super) fn iterated(
         let fuel = SpannedTyped::new(
             span,
             &crate::ast_util::unit_typ(),
-            ExprX::Fuel(expr::function("iterate"), simplify::FINITE_GENERATION_LIMIT + 1, false),
+            ExprX::Fuel(
+                expr::function("iterate"),
+                simplify::collections::FINITE_GENERATION_LIMIT + 1,
+                false,
+            ),
         );
         proofs.push(crate::def::Spanned::new(span.clone(), StmtX::Expr(fuel)));
     }
@@ -295,7 +299,7 @@ pub(super) fn closed_iteration(
     // caller budget queries and the opaque iteration operator.
     let mut records = 0u32;
     crate::ast_visitor::expr_visitor_check(closed_body, &mut |_, value| {
-        if simplify::call(value, "allocated").is_some() {
+        if simplify::inspect::call(value, "allocated").is_some() {
             records = records.saturating_add(1);
         }
         Ok::<(), VirErr>(())

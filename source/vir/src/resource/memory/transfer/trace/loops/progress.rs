@@ -50,7 +50,7 @@ impl Trace<'_> {
             .chain(self.loop_calls.iter().map(|(_, _, value)| value))
             .chain(self.loop_nested.iter())
         {
-            let candidate = simplify::allocation_bound(candidate, &observations, &ceiling);
+            let candidate = simplify::bounds::allocation_bound(candidate, &observations, &ceiling);
             let bound = interval_upper(&candidate, binder, &expr::integer(span, 0), count)?;
             added = contracts::add(span, added, bound);
         }
@@ -555,19 +555,19 @@ pub(super) fn interval_upper(
 /// positive, so only a zero final floor yields this induction candidate.
 fn saturating_difference(value: &Expr, previous: &Expr) -> Option<i128> {
     fn translate(value: &Expr, previous: &Expr) -> Option<(i128, Option<i128>)> {
-        if simplify::same_expression(value, previous) {
+        if simplify::inspect::same_expression(value, previous) {
             return Some((0, None));
         }
         if let ExprX::If(condition, yes, Some(no)) = &value.x {
             if let ExprX::Binary(BinaryOp::Inequality(InequalityOp::Ge), a, b) = &condition.x {
                 let inner = if contracts::constant(a) == Some(0)
                     && contracts::constant(yes) == Some(0)
-                    && simplify::same_expression(b, no)
+                    && simplify::inspect::same_expression(b, no)
                 {
                     no
                 } else if contracts::constant(b) == Some(0)
                     && contracts::constant(no) == Some(0)
-                    && simplify::same_expression(a, yes)
+                    && simplify::inspect::same_expression(a, yes)
                 {
                     yes
                 } else {

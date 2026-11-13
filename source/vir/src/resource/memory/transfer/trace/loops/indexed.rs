@@ -92,7 +92,7 @@ impl Trace<'_> {
         let observations: HashSet<_> = [state_name.clone()].into();
         let mut added = expr::integer(span, 0);
         for (site, actual, candidate) in &self.loop_allocations {
-            let candidate = simplify::allocation_bound(
+            let candidate = simplify::bounds::allocation_bound(
                 candidate,
                 &observations,
                 &self.loop_size_ceiling.clone().unwrap_or_else(|| expr::integer(span, 0)),
@@ -116,7 +116,7 @@ impl Trace<'_> {
         }
         self.loop_repetitions.insert(span.id, simplify::simplify(&added));
         for (site, actual, candidate) in &self.loop_calls {
-            let candidate = simplify::allocation_bound(
+            let candidate = simplify::bounds::allocation_bound(
                 candidate,
                 &observations,
                 &self.loop_size_ceiling.clone().unwrap_or_else(|| expr::integer(span, 0)),
@@ -149,8 +149,10 @@ impl Trace<'_> {
                     floor.capacity = expr::integer(span, 0);
                 }
             }
-            let changed =
-                !simplify::same_expression(&node.memory, &select(span, state.clone(), slot));
+            let changed = !simplify::inspect::same_expression(
+                &node.memory,
+                &select(span, state.clone(), slot),
+            );
             results.push((minima, changed));
         }
         for (offset, region) in record.regions.iter().enumerate() {
@@ -175,7 +177,7 @@ impl Trace<'_> {
                 body,
             ),
         );
-        let completed = simplify::finite_iteration(
+        let completed = simplify::collections::finite_iteration(
             span,
             builder,
             initial.clone(),

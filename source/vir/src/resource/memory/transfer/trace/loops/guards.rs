@@ -49,7 +49,7 @@ pub(super) fn partition(
     }
     let mut unique = Vec::new();
     for cut in cuts {
-        if !unique.iter().any(|old| simplify::same_expression(old, &cut)) {
+        if !unique.iter().any(|old| simplify::inspect::same_expression(old, &cut)) {
             unique.push(cut);
         }
     }
@@ -114,7 +114,7 @@ pub(super) fn partition(
 fn collect(effects: &[Effect], guards: &mut Vec<Expr>) {
     for effect in effects {
         if let Effect::Guarded { condition, effect, .. } = effect {
-            if !guards.iter().any(|old| simplify::same_expression(old, condition)) {
+            if !guards.iter().any(|old| simplify::inspect::same_expression(old, condition)) {
                 guards.push(condition.clone());
             }
             collect(std::slice::from_ref(effect), guards);
@@ -126,8 +126,10 @@ fn select(effects: &[Effect], guards: &[Expr], selection: usize) -> Vec<Effect> 
     let mut result = Vec::new();
     for effect in effects {
         if let Effect::Guarded { condition, selected, effect } = effect {
-            let index =
-                guards.iter().position(|old| simplify::same_expression(old, condition)).unwrap();
+            let index = guards
+                .iter()
+                .position(|old| simplify::inspect::same_expression(old, condition))
+                .unwrap();
             if (selection & (1 << index) != 0) == *selected {
                 result.extend(select(std::slice::from_ref(effect), guards, selection));
             }
@@ -174,8 +176,8 @@ fn boundaries(
             let direct = matches!(&a.x, ExprX::Var(name) if name == binder)
                 || matches!(&b.x, ExprX::Var(name) if name == binder);
             if !direct {
-                let (a_slope, a_offset) = simplify::affine(a, binder)?;
-                let (b_slope, b_offset) = simplify::affine(b, binder)?;
+                let (a_slope, a_offset) = simplify::bounds::affine(a, binder)?;
+                let (b_slope, b_offset) = simplify::bounds::affine(b, binder)?;
                 let slope =
                     crate::resource::memory::loops::progress::difference(&a_slope, &b_slope)?;
                 if slope == 0 {

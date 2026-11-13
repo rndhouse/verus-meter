@@ -653,7 +653,7 @@ impl Trace<'_> {
     ) -> Option<Expr> {
         let span = &record.span;
         let ceiling = self.loop_size_ceiling.clone().unwrap_or_else(|| expr::integer(span, 0));
-        let candidate = simplify::allocation_bound(
+        let candidate = simplify::bounds::allocation_bound(
             candidate,
             &self.loop_inputs.keys().cloned().collect(),
             &ceiling,

@@ -152,13 +152,13 @@ impl Analysis<'_> {
         // it again would lose its identity in isolated loop queries, separating
         // progress, conservation, and the reserved allocation headroom.
         let frozen = self.growth.loop_entry.get(&span.id).is_some_and(|entries| {
-            entries
-                .values()
-                .any(|snapshot| super::transfer::simplify::same_expression(snapshot, value))
+            entries.values().any(|snapshot| {
+                super::transfer::simplify::inspect::same_expression(snapshot, value)
+            })
         }) || self.growth.loop_observations.get(&span.id).is_some_and(|entries| {
-            entries
-                .iter()
-                .any(|(_, snapshot)| super::transfer::simplify::same_expression(snapshot, value))
+            entries.iter().any(|(_, snapshot)| {
+                super::transfer::simplify::inspect::same_expression(snapshot, value)
+            })
         });
         if frozen {
             return value.clone();
@@ -167,7 +167,7 @@ impl Analysis<'_> {
             if let Some((_, snapshot)) =
                 self.growth.loop_observations.get(&span.id).and_then(|values| {
                     values.iter().find(|(observation, _)| {
-                        super::transfer::simplify::same_expression(observation, value)
+                        super::transfer::simplify::inspect::same_expression(observation, value)
                     })
                 })
             {

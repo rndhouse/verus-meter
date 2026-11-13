@@ -36,7 +36,7 @@ fn calls(proofs: &[Stmt], name: &str) -> usize {
     for statement in proofs {
         let StmtX::Expr(value) = &statement.x else { continue };
         crate::ast_visitor::expr_visitor_walk(value, &mut |value| {
-            count += usize::from(simplify::call(value, name).is_some());
+            count += usize::from(simplify::inspect::call(value, name).is_some());
             if matches!(value.x, ExprX::Call { .. }) {
                 crate::ast_visitor::VisitorControlFlow::Return
             } else {

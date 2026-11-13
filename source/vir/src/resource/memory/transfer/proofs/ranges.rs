@@ -27,8 +27,9 @@ pub(super) fn block(
     match name.as_str() {
         "empty" => {}
         "prefix" => {
-            let path =
-                simplify::path(&args[1]).filter(|path| path.len() == 1).ok_or_else(|| {
+            let path = simplify::inspect::path(&args[1])
+                .filter(|path| path.len() == 1)
+                .ok_or_else(|| {
                     model::unsupported(span, "an ownership block without a single runtime index")
                 })?;
             emitter.lemma(

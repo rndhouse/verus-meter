@@ -209,5 +209,5 @@ fn conditional_projection_keeps_only_the_selected_role() {
     let no = expr::prefix(&span, source.clone(), source_path.clone());
     let joined = choice(&span, condition, yes, no);
     let selected = simplify::simplify(&expr::subtree(&span, joined, source_path));
-    assert!(simplify::same_expression(&selected, &source), "{selected:?}");
+    assert!(simplify::inspect::same_expression(&selected, &source), "{selected:?}");
 }
