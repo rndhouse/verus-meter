@@ -350,17 +350,17 @@ impl Analysis<'_> {
         // must also select through descendants retained by a prior extraction.
         for group in [
             crate::fun!(CrateId::Vstd => "seq"; "group_seq_axioms"),
-            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "group_metadata_algebra"),
-            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "select_root"),
-            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "select_runtime"),
-            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "select_descendants"),
-            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "contains_prefix"),
-            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "lookup_prefix"),
-            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "take_children_empty"),
-            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "take_children_root"),
-            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "take_children_add"),
-            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "take_children_prefix"),
-            crate::fun!(CrateId::Vstd => "std_specs", "memory"; "take_children_repeat"),
+            expr::function("group_metadata_algebra"),
+            expr::function("select_root"),
+            expr::function("select_runtime"),
+            expr::function("select_descendants"),
+            expr::function("contains_prefix"),
+            expr::function("lookup_prefix"),
+            expr::function("take_children_empty"),
+            expr::function("take_children_root"),
+            expr::function("take_children_add"),
+            expr::function("take_children_prefix"),
+            expr::function("take_children_repeat"),
         ] {
             let activation =
                 SpannedTyped::new(span, &crate::ast_util::unit_typ(), ExprX::Fuel(group, 1, true));

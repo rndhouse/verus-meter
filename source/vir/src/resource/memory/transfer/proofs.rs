@@ -605,7 +605,7 @@ fn generated(
             span,
             &crate::ast_util::unit_typ(),
             ExprX::Fuel(
-                crate::fun!(CrateId::Vstd => "std_specs", "memory"; "generated_cost"),
+                expr::function("generated_cost"),
                 simplify::FINITE_GENERATION_LIMIT + 1,
                 false,
             ),
@@ -681,11 +681,7 @@ fn iterated(
         let fuel = SpannedTyped::new(
             span,
             &crate::ast_util::unit_typ(),
-            ExprX::Fuel(
-                crate::fun!(CrateId::Vstd => "std_specs", "memory"; "iterate"),
-                simplify::FINITE_GENERATION_LIMIT + 1,
-                false,
-            ),
+            ExprX::Fuel(expr::function("iterate"), simplify::FINITE_GENERATION_LIMIT + 1, false),
         );
         proofs.push(crate::def::Spanned::new(span.clone(), StmtX::Expr(fuel)));
     }

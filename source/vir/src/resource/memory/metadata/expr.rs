@@ -11,7 +11,7 @@ pub(in super::super) fn record_type() -> Typ {
 }
 
 fn record_name() -> Dt {
-    Dt::Path(crate::path!(CrateId::Vstd => "std_specs", "memory", "Record"))
+    super::algebra::record()
 }
 
 pub(in super::super) fn sequence_type(element: Typ) -> Typ {
@@ -32,14 +32,12 @@ pub(in super::super) fn integer(span: &Span, n: i128) -> Expr {
 
 /// Canonical identity shared by generated calls and scoped definition reveals.
 pub(in super::super) fn function(name: &str) -> Fun {
-    let mut path = crate::path!(CrateId::Vstd => "std_specs", "memory").as_ref().clone();
-    Arc::make_mut(&mut path.segments).push(Segment::V(Arc::new(name.into()), 0));
-    Arc::new(FunX { path: Arc::new(path) })
+    super::algebra::function(name)
 }
 
 /// Match generated operations using their complete, encoded VIR identity.
 pub(in super::super) fn is_operation(value: &Fun, name: &str) -> bool {
-    *value == function(name)
+    super::algebra::is_function(value, name)
 }
 
 fn call(span: &Span, name: Fun, types: Vec<Typ>, args: Vec<Expr>, result: Typ) -> Expr {

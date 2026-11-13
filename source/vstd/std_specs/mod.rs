@@ -16,7 +16,6 @@ pub mod fmt;
 pub mod iter;
 pub mod manually_drop;
 pub mod maybe_uninit;
-pub mod memory;
 pub mod ops;
 pub mod pin;
 pub mod ptr;
@@ -29,6 +28,7 @@ pub mod hash;
 pub mod num;
 pub mod option;
 pub mod range;
+pub mod resource;
 pub mod result;
 
 pub mod slice;

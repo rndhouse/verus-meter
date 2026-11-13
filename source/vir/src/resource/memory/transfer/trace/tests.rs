@@ -54,7 +54,28 @@ fn constructor_requires_a_checked_rule_and_does_not_reenter_on_its_constant() {
     let payload = SpannedTyped::new(&span, &payload_type, expr::integer(&span, 0).x.clone());
     // Checked allocation operands can share the constructor's span, as with
     // the zero capacity synthesized for Vec::new(). They are scalar values.
-    let source = expr::operation(&span, "constructor", vec![payload.clone()], typ);
+    // This is a source call, outside the compiler's specification algebra.
+    let source = SpannedTyped::new(
+        &span,
+        &typ,
+        ExprX::Call {
+            target: CallTarget::Fun(
+                CallTargetKind::Static,
+                crate::fun!(CrateId::Vstd => "tests"; "constructor"),
+                Arc::new(vec![]),
+                Arc::new(vec![]),
+                CallTargetAttrs {
+                    autospec: AutospecUsage::Final,
+                    const_var: false,
+                    assume_external_allowed: false,
+                    resource_intrinsic: None,
+                },
+            ),
+            args: Arc::new(vec![payload.clone()]),
+            post_args: None,
+            body: None,
+        },
+    );
     with_trace(&Checked::default(), |trace| assert!(trace.value(&source).is_none()));
     let mut checked = Checked::default();
     checked.operation(&span, checked::Operation::Box { payload, bytes: 16 });

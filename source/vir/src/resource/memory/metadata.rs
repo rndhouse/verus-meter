@@ -1,6 +1,7 @@
 //! Transferable allocation forests for runtime children. Charged byte upper
 //! bounds and reserved-slot lower bounds have independent meanings.
 
+mod algebra;
 pub(super) mod expr;
 mod geometry;
 pub(super) mod operations;
@@ -17,7 +18,7 @@ use crate::messages::Span;
 /// structural rewrites out of budget queries avoids unbounded matching on
 /// composed forests when the requested budget is too small.
 pub(super) fn runtime_shape_proof(span: &Span, records: Expr) -> Stmt {
-    let group = crate::fun!(CrateId::Vstd => "std_specs", "memory"; "group_runtime_shape");
+    let group = expr::function("group_runtime_shape");
     let proofs = vec![crate::def::Spanned::new(
         span.clone(),
         StmtX::Expr(SpannedTyped::new(
@@ -277,10 +278,10 @@ impl Analysis<'_> {
         if self.growth.metadata_scopes.insert(span.id) {
             let mut groups = vec![
                 crate::fun!(CrateId::Vstd => "seq"; "group_seq_axioms"),
-                crate::fun!(CrateId::Vstd => "std_specs", "memory"; "group_metadata_algebra"),
+                expr::function("group_metadata_algebra"),
             ];
             if self.growth.loop_depth > 0 {
-                groups.push(crate::fun!(CrateId::Vstd => "std_specs", "memory"; "group_metadata_loop_algebra"));
+                groups.push(expr::function("group_metadata_loop_algebra"));
             }
             for group in groups {
                 let activation = SpannedTyped::new(
@@ -310,11 +311,7 @@ impl Analysis<'_> {
         let activation = SpannedTyped::new(
             span,
             &crate::ast_util::unit_typ(),
-            ExprX::Fuel(
-                crate::fun!(CrateId::Vstd => "std_specs", "memory"; "group_metadata_loop_algebra"),
-                1,
-                true,
-            ),
+            ExprX::Fuel(expr::function("group_metadata_loop_algebra"), 1, true),
         );
         self.growth
             .before
