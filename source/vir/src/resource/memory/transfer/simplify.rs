@@ -191,7 +191,26 @@ fn closed(value: &Expr) -> bool {
     .is_ok()
 }
 
+/// Apply the first applicable rule in the established normalization order.
+/// A rule can finish with an unchanged expression; only `None` tries the next rule.
 fn node(value: &Expr) -> Expr {
+    empty_forest(value)
+        .or_else(|| branch_projection(value))
+        .or_else(|| arithmetic(value))
+        .or_else(|| reverse_children(value))
+        .or_else(|| record_field(value))
+        .or_else(|| cost(value))
+        .or_else(|| ownership(value))
+        .or_else(|| remove_child(value))
+        .or_else(|| shift_children(value))
+        .or_else(|| finite_collections(value))
+        .or_else(|| take_children(value))
+        .or_else(|| select_path(value))
+        .unwrap_or_else(|| fold_constants(value))
+}
+
+/// Remove empty inputs from operations that cannot create allocation records.
+fn empty_forest(value: &Expr) -> Option<Expr> {
     let span = &value.span;
     // Partial views and original-only substitutions often leave empty input
     // forests. These operators cannot create descriptors from an empty forest.
@@ -210,12 +229,18 @@ fn node(value: &Expr) -> Expr {
         "repeat",
     ] {
         if call(value, name).is_some_and(|args| empty(&args[0])) {
-            return expr::empty(span, expr::record_type());
+            return Some(expr::empty(span, expr::record_type()));
         }
     }
+    None
+}
+
+/// Collapse identical branches and project observations through forest joins.
+fn branch_projection(value: &Expr) -> Option<Expr> {
+    let span = &value.span;
     if let ExprX::If(_, yes, Some(no)) = &value.x {
         if same_expression(yes, no) {
-            return yes.clone();
+            return Some(yes.clone());
         }
     }
     // Project a branch join before inspecting its children. Otherwise selecting
@@ -239,12 +264,12 @@ fn node(value: &Expr) -> Expr {
                     args[0] = memory;
                     expr::operation(span, name, args, value.typ.clone())
                 };
-                return simplify(&super::choice(
+                return Some(simplify(&super::choice(
                     span,
                     condition.clone(),
                     apply(yes.clone()),
                     apply(no.clone()),
-                ));
+                )));
             }
         }
     }
@@ -252,39 +277,51 @@ fn node(value: &Expr) -> Expr {
         if let ExprX::If(condition, yes, Some(no)) = &record.x {
             let apply =
                 |record| SpannedTyped::new(span, &value.typ, ExprX::UnaryOpr(op.clone(), record));
-            return simplify(&super::choice(
+            return Some(simplify(&super::choice(
                 span,
                 condition.clone(),
                 apply(yes.clone()),
                 apply(no.clone()),
-            ));
+            )));
         }
     }
+    None
+}
+
+/// Apply additive and multiplicative identities to unbounded arithmetic.
+fn arithmetic(value: &Expr) -> Option<Expr> {
+    let span = &value.span;
     if let ExprX::Binary(BinaryOp::Arith(op), left, right) = &value.x {
         match op {
             ArithOp::Add(OverflowBehavior::Allow) | ArithOp::Sub(OverflowBehavior::Allow)
                 if contracts::constant(right) == Some(0) =>
             {
-                return left.clone();
+                return Some(left.clone());
             }
             ArithOp::Add(OverflowBehavior::Allow) if contracts::constant(left) == Some(0) => {
-                return right.clone();
+                return Some(right.clone());
             }
             ArithOp::Mul(OverflowBehavior::Allow)
                 if contracts::constant(right) == Some(0)
                     || contracts::constant(left) == Some(0) =>
             {
-                return expr::integer(span, 0);
+                return Some(expr::integer(span, 0));
             }
             ArithOp::Mul(OverflowBehavior::Allow) if contracts::constant(right) == Some(1) => {
-                return left.clone();
+                return Some(left.clone());
             }
             ArithOp::Mul(OverflowBehavior::Allow) if contracts::constant(left) == Some(1) => {
-                return right.clone();
+                return Some(right.clone());
             }
             _ => {}
         }
     }
+    None
+}
+
+/// Normalize exact reverse-range maps for closed forests.
+fn reverse_children(value: &Expr) -> Option<Expr> {
+    let span = &value.span;
     if let Some(args) = call(value, "reverse_children").filter(|args| closed(&args[0])) {
         let memory = &args[0];
         let (start, end, base) = (&args[1], &args[2], &args[3]);
@@ -297,14 +334,18 @@ fn node(value: &Expr) -> Expr {
             )
         };
         if empty(memory) || call(memory, "nonruntime").is_some() || same_expression(start, end) {
-            return expr::empty(span, expr::record_type());
+            return Some(expr::empty(span, expr::record_type()));
         }
         if let Some(parts) = call(memory, "add") {
-            return simplify(&expr::add(span, apply(parts[0].clone()), apply(parts[1].clone())));
+            return Some(simplify(&expr::add(
+                span,
+                apply(parts[0].clone()),
+                apply(parts[1].clone()),
+            )));
         }
         if let Some(parts) = call(memory, "push") {
             if call(&parts[1], "allocated").is_some_and(|record| empty(&record[0])) {
-                return simplify(&apply(parts[0].clone()));
+                return Some(simplify(&apply(parts[0].clone())));
             }
         }
         // Reversal selects runtime children only. A previous prefix cut ending
@@ -312,12 +353,12 @@ fn node(value: &Expr) -> Expr {
         if let Some(parts) =
             call(memory, "take_children").filter(|parts| same_expression(&parts[1], end))
         {
-            return simplify(&apply(parts[0].clone()));
+            return Some(simplify(&apply(parts[0].clone())));
         }
         // Keep runtime filters explicit: scoped prefix-cut proofs use them to
         // connect source descriptors to the local collection's child records.
         if let Some(parts) = call(memory, "descendants") {
-            return simplify(&apply(parts[0].clone()));
+            return Some(simplify(&apply(parts[0].clone())));
         }
         if let Some(parts) = call(memory, "prefix") {
             if let Some(mut path) = path(&parts[1]) {
@@ -344,16 +385,22 @@ fn node(value: &Expr) -> Expr {
                             index,
                         ),
                     );
-                    return simplify(&super::choice(
+                    return Some(simplify(&super::choice(
                         span,
                         selected,
                         expr::prefix(span, parts[0].clone(), make_path(span, &path)),
                         expr::empty(span, expr::record_type()),
-                    ));
+                    )));
                 }
             }
         }
     }
+    None
+}
+
+/// Read known allocation descriptor fields without changing their types.
+fn record_field(value: &Expr) -> Option<Expr> {
+    let span = &value.span;
     if let ExprX::UnaryOpr(UnaryOpr::Field(field), record) = &value.x {
         if let Some(args) = call(record, "allocated") {
             let index = match field.field.as_str() {
@@ -361,26 +408,40 @@ fn node(value: &Expr) -> Expr {
                 "bytes" => 2,
                 "capacity" => 3,
                 "length" => 4,
-                _ => return value.clone(),
+                _ => return Some(value.clone()),
             };
-            return SpannedTyped::new(span, &value.typ, args[index].x.clone());
+            return Some(SpannedTyped::new(span, &value.typ, args[index].x.clone()));
         }
     }
+    None
+}
+
+/// Distribute memory-kind costs through finite forest constructors.
+fn cost(value: &Expr) -> Option<Expr> {
+    let span = &value.span;
     if let Some(args) = call(value, "cost") {
         let memory = &args[0];
         let kind = &args[1];
         let cost = |memory: Expr| expr::cost(span, memory, kind.clone());
         if empty(memory) {
-            return expr::integer(span, 0);
+            return Some(expr::integer(span, 0));
         }
         if let Some(parts) = call(memory, "add") {
-            return simplify(&contracts::add(span, cost(parts[0].clone()), cost(parts[1].clone())));
+            return Some(simplify(&contracts::add(
+                span,
+                cost(parts[0].clone()),
+                cost(parts[1].clone()),
+            )));
         }
         if let Some(parts) = call(memory, "prefix").or_else(|| call(memory, "shift_children")) {
-            return simplify(&cost(parts[0].clone()));
+            return Some(simplify(&cost(parts[0].clone())));
         }
         if let Some(parts) = call(memory, "repeat").or_else(|| call(memory, "tile_children")) {
-            return simplify(&contracts::multiply(span, parts[2].clone(), cost(parts[0].clone())));
+            return Some(simplify(&contracts::multiply(
+                span,
+                parts[2].clone(),
+                cost(parts[0].clone()),
+            )));
         }
         if let Some(parts) = call(memory, "push") {
             if let Some(record) = call(&parts[1], "allocated") {
@@ -390,64 +451,70 @@ fn node(value: &Expr) -> Expr {
                     record[2].clone(),
                     expr::integer(span, 0),
                 );
-                return simplify(&contracts::add(span, cost(parts[0].clone()), amount));
+                return Some(simplify(&contracts::add(span, cost(parts[0].clone()), amount)));
             }
         }
     }
+    None
+}
+
+/// Normalize root lookup, composition, descendants, and replacement.
+fn ownership(value: &Expr) -> Option<Expr> {
+    let span = &value.span;
     if let Some(args) = call(value, "lookup") {
         if empty(&args[1]) {
             if let Some(parts) = call(&args[0], "add") {
                 if rootless(&parts[1]) {
-                    return simplify(&expr::lookup(span, parts[0].clone(), args[1].clone()));
+                    return Some(simplify(&expr::lookup(span, parts[0].clone(), args[1].clone())));
                 }
             }
             // Cutting a proper child or reindexing runtime siblings preserves
             // the root record, even when that record is an abstract input.
             if let Some(parts) = call(&args[0], "without") {
                 if path(&parts[1]).is_some_and(|path| !path.is_empty()) {
-                    return simplify(&expr::lookup(span, parts[0].clone(), args[1].clone()));
+                    return Some(simplify(&expr::lookup(span, parts[0].clone(), args[1].clone())));
                 }
             }
             if let Some(parts) = call(&args[0], "remove_index") {
-                return simplify(&expr::lookup(span, parts[0].clone(), args[1].clone()));
+                return Some(simplify(&expr::lookup(span, parts[0].clone(), args[1].clone())));
             }
             if let Some(record) = known_root(&args[0]) {
-                return record;
+                return Some(record);
             }
         }
     }
     if let Some(args) = call(value, "add") {
         if empty(&args[0]) {
-            return args[1].clone();
+            return Some(args[1].clone());
         }
         if empty(&args[1]) {
-            return args[0].clone();
+            return Some(args[0].clone());
         }
     }
     if let Some(args) = call(value, "prefix") {
         if empty(&args[0]) {
-            return args[0].clone();
+            return Some(args[0].clone());
         }
         if empty(&args[1]) {
-            return args[0].clone();
+            return Some(args[0].clone());
         }
     }
     if let Some(args) = call(value, "with_root") {
         let descendants =
             expr::operation(span, "descendants", vec![args[0].clone()], expr::memory_type());
-        return simplify(&expr::push(span, descendants, args[1].clone()));
+        return Some(simplify(&expr::push(span, descendants, args[1].clone())));
     }
     if let Some(args) = call(value, "descendants") {
         let memory = &args[0];
         if rootless(memory) {
-            return memory.clone();
+            return Some(memory.clone());
         }
         if let Some(parts) = call(memory, "add") {
-            return simplify(&expr::add(
+            return Some(simplify(&expr::add(
                 span,
                 expr::operation(span, "descendants", vec![parts[0].clone()], expr::memory_type()),
                 expr::operation(span, "descendants", vec![parts[1].clone()], expr::memory_type()),
-            ));
+            )));
         }
         if let Some(parts) = call(memory, "push") {
             if let Some(record) = call(&parts[1], "allocated") {
@@ -458,22 +525,28 @@ fn node(value: &Expr) -> Expr {
                     expr::memory_type(),
                 );
                 if empty(&record[0]) {
-                    return simplify(&previous);
+                    return Some(simplify(&previous));
                 }
                 if path(&record[0]).is_some_and(|path| !path.is_empty()) {
-                    return simplify(&expr::push(span, previous, parts[1].clone()));
+                    return Some(simplify(&expr::push(span, previous, parts[1].clone())));
                 }
             }
         }
     }
     if let Some(args) = call(value, "replace") {
-        return simplify(&super::super::metadata::operations::replace(
+        return Some(simplify(&super::super::metadata::operations::replace(
             span,
             args[0].clone(),
             args[1].clone(),
             args[2].clone(),
-        ));
+        )));
     }
+    None
+}
+
+/// Remove a runtime child while preserving the root and reindexing survivors.
+fn remove_child(value: &Expr) -> Option<Expr> {
+    let span = &value.span;
     if let Some(args) = call(value, "remove_index") {
         let memory = &args[0];
         let index = &args[1];
@@ -481,14 +554,22 @@ fn node(value: &Expr) -> Expr {
             expr::operation(span, "remove_index", vec![memory, index.clone()], expr::memory_type())
         };
         if empty(memory) {
-            return memory.clone();
+            return Some(memory.clone());
         }
         if let Some(parts) = call(memory, "add") {
-            return simplify(&expr::add(span, apply(parts[0].clone()), apply(parts[1].clone())));
+            return Some(simplify(&expr::add(
+                span,
+                apply(parts[0].clone()),
+                apply(parts[1].clone()),
+            )));
         }
         if let Some(parts) = call(memory, "push") {
             if call(&parts[1], "allocated").is_some_and(|record| empty(&record[0])) {
-                return simplify(&expr::push(span, apply(parts[0].clone()), parts[1].clone()));
+                return Some(simplify(&expr::push(
+                    span,
+                    apply(parts[0].clone()),
+                    parts[1].clone(),
+                )));
             }
         }
         if let Some(parts) = call(memory, "prefix") {
@@ -502,24 +583,30 @@ fn node(value: &Expr) -> Expr {
                         slot.clone(),
                     );
                     prefix[0] = shifted;
-                    return simplify(&super::choice(
+                    return Some(simplify(&super::choice(
                         span,
                         crate::ast_util::mk_eq(span, &slot, index),
                         expr::empty(span, expr::record_type()),
                         expr::prefix(span, parts[0].clone(), make_path(span, &prefix)),
-                    ));
+                    )));
                 }
             }
         }
     }
+    None
+}
+
+/// Normalize runtime child offsets through finite forest constructors.
+fn shift_children(value: &Expr) -> Option<Expr> {
+    let span = &value.span;
     if let Some(args) = call(value, "shift_children") {
         let memory = &args[0];
         let base = &args[1];
         if empty(memory) || contracts::constant(base) == Some(0) {
-            return memory.clone();
+            return Some(memory.clone());
         }
         if let Some(parts) = call(memory, "add") {
-            return simplify(&expr::add(
+            return Some(simplify(&expr::add(
                 span,
                 expr::operation(
                     span,
@@ -533,24 +620,24 @@ fn node(value: &Expr) -> Expr {
                     vec![parts[1].clone(), base.clone()],
                     expr::memory_type(),
                 ),
-            ));
+            )));
         }
         if let Some(parts) = call(memory, "prefix") {
             if let Some(mut slots) = path(&parts[1]) {
                 if let Some(first) = slots.first_mut() {
                     if contracts::constant(first).is_some() {
                         *first = contracts::add(span, first.clone(), base.clone());
-                        return simplify(&expr::prefix(
+                        return Some(simplify(&expr::prefix(
                             span,
                             parts[0].clone(),
                             make_path(span, &slots),
-                        ));
+                        )));
                     }
                 }
             }
         }
         if let Some(parts) = call(memory, "tile_children") {
-            return simplify(&expr::operation(
+            return Some(simplify(&expr::operation(
                 span,
                 "tile_children",
                 vec![
@@ -560,9 +647,15 @@ fn node(value: &Expr) -> Expr {
                     contracts::add(span, parts[3].clone(), base.clone()),
                 ],
                 expr::memory_type(),
-            ));
+            )));
         }
     }
+    None
+}
+
+/// Expand bounded finite builders and normalize tiled child blocks.
+fn finite_collections(value: &Expr) -> Option<Expr> {
+    let span = &value.span;
     if let Some(args) = call(value, "iterate") {
         if let (ExprX::Closure(binders, body), Some(count)) =
             (&args[0].x, contracts::constant(&args[2]))
@@ -578,7 +671,7 @@ fn node(value: &Expr) -> Expr {
                         ]),
                     );
                 }
-                return memory;
+                return Some(memory);
             }
         }
     }
@@ -618,7 +711,7 @@ fn node(value: &Expr) -> Expr {
                         ),
                     );
                 }
-                return simplify(&memory);
+                return Some(simplify(&memory));
             }
         }
     }
@@ -628,12 +721,12 @@ fn node(value: &Expr) -> Expr {
                 if path(&parts[1])
                     .is_some_and(|path| path.len() == 1 && contracts::constant(&path[0]) == Some(0))
                 {
-                    return simplify(&expr::operation(
+                    return Some(simplify(&expr::operation(
                         span,
                         "repeat",
                         vec![parts[0].clone(), args[3].clone(), args[2].clone()],
                         expr::memory_type(),
-                    ));
+                    )));
                 }
             }
         }
@@ -645,7 +738,7 @@ fn node(value: &Expr) -> Expr {
                     contracts::constant(&args[1]),
                 ) {
                     if inner.checked_mul(count) == Some(width) {
-                        return simplify(&expr::operation(
+                        return Some(simplify(&expr::operation(
                             span,
                             "tile_children",
                             vec![
@@ -655,23 +748,29 @@ fn node(value: &Expr) -> Expr {
                                 args[3].clone(),
                             ],
                             expr::memory_type(),
-                        ));
+                        )));
                     }
                 }
             }
         }
         if empty(&args[0]) || contracts::constant(&args[2]) == Some(0) {
-            return expr::empty(span, expr::record_type());
+            return Some(expr::empty(span, expr::record_type()));
         }
         if contracts::constant(&args[2]) == Some(1) {
-            return simplify(&expr::operation(
+            return Some(simplify(&expr::operation(
                 span,
                 "shift_children",
                 vec![args[0].clone(), args[3].clone()],
                 expr::memory_type(),
-            ));
+            )));
         }
     }
+    None
+}
+
+/// Normalize retained child ranges while keeping symbolic runtime filters explicit.
+fn take_children(value: &Expr) -> Option<Expr> {
+    let span = &value.span;
     if let Some(args) = call(value, "take_children") {
         let memory = &args[0];
         let length = &args[1];
@@ -684,7 +783,7 @@ fn node(value: &Expr) -> Expr {
             )
         };
         if empty(memory) {
-            return memory.clone();
+            return Some(memory.clone());
         }
         if let Some(parts) = call(memory, "take_children") {
             let retained = if same_expression(&parts[1], length) {
@@ -692,15 +791,15 @@ fn node(value: &Expr) -> Expr {
             } else {
                 contracts::minimum(span, parts[1].clone(), length.clone())
             };
-            return simplify(&expr::operation(
+            return Some(simplify(&expr::operation(
                 span,
                 "take_children",
                 vec![parts[0].clone(), retained],
                 expr::memory_type(),
-            ));
+            )));
         }
         if call(memory, "nonruntime").is_some() {
-            return expr::empty(span, expr::record_type());
+            return Some(expr::empty(span, expr::record_type()));
         }
         // Prefix retention counts only nonnegative runtime indices. Keep the
         // conditional theorem for symbolic starts in the proof algebra.
@@ -716,19 +815,23 @@ fn node(value: &Expr) -> Expr {
                     contracts::subtract(span, length.clone(), parts[1].clone()),
                 ),
             );
-            return simplify(&expr::operation(
+            return Some(simplify(&expr::operation(
                 span,
                 "repeat",
                 vec![parts[0].clone(), parts[1].clone(), count],
                 expr::memory_type(),
-            ));
+            )));
         }
         if let Some(parts) = call(memory, "add") {
-            return simplify(&expr::add(span, apply(parts[0].clone()), apply(parts[1].clone())));
+            return Some(simplify(&expr::add(
+                span,
+                apply(parts[0].clone()),
+                apply(parts[1].clone()),
+            )));
         }
         if let Some(parts) = call(memory, "push") {
             if call(&parts[1], "allocated").is_some_and(|record| empty(&record[0])) {
-                return simplify(&apply(parts[0].clone()));
+                return Some(simplify(&apply(parts[0].clone())));
             }
         }
         if let Some(parts) = call(memory, "prefix") {
@@ -743,16 +846,22 @@ fn node(value: &Expr) -> Expr {
                         ),
                         crate::ast_util::mk_ineq(span, slot, length, InequalityOp::Lt),
                     ];
-                    return simplify(&super::choice(
+                    return Some(simplify(&super::choice(
                         span,
                         crate::ast_util::conjoin(span, &conditions),
                         memory.clone(),
                         expr::empty(span, expr::record_type()),
-                    ));
+                    )));
                 }
             }
         }
     }
+    None
+}
+
+/// Select or exclude an ownership path using exact prefix and index maps.
+fn select_path(value: &Expr) -> Option<Expr> {
+    let span = &value.span;
     for (operation, cutting) in [("subtree", false), ("without", true)] {
         let Some(args) = call(value, operation) else {
             continue;
@@ -760,13 +869,17 @@ fn node(value: &Expr) -> Expr {
         let memory = &args[0];
         let selected = &args[1];
         if empty(memory) {
-            return memory.clone();
+            return Some(memory.clone());
         }
         let Some(selected_path) = path(selected) else {
             continue;
         };
         if selected_path.is_empty() {
-            return if cutting { expr::empty(span, expr::record_type()) } else { memory.clone() };
+            return Some(if cutting {
+                expr::empty(span, expr::record_type())
+            } else {
+                memory.clone()
+            });
         }
         let apply = |memory| {
             if cutting {
@@ -777,11 +890,11 @@ fn node(value: &Expr) -> Expr {
         };
         if !cutting {
             if let Some(parts) = call(memory, "descendants") {
-                return simplify(&expr::subtree(span, parts[0].clone(), selected.clone()));
+                return Some(simplify(&expr::subtree(span, parts[0].clone(), selected.clone())));
             }
             for (filter, op) in [("runtime", InequalityOp::Le), ("nonruntime", InequalityOp::Gt)] {
                 if let Some(parts) = call(memory, filter) {
-                    return simplify(&super::choice(
+                    return Some(simplify(&super::choice(
                         span,
                         crate::ast_util::mk_ineq(
                             span,
@@ -791,7 +904,7 @@ fn node(value: &Expr) -> Expr {
                         ),
                         expr::subtree(span, parts[0].clone(), selected.clone()),
                         expr::empty(span, expr::record_type()),
-                    ));
+                    )));
                 }
             }
             if let Some(parts) = call(memory, "remove_index") {
@@ -802,11 +915,11 @@ fn node(value: &Expr) -> Expr {
                     selected_path[0].clone(),
                     contracts::add(span, selected_path[0].clone(), expr::integer(span, 1)),
                 );
-                return simplify(&expr::subtree(
+                return Some(simplify(&expr::subtree(
                     span,
                     parts[0].clone(),
                     make_path(span, &original),
-                ));
+                )));
             }
             if let Some(parts) = call(memory, "without") {
                 if let Some(cut) = path(&parts[1]) {
@@ -820,19 +933,23 @@ fn node(value: &Expr) -> Expr {
                         .all(|value| matches!(value.x, ExprX::Const(Constant::Bool(true))))
                     {
                         if cut.len() <= selected_path.len() {
-                            return expr::empty(span, expr::record_type());
+                            return Some(expr::empty(span, expr::record_type()));
                         }
-                        return simplify(&expr::without(
+                        return Some(simplify(&expr::without(
                             span,
                             expr::subtree(span, parts[0].clone(), selected.clone()),
                             make_path(span, &cut[selected_path.len()..]),
-                        ));
+                        )));
                     }
                     if comparisons
                         .iter()
                         .any(|value| matches!(value.x, ExprX::Const(Constant::Bool(false))))
                     {
-                        return simplify(&expr::subtree(span, parts[0].clone(), selected.clone()));
+                        return Some(simplify(&expr::subtree(
+                            span,
+                            parts[0].clone(),
+                            selected.clone(),
+                        )));
                     }
                 }
             }
@@ -842,7 +959,7 @@ fn node(value: &Expr) -> Expr {
                 if contracts::constant(&selected_path[0]).is_some() {
                     let mut relative = selected_path.clone();
                     relative[0] = contracts::subtract(span, relative[0].clone(), parts[1].clone());
-                    return simplify(&super::choice(
+                    return Some(simplify(&super::choice(
                         span,
                         crate::ast_util::mk_ineq(
                             span,
@@ -852,7 +969,7 @@ fn node(value: &Expr) -> Expr {
                         ),
                         expr::subtree(span, parts[0].clone(), make_path(span, &relative)),
                         expr::empty(span, expr::record_type()),
-                    ));
+                    )));
                 }
             }
             // Whole-range transfers have an exact inverse index map. Select
@@ -884,12 +1001,12 @@ fn node(value: &Expr) -> Expr {
                 );
                 let mut relative = selected_path.clone();
                 relative[0] = index;
-                return simplify(&super::choice(
+                return Some(simplify(&super::choice(
                     span,
                     conditions,
                     expr::subtree(span, parts[0].clone(), make_path(span, &relative)),
                     expr::empty(span, expr::record_type()),
-                ));
+                )));
             }
             // Ordered blocks are built with precisely their declared width.
             // Select one block arithmetically rather than expanding its count.
@@ -903,7 +1020,7 @@ fn node(value: &Expr) -> Expr {
                         let iteration = (index - start) / width;
                         let mut relative = selected_path.clone();
                         relative[0] = contracts::literal(span, (index - start) % width);
-                        return simplify(&super::choice(
+                        return Some(simplify(&super::choice(
                             span,
                             crate::ast_util::mk_ineq(
                                 span,
@@ -913,9 +1030,9 @@ fn node(value: &Expr) -> Expr {
                             ),
                             expr::subtree(span, parts[0].clone(), make_path(span, &relative)),
                             expr::empty(span, expr::record_type()),
-                        ));
+                        )));
                     } else if index < start {
-                        return expr::empty(span, expr::record_type());
+                        return Some(expr::empty(span, expr::record_type()));
                     }
                 }
             }
@@ -932,12 +1049,12 @@ fn node(value: &Expr) -> Expr {
                         InequalityOp::Lt,
                     ),
                 ];
-                return simplify(&super::choice(
+                return Some(simplify(&super::choice(
                     span,
                     crate::ast_util::conjoin(span, &conditions),
                     parts[0].clone(),
                     expr::empty(span, expr::record_type()),
-                ));
+                )));
             }
             if let Some(parts) = call(memory, "take_children") {
                 let conditions = vec![
@@ -949,25 +1066,29 @@ fn node(value: &Expr) -> Expr {
                     ),
                     crate::ast_util::mk_ineq(span, index, &parts[1], InequalityOp::Lt),
                 ];
-                return simplify(&super::choice(
+                return Some(simplify(&super::choice(
                     span,
                     crate::ast_util::conjoin(span, &conditions),
                     expr::subtree(span, parts[0].clone(), selected.clone()),
                     expr::empty(span, expr::record_type()),
-                ));
+                )));
             }
         }
         if let Some(parts) = call(memory, "add") {
-            return simplify(&expr::add(span, apply(parts[0].clone()), apply(parts[1].clone())));
+            return Some(simplify(&expr::add(
+                span,
+                apply(parts[0].clone()),
+                apply(parts[1].clone()),
+            )));
         }
         if let Some(parts) = call(memory, "push") {
             if call(&parts[1], "allocated").is_some_and(|record| empty(&record[0])) {
                 let prior = apply(parts[0].clone());
-                return simplify(&if cutting {
+                return Some(simplify(&if cutting {
                     expr::push(span, prior, parts[1].clone())
                 } else {
                     prior
-                });
+                }));
             }
         }
         if let Some(parts) = call(memory, "prefix") {
@@ -1004,13 +1125,18 @@ fn node(value: &Expr) -> Expr {
             };
             let unmatched =
                 if cutting { memory.clone() } else { expr::empty(span, expr::record_type()) };
-            return simplify(&SpannedTyped::new(
+            return Some(simplify(&SpannedTyped::new(
                 span,
                 &value.typ,
                 ExprX::If(condition, matched, Some(unmatched)),
-            ));
+            )));
         }
     }
+    None
+}
+
+/// Fold fully constant scalar operations after the structural rules decline.
+fn fold_constants(value: &Expr) -> Expr {
     let constant = |value: &Expr| matches!(value.x, ExprX::Const(_));
     let fold = match &value.x {
         ExprX::Unary(_, a) => constant(a),
