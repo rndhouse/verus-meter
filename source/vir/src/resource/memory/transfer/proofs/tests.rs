@@ -1,5 +1,6 @@
 //! Proof generation must reuse shared facts without crossing lexical guards.
 
+use super::ranges::{block, retention};
 use super::*;
 
 fn span() -> Span {
