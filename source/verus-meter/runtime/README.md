@@ -47,9 +47,11 @@ supports references to sized values and slices. Rust resolves aliases and type
 identity through hidden size traits; no ABI `size_of` is used. Primitive widths,
 array arithmetic, and reference widths come from `verus_meter_model`, shared with
 the existing verifier layouts. Custom structs and other types have no runtime
-size implementation and produce trait diagnostics. Existing resource checks
-still validate layouts and supported contents. Methods and generic query
-functions remain outside this version. Size queries on computed helper locals
+size implementation and produce trait diagnostics. The hidden size traits are
+sealed so downstream implementations cannot replace verified sizes with custom
+byte counts. Existing resource checks still validate layouts and supported
+contents. Methods and generic query functions remain outside this version.
+Size queries on computed helper locals
 need an explicit source type annotation when their type is not retained from an
 input or helper declaration.
 Model-size type and array-length paths resolve in the original module, including

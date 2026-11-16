@@ -4,6 +4,30 @@ use std::process::Command;
 
 #[test]
 #[ignore = "requires prepared verifier and runtime bundle; see runtime README"]
+fn custom_layout_implementations_cannot_replace_verified_sizes() {
+    let source = r#"
+use vstd::prelude::*;
+verus! {
+    struct Buffer { bytes: [u8; 64] }
+    #[queryable_peak_memory]
+    fn checked() resources peak(memory) <= value_size(Buffer) {
+        let buffer = Buffer { bytes: [0u8; 64] };
+    }
+}
+impl verus_meter_runtime::ValueSize for Buffer {
+    const BYTES: u64 = 0;
+}
+fn main() { assert_eq!(checked::peak_memory_bound().unwrap().to_u64(), Ok(0)); }
+"#;
+    let directory = tempfile::tempdir().unwrap();
+    let (output, _) = compile(source, directory.path());
+    assert!(!output.status.success());
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(diagnostic.contains("sealed::Value"), "{diagnostic}");
+}
+
+#[test]
+#[ignore = "requires prepared verifier and runtime bundle; see runtime README"]
 fn model_size_paths_keep_the_original_module_scope() {
     let source = r#"
 use vstd::prelude::*;
