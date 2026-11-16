@@ -16,7 +16,7 @@ instructions and references repository-relative so the plan survives relocation.
 2. [Runtime expressions and evaluator](complete/02-runtime-evaluator.md) — complete
 3. [Additional expressions and spec helpers](complete/03-expression-support.md) — complete
 4. [Attribute and executable queries](complete/04-attribute-and-queries.md) — complete
-5. [Correctness tests and regressions](05-tests-and-regressions.md)
+5. [Correctness tests and regressions](complete/05-tests-and-regressions.md) — complete
 6. [User example and integration validation](06-example-and-validation.md)
 
 ## Completing tasks
