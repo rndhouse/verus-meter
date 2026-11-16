@@ -2,9 +2,11 @@
 
 `prepare-resource-runtime` is a source-tree development tool. It builds the runtime
 through Cargo and uses Cargo's artifact messages to collect the runtime library
-and its library dependencies. It replaces only the managed `resource-runtime/`
-directory under the selected Verus artifact directory, removing stale dependency
-files. The bundle contains no per-function formulas or generated source files.
+and its library dependencies. Cargo writes to a temporary private build directory
+so other builds cannot replace the libraries while they are being collected.
+It replaces only the managed `resource-runtime/` directory under the selected
+Verus artifact directory, removing stale dependency files. The bundle contains no
+per-function formulas or generated source files.
 
 From `source/`, after building Verus:
 

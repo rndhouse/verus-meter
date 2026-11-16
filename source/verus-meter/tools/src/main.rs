@@ -18,6 +18,9 @@ fn main() -> Result<()> {
     let arguments = Arguments::parse();
     let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    // Cargo releases its artifact lock before we copy the finished libraries.
+    // A private build directory prevents another build from replacing them.
+    let build = tempfile::tempdir().context("creating isolated runtime build directory")?;
     let mut child = Command::new(cargo)
         .current_dir(source)
         .args([
@@ -29,6 +32,10 @@ fn main() -> Result<()> {
             &arguments.profile,
             "--message-format=json-render-diagnostics",
         ])
+        .arg("--target-dir")
+        .arg(build.path())
+        // The workspace also configures a separate intermediate build directory.
+        .env("CARGO_BUILD_BUILD_DIR", build.path())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
@@ -65,7 +72,8 @@ fn main() -> Result<()> {
     let dependencies = staging.path().join("deps");
     std::fs::create_dir(&dependencies)?;
     for library in libraries {
-        std::fs::copy(&library, dependencies.join(library.file_name().context("rlib filename")?))?;
+        std::fs::copy(&library, dependencies.join(library.file_name().context("rlib filename")?))
+            .with_context(|| format!("copying runtime dependency {library}"))?;
     }
     std::fs::copy(runtime, staging.path().join("libverus_meter_runtime.rlib"))?;
     let destination = arguments.destination.join("resource-runtime");
