@@ -16,16 +16,82 @@ fn opaque_sizes_are_source_model_values() {
 }
 
 #[test]
+fn tracked_guards_are_not_runtime_memory_roots() {
+    verifies(
+        "tracked_guard",
+        r#"
+        fn f(tracked guard: std::sync::MutexGuard<'static, u64>)
+            resources peak(memory) <= 0 {}
+    "#,
+    );
+}
+
+#[test]
 fn runtime_mutex_is_not_accepted_without_lifetime_coverage() {
     rejects(
         "mutex_coverage",
         r#"
-        #[verifier::assume(externals_available_without_declaration)]
         fn f() resources peak(memory) <= 1000 {
             let m = std::sync::Mutex::new(1u64);
         }
     "#,
-        "runtime synchronization values before guard cleanup and concurrent lifetime accounting are available",
+        "before concurrent lifetime accounting is available",
+    );
+}
+
+#[test]
+fn native_mutex_surface_keeps_acquisition_outcomes_visible() {
+    verifies(
+        "mutex_native_surface",
+        r#"
+        fn f() {
+            let mutex = std::sync::Mutex::new(1u64);
+            match mutex.try_lock() {
+                Ok(mut guard) => {
+                    let view = &*guard;
+                    let value = *view;
+                    *guard = value;
+                    drop(guard);
+                },
+                Err(std::sync::TryLockError::WouldBlock) => {},
+                Err(std::sync::TryLockError::Poisoned(poison)) => { drop(poison); },
+            };
+        }
+    "#,
+    );
+}
+
+#[test]
+fn native_specifications_do_not_assume_acquisition_succeeds() {
+    rejects(
+        "mutex_no_assumed_success",
+        r#"
+        fn f(mutex: &std::sync::Mutex<u64>) {
+            let result = mutex.try_lock();
+            assert(result matches Ok(_));
+        }
+    "#,
+        "assertion failed",
+    );
+}
+
+#[test]
+fn lifetime_checks_cannot_be_bypassed_for_runtime_synchronization() {
+    let error = crate::verify_one_file(
+        "mutex_no_lifetime",
+        r#"
+        use vstd::prelude::*;
+        verus! {
+            fn f(m: &std::sync::Mutex<u64>) resources peak(memory) <= 1000 {}
+        }
+    "#
+        .into(),
+        &["--no-lifetime"],
+    )
+    .unwrap_err();
+    crate::common::assert_vir_error_msg(
+        error,
+        "runtime synchronization memory analysis requires lifetime checking",
     );
 }
 
@@ -51,7 +117,7 @@ fn containing_a_guard_does_not_bypass_the_cleanup_boundary() {
         struct Wrapper { guard: std::sync::MutexGuard<'static, u64> }
         fn f(w: Wrapper) resources peak(memory) <= 1000 {}
     "#,
-        "runtime synchronization values before guard cleanup and concurrent lifetime accounting are available",
+        "before concurrent lifetime accounting is available",
     );
 }
 

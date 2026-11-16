@@ -20,9 +20,12 @@ pub(crate) fn check(
     krate: &mut KrateX,
     modes: &HashMap<Fun, Arc<ResolutionInfo>>,
     trace: bool,
+    lifetime_checks: bool,
 ) -> Result<Vec<VirErrAs>, VirErr> {
     let (global_allocator, vector, option) = identities(ctxt);
     let synchronization_types = synchronization_types(ctxt);
+    let synchronization =
+        synchronization_evidence(ctxt, krate, modes, synchronization_types, lifetime_checks)?;
     let reports = vir::resource::memory::check_crate(
         &mut krate.functions,
         &krate.datatypes,
@@ -30,7 +33,7 @@ pub(crate) fn check(
         global_allocator,
         vector,
         option,
-        &synchronization_types,
+        &synchronization,
         &|span| {
             let mut span = span.clone();
             span.id = ctxt.spans.get_next_span_id();
@@ -43,6 +46,55 @@ pub(crate) fn check(
     } else {
         Vec::new()
     })
+}
+
+/// Obtain cleanup only for actual runtime synchronization. Ordinary sequential
+/// proofs and type-size queries do not force additional MIR/borrow-check queries.
+/// The lifetime-check MIR also retains tracked proof bookkeeping; only mode-
+/// checked executable source bindings may root native synchronization identities.
+/// Tracked bindings remain available for the checked custom-protocol interface.
+fn synchronization_evidence(
+    ctxt: &Context<'_>,
+    krate: &KrateX,
+    modes: &HashMap<Fun, Arc<ResolutionInfo>>,
+    types: vir::resource::memory::synchronization::LibraryTypes,
+    lifetime_checks: bool,
+) -> Result<vir::resource::memory::synchronization::CompilerEvidence, VirErr> {
+    use vir::resource::memory::synchronization::{CompilerEvidence, needs_cleanup};
+    let mut evidence = CompilerEvidence { types, ..Default::default() };
+    for function in krate.functions.iter().filter(|f| f.x.attrs.resource_contract.is_some()) {
+        let modes = modes.get(&function.x.name).map(Arc::as_ref);
+        if !needs_cleanup(function, modes, &evidence.types, &krate.datatypes) {
+            continue;
+        }
+        if !lifetime_checks {
+            return Err(vir::messages::error(
+                &function.span,
+                "runtime synchronization memory analysis requires lifetime checking; remove --no-lifetime",
+            ));
+        }
+        let owner = ctxt
+            .name_def_id_map
+            .borrow()
+            .get(&function.x.name.path)
+            .and_then(|id| id.as_local())
+            .filter(|id| ctxt.tcx.hir_maybe_body_owned_by(*id).is_some())
+            .ok_or_else(|| {
+                vir::messages::error(
+                    &function.span,
+                    "runtime synchronization requires a local compiler body for guard cleanup",
+                )
+            })?;
+        let mut graph = super::cleanup::lower(
+            ctxt.tcx,
+            owner,
+            &|id| Arc::new(vir::ast::FunX { path: ctxt.def_id_to_vir_path(id) }),
+            &|span| ctxt.spans.to_air_span(span),
+        );
+        vir::resource::memory::synchronization::attach_binding_modes(&mut graph, function, modes);
+        evidence.cleanup.insert(function.x.name.clone(), graph);
+    }
+    Ok(evidence)
 }
 
 /// Identify the standard library types whose memory behavior the model understands.

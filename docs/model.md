@@ -117,10 +117,12 @@ owned allocations remain separate from these inline sizes. Static and runtime
 queries use the same policy, which does not describe OS lock storage or ABI layout.
 
 Primitive identification uses compiler definitions, including through aliases.
-Runtime synchronization values still reject in resource-contracted code: type
-sizes and exclusion contracts alone do not establish guard cleanup or concurrent
-allocation coverage. The [concurrent TODOs](todo/concurrent/README.md) track those
-remaining requirements.
+Compiler-derived synchronization graphs preserve moves, acquisition outcomes and
+actual guard cleanup. Runtime synchronization values still reject in
+resource-contracted code until concurrent allocation coverage and bound checking
+are connected. Native functional specifications assume neither acquisition
+success nor a protected payload invariant. The
+[concurrent TODOs](todo/concurrent/README.md) track the remaining requirements.
 
 ## Concurrent extension specification
 

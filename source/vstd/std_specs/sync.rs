@@ -25,10 +25,38 @@ pub struct ExMutexGuard<'a, T: ?Sized + 'a>(MutexGuard<'a, T>);
 #[verifier::reject_recursive_types(T)]
 pub struct ExPoisonError<T>(PoisonError<T>);
 
-/// Opaque try-lock failure, distinguished by the resource contract on acquisition.
+/// Expose the native variants so executable code can distinguish WouldBlock from
+/// an acquiring poison error. The PoisonError payload itself remains opaque.
 #[verifier::external_type_specification]
-#[verifier::external_body]
 #[verifier::reject_recursive_types(T)]
 pub struct ExTryLockError<T>(TryLockError<T>);
+
+// These deliberately weak functional specifications expose the native surface
+// without assuming success, progress, an unpoisoned state or a payload invariant.
+// Reviewed compiler resource contracts carry exclusion and conditional ownership;
+// ordinary user postconditions cannot create those effects.
+pub assume_specification<T>[ Mutex::<T>::new ](value: T) -> (mutex: Mutex<T>)
+;
+
+pub assume_specification<'a, T: ?Sized>[ Mutex::<T>::lock ](mutex: &'a Mutex<T>) -> (result: Result<
+    MutexGuard<'a, T>,
+    PoisonError<MutexGuard<'a, T>>,
+>)
+;
+
+pub assume_specification<'a, T: ?Sized>[ Mutex::<T>::try_lock ](mutex: &'a Mutex<T>) -> (result:
+    Result<MutexGuard<'a, T>, TryLockError<MutexGuard<'a, T>>>)
+;
+
+pub assume_specification<'a, 'b, T: ?Sized>[ <MutexGuard<'a, T> as core::ops::Deref>::deref ](
+    guard: &'b MutexGuard<'a, T>,
+) -> (value: &'b T)
+;
+
+pub assume_specification<'a, 'b, T: ?Sized>[ <MutexGuard<
+    'a,
+    T,
+> as core::ops::DerefMut>::deref_mut ](guard: &'b mut MutexGuard<'a, T>) -> (value: &'b mut T)
+;
 
 } // verus!

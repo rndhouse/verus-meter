@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use vir_macros::ToDebugSNode;
 
+pub mod flow;
+
 /// Compiler-identified synchronization operations, independent of source names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToDebugSNode)]
 pub enum Operation {
@@ -46,6 +48,17 @@ pub enum LibraryType {
 
 /// Resolved library identities; unrelated types cannot receive opaque layouts.
 pub type LibraryTypes = HashMap<Dt, LibraryType>;
+
+/// Frontend evidence, kept separate from user specifications and checked memory
+/// summaries. A cleanup graph alone never establishes an allocation lifetime or
+/// a concurrent byte bound.
+#[derive(Default)]
+pub struct CompilerEvidence {
+    /// Resolved native types used for source layouts and primitive contracts.
+    pub types: LibraryTypes,
+    /// Drop-elaborated transport for local resource-contracted functions.
+    pub cleanup: HashMap<crate::ast::Fun, flow::Graph>,
+}
 
 /// Possible outcomes of an acquire operation. Poisoned still owns the lock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -341,8 +354,37 @@ pub struct ProtocolDeclaration {
 #[cfg(test)]
 mod tests;
 
-/// Recognizing primitive layouts and exclusion does not establish coverage of
-/// guard cleanup or asynchronous storage. Reject runtime use until those passes
+/// Whether a function needs executable synchronization cleanup evidence.
+/// Proof-only values and type-only size queries do not require a compiler body.
+pub fn needs_cleanup(
+    function: &crate::ast::Function,
+    modes: Option<&crate::resolution_inference::ResolutionInfo>,
+    types: &LibraryTypes,
+    datatypes: &[crate::ast::Datatype],
+) -> bool {
+    let empty = HashMap::new();
+    let modes = modes.map(|m| &m.var_modes).unwrap_or(&empty);
+    reject_unaccounted(function, modes, types, datatypes).is_err()
+}
+
+/// Distinguish executable roots from tracked protocol witnesses and specification
+/// bindings. Lifetime-check MIR preserves proof code: its presence must never
+/// confer a runtime guard, byte charge or native exclusion guarantee.
+pub fn attach_binding_modes(
+    graph: &mut flow::Graph,
+    function: &crate::ast::Function,
+    modes: Option<&crate::resolution_inference::ResolutionInfo>,
+) {
+    for (name, binding) in &mut graph.bindings {
+        binding.mode = modes
+            .and_then(|m| m.var_modes.get(name))
+            .copied()
+            .or_else(|| function.x.params.iter().find(|p| p.x.name == *name).map(|p| p.x.mode));
+    }
+}
+
+/// Recognizing primitive layouts, exclusion and cleanup does not establish
+/// allocation coverage or asynchronous storage. Reject runtime use until those passes
 /// are connected. Type-only size queries remain available without such a proof.
 pub(super) fn reject_unaccounted(
     function: &crate::ast::Function,
@@ -372,7 +414,7 @@ pub(super) fn reject_unaccounted(
                     if self.types.get(name).is_some_and(|kind| *kind != LibraryType::Result) {
                         return Err(super::model::unsupported(
                             span,
-                            "runtime synchronization values before guard cleanup and concurrent lifetime accounting are available",
+                            "runtime synchronization values before concurrent lifetime accounting is available",
                         ));
                     }
                     for arg in args.iter() {
@@ -418,7 +460,7 @@ pub(super) fn reject_unaccounted(
                 return Err(super::model::unsupported(
                     &expr.span,
                     &format!(
-                        "synchronization operation {operation:?} before guard cleanup and concurrent lifetime accounting are available"
+                        "synchronization operation {operation:?} before concurrent lifetime accounting is available"
                     ),
                 ));
             }

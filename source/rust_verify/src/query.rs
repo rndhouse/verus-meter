@@ -596,6 +596,7 @@ impl<'tcx> Query<'tcx> {
             &mut cratex,
             &resource_modes,
             self.args.trace,
+            !self.args.no_lifetime,
         )
         .map_err(|e| self.emit_error(e))?;
         self.emit_diags(memory_diagnostics);

@@ -93,7 +93,7 @@ pub fn check_crate(
     global_allocator: Option<Dt>,
     vector: Option<Dt>,
     option: Option<Dt>,
-    synchronization_types: &synchronization::LibraryTypes,
+    synchronization: &synchronization::CompilerEvidence,
     fresh_span: &dyn Fn(&Span) -> Span,
 ) -> Result<Vec<(Span, MemoryReport)>, VirErr> {
     for function in functions.iter_mut() {
@@ -103,12 +103,21 @@ pub fn check_crate(
     }
     for function in functions.iter().filter(|f| f.x.attrs.resource_contract.is_some()) {
         let empty = HashMap::new();
-        let modes = modes.get(&function.x.name).map(|modes| &modes.var_modes).unwrap_or(&empty);
-        synchronization::reject_unaccounted(function, modes, synchronization_types, datatypes)?;
+        let resolution = modes.get(&function.x.name).map(Arc::as_ref);
+        let modes = resolution.map(|modes| &modes.var_modes).unwrap_or(&empty);
+        if synchronization::needs_cleanup(function, resolution, &synchronization.types, datatypes)
+            && !synchronization.cleanup.contains_key(&function.x.name)
+        {
+            return Err(model::unsupported(
+                &function.span,
+                "runtime synchronization without compiler-derived guard cleanup evidence",
+            ));
+        }
+        synchronization::reject_unaccounted(function, modes, &synchronization.types, datatypes)?;
     }
     let function_map = functions.iter().map(|f| (f.x.name.clone(), f.clone())).collect();
     let layouts = layout::Layouts::new(datatypes, global_allocator, vector, option)
-        .with_synchronization_types(synchronization_types);
+        .with_synchronization_types(&synchronization.types);
     let budgets = budget::resolve(functions, &function_map, &layouts)?;
     let graph = call_graph::CallGraph::new(&function_map, modes)?;
     let mut reports = Vec::new();
