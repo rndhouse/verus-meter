@@ -456,3 +456,73 @@ attachment checks do not establish the semantic correctness of every scheduled
 action or invariant. Runtime-query evaluation and the earlier solver-limit
 sensitivity were not revisited. Unrelated documentation moves remain outside
 this pass.
+
+## Loop proof entry, back edges, and exits
+
+- [x] Inspect `loops/analysis.rs`, `analysis/charges.rs`, `evidence.rs`,
+  `visits.rs`, and `nested.rs`: generated charge/progress/headroom facts remain
+  proof candidates, and nested entries snapshot the current parent visit.
+- [x] Follow `metadata.rs` snapshot freezing and `symbolic.rs` invariant kinds
+  into the ordinary `ast_to_sst.rs` / `sst_to_air.rs` entry, body-end, continue,
+  and break proof obligations. Inspect `control.rs` and `lifetime.rs` restoration
+  of reachable continue edges before no-back-edge classification.
+- [x] Add ten independently calculated passing/one-byte-short pairs and ten
+  additional logical controls in
+  [`loop_proofs.rs`](../../../source/rust_verify_test/tests/resource/memory/loop_proofs.rs).
+- [x] Finish broad validation and commit this bounded pass.
+
+Regular generated resource invariants are checked before the loop and on normal
+back edges and continues. In isolated loops, their exit facts must also be proved
+at breaks before being assumed outside. Partial breaks, returns, and exits to
+enclosing labels select `InvariantExceptBreak` for resource facts, so completed
+visit relationships are not assumed on those exits. Head breaks that close the
+iteration count have a separately checked completed-count postcondition.
+
+The visit ordinal increments after a normally completed body, or before a
+continue; `EvalAndResolve` skips the body-end increment when control has already
+exited. Continue states restore reachability before the no-back-edge decision.
+Loops with no fallthrough or local continue use ordinary verification without
+loop isolation and retain their real entry/exit state. That path does not assume
+header invariants after a break: the control that increments `i` from zero and
+breaks still rejects a subsequent `assert(i == 0)`.
+
+| Cases | Passing / failing bound (bytes) | Independent peak calculation |
+| --- | --- | --- |
+| Late allocation after normal, unconditional-continue, or conditional-continue back edges | 633 / 632 each | Retained root 72 + vector handle 24 + backing 17*8 + counter 1 + 17 payloads of 16 + scratch 128 |
+| Allocation immediately before a partial break or return | 633 / 632 each | Same retained storage; the final payload exists before the counter advances |
+| Nested loop on outer visit 17 | 634 / 633 | Same 633 plus the live inner u8 counter |
+| Unconditional loop with a closing head break | 633 / 632 | Same retained storage and late allocation as the normal back-edge case |
+| Caller retains the completed loop's returned collection | 2552 / 2551 | Caller root 72 + returned vector 24 + backing 136 + payloads 272 + scratch 2048; the 1024-byte helper allowance also fits at the call |
+| Taken / skipped single visit | 249 / 248; 233 / 232 | Boolean input 1 + root 72 + vector handle/backing 32 + scratch 128; taken visit adds one retained 16-byte payload |
+
+The first peak probes require an allocation on visit 17, beyond the finite
+summary window. Six logical controls reject reachable `assert(false)` statements
+at entry, on a later visit, before continue/return, after a partial break, and
+after full completion. Three invalid user-invariant controls fail at entry, body
+end, and continue; a fourth checks the actual single-visit exit state. Multiple
+invariant diagnostics are permitted, but every diagnostic must have the expected
+proof-failure class. No incorrect accepted byte bound or inconsistent generated
+fact was confirmed in these samples. Implementation behavior is unchanged.
+
+Validation against the rebuilt verifier: all 935 memory integration tests and 44
+resource examples passed on their full runs without retries. All seven focused
+tests passed. Memory unit tests passed 48 tests with one existing manual
+measurement ignored. Formatting for `vir` and `rust_verify_test`, Clippy for
+`rust_verify_test --test resource`, whitespace checks, and all 27 tracker links
+passed. Changes are confined to regression tests and this tracker.
+
+Precision follow-up: a partial break after the final push rejects a subsequent
+128-byte scratch allocation under the concrete 633-byte peak, even with user
+invariants bounding the final length. Generated resource facts are not exported
+on that partial exit, leaving insufficient metadata for the post-loop check.
+Putting scratch before the break verifies at 633 and rejects 632. This is a
+rejection of a fitting program, not a demonstrated undercount; improving partial
+exit metadata requires a separate design and proof pass.
+
+Remaining audit: broader labelled exits, nested partial exits, and the semantic
+validity of each metadata lemma and inferred ownership summary. The sampled
+entry/back-edge/exit checks do not close the broad loop-composition or proof
+integration checklist items. Verification selection and bypass behavior are the
+next bounded pass, followed by metadata/summary agreement. Runtime-query
+evaluation and the earlier solver-limit sensitivity were not revisited.
+Unrelated documentation moves remain outside this pass.
