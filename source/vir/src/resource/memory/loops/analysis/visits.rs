@@ -85,6 +85,7 @@ impl Analysis<'_> {
             zero.clone(),
             Mode::Spec,
         );
+        self.growth.register_loop_proof_local(&ordinal);
         self.growth.before.entry(record.span.id).or_default().push(declaration);
         self.growth.after.entry(record.body.span.id).or_default().push(metadata::expr::assign(
             &record.body.span,

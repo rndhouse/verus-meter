@@ -43,6 +43,12 @@ pub(super) struct VectorState {
 
 #[derive(Default)]
 pub(super) struct Growth {
+    /// Erased loop observations and ordinals do not mutate allocation state.
+    /// Argument effect guards must still observe every allocation-state write.
+    loop_proof_locals: std::collections::HashSet<VarIdent>,
+    /// Read-only loop proof actions, retaining their Arc owners so identity
+    /// keys cannot be reused while argument effect guards inspect schedules.
+    loop_proof_statements: HashMap<usize, Stmt>,
     /// Structurally checked loops with no local back edge use Verus's existing
     /// nonisolated, no-back-edge proof form and retain their actual entry facts.
     pub(super) single_visit_loops: std::collections::HashSet<u64>,
@@ -254,9 +260,45 @@ impl Growth {
         .expect("substitute committed allocation values")
     }
 
+    pub(super) fn register_loop_proof_local(&mut self, value: &Expr) {
+        let ExprX::Var(name) = &value.x else { unreachable!("loop proof local") };
+        self.loop_proof_locals.insert(name.clone());
+    }
+
+    /// Schedule a read-only loop proof without classifying it as an allocation
+    /// transition. Allocation-state assignments must use the ordinary schedule.
+    pub(super) fn before_loop_proof(&mut self, span: &Span, statement: Stmt) {
+        self.loop_proof_statements.insert(Arc::as_ptr(&statement) as usize, statement.clone());
+        self.before.entry(span.id).or_default().push(statement);
+    }
+
+    /// Count allocation-affecting actions independently of erased loop bookkeeping.
+    /// Unknown statement forms remain effects so the argument guard fails closed.
     pub(super) fn revision(&self) -> usize {
-        self.before.values().map(Vec::len).sum::<usize>()
-            + self.updates.values().map(Vec::len).sum::<usize>()
+        self.before
+            .values()
+            .chain(self.updates.values())
+            .flatten()
+            .filter(|statement| {
+                if self.loop_proof_statements.contains_key(&(Arc::as_ptr(statement) as usize)) {
+                    return false;
+                }
+                let target = match &statement.x {
+                    StmtX::Decl { pattern, .. } => match &pattern.x {
+                        PatternX::Var(binding) => Some(&binding.name),
+                        _ => None,
+                    },
+                    StmtX::Expr(expr) => match &expr.x {
+                        ExprX::Assign { place, .. } => match &place.x {
+                            PlaceX::Local(name) => Some(name),
+                            _ => None,
+                        },
+                        _ => None,
+                    },
+                };
+                target.is_none_or(|name| !self.loop_proof_locals.contains(name))
+            })
+            .count()
     }
 
     pub(super) fn new_vector(

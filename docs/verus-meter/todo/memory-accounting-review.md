@@ -71,7 +71,7 @@ bugs.
 
 - [x] Restore the tight append-only scalar vector bound after a loop.
 - [x] Preserve checked metadata on partial loop exits for later allocations.
-- [ ] Admit scalar-only argument loops without disabling allocation-effect guards.
+- [x] Admit scalar-only argument loops without disabling allocation-effect guards.
 - [ ] Reproduce and address the recorded delegated-extraction solver-limit
   sensitivity without raising the default limit or weakening failure checks.
 
@@ -596,3 +596,38 @@ examples passed on their full runs without retries. Memory unit tests passed
 `rust_verify_test`, Clippy for `vir --lib --tests` and the resource test target,
 whitespace checks, and tracker references passed. The intermittent solver-limit
 case passed in this run; its robustness fix remains separately queued.
+
+## Argument-loop proof bookkeeping fix
+
+The original inline scalar-loop reproduction failed before call composition,
+despite a generous allowance. The allocation-effect revision counted erased
+loop snapshots, visit ordinals, and read-only metadata proofs as if they changed
+collection allocation state. Retained collections exposed the same issue through
+their metadata activation and shape proofs.
+
+`growth.rs` now distinguishes explicitly registered loop proof locals and
+read-only loop proof actions from allocation-state actions. Proof statements
+keep their existing order and are still verified. Writes to allocation counters
+and unclassified actions continue to invalidate argument composition; the guard
+is not disabled. Local control-flow exits inside arguments retain their prior
+support restriction.
+
+Seven passing/one-byte-short pairs in `argument_ownership.rs` cover normal,
+conditional, and nested loops while an earlier owner is pending, plus returned
+ownership and a retained collection used by a later helper. Pending root/owner/
+workspace peaks are 241/240, or 242/241 with both nested counters live; returned
+ownership overlaps later scratch at 304/303; retained collection storage gives
+265/264. A generous-bound negative control still rejects actual vector growth
+inside an argument. All 11 focused argument-ownership tests pass. Branches may
+report multiple short-bound errors, and every diagnostic must be a budget
+failure; solver-limit and unrelated errors remain test failures.
+
+Validation: rebuilt verifier; 48 memory unit tests passed (one existing manual
+measurement ignored), all 11 focused argument-ownership tests and 44 resource
+examples passed. The full memory run passed 939 tests; the existing ordered-
+append test reported its intended short-bound failure plus a loop-query resource
+limit. That entire test passed unchanged at the default limit on focused retry.
+The concrete remaining reproduction is `direct_block_short` in
+`loop_ownership::ordered_append_blocks_compose_direct_helpers_and_nested_loops`.
+Formatting, Clippy for `vir --lib --tests` and the resource target, whitespace,
+and tracker references passed. The solver failure remains queued separately.

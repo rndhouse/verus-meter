@@ -167,13 +167,17 @@ impl Analysis<'_> {
         if contracts::constant(&amount).is_none() {
             // Ordinary queries treat general multiplication as uninterpreted.
             // Supply pointwise order and successor facts for this envelope.
-            self.growth.before.entry(record.span.id).or_default().push(metadata::expr::lemma(
+            self.growth.before_loop_proof(
                 &record.span,
-                "product_bounds",
-                vec![amount.clone(), contracts::literal(&record.span, 0), visits.clone()],
-            ));
+                metadata::expr::lemma(
+                    &record.span,
+                    "product_bounds",
+                    vec![amount.clone(), contracts::literal(&record.span, 0), visits.clone()],
+                ),
+            );
             if let Some(observation) = &record.progress {
-                self.growth.before.entry(record.body.span.id).or_default().push(
+                self.growth.before_loop_proof(
+                    &record.body.span,
                     metadata::expr::lemma(
                         &record.body.span,
                         "product_bounds",
@@ -233,11 +237,10 @@ impl Analysis<'_> {
                     )),
                 },
             );
-            self.growth
-                .before
-                .entry(record.span.id)
-                .or_default()
-                .push(crate::def::Spanned::new(record.span.clone(), StmtX::Expr(check)));
+            self.growth.before_loop_proof(
+                &record.span,
+                crate::def::Spanned::new(record.span.clone(), StmtX::Expr(check)),
+            );
         }
         self.growth.loops.entry(record.span.id).or_default().extend(facts);
         Ok(())

@@ -1,6 +1,7 @@
 //! Pending owning arguments overlap later evaluation until the callee runs.
 
 use super::support::{rejects, verifies};
+use crate::verify_one_file;
 
 const HELPERS: &str = "
     fn make() -> Box<[u8;64]> resources peak(memory) <= 72 { Box::new([0u8;64]) }
@@ -20,11 +21,18 @@ const HELPERS: &str = "
 fn check_peak(name: &str, code: &str, peak: u64) {
     let code = format!("{HELPERS}\n{code}");
     verifies(name, &code.replace("BOUND", &format!("{peak}")));
-    rejects(
-        &format!("{name}_short"),
-        &code.replace("BOUND", &format!("{short}", short = peak - 1)),
-        "memory budget exceeded",
-    );
+    let code = code.replace("BOUND", &format!("{short}", short = peak - 1));
+    let source = format!("use vstd::prelude::*; verus! {{ {code} }}");
+    let error = verify_one_file(&format!("{name}_short"), source, &[]).unwrap_err();
+    assert!(!error.errors.is_empty());
+    for diagnostic in error.errors {
+        assert!(diagnostic.code.is_none());
+        assert!(
+            diagnostic.message.contains("memory budget exceeded"),
+            "{diagnostic:?}",
+            diagnostic = diagnostic
+        );
+    }
 }
 
 #[test]
@@ -71,24 +79,77 @@ fn pending_owner_overlaps_later_calls_and_control_flow() {
 }
 
 #[test]
-fn inline_argument_loop_is_rejected_before_composition() {
-    // The revision guard also observes scalar loop instrumentation. Keep this
-    // conservative boundary distinct from an accepted pending-ownership proof.
+fn inline_argument_loops_keep_pending_and_returned_owners() {
+    for (name, body, peak) in [
+        ("normal", "workspace(); i += 1;", 241),
+        ("branch", "if i == 0 { workspace(); } else { workspace(); } i += 1;", 241),
+        (
+            "nested",
+            "let mut j = 0u8;
+            while j < 2 invariant j <= 2, decreases 2-j, { workspace(); j += 1; }
+            i += 1;",
+            242,
+        ),
+    ] {
+        for (callee, result, suffix, peak) in
+            [("consume", "", "", peak), ("forward", "let result = ", "drop(result);", 304)]
+        {
+            // Pending owner 72 + caller root 40 + workspace 128 + loop
+            // counters. Forwarding instead overlaps 72 + 40 + later 192.
+            let code = format!(
+                "fn f() resources peak(memory) <= BOUND {{
+                let retained = Box::new([0u8;32]);
+                {result}{callee}(make(), {{
+                    let mut i = 0u8;
+                    while i < 2 invariant i <= 2, decreases 2 - i, {{
+                        {body}
+                    }}
+                }});
+                {{ let after = [0u8;192]; }}
+                {suffix}
+            }}"
+            );
+            check_peak(&format!("pending_owner_inline_{name}_{callee}"), &code, peak);
+        }
+    }
+}
+
+#[test]
+fn collection_state_changes_inside_arguments_still_require_binding() {
     rejects(
-        "pending_owner_inline_loop",
+        "pending_owner_inline_vector_growth",
         &format!(
             "{HELPERS}
             fn f() resources peak(memory) <= 10000 {{
-                let retained = Box::new([0u8;32]);
                 consume(make(), {{
-                    let mut i = 0u8;
-                    while i < 2 invariant i <= 2, decreases 2 - i, {{
-                        workspace(); i += 1;
-                    }}
+                    let mut values = Vec::<u32>::new(); values.push(1);
                 }});
             }}"
         ),
         "vector allocation changes inside call arguments; bind the arguments first",
+    );
+}
+
+#[test]
+fn argument_loops_preserve_retained_collection_storage() {
+    // Retained vector handle/backing/payload 64 + pending owner 72
+    // + workspace 128 + counter 1 = 265; later scratch needs only 256.
+    check_peak(
+        "pending_owner_inline_retained_collection",
+        "fn consume_collection(v: Vec<Box<[u8;32]>>) resources peak(memory) <= 24 { drop(v); }
+        fn f() resources peak(memory) <= BOUND {
+            let mut retained = Vec::<Box<[u8;32]>>::with_capacity(1);
+            let child = Box::new([0u8;32]); retained.push(child);
+            consume(make(), {
+                let mut i = 0u8;
+                while i < 2 invariant i <= 2, decreases 2-i, {
+                    workspace(); i += 1;
+                }
+            });
+            { let after = [0u8;192]; }
+            consume_collection(retained);
+        }",
+        265,
     );
 }
 

@@ -174,6 +174,7 @@ impl Analysis<'_> {
                 return snapshot.clone();
             }
             let snapshot = self.allocation_snapshot(span, value.clone());
+            self.growth.register_loop_proof_local(&snapshot);
             self.growth
                 .loop_observations
                 .entry(span.id)
@@ -194,6 +195,7 @@ impl Analysis<'_> {
         }
         let (snapshot, declaration) =
             expr::local(span, "loop_entry", value.typ.clone(), value.clone(), Mode::Spec);
+        self.growth.register_loop_proof_local(&snapshot);
         let StmtX::Decl { pattern, mode, els, assert_irrefutable, .. } = &declaration.x else {
             unreachable!()
         };
@@ -313,11 +315,10 @@ impl Analysis<'_> {
             &crate::ast_util::unit_typ(),
             ExprX::Fuel(expr::function("group_metadata_loop_algebra"), 1, true),
         );
-        self.growth
-            .before
-            .entry(span.id)
-            .or_default()
-            .push(crate::def::Spanned::new(span.clone(), StmtX::Expr(activation)));
+        self.growth.before_loop_proof(
+            span,
+            crate::def::Spanned::new(span.clone(), StmtX::Expr(activation)),
+        );
     }
 
     pub(super) fn metadata_cost(&self, span: &Span, records: Expr, kind: &MemoryKind) -> Expr {
@@ -383,11 +384,10 @@ impl Analysis<'_> {
             owner.visit(&mut |node| {
                 if let Some(elements) = &node.elements {
                     if elements.precise {
-                        self.growth
-                            .before
-                            .entry(span.id)
-                            .or_default()
-                            .push(runtime_shape_proof(span, elements.records.clone()));
+                        self.growth.before_loop_proof(
+                            span,
+                            runtime_shape_proof(span, elements.records.clone()),
+                        );
                         self.growth
                             .after
                             .entry(body.span.id)
