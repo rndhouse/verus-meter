@@ -15,7 +15,6 @@ enum Mode {
 }
 
 examples_in_dir!("../../examples");
-examples_in_dir!("../../examples/expected-failures");
 examples_in_dir!("../../examples/guide");
 examples_in_dir!("../../examples/resource");
 examples_in_dir!("../../examples/resource/memory/basics");

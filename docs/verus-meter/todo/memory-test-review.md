@@ -79,17 +79,16 @@ Progress: 48 of 48 files reviewed and validated.
 - [x] [mod.rs](../../../source/rust_verify_test/tests/resource/memory/mod.rs)
 - [x] [support.rs](../../../source/rust_verify_test/tests/resource/memory/support.rs)
 
-## Remaining fork memory coverage
+## Additional fork memory coverage
 
-After the integration suite, review these areas. Check each area only after
-reviewing all applicable fork additions within it.
+All five areas below are reviewed and validated.
 
 - [x] Internal unit tests under `source/vir/src/resource/memory/` (42 tests in 10 files).
 - [x] Parser tests under `dependencies/syn/tests/resource/memory/` and their entry point (14 tests).
 - [x] Prettyprinter tests under `dependencies/prettyplease/tests/resource/memory/`
   and their entry point (7 tests, including the four formerly embedded in source).
-- [ ] Executable examples under `examples/resource/memory/`, including expected failures.
-- [ ] Fork additions to `source/rust_verify_test/tests/examples.rs` that register and run memory examples.
+- [x] Executable examples under `examples/resource/memory/`, including expected failures (38 files).
+- [x] Fork additions to `source/rust_verify_test/tests/examples.rs` that register and run memory examples.
 
 ## Open work
 

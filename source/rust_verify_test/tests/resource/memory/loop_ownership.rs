@@ -3,6 +3,25 @@
 use super::support::{rejects, verifies};
 
 #[test]
+fn retained_work_example_rejects_result_allocation_overlap() {
+    let err = crate::verify_one_file(
+        "loop_peak_overlap",
+        include_str!(
+            "../../../../../examples/resource/memory/expected-failures/loop_peak_overlap.rs"
+        )
+        .into(),
+        // Preserve the example's crate-level attribute before any injected imports.
+        &["no-auto-import-verus_builtin"],
+    )
+    .unwrap_err();
+    // The general example runner accepts any verification failure. Require the
+    // memory diagnostic at the result allocation while extracted work is live.
+    crate::common::assert_vir_error_msg(err.clone(), "conditional memory budget exceeded");
+    assert!(err.errors[0].spans.iter().any(|span| span.is_primary
+        && span.text.iter().any(|line| line.text.contains("let next = Box::new"))));
+}
+
+#[test]
 fn local_transfers_prove_combined_footprint_conservation() {
     let code = "fn f() resources peak(memory) <= BOUND {
         let mut source = Vec::<Vec<u32>>::with_capacity(2);
