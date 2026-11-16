@@ -64,6 +64,9 @@ runtime storage.
 - Short-circuit operands follow the same ownership restrictions as explicit
   branches. Moving or dropping an enclosing heap owner in a conditional operand
   is rejected; allocations local to the operand remain supported.
+- An owning `Option` match must bind each present owner to move it. Wildcards
+  over owning values are unsupported because ignoring a value does not drop it;
+  a named binding such as `Some(_value)` establishes an ordinary value lifetime.
 - Heap backing counts even when a collection's logical length is smaller than
   its capacity. Child allocations count separately from their handles.
 - Reallocation and replacement include overlapping old and new storage. Vector

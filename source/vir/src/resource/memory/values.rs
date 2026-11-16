@@ -127,10 +127,13 @@ impl Analysis<'_> {
         match &pattern.x {
             PatternX::Wildcard => {
                 if owning {
-                    self.transitions.pattern(&pattern.span, Transition::Discard);
-                }
-                if let Some(owner) = owner {
-                    self.release_owner(owner, &pattern.span);
+                    // A wildcard does not move a stored scrutinee or payload.
+                    // Temporary scrutinees also survive through the arm body;
+                    // neither lifetime can end here merely because it is ignored.
+                    return Err(unsupported(
+                        &pattern.span,
+                        "wildcard patterns over owning values; bind the value to move or drop it",
+                    ));
                 }
                 Ok(())
             }

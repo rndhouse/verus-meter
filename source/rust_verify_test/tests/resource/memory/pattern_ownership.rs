@@ -2,6 +2,86 @@
 use super::support::{rejects, verifies};
 
 #[test]
+fn wildcard_patterns_cannot_release_ignored_owners() {
+    // Both stored values and match temporaries retain ignored allocations.
+    // A generous allowance cannot supply a missing ownership transition.
+    for (name, code) in [
+        (
+            "stored_wildcard",
+            "fn f() resources peak(memory) <= 80 {
+                let first = Some(Box::new([0u8; 64]));
+                match first { _ => {} }
+                let second = Box::new([0u8; 64]);
+            }",
+        ),
+        (
+            "temporary_payload",
+            "fn f() resources peak(memory) <= 90 {
+                match Some(Box::new([0u8; 64])) {
+                    Some(_) => { let second = Box::new([0u8; 64]); },
+                    None => {},
+                }
+            }",
+        ),
+        (
+            "nested_payload",
+            "fn f() resources peak(memory) <= 10000 {
+                let first = Some(Some(Box::new([0u8; 64])));
+                match first { Some(Some(_)) => {}, Some(None) => {}, None => {} }
+            }",
+        ),
+        (
+            "helper_input",
+            "fn helper(input: Option<Box<[u8; 64]>>) resources peak(memory) <= 10000 {
+                match input { Some(_) => {}, None => {} }
+                let second = Box::new([0u8; 64]);
+            }
+            fn f() resources peak(memory) <= 20000 {
+                let first = Some(Box::new([0u8; 64])); helper(first);
+            }",
+        ),
+        (
+            "stored_field",
+            "struct Item { child: Option<Box<[u8; 64]>>, spare: Box<[u8; 16]> }
+            fn f() resources peak(memory) <= 10000 {
+                let item = Item {
+                    child: Some(Box::new([0u8; 64])), spare: Box::new([0u8; 16]),
+                };
+                match item.child { Some(_) => {}, None => {} }
+            }",
+        ),
+        (
+            "loop_local",
+            "fn f() resources peak(memory) <= 10000 {
+                let mut i = 0u8;
+                while i < 2 invariant i <= 2, decreases 2 - i, {
+                    let first = Some(Box::new([0u8; 64]));
+                    match first { Some(_) => {}, None => {} }
+                    let second = Box::new([0u8; 64]);
+                    i += 1;
+                }
+            }",
+        ),
+    ] {
+        rejects(name, code, "wildcard patterns over owning values");
+    }
+}
+
+#[test]
+fn named_pattern_bindings_release_owners_at_arm_exit() {
+    // A named binding moves the box. The 9-byte temporary Option and 8-byte
+    // payload binding overlap its 64-byte heap allocation: 81 bytes in total.
+    let code = "fn f() resources peak(memory) <= BOUND {
+        match Some(Box::new([0u8; 64])) {
+            Some(_ignored) => {}, None => {},
+        }
+        let second = Box::new([0u8; 64]);
+    }";
+    verifies("named_pattern", &code.replace("BOUND", "81"));
+    rejects("named_pattern_short", &code.replace("BOUND", "80"), "memory budget exceeded");
+}
+
+#[test]
 fn stored_optional_owners_match_from_inputs_locals_and_fields() {
     verifies(
         "stored_option_moves",

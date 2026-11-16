@@ -14,6 +14,33 @@ focused review of critical paths, not an exhaustive audit of the fork.
   bypasses, and agreement between runtime queries and verified contracts.
 - [x] Validate the two fixes and commit the completed work.
 
+## Release and transfer invariants
+
+This pass checks the operations that end charges, rather than marking entire
+modules reviewed. A checked invariant needs source inspection and independently
+calculated passing/failing bounds across its relevant execution contexts.
+
+- [x] Sample named values and fixed children: moves preserve allocation identity;
+  replacement charges old and new storage before retiring the old owner.
+  Inspected `lifetime.rs`, `children.rs`, `heap.rs`, and `construction.rs`.
+- [x] Sample alternatives and exits: a release applies only to its executed path;
+  patterns, scope cleanup, returns, breaks, and continues preserve other owners.
+  Inspected `values.rs`, `control.rs`, `sections.rs`, and branch accounting.
+- [x] Sample runtime collections: extraction, insertion, and indexed replacement move
+  child charges without losing backing storage or sibling allocations.
+  Inspected `extraction.rs`, `elements.rs`, `boxed_slices.rs`, and `provenance.rs`.
+- [x] Sample calls and repeated execution: consumed/returned input regions and retained
+  caller storage remain consistent through helper summaries and loop exits.
+  Inspected `calls.rs`, `ownership.rs`, `transfer/calls.rs`, and `loops/analysis.rs`.
+- [x] Validate the confirmed finding, record remaining limits, and commit this pass.
+- [ ] Complete exhaustive coverage of every release/transfer site; defer until
+  the review strategy is revised.
+
+This pass ended at the user's request. The inventory and 19 independently
+calculated passing/one-byte-short bound pairs covered drops, helper consumption,
+collection extraction, replacement overlap, branches, loops, and section returns.
+They support the sampled checks above, not an exhaustive audit.
+
 ## Findings and fixes
 
 ### P1: skipped short-circuit operands released live storage
@@ -47,8 +74,23 @@ both traits; the original generated-query reproduction is covered by
 Validated by eight runtime unit tests, three doctests, and all 12 compiled query
 tests, including runtime bundle refresh, relocation, and a Cargo client.
 
-Both findings are resolved. No additional confirmed findings in the reviewed
-call/loop composition paths.
+### P1: wildcard patterns released ignored owners
+
+Matching a stored `Option<Box<_>>` with `_` or `Some(_)` does not move its owner.
+A temporary match input also survives through its arm body. Previously,
+[`values.rs`](../../../source/vir/src/resource/memory/values.rs) released ignored
+allocations at pattern entry, accepting an 80-byte allowance while two 64-byte
+payloads remained live. A temporary-input case similarly verified at 90 bytes.
+
+Owning wildcard patterns now fail explicitly; named bindings retain their
+existing move and arm-exit cleanup behavior. Removed the corresponding erroneous
+discard transition from ownership summaries. Regressions in
+[`pattern_ownership.rs`](../../../source/rust_verify_test/tests/resource/memory/pattern_ownership.rs)
+cover stored/temporary inputs, nesting, fields, helpers, loops, and an independent
+81-byte passing/80-byte failing bound for a named binding. Resolved and validated.
+
+All three confirmed findings are resolved. No additional confirmed findings in
+the sampled call/loop composition paths.
 Detailed reproduction and validation evidence belongs in the fix commits.
 Existing unrelated documentation moves are outside this review.
 
@@ -57,7 +99,9 @@ Existing unrelated documentation moves are outside this review.
 Checks passed against the rebuilt verifier and refreshed runtime bundle:
 
 - Memory unit tests: 41 passed; one manual proof-generation measurement ignored.
-- Memory integration tests: 898 passed, including both new regression tests.
+- Latest memory integration run: 899 passed; one existing loop test failed on an
+  additional solver resource-limit diagnostic and passed unchanged on focused
+  retry. Both new pattern regression tests passed, bringing coverage to 900 tests.
 - Resource examples: 44 passed.
 - Runtime: eight unit tests, three doctests, and 12 compiled query tests passed.
 - Formatting for `vir`, `rust_verify_test`, and `verus_meter_runtime` passed.
@@ -65,3 +109,11 @@ Checks passed against the rebuilt verifier and refreshed runtime bundle:
   `verus_meter_runtime --all-targets` passed.
 - Runtime rustdoc with `RUSTDOCFLAGS='-D warnings'`, whitespace checks, and review
   document references passed.
+
+The second pass rebuilt the verifier and reran memory unit tests, integrations,
+resource examples, formatting, and Clippy for `vir` and the resource test target.
+The earlier runtime checks were unaffected by its changes. One supplemental
+one-byte-short delegated-extraction loop probe needed `--rlimit 100` to obtain
+the intended budget failure; its passing bound succeeded at the default limit.
+Solver-limit sensitivity remains a verification robustness concern for a future
+review; no bound violation was accepted in these supplemental pairs.

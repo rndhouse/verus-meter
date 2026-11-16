@@ -92,7 +92,6 @@ impl Trace<'_> {
         let transition = self.checked.patterns.get(&span.id)?.clone();
         self.used.insert((checked::Kind::Pattern, span.id));
         match transition {
-            checked::Pattern::Discard => Some(crate::ast_util::mk_bool(span, true)),
             checked::Pattern::Bind(name) => {
                 locals.push(name.clone());
                 self.state.values.insert(name, value);

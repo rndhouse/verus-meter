@@ -162,7 +162,6 @@ pub(in super::super) enum Operation {
 /// Pattern ownership decisions made while checking the actual match arm.
 #[derive(Clone)]
 pub(in super::super) enum Pattern {
-    Discard,
     Bind(VarIdent),
     Absent,
     Present { payload: Typ, pattern: crate::ast::Pattern },
