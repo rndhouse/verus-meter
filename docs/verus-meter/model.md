@@ -61,6 +61,9 @@ runtime storage.
 - Parameters, local slots, owning handles, and modeled temporaries count while
   live. Moves transfer ownership; copies require additional storage. Scope exit
   and explicit drop release storage; last use alone does not.
+- Short-circuit operands follow the same ownership restrictions as explicit
+  branches. Moving or dropping an enclosing heap owner in a conditional operand
+  is rejected; allocations local to the operand remain supported.
 - Heap backing counts even when a collection's logical length is smaller than
   its capacity. Child allocations count separately from their handles.
 - Reallocation and replacement include overlapping old and new storage. Vector

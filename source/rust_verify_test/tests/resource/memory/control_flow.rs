@@ -3,6 +3,71 @@
 use crate::common::*;
 use crate::verify_one_file;
 
+// Short-circuit operands have the same ownership boundary as explicit branches.
+// A skipped drop or consuming call must not release the enclosing allocation.
+#[test]
+fn short_circuit_operands_cannot_consume_enclosing_owners() {
+    for (name, operator, consume) in [
+        ("and_drop", "&&", "{ drop(first); true }"),
+        ("or_drop", "||", "{ drop(first); true }"),
+        ("and_call", "&&", "consume(first)"),
+        ("or_call", "||", "consume(first)"),
+    ] {
+        let code = format!(
+            r#"
+use vstd::prelude::*;
+verus! {{
+    fn consume(input: Box<[u8; 64]>) -> bool resources peak(memory) <= 8 {{
+        drop(input);
+        true
+    }}
+    fn example(flag: bool) resources peak(memory) <= 80 {{
+        let first = Box::new([0u8; 64]);
+        let ignored = flag {operator} {consume};
+        let second = Box::new([0u8; 64]);
+    }}
+}}
+"#
+        );
+        let err = verify_one_file(name, code, &[]).unwrap_err();
+        assert_vir_error_msg(err, "moving or dropping an enclosing heap owner");
+    }
+}
+
+// Local RHS allocations remain supported and are charged only when executed.
+// Both operators retain the enclosing allocation on the path that skips work.
+test_verify_one_file! {
+    #[test] short_circuit_local_work_preserves_enclosing_storage verus_code! {
+        use vstd::prelude::*;
+        fn conjunction(flag: bool)
+            resources peak(memory) <= 26 + if flag { 72 } else { 0 },
+        {
+            let retained = Box::new([0u8; 16]);
+            let result = flag && { let scratch = Box::new([0u8; 64]); true };
+            assert(result == flag);
+            assert(current(memory) <= 26);
+        }
+
+        fn disjunction(flag: bool)
+            resources peak(memory) <= 26 + if flag { 0 } else { 72 },
+        {
+            let retained = Box::new([0u8; 16]);
+            let result = flag || { let scratch = Box::new([0u8; 64]); false };
+            assert(result == flag);
+            assert(current(memory) <= 26);
+        }
+
+        // The left operand executes unconditionally and may consume its owner.
+        fn left_operand(flag: bool) resources peak(memory) <= 74 {
+            let first = Box::new([0u8; 64]);
+            let result = { drop(first); flag }
+                && { let scratch = Box::new([0u8; 64]); true };
+            assert(result == flag);
+            assert(current(memory) <= 2);
+        }
+    } => Ok(())
+}
+
 // A return transfers its result while releasing the other local allocations.
 test_verify_one_file! {
     #[test] explicit_return_preserves_owning_result verus_code! {

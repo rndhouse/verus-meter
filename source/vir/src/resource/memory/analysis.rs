@@ -403,10 +403,17 @@ impl Analysis<'_> {
                 let right = self.expr(rhs)?;
                 operands = left.checked_add(right).expect("bounded by live total");
             }
-            ExprX::Logical(LogicalOp::And | LogicalOp::Or, lhs, rhs) => {
-                // Charge the RHS possibility even if the LHS is a constant.
-                self.discard(lhs)?;
-                operands = self.expr(rhs)?;
+            ExprX::Logical(op @ (LogicalOp::And | LogicalOp::Or), lhs, rhs) => {
+                // A skipped operand retains its live storage. Use the same
+                // ownership protection and path joins as an explicit branch;
+                // charging the RHS peak alone cannot justify its release effects.
+                if *op == LogicalOp::And {
+                    self.conditional(expr, lhs, rhs, None, false)?;
+                } else {
+                    let yes = crate::ast_util::mk_bool(&expr.span, true);
+                    self.conditional(expr, lhs, &yes, Some(rhs), false)?;
+                }
+                return Ok(0);
             }
             ExprX::Binary(..) if super::model::negative_literal(expr).is_some() => {}
             ExprX::Binary(op, lhs, rhs) if arithmetic(op) => {

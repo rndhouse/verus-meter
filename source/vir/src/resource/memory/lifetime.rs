@@ -368,8 +368,10 @@ impl Analysis<'_> {
         if self.layouts.owner(&expr.typ) {
             return Err(unsupported(&expr.span, "conditional heap ownership results"));
         }
-        let protection = self.heap.protect_branch(self.growth.loop_depth > 0);
+        // The condition always runs before either alternative. Its completed
+        // transfers belong to both paths; only conditional work needs protection.
         self.discard(cond)?;
+        let protection = self.heap.protect_branch(self.growth.loop_depth > 0);
         let entry = self.branch_state();
         let mut result = if new_value {
             Some(self.produce(yes)?)
