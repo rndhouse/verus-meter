@@ -1,4 +1,5 @@
 use crate::common::*;
+use crate::verify_one_file;
 
 test_verify_one_file! {
     #[test] owned_vector_capacity_is_inferred verus_code! {

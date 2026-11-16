@@ -1,4 +1,5 @@
 use crate::common::*;
+use crate::verify_one_file;
 
 test_verify_one_file! {
     #[test] read_only_vector_parameter verus_code! {

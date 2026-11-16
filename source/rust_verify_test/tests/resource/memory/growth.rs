@@ -1,5 +1,6 @@
 use super::support::{rejects, verifies};
 use crate::common::*;
+use crate::verify_one_file;
 
 #[test]
 fn growth_policy_covers_element_sizes() {

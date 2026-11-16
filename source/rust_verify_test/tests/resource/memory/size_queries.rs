@@ -1,4 +1,5 @@
 use crate::common::*;
+use crate::verify_one_file;
 
 test_verify_one_file! {
     #[test] queries_preserve_existing_inline_sizes verus_code! {
