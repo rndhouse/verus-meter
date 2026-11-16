@@ -26,16 +26,20 @@ bounds. See [contract examples](../../examples/resource/memory/README.md#contrac
 ## Runtime queries (prototype)
 
 `#[queryable_peak_memory]` exposes a nongeneric free function's allowance through
-`function_name::peak_memory_bound(input)`. The prototype supports one unsigned
-scalar parameter, constants, addition, and multiplication, and returns model bytes
+`function_name::peak_memory_bound(arguments)`. Queries support unsigned scalar and
+Boolean parameters, constants, addition, multiplication, comparisons, Boolean
+operators, conditionals, supported model-size types, and local spec helpers in the
+same `verus!` item scope. Argument-specific `peak(helper(arguments))` queries use
+the callee's declared allowance. Runtime queries return model bytes
 as `Result<ModelBytes, QueryError>` using exact arbitrary-precision arithmetic.
 Use `fits_within(budget)` to compare with a `u64` budget or `to_u64()` for an
 explicit conversion that fails if the allowance is too large. Negative results
 are errors; results above `u64` remain representable. Existing verification of
 the target function still enforces its resource arithmetic constraints.
 The runtime interprets retained expression data; the query implementation is
-tested Rust tooling, not formally
-verified. The caller must still establish the function's execution preconditions.
+tested Rust tooling, not formally verified. The caller must still establish the
+function's execution preconditions. Unsupported queried bodies fail compilation;
+unannotated resource contracts retain their existing supported scope.
 See the [example and run instructions](../../source/verus-meter/runtime/README.md).
 
 ## What the guarantee covers

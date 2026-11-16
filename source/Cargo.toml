@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "verus-meter/runtime",
+  "verus-meter/model",
   "air",
   "builtin",
   "builtin_macros",
@@ -29,6 +30,7 @@ exclude = [
 tag = "workspace"
 
 [workspace.dependencies]
+verus_meter_model = { path = "verus-meter/model" }
 anyhow = "1.0.103"
 bincode-next = { version = "3.1", features = ["serde"] }
 cargo_metadata = "0.23.1"

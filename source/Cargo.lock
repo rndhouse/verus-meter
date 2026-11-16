@@ -3265,12 +3265,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "verus_meter_model"
+version = "0.1.0"
+
+[[package]]
 name = "verus_meter_runtime"
 version = "0.1.0"
 dependencies = [
  "num-bigint 0.5.1",
  "num-traits",
  "tempfile",
+ "verus_meter_model",
 ]
 
 [[package]]
@@ -3324,6 +3329,7 @@ dependencies = [
  "serde",
  "sha2",
  "sise",
+ "verus_meter_model",
  "vir-macros",
 ]
 

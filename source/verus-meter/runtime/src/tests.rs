@@ -119,3 +119,13 @@ fn reports_argument_errors_and_negative_results() {
     const EXPRESSION: E = E::conditional(&B::parameter(0), &E::constant(1), &E::constant(0));
     assert_eq!(evaluate(&EXPRESSION, &[0u8.into()]), Err(QueryError::InputType { index: 0 }));
 }
+
+#[test]
+fn model_sizes_use_source_storage_instead_of_abi_padding() {
+    assert_eq!(<Option<u64> as ValueSize>::BYTES, 9);
+    assert_eq!(<Vec<u32> as ValueSize>::BYTES, 24);
+    assert_eq!(<Box<[u32]> as ValueSize>::BYTES, 16);
+    assert_eq!(<[u32; 3] as ValueSize>::BYTES, 12);
+    assert_eq!(<&[u32] as ReferenceSize>::BYTES, 16);
+    assert_eq!(<&mut [u32; 3] as ReferenceSize>::BYTES, 8);
+}

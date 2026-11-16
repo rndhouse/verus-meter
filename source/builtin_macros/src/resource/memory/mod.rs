@@ -1,5 +1,7 @@
 //! Lower memory contracts while preserving executable code and ghost erasure.
 
+pub(super) mod runtime;
+
 use crate::syntax::{Visitor, take_expr};
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote, quote_spanned};

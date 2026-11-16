@@ -7,6 +7,7 @@ edition = "2024"
 
 # Note: do not add any dependencies on rustc -- VIR deliberately abstracts away from rustc's internals
 [dependencies]
+verus_meter_model = { workspace = true }
 air = { workspace = true }
 im = { workspace = true }
 indexmap = { workspace = true }

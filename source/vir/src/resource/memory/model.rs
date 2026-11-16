@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use vir_macros::ToDebugSNode;
 
 pub(super) const MODEL_NAME: &str = "source-values-v38-64";
-pub(super) const WORD_BYTES: u64 = 8;
+pub(super) use verus_meter_model::WORD_BYTES;
 
 /// Current source-storage contract. This unreleased format has no legacy variants.
 #[derive(Clone, Debug, Serialize, Deserialize, ToDebugSNode)]
@@ -33,7 +33,7 @@ pub(super) fn diverging(typ: &Typ) -> bool {
 pub(super) fn integer_size(range: &IntRange) -> Option<u64> {
     match range {
         IntRange::U(bits @ (8 | 16 | 32 | 64 | 128))
-        | IntRange::I(bits @ (8 | 16 | 32 | 64 | 128)) => Some(u64::from(*bits) / 8),
+        | IntRange::I(bits @ (8 | 16 | 32 | 64 | 128)) => verus_meter_model::integer_bytes(*bits),
         IntRange::USize | IntRange::ISize => Some(WORD_BYTES),
         _ => None,
     }

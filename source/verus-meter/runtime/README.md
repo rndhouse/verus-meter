@@ -1,15 +1,41 @@
 # Runtime memory-query prototype
 
-The macro retains constants, one unsigned parameter (`u8`, `u16`, `u32`, `u64`, or
-`usize`), addition, multiplication, and parentheses as expression data. A generated
+The macro retains constants, unsigned parameters (`u8`, `u16`, `u32`, `u64`, or
+`usize`), Boolean parameters, addition, multiplication, comparisons, Boolean
+operators, and conditionals as expression data. A generated
 module shares the function's name and visibility. Its `peak_memory_bound` function
 accepts the original parameter type and returns `Result<ModelBytes, QueryError>`.
 Evaluation uses the workspace's arbitrary-precision integer library. `ModelBytes`
 supports `fits_within(budget: u64)`, decimal display, ordering against another
 allowance, and explicit `to_u64()` conversion returning `NativeRangeError` when
-the result is too large. Third-party numeric types stay private. Model-size
-queries, spec helpers, methods, and generic functions are not supported yet.
-Attribute expansion must occur inside `verus!`.
+the result is too large. Third-party numeric types stay private. Attribute
+expansion must occur inside `verus!`.
+
+Local nongeneric spec helpers in the same `verus!` item scope can supply the
+formula. Supported bodies contain immutable scalar lets, nested supported helper
+calls, and a final scalar expression. Local shadowing and nonnegative casts to
+mathematical `nat`/`int` preserve their values. All reachable bodies and branches
+are inspected, including unused initializers. Recursion, higher-order application,
+native casts, other arithmetic operations, executable or external helper bodies,
+and helpers outside that item scope are rejected. Source parameters retain their
+order and Rust types, including unused parameters.
+
+`peak(helper(arguments))` expands the local checked function's declared allowance
+with the same argument substitution. Cycles and missing contracts are errors.
+Argument-free `peak(helper)` remains unsupported by runtime queries; its existing
+verification semantics are unchanged.
+
+`value_size` supports native integer and Boolean types, unit, fixed integer
+arrays, and the standard `Vec`, `Box`, and supported `Option` handles. `ref_size`
+supports references to sized values and slices. Rust resolves aliases and type
+identity through hidden size traits; no ABI `size_of` is used. Primitive widths,
+array arithmetic, and reference widths come from `verus_meter_model`, shared with
+the existing verifier layouts. Custom structs and other types have no runtime
+size implementation and produce trait diagnostics. Existing resource checks
+still validate layouts and supported contents. Methods and generic query
+functions remain outside this version. Size queries on computed helper locals
+need an explicit source type annotation when their type is not retained from an
+input or helper declaration.
 
 The original function receives normal Verus resource verification. The generated
 query module is external Rust tooling: its evaluator and connection to the source
@@ -20,10 +46,9 @@ compiler passes. Keep typed resolution for additional expressions in the focused
 resource modules when extending this path.
 
 The runtime has separate integer and Boolean expression types, indexed scalar
-inputs, comparisons, lazy logical operators, and conditional integer expressions
-for the next extraction milestone. These constructors are hidden implementation
-interfaces for generated code, with private nodes; they do not expand the source
-syntax accepted by the current macro. Negative final byte values and missing or
+inputs, comparisons, lazy logical operators, and conditional integer expressions.
+Their constructors are hidden implementation interfaces for generated code, with
+private nodes. Negative final byte values and missing or
 incorrectly typed arguments produce `QueryError`. An allowance greater than `u64`
 remains a valid result; a small evaluated allowance does not certify execution
 preconditions. Source resource verification retains its existing `u64` obligations.

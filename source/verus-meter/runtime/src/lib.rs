@@ -4,6 +4,10 @@
 //! execution preconditions; evaluating a query does not reserve physical memory.
 
 mod expression;
+mod layout;
+
+#[doc(hidden)]
+pub use layout::{ReferenceSize, ValueSize};
 
 #[doc(hidden)]
 pub use expression::{BooleanExpression, Comparison, Expression, Input, evaluate};

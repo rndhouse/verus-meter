@@ -101,7 +101,10 @@ fn compiled_query_tracks_contract_and_types() {
             "queryable_peak_memory requires resources",
         ),
         (source.replace("peak_memory_bound(count)", "peak_memory_bound(true)"), "mismatched types"),
-        (source.replace("1024 + count", "value_size(u16)"), "currently supports constants"),
+        (
+            source.replace("1024 + count", "peak(allocate)"),
+            "runtime peak(helper) queries are unsupported",
+        ),
     ] {
         let (output, _) = compile(&source, directory.path());
         assert!(!output.status.success());
@@ -111,4 +114,92 @@ fn compiled_query_tracks_contract_and_types() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+#[test]
+#[ignore = "requires built runtime and prepared verifier; see runtime README"]
+fn compiled_expressions_helpers_and_model_sizes() {
+    let source = r#"
+use vstd::prelude::*;
+verus_builtin_macros::verus! {
+    type Words = [u16; 3];
+    type SliceRef<'a> = &'a [u32];
+    spec fn element_bytes(count: nat) -> nat {
+        let stride = value_size(u32);
+        stride * count
+    }
+    spec fn budget(n: u16, m: u8, large: bool) -> nat {
+        let count = n as nat;
+        let count = count + 1;
+        let extra = if large && n > 0 { element_bytes(count) } else { m as nat };
+        1024 + extra + ref_size(SliceRef) + value_size(Vec<u32>)
+            + value_size(Words) + value_size(n)
+    }
+    #[queryable_peak_memory]
+    fn queried(n: u16, m: u8, large: bool)
+        resources peak(memory) <= budget(n, m, large),
+    {}
+    #[queryable_peak_memory]
+    fn direct(n: u16, m: u8, large: bool)
+        resources peak(memory) <= 1072 + if large && n > 0 { 4 * (n + 1) } else { m },
+    {}
+    #[queryable_peak_memory]
+    fn delegated(n: u16, m: u8, large: bool)
+        resources peak(memory) <= 1024 + peak(queried(n, m, large)),
+    { queried(n, m, large); }
+    #[queryable_peak_memory]
+    fn controls(a: bool, b: bool, n: u16, m: u8)
+        resources peak(memory) <= 128 + if (a == b) || (n <= 2 && !a) { m } else { n },
+    {}
+}
+fn main() {
+    assert_eq!(queried::peak_memory_bound(3, 5, true).unwrap().to_u64().unwrap(), 1088);
+    assert_eq!(queried::peak_memory_bound(3, 5, false).unwrap().to_u64().unwrap(), 1077);
+    assert_eq!(queried::peak_memory_bound(0, 9, true).unwrap().to_u64().unwrap(), 1081);
+    assert_eq!(queried::peak_memory_bound(3, 5, true), direct::peak_memory_bound(3, 5, true));
+    assert_eq!(queried::peak_memory_bound(0, 9, false), direct::peak_memory_bound(0, 9, false));
+    assert_eq!(delegated::peak_memory_bound(3, 5, true).unwrap().to_u64().unwrap(), 2112);
+    assert_eq!(controls::peak_memory_bound(true, false, 3, 5).unwrap().to_u64().unwrap(), 131);
+    assert_eq!(controls::peak_memory_bound(false, false, 3, 5).unwrap().to_u64().unwrap(), 133);
+    assert_eq!(controls::peak_memory_bound(false, true, 2, 5).unwrap().to_u64().unwrap(), 133);
+}
+"#;
+    let directory = tempfile::tempdir().unwrap();
+    let (output, executable) = compile(source, directory.path());
+    succeeds(&output);
+    succeeds(&Command::new(executable).output().unwrap());
+    let changed = source.replace("stride * count", "stride * count + 10")
+        .replace("1088", "1098")
+        .replace("2112", "2122")
+        .replace("assert_eq!(queried::peak_memory_bound(3, 5, true), direct::peak_memory_bound(3, 5, true));", "");
+    let (output, executable) = compile(&changed, directory.path());
+    succeeds(&output);
+    succeeds(&Command::new(executable).output().unwrap());
+
+    for (replacement, message) in [
+        ("let unused = 1 / 1; stride * count", "unsupported arithmetic operation"),
+        ("element_bytes(count)", "recursive spec helpers"),
+        ("(stride * count) as u64 as nat", "native casts are unsupported"),
+        ("other_module::bytes(count)", "same verus item scope"),
+        ("(|n: nat| n)(count)", "higher-order spec applications"),
+    ] {
+        let (output, _) = compile(&source.replace("stride * count", replacement), directory.path());
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(message),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let unchecked =
+        source.replace("spec fn element_bytes", "#[verifier::external_body] spec fn element_bytes");
+    let (output, _) = compile(&unchecked, directory.path());
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("checked body"));
+
+    let custom_struct =
+        source.replace("type Words = [u16; 3];", "struct Words { small: u8, large: u32 }");
+    let (output, _) = compile(&custom_struct, directory.path());
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("ValueSize"));
 }

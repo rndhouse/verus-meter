@@ -340,12 +340,12 @@ impl Layouts {
                     AllocationLayout::Sequence { .. } => Ok(2 * WORD_BYTES),
                 }
             }
-            TypX::Bool => Ok(1),
+            TypX::Bool => Ok(verus_meter_model::BOOL_BYTES),
             TypX::Int(range) if integer_size(range).is_some() => Ok(integer_size(range).unwrap()),
             TypX::MutRef(inner) | TypX::Decorate(TypDecoration::Ref, None, inner) => {
                 if slice(inner) {
                     self.slice_element(inner, span)?;
-                    Ok(2 * WORD_BYTES)
+                    Ok(verus_meter_model::reference_bytes(true))
                 } else if matches!(
                     &**inner,
                     TypX::MutRef(_) | TypX::Decorate(TypDecoration::Ref, ..)
@@ -353,7 +353,7 @@ impl Layouts {
                     Err(unsupported(span, "nested references"))
                 } else {
                     self.size_inner(inner, span, visiting)?;
-                    Ok(WORD_BYTES)
+                    Ok(verus_meter_model::reference_bytes(false))
                 }
             }
             TypX::Datatype(Dt::Tuple(0), _, _) => Ok(0),
@@ -390,7 +390,9 @@ impl Layouts {
                 n.to_string()
                     .parse::<u64>()
                     .ok()
-                    .and_then(|n| n.checked_mul(integer_type_size(&args[0]).unwrap()))
+                    .and_then(|n| {
+                        verus_meter_model::array_bytes(integer_type_size(&args[0]).unwrap(), n)
+                    })
                     .ok_or_else(|| unsupported(span, "array sizes exceeding u64"))
             }
             _ => Err(unsupported(
