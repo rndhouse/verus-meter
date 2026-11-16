@@ -283,7 +283,7 @@ impl Analysis<'_> {
             // preconditions and loop invariants can establish available room.
             let len = length(&expr.span, types.clone(), vector);
             let element_length = len.clone();
-            if self.layouts.owning_elements(&typ) && state.append_only {
+            if state.append_only {
                 self.growth.vectors[state_id].sequence_length = Some(len.clone());
             }
             let revision = self.growth.revision();

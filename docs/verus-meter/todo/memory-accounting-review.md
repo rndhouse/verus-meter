@@ -62,6 +62,19 @@ and a bounded scope per pass; inspect its source, calculate independent passing
 and failing bounds across relevant contexts, and record fixes, validation, and
 remaining questions before marking that scoped work complete.
 
+## Open-findings fix queue
+
+Fix and validate each recorded open issue in its own commit. The earlier three
+source/runtime findings and the proof-state attachment gap are already fixed.
+The broad core checklist above remains review coverage, not a list of confirmed
+bugs.
+
+- [x] Restore the tight append-only scalar vector bound after a loop.
+- [ ] Preserve checked metadata on partial loop exits for later allocations.
+- [ ] Admit scalar-only argument loops without disabling allocation-effect guards.
+- [ ] Reproduce and address the recorded delegated-extraction solver-limit
+  sensitivity without raising the default limit or weakening failure checks.
+
 ## Completed bounded passes
 
 - [x] Heap ownership and peak accounting: moves, drops, nested allocations,
@@ -526,3 +539,35 @@ integration checklist items. Verification selection and bypass behavior are the
 next bounded pass, followed by metadata/summary agreement. Runtime-query
 evaluation and the earlier solver-limit sensitivity were not revisited.
 Unrelated documentation moves remain outside this pass.
+
+## Append-only loop buffer fix
+
+The empty and initially one-element scalar-vector probes reproduced rejection of
+`current(memory) <= 41` after two pushes in a loop. The concrete final storage is
+a 24-byte handle, a 16-byte buffer, and a one-byte counter; adding a 128-byte
+scratch array gives a 169-byte peak.
+
+`vectors.rs` now records append-only length observations for scalar elements as
+well as owning elements. The checked backing invariant in `growth.rs` uses the
+largest possible pre-append length, `current_length - 1`, for the most recent
+replacement, rather than allowing another replacement at the current length.
+Initial backing and helper-retention floors remain charged. Pop/remove still
+invalidate the append-only observation, so emptying a grown vector cannot
+restore its original smaller allocation in the accounting.
+
+Both probes now pass at 169 and reject 168. A separate removal regression keeps
+the grown buffer after two pops and rejects an allowance that counts only its
+original four-byte backing. All 19 focused growth tests pass. These changes
+resolve the scalar-vector precision case recorded above; they do not promise
+exact capacity inference for every supported loop.
+
+Validation: rebuilt verifier; 48 memory unit tests passed (one existing manual
+measurement ignored), all 19 focused growth tests and 44 resource examples
+passed. The full memory run passed 936 tests and failed one existing fixed-role
+extraction negative case on a solver resource-limit diagnostic; that complete
+test passed unchanged at the default limit on focused retry. Its concrete input
+is now retained as `fixed_role_extraction_short` in
+`loop_ownership::disjoint_fixed_roles_transfer_nested_children_with_a_symbolic_count`.
+This evidence keeps the solver-robustness queue item open. Formatting, Clippy for
+`vir --lib --tests` and the resource test target, whitespace checks, and tracker
+references passed. No limit was raised and no failure assertion was relaxed.

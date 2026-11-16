@@ -355,7 +355,14 @@ impl Growth {
                     contracts::multiply(
                         span,
                         contracts::literal(span, state.element),
-                        grown_capacity(span, length.clone(), state.element),
+                        // The newest replacement was made before an append,
+                        // at a length at most current_length - 1. This holds
+                        // for scalar elements too; removal invalidates it.
+                        grown_capacity(
+                            span,
+                            contracts::subtract(span, length.clone(), contracts::literal(span, 1)),
+                            state.element,
+                        ),
                     ),
                 );
                 contracts::maximum(

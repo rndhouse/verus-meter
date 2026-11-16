@@ -3,6 +3,54 @@ use crate::common::*;
 use crate::verify_one_file;
 
 #[test]
+fn append_only_scalar_loops_retain_the_last_replacement() {
+    for (name, constructor, first, length) in
+        [("empty", "new()", "", 0), ("nonempty", "with_capacity(1)", "values.push(1);", 1)]
+    {
+        let code = format!(
+            "fn f() resources peak(memory) <= BOUND {{
+                let mut values = Vec::<u32>::{constructor}; {first}
+                let mut i = 0u8;
+                while i < 2
+                    invariant i <= 2, values.len() == {length} + i as int,
+                    decreases 2-i,
+                {{ values.push(2); i += 1; }}
+                assert(current(memory) <= 41);
+                let scratch = [0u8;128];
+            }}"
+        );
+        // Handle 24 + grown backing 16 + counter 1 + scratch 128.
+        verifies(&format!("scalar_loop_backing_{name}"), &code.replace("BOUND", "169"));
+        rejects(
+            &format!("scalar_loop_backing_{name}_short"),
+            &code.replace("BOUND", "168"),
+            "memory budget exceeded",
+        );
+    }
+}
+
+#[test]
+fn removal_keeps_backing_when_the_new_length_fits_the_initial_capacity() {
+    let code = "fn f() resources peak(memory) <= 1024 {
+        let mut values = Vec::<u32>::with_capacity(1);
+        values.push(1); values.push(2); values.pop(); values.pop();
+        let mut i = 0u8;
+        while i < 1 invariant i <= 1, values.len() == i as int, decreases 1-i, {
+            values.push(3); i += 1;
+        }
+        CHECK
+    }";
+    verifies("removed_scalar_loop_backing", &code.replace("CHECK", ""));
+    // The emptying pops retained the 16-byte grown buffer. A one-element
+    // final length cannot restore its original four-byte allocation.
+    rejects(
+        "removed_scalar_loop_backing_short",
+        &code.replace("CHECK", "assert(current(memory) <= 29);"),
+        "memory budget exceeded",
+    );
+}
+
+#[test]
 fn growth_policy_covers_element_sizes() {
     verifies(
         "byte_growth",
