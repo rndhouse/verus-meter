@@ -8,7 +8,61 @@ Review the [memory model](../model.md): an accepted contract must bound all
 simultaneous storage charged by that model. Focus on fork-specific memory
 accounting; the completed checks do not establish exhaustive correctness.
 
-## Progress
+## Core guarantee checklist
+
+For every permitted execution, modeled live storage must be no greater than
+accounted storage, which must be no greater than the declared bound. Verus checks
+the generated mathematical obligations; the fork must connect those obligations
+to executable behavior under the [documented model](../model.md) and ordinary
+Verus trust assumptions. The guarantee concerns model bytes, not physical RAM.
+
+These broader audits remain open. Completed bounded passes below supply evidence
+for particular cases; their checked boxes do not close these whole areas.
+
+- [ ] Source interpretation and supported-operation boundaries: preserve moves,
+  copies, ignored values, evaluation order, and executable/proof boundaries during
+  lowering and erasure. Identify intrinsics by compiler identity, apply the
+  documented layout policy, and reject unsupported operations instead of assigning
+  zero cost. Start with [frontend intrinsics](../../../source/rust_verify/src/resource/memory/intrinsics.rs),
+  `layout.rs`, and `execution.rs`.
+- [ ] Ownership, lifetimes, and simultaneous storage: retain charges until their
+  modeled lifetimes end; preserve allocation identity across moves and partial
+  moves; include replacement overlap; and apply branch and exit cleanup only to
+  the executed path. Start with [accounting](../../../source/vir/src/resource/memory/accounting.rs),
+  `lifetime.rs`, `heap.rs`, and `control.rs`.
+- [ ] Call and loop composition: overlap callee allowances, including declared
+  slack, with retained caller allocations; preserve consumed and returned owners;
+  and prove loop entry, every back edge, accumulation, and exit behavior. Start
+  with [calls](../../../source/vir/src/resource/memory/calls.rs), `ownership.rs`,
+  and [loop analysis](../../../source/vir/src/resource/memory/loops/analysis.rs).
+- [ ] Ownership metadata agrees with execution: descriptors and simplification
+  preserve allocations, charged bytes, capacities, logical child counts, and
+  original input regions. Verify the mathematical helper lemmas and establish
+  their preconditions at every generated use. Start with
+  [transfer machinery](../../../source/vir/src/resource/memory/transfer/mod.rs),
+  `metadata/`, and the [ownership-forest library](../../../source/vstd/std_specs/resource/memory/mod.rs).
+- [ ] Proof generation and verification integration: emit every required
+  inequality as an assertion at the correct execution point, preserve it through
+  annotation erasure, and prove generated loop invariants. Check branch guards,
+  snapshot/update ordering, arithmetic ranges, and verification selection/bypass
+  behavior so unchecked obligations cannot establish a memory guarantee. Start
+  with [instrumentation](../../../source/vir/src/resource/memory/symbolic.rs),
+  `contracts.rs`, and [pipeline integration](../../../source/rust_verify/src/resource/memory/pipeline.rs).
+- [ ] Runtime-query agreement: generated queries evaluate the verified allowance
+  with the same arguments, size policy, arithmetic, and helper specialization;
+  preserve errors and artifact/model agreement. Runtime decisions still require
+  execution preconditions and completed verification. Start with
+  [query generation](../../../source/builtin_macros/src/resource/runtime/mod.rs),
+  the [runtime evaluator](../../../source/verus-meter/runtime/src/expression.rs),
+  and the [shared size policy](../../../source/verus-meter/model/src/lib.rs).
+
+Prioritize proof generation and pipeline integration next, then agreement between
+ownership metadata, runtime collections, and loop summaries. Define one invariant
+and a bounded scope per pass; inspect its source, calculate independent passing
+and failing bounds across relevant contexts, and record fixes, validation, and
+remaining questions before marking that scoped work complete.
+
+## Completed bounded passes
 
 - [x] Heap ownership and peak accounting: moves, drops, nested allocations,
   replacement overlap, branch joins, and lexical exits.
