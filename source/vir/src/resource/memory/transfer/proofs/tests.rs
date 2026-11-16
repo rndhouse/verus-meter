@@ -278,7 +278,8 @@ fn retention_cannot_satisfy_or_cache_an_unsupported_block_request() {
     let mut proofs = Vec::new();
     retention(&span, &value, &width, &mut proofs, &mut emitter);
     for _ in 0..2 {
-        assert!(block(&span, &value, &width, &mut proofs, &mut emitter).is_err());
+        let error = block(&span, &value, &width, &mut proofs, &mut emitter).unwrap_err();
+        assert!(error.note.contains("this structural ownership block"));
     }
 }
 

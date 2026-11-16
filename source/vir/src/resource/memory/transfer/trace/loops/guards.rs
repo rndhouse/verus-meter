@@ -271,7 +271,7 @@ mod tests {
                 contracts::multiply(&span, expr::integer(&span, slope), counter.clone()),
             ));
             for reverse in [false, true] {
-                for threshold in [-2, 0, 2, 4, 7] {
+                for threshold_value in [-2, 0, 2, 4, 7] {
                     for op in [
                         BinaryOp::Eq(Mode::Exec),
                         BinaryOp::Ne,
@@ -280,7 +280,7 @@ mod tests {
                         BinaryOp::Inequality(InequalityOp::Gt),
                         BinaryOp::Inequality(InequalityOp::Ge),
                     ] {
-                        let threshold = expr::integer(&span, threshold);
+                        let threshold = expr::integer(&span, threshold_value);
                         let (a, b) = if reverse {
                             (threshold.clone(), counter.clone())
                         } else {
@@ -313,6 +313,7 @@ mod tests {
                             .iter()
                             .flatten()
                             .flat_map(|program| {
+                                assert_eq!(program.effects.len(), 1);
                                 std::iter::repeat_n(
                                     program.effects[0].root() == &yes,
                                     contracts::constant(&program.count).unwrap() as usize,
@@ -321,14 +322,23 @@ mod tests {
                             .collect();
                         let expected: Vec<_> = (0..4)
                             .map(|index| {
-                                let condition = contracts::simplify(&substitute(
-                                    &condition,
-                                    &HashMap::from([(binder.clone(), expr::integer(&span, index))]),
-                                ));
-                                let ExprX::Const(Constant::Bool(selected)) = condition.x else {
-                                    panic!("constant comparison");
+                                // Keep the oracle independent of the expression
+                                // algebra used by the partitioner under test.
+                                let value = slope * index + offset;
+                                let (a, b) = if reverse {
+                                    (threshold_value, value)
+                                } else {
+                                    (value, threshold_value)
                                 };
-                                selected
+                                match op {
+                                    BinaryOp::Eq(_) => a == b,
+                                    BinaryOp::Ne => a != b,
+                                    BinaryOp::Inequality(InequalityOp::Lt) => a < b,
+                                    BinaryOp::Inequality(InequalityOp::Le) => a <= b,
+                                    BinaryOp::Inequality(InequalityOp::Gt) => a > b,
+                                    BinaryOp::Inequality(InequalityOp::Ge) => a >= b,
+                                    _ => unreachable!(),
+                                }
                             })
                             .collect();
                         assert_eq!(actual, expected, "direction {reverse}, operator {op:?}");

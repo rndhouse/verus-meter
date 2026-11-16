@@ -156,6 +156,8 @@ mod tests {
         let different =
             crate::fun!(CrateId::Vstd => "std_specs", "resource", "memory", "forest"; "lookup");
         assert!(!is_function(&different, "allocated"));
+        let impostor = crate::fun!(CrateId::Vstd => "tests"; "allocated");
+        assert!(!is_function(&impostor, "allocated"));
         assert!(!is_function(&definition, "unregistered"));
     }
 }

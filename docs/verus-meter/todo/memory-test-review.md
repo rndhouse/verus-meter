@@ -5,7 +5,7 @@ and the wiring needed to run them; exclude inherited test cases.
 
 ## Process
 
-Review the integration test files alphabetically, one file at a time. Check a
+Review the files alphabetically within each area, one file at a time. Check a
 box only after reviewing the file and validating any fixes. Preliminary
 inspection does not count as a completed review. Preserve detailed findings and
 validation results in commit messages; this checklist tracks current status.
@@ -84,7 +84,7 @@ Progress: 48 of 48 files reviewed and validated.
 After the integration suite, review these areas. Check each area only after
 reviewing all applicable fork additions within it.
 
-- [ ] Internal unit tests under `source/vir/src/resource/memory/`.
+- [x] Internal unit tests under `source/vir/src/resource/memory/` (42 tests in 10 files).
 - [ ] Parser tests under `dependencies/syn/tests/resource/memory/` and their entry point.
 - [ ] The two memory prettyprinter tests added to `dependencies/prettyplease/tests/test.rs`.
 - [ ] Executable examples under `examples/resource/memory/`, including expected failures.

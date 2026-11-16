@@ -594,6 +594,7 @@ mod tests {
             let sibling = storage.clone();
             storage.join_live(&sibling).unwrap();
             assert_eq!(storage.paths.len(), 1);
+            assert_eq!(contracts::constant(&storage.live_expression(&span).total()), Some(40));
         }
     }
 
@@ -623,7 +624,8 @@ mod tests {
         }
         let mut extra = Accounting::new(&span, 100);
         extra.reserve_value_unchecked(MemoryKind::host_local(), 1);
-        assert!(storage.join_live(&extra).is_err());
+        let error = storage.join_live(&extra).unwrap_err();
+        assert!(error.note.contains("more than 1024 distinct live ownership alternatives"));
         assert_eq!(storage.paths.len(), 1024);
     }
     fn selected(storage: &Accounting, selection: MemorySelection) -> u64 {

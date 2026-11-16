@@ -248,7 +248,8 @@ mod tests {
         };
         let replacement =
             Charge { kind: MemoryKind::host_heap(), amount: contracts::literal(&s, 32) };
-        assert!(allocation.retain(&s, &replacement).is_err());
+        let error = allocation.retain(&s, &replacement).unwrap_err();
+        assert!(error.note.contains("changing an allocation's memory kind"));
         assert!(!allocation.changed);
         assert_eq!(contracts::constant(&allocation.floor), Some(0));
     }
