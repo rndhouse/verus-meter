@@ -262,6 +262,27 @@ fn parameter_size_inside_spec_body() {
 }
 
 #[test]
+fn local_size_inside_spec_body_compiles() {
+    crate::verify_one_file(
+        "local_size_inside_spec_body_compiles",
+        r#"
+        use vstd::prelude::*;
+        verus! {
+            spec fn bytes(n: u16) -> nat {
+                let copied: u16 = n;
+                value_size(copied)
+            }
+            fn f(n: u16) resources peak(memory) <= bytes(n) {}
+            fn main() { f(1); }
+        }
+        "#
+        .into(),
+        &["--compile"],
+    )
+    .unwrap();
+}
+
+#[test]
 fn returned_formula_captures_parameters() {
     verifies(
         "formula",

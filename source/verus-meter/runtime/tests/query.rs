@@ -2,6 +2,9 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+#[path = "query/regressions.rs"]
+mod regressions;
+
 fn compile(source: &str, directory: &Path) -> (Output, PathBuf) {
     let verifier = std::env::var_os("VERUS_QUERY_TEST_VERIFIER")
         .expect("set VERUS_QUERY_TEST_VERIFIER to the prepared verus executable");

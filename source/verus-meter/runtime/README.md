@@ -113,3 +113,6 @@ prepared runtime bundle, `cargo-verus`, `create-release`, and
 `prepare-resource-runtime` binaries. Set `VERUS_Z3_PATH` to the prepared solver.
 It checks the interface and compiled examples, a relocated release distribution,
 runtime bundle refresh, and a Cargo client rebuilt after its formula changes.
+Regression cases also check exact input conversion and arithmetic, helper
+substitution and local size queries, queries outside preconditions, and resource
+verification failures with and without the query attribute.

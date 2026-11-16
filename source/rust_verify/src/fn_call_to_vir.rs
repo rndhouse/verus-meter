@@ -952,7 +952,10 @@ fn verus_item_to_vir<'tcx, 'a>(
                 | SpecItem::ResourceRefSizeValue
                 | SpecItem::ResourceRefSizeType
                 | SpecItem::ResourceValueSizeType => {
-                    record_spec_fn_pure_args_only(bctx, expr);
+                    // Size operands supply a type, not a value. Erase the whole
+                    // call: basic checks would revisit ghost locals whose uses
+                    // are intentionally absent from VIR and mode checking.
+                    record_call(bctx, expr, ResolvedCall::MiscEraseAbsolutely);
                     let typ = bctx.mid_ty_to_vir(expr.span, &node_substs.type_at(0))?;
                     let target = CallTarget::Fun(
                         vir::ast::CallTargetKind::Static,
