@@ -1,8 +1,12 @@
-# Critical memory review
+# Memory accounting correctness review
 
-Review the soundness boundaries of the [memory model](../model.md): an accepted
-contract must bound all simultaneous storage charged by that model. This is a
-focused review of critical paths, not an exhaustive audit of the fork.
+This tracker covers development correctness review of our own unreleased,
+experimental Verus fork. Describe findings by their incorrect behavior, affected
+cases, and development impact, without severity ratings.
+
+Review the [memory model](../model.md): an accepted contract must bound all
+simultaneous storage charged by that model. Focus on fork-specific memory
+accounting; the completed checks do not establish exhaustive correctness.
 
 ## Progress
 
@@ -10,9 +14,10 @@ focused review of critical paths, not an exhaustive audit of the fork.
   replacement overlap, branch joins, and lexical exits.
 - [x] Function and loop composition: retained caller allocations, declared slack,
   returned ownership, accumulating iterations, branches, and early exits.
-- [x] Trust boundaries: unsupported operations, verification instrumentation,
-  bypasses, and agreement between runtime queries and verified contracts.
-- [x] Validate the two fixes and commit the completed work.
+- [x] Contract and query consistency: unsupported operations, generated proof
+  obligations, verification configuration, and agreement between runtime queries
+  and verified contracts.
+- [x] Validate the initial fixes and commit the completed work.
 
 ## Release and transfer invariants
 
@@ -39,11 +44,11 @@ calculated passing/failing bounds across its relevant execution contexts.
 This pass ended at the user's request. The inventory and 19 independently
 calculated passing/one-byte-short bound pairs covered drops, helper consumption,
 collection extraction, replacement overlap, branches, loops, and section returns.
-They support the sampled checks above, not an exhaustive audit.
+They support the sampled checks above; broader coverage remains unfinished.
 
 ## Findings and fixes
 
-### P1: skipped short-circuit operands released live storage
+### Skipped short-circuit operands released live storage
 
 Before the fix, `flag && { drop(first); true }` and its `||` counterpart could
 release a 64-byte box unconditionally in the accounting model. A subsequent
@@ -60,11 +65,12 @@ Regressions in
 cover both operators, direct drops, consuming calls, guarded local allocations,
 retained storage, and unconditional left-operand transfers. Resolved and validated.
 
-### P1: custom size-trait implementations falsified runtime allowances
+### Custom size-trait implementations returned inconsistent runtime allowances
 
 Before the fix, a safe downstream `ValueSize` implementation returning zero made
 a generated query report zero for `value_size(Buffer)`, while Verus checked the
-same contract as 64 bytes. No unsafe code or verification bypass was necessary.
+same contract as 64 bytes. The query used the downstream byte constant while the
+verifier used the struct's modeled layout.
 
 [`layout.rs`](../../../source/verus-meter/runtime/src/layout.rs) now seals
 `ValueSize` and `ReferenceSize`, preserving the existing supported types while
@@ -74,7 +80,7 @@ both traits; the original generated-query reproduction is covered by
 Validated by eight runtime unit tests, three doctests, and all 12 compiled query
 tests, including runtime bundle refresh, relocation, and a Cargo client.
 
-### P1: wildcard patterns released ignored owners
+### Wildcard patterns released ignored owners
 
 Matching a stored `Option<Box<_>>` with `_` or `Some(_)` does not move its owner.
 A temporary match input also survives through its arm body. Previously,
