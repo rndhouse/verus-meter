@@ -113,7 +113,9 @@ static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0)
 #[derive(Clone, Default)]
 pub(super) struct Live {
     fixed: std::collections::BTreeMap<MemoryKind, u64>,
-    dynamic: HashMap<u64, Charge<Expr>>,
+    /// Allocation identity fixes symbolic addition order across verifier runs.
+    /// Hash iteration changes SMT term shape and can amplify metadata matching.
+    dynamic: std::collections::BTreeMap<u64, Charge<Expr>>,
     values: HashMap<u64, Charge<u64>>,
     pub(super) inputs: HashSet<usize>,
 }
@@ -536,6 +538,7 @@ impl Accounting {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::{ExprX, VarIdent, VarIdentDisambiguate};
 
     fn span() -> Span {
         Span {
@@ -544,6 +547,38 @@ mod tests {
             data: Arc::new([]),
             as_string: "peak merge test".into(),
         }
+    }
+
+    #[test]
+    fn symbolic_totals_are_stable_across_allocation_insertion_orders() {
+        let span = span();
+        let total = |offset: u64| {
+            let mut live = Live::default();
+            for step in 0..8 {
+                let id = (step + offset) % 8;
+                let name = VarIdent(
+                    Arc::new(format!("allocation_{id}")),
+                    VarIdentDisambiguate::VirTemp(id),
+                );
+                let (amount, _) = super::super::symbolic::integer_local(&span, name);
+                live.dynamic.insert(id, Charge { kind: MemoryKind::host_heap(), amount });
+            }
+            Accounting::path_expression(&live, &span).total()
+        };
+        let expected = total(0);
+        for offset in 1..8 {
+            assert!(super::super::transfer::simplify::inspect::same_expression(
+                &expected,
+                &total(offset),
+            ));
+        }
+        let mut allocations = 0;
+        crate::ast_visitor::expr_visitor_check(&expected, &mut |_, value| {
+            allocations += usize::from(matches!(&value.x, ExprX::Var(_)));
+            Ok::<(), VirErr>(())
+        })
+        .unwrap();
+        assert_eq!(allocations, 8);
     }
 
     #[test]

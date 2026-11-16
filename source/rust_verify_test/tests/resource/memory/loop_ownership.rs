@@ -343,6 +343,53 @@ fn ordered_append_blocks_compose_direct_helpers_and_nested_loops() {
 }
 
 #[test]
+fn delegated_extraction_reports_the_short_bound_at_the_default_limit() {
+    let code = "fn take(values: &mut Vec<Vec<u32>>) -> (result: Vec<Vec<u32>>)
+        requires old(values).len() >= 2,
+        ensures final(values).len() == old(values).len()-2, result.len() == 2,
+        resources peak(memory) <= 512,
+    {
+        let mut result = Vec::with_capacity(2); let mut i = 0usize;
+        while i < 2
+            invariant i <= 2, values.len() >= 2-i,
+                values.len()+i == old(values).len(), result.len() == i,
+            decreases 2-i,
+        {
+            let child = values.remove(0); result.push(child); i += 1;
+        }
+        result
+    }
+    fn delegate(values: &mut Vec<Vec<u32>>) -> (result: Vec<Vec<u32>>)
+        requires old(values).len() >= 2,
+        ensures final(values).len() == old(values).len()-2, result.len() == 2,
+        resources peak(memory) <= 600,
+    { take(values) }
+    fn f() resources peak(memory) <= BOUND {
+        let mut values = Vec::with_capacity(3);
+        let a = Vec::<u32>::with_capacity(1); values.push(a);
+        let b = Vec::<u32>::with_capacity(2); values.push(b);
+        let c = Vec::<u32>::with_capacity(3); values.push(c);
+        let selected = CALL(&mut values); drop(values);
+        let scratch = [0u8;4096];
+    }";
+    // Selected handle 24 + backing 48 + transferred payloads 4+8 + scratch
+    // 4096 = 4180. The declared helper allowances fit below this later peak.
+    // Fresh verifier processes exercise the formerly unstable formula order;
+    // every rejection must be the budget diagnostic, never solver exhaustion.
+    for caller in ["take", "delegate"] {
+        let code = code.replace("CALL", caller);
+        for run in 0..3 {
+            verifies(&format!("extraction_{caller}_{run}"), &code.replace("BOUND", "4180"));
+            rejects(
+                &format!("extraction_{caller}_{run}_short"),
+                &code.replace("BOUND", "4179"),
+                "memory budget exceeded",
+            );
+        }
+    }
+}
+
+#[test]
 fn removal_blocks_compose_and_preserve_the_unconsumed_prefix() {
     let code = "fn trim_pair(v: &mut Vec<Vec<u32>>)
         requires old(v).len() >= 2,

@@ -72,7 +72,7 @@ bugs.
 - [x] Restore the tight append-only scalar vector bound after a loop.
 - [x] Preserve checked metadata on partial loop exits for later allocations.
 - [x] Admit scalar-only argument loops without disabling allocation-effect guards.
-- [ ] Reproduce and address the recorded delegated-extraction solver-limit
+- [x] Reproduce and address the recorded delegated-extraction solver-limit
   sensitivity without raising the default limit or weakening failure checks.
 
 ## Completed bounded passes
@@ -631,3 +631,36 @@ The concrete remaining reproduction is `direct_block_short` in
 `loop_ownership::ordered_append_blocks_compose_direct_helpers_and_nested_loops`.
 Formatting, Clippy for `vir --lib --tests` and the resource target, whitespace,
 and tracker references passed. The solver failure remains queued separately.
+
+## Stable symbolic accounting order
+
+Two fresh verifier processes for `direct_block_short` emitted different
+parenthesized symbolic sums from the same source. `Live::dynamic` used hash
+iteration when constructing the charged-byte expression, changing SMT term order
+and metadata quantifier behavior. The observed ordered-append and fixed-role
+extraction limit failures therefore had a concrete nondeterministic input to the
+solver, even though the mathematical totals agreed.
+
+`accounting.rs` now orders dynamic charges by allocation identity. A regression
+compares formulas across eight insertion orders and checks that all eight
+allocations remain present. It fails with the old hash map and passes with the
+ordered map. Two fresh profiled runs of the recorded ordered-append input now
+produce byte-identical AIR and identical solver resource counts. The ordering
+fix changes no byte rule, proof assertion, or solver limit.
+
+A default-limit regression in `loop_ownership.rs` covers direct and delegated
+loop extraction in three fresh-process passing/short-bound pairs each. The
+4180-byte peak is selected handle 24 + backing 48 + transferred payloads 4+8 +
+scratch 4096; 4179 must report only the budget violation. Both the 512-byte direct
+helper allowance and the delegated 600-byte allowance fit below that later
+peak. All twelve checks pass without a limit override, and the existing 14-test
+loop-ownership suite passes. This removes the identified formula-order
+instability; it does not guarantee bounded solver work for arbitrary programs.
+
+Validation: rebuilt verifier; all 941 memory integration tests and 44 resource
+examples passed on their full runs without retries or limit overrides, including
+the recorded ordered-append and fixed-role extraction cases. Memory unit tests
+passed 49 tests with one existing manual measurement ignored. Formatting for
+`vir` and `rust_verify_test`, Clippy for `vir --lib --tests` and the resource test
+target, whitespace checks, and all 27 tracker references passed. All four entries
+in the fix queue are addressed; the broader core guarantee audits remain open.
