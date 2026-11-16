@@ -10,7 +10,10 @@ mod layout;
 pub use layout::{ReferenceSize, ValueSize};
 
 #[doc(hidden)]
-pub use expression::{BooleanExpression, Comparison, Expression, Input, evaluate};
+pub use expression::{
+    BindingExpression, BooleanExpression, Comparison, Expression, Input, Program, evaluate,
+    evaluate_program,
+};
 
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
@@ -75,6 +78,11 @@ pub enum QueryError {
         /// Position in the query's argument list.
         index: usize,
     },
+    /// A retained binding has a forward/cyclic reference or the wrong scalar type.
+    InvalidBinding {
+        /// Position in the retained program's binding list.
+        index: usize,
+    },
     /// The resulting mathematical integer was negative.
     NegativeResult,
 }
@@ -85,6 +93,9 @@ impl fmt::Display for QueryError {
             Self::MissingInput { index } => write!(formatter, "missing query argument {index}"),
             Self::InputType { index } => {
                 write!(formatter, "incorrect type for query argument {index}")
+            }
+            Self::InvalidBinding { index } => {
+                write!(formatter, "invalid retained query binding {index}")
             }
             Self::NegativeResult => formatter.write_str("memory allowance is negative"),
         }

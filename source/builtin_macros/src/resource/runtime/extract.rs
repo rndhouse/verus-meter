@@ -1,5 +1,5 @@
-//! Capture-free substitution of immutable spec bindings into typed expression
-//! data. Inspect all branches and initializers, including unused ones.
+//! Retain immutable spec bindings as a shared expression graph. Inspect all
+//! branches and initializers, including unused ones, before ghost erasure.
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
 use std::collections::HashMap;
@@ -11,7 +11,7 @@ use verus_syn::{
 
 type Environment = HashMap<String, Binding>;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum Kind {
     Integer,
     Boolean,
@@ -28,12 +28,16 @@ impl Kind {
 
 #[derive(Clone)]
 pub(super) struct Binding {
-    /// Static data describing this binding's substituted expression.
+    /// Compact reference to retained expression data (or an unretained input).
     pub tokens: TokenStream,
     /// Operand category, checked before composing typed nodes.
     pub kind: Kind,
     /// Declared type for size queries on a binding.
     pub ty: Option<Type>,
+    /// Canonical node identity for sharing helper applications and local values.
+    node: Option<usize>,
+    /// Type tokens can contain span-sensitive macros, so those leaves stay distinct.
+    intern: bool,
 }
 
 fn error(node: impl ToTokens, message: &str) -> verus_syn::Error {
@@ -42,7 +46,20 @@ fn error(node: impl ToTokens, message: &str) -> verus_syn::Error {
 
 impl Binding {
     fn new(kind: Kind, tokens: TokenStream) -> Self {
-        Self { kind, tokens, ty: (kind == Kind::Boolean).then(|| verus_syn::parse_quote!(bool)) }
+        Self {
+            kind,
+            tokens,
+            ty: (kind == Kind::Boolean).then(|| verus_syn::parse_quote!(bool)),
+            node: None,
+            intern: true,
+        }
+    }
+
+    pub(super) fn parameter(kind: Kind, ty: Type, index: usize) -> Self {
+        let constructor = kind.constructor();
+        let mut binding = Self::new(kind, quote!(#constructor::parameter(#index)));
+        binding.ty = Some(ty);
+        binding
     }
 
     fn require(self, kind: Kind, node: impl ToTokens) -> verus_syn::Result<TokenStream> {
@@ -58,11 +75,62 @@ pub(super) struct Extractor<'a> {
     functions: &'a HashMap<String, ItemFn>,
     /// Active helper and peak-target names, for dependency-cycle diagnostics.
     visiting: Vec<String>,
+    /// Nodes are appended after their dependencies, so references point backward.
+    nodes: Vec<TokenStream>,
+    /// Intern structural expressions after child expressions have become references.
+    interned: HashMap<(Kind, String), usize>,
+    /// Reuse identical nonrecursive applications instead of expanding their bodies again.
+    applications: HashMap<(String, Vec<usize>), Binding>,
+    peaks: HashMap<(String, Vec<usize>), TokenStream>,
 }
 
 impl<'a> Extractor<'a> {
     pub fn new(functions: &'a HashMap<String, ItemFn>) -> Self {
-        Self { functions, visiting: Vec::new() }
+        Self {
+            functions,
+            visiting: Vec::new(),
+            nodes: Vec::new(),
+            interned: HashMap::new(),
+            applications: HashMap::new(),
+            peaks: HashMap::new(),
+        }
+    }
+
+    pub(super) fn nodes(&self) -> &[TokenStream] {
+        &self.nodes
+    }
+
+    fn retain(&mut self, mut binding: Binding) -> Binding {
+        if binding.node.is_some() {
+            return binding;
+        }
+        let key = binding.intern.then(|| (binding.kind, binding.tokens.to_string()));
+        let existing = key.as_ref().and_then(|key| self.interned.get(key)).copied();
+        let index = if let Some(index) = existing {
+            index
+        } else {
+            let index = self.nodes.len();
+            let tokens = &binding.tokens;
+            let node = match binding.kind {
+                Kind::Integer => quote!(::verus_meter_runtime::BindingExpression::Integer(#tokens)),
+                Kind::Boolean => quote!(::verus_meter_runtime::BindingExpression::Boolean(#tokens)),
+            };
+            self.nodes.push(node);
+            if let Some(key) = key {
+                self.interned.insert(key, index);
+            }
+            index
+        };
+        let constructor = binding.kind.constructor();
+        binding.tokens = quote!(#constructor::binding(#index));
+        binding.node = Some(index);
+        binding
+    }
+
+    fn retain_size(&mut self, tokens: TokenStream) -> Binding {
+        let mut binding = Binding::new(Kind::Integer, tokens);
+        binding.intern = false;
+        self.retain(binding)
     }
 
     pub fn budget(
@@ -71,7 +139,10 @@ impl<'a> Extractor<'a> {
         env: &Environment,
     ) -> verus_syn::Result<TokenStream> {
         match budget {
-            ResourceExpr::Size(name, _, ty) => self.size(name, ty, env),
+            ResourceExpr::Size(name, _, ty) => {
+                let size = self.size(name, ty, env)?;
+                Ok(self.retain_size(size).tokens)
+            }
             ResourceExpr::PeakCall(_, _, call) => self.peak_call(call, env),
             ResourceExpr::Peak(..) => Err(error(
                 budget,
@@ -125,7 +196,7 @@ impl<'a> Extractor<'a> {
     fn expression(&mut self, expr: &Expr, env: &Environment) -> verus_syn::Result<Binding> {
         let integer = quote!(::verus_meter_runtime::Expression);
         let boolean = quote!(::verus_meter_runtime::BooleanExpression);
-        Ok(match expr {
+        let binding = match expr {
             Expr::Lit(literal) => match &literal.lit {
                 Lit::Bool(value) => Binding::new(Kind::Boolean, quote!(#boolean::constant(#value))),
                 Lit::Int(value)
@@ -241,7 +312,8 @@ impl<'a> Extractor<'a> {
                 Binding::new(Kind::Integer, quote!(#integer::conditional(&#condition, &#a, &#c)))
             }
             _ => return Err(error(expr, "unsupported expression in runtime resource query")),
-        })
+        };
+        Ok(self.retain(binding))
     }
     fn block(&mut self, block: &Block, mut env: Environment) -> verus_syn::Result<Binding> {
         for (index, statement) in block.stmts.iter().enumerate() {
@@ -302,7 +374,8 @@ impl<'a> Extractor<'a> {
             else {
                 return Err(error(call, "invalid runtime model-size query"));
             };
-            return Ok(Binding::new(Kind::Integer, self.size(&query, &ty, env)?));
+            let size = self.size(&query, &ty, env)?;
+            return Ok(self.retain_size(size));
         }
         let function = self.functions.get(&name.unraw().to_string()).cloned().ok_or_else(|| {
             error(call, "runtime spec helper is unavailable in this verus item scope")
@@ -328,7 +401,11 @@ impl<'a> Extractor<'a> {
         if self.visiting.contains(&name.unraw().to_string()) {
             return Err(error(call, "recursive spec helpers are unsupported in runtime queries"));
         }
-        let bound = self.arguments(&function, call, env)?;
+        let (bound, arguments) = self.arguments(&function, call, env)?;
+        let key = (name.unraw().to_string(), arguments);
+        if let Some(result) = self.applications.get(&key) {
+            return Ok(result.clone());
+        }
         self.visiting.push(name.unraw().to_string());
         let result = self.block(&function.block, bound);
         self.visiting.pop();
@@ -336,6 +413,7 @@ impl<'a> Extractor<'a> {
         if let ReturnType::Type(_, _, _, ty) = &function.sig.output {
             result.ty = Some((**ty).clone());
         }
+        self.applications.insert(key, result.clone());
         Ok(result)
     }
     fn arguments(
@@ -343,11 +421,12 @@ impl<'a> Extractor<'a> {
         function: &ItemFn,
         call: &ExprCall,
         env: &Environment,
-    ) -> verus_syn::Result<Environment> {
+    ) -> verus_syn::Result<(Environment, Vec<usize>)> {
         if function.sig.inputs.len() != call.args.len() {
             return Err(error(call, "incorrect runtime helper argument count"));
         }
         let mut bound = Environment::new();
+        let mut arguments = Vec::new();
         for (parameter, argument) in function.sig.inputs.iter().zip(&call.args) {
             let FnArgKind::Typed(typed) = &parameter.kind else {
                 return Err(error(parameter, "unsupported runtime helper parameter"));
@@ -363,9 +442,11 @@ impl<'a> Extractor<'a> {
             }
             let mut value = self.expression(argument, env)?;
             value.ty = Some((*typed.ty).clone());
+            let value = self.retain(value);
+            arguments.push(value.node.expect("retained argument has a node identity"));
             bound.insert(id.ident.unraw().to_string(), value);
         }
-        Ok(bound)
+        Ok((bound, arguments))
     }
 
     fn peak_call(&mut self, call: &ExprCall, env: &Environment) -> verus_syn::Result<TokenStream> {
@@ -405,10 +486,16 @@ impl<'a> Extractor<'a> {
                 "recursive peak references are unsupported in runtime queries",
             ));
         }
-        let bound = self.arguments(&function, call, env)?;
+        let (bound, arguments) = self.arguments(&function, call, env)?;
+        let key = (name.unraw().to_string(), arguments);
+        if let Some(result) = self.peaks.get(&key) {
+            return Ok(result.clone());
+        }
         self.visiting.push(name.unraw().to_string());
         let result = self.budget(&contract.budget, &bound);
         self.visiting.pop();
-        result
+        let result = self.retain(Binding::new(Kind::Integer, result?)).tokens;
+        self.peaks.insert(key, result.clone());
+        Ok(result)
     }
 }

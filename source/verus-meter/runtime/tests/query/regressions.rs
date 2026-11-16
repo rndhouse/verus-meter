@@ -4,6 +4,123 @@ use std::process::Command;
 
 #[test]
 #[ignore = "requires prepared verifier and runtime bundle; see runtime README"]
+fn model_size_paths_keep_the_original_module_scope() {
+    let source = r#"
+use vstd::prelude::*;
+verus! {
+    type Buffer = [u8; 64];
+    exec const WIDTH: usize = 64;
+}
+macro_rules! location_array { () => { [u8; line!() as usize] }; }
+mod function_name {
+    use vstd::prelude::*;
+    verus! {
+        #[allow(non_snake_case)]
+        #[queryable_peak_memory]
+        pub fn QueryData(n: u8) resources peak(memory) <= value_size(n) {}
+    }
+}
+mod nested {
+    use vstd::prelude::*;
+    type Buffer = [u8; 8];
+    type QueryData = [u8; 7];
+    verus! {
+        exec const WIDTH: usize = 8;
+        spec fn budget() -> nat { value_size(super::Buffer) }
+        #[queryable_peak_memory]
+        pub fn direct() resources peak(memory) <= value_size(super::Buffer) {
+            let scratch = [0u8; 64];
+        }
+        #[queryable_peak_memory]
+        pub fn helper() resources peak(memory) <= budget() { let scratch = [0u8; 64]; }
+        #[queryable_peak_memory]
+        pub fn array() resources peak(memory) <= value_size([u8; super::WIDTH]) {
+            let scratch = [0u8; 64];
+        }
+        #[queryable_peak_memory]
+        pub fn local_type() resources peak(memory) <= value_size(QueryData) {
+            let scratch = [0u8; 7];
+        }
+        #[queryable_peak_memory]
+        pub fn named_parameter(QueryData: u8) resources peak(memory) <= value_size(QueryData) {}
+        #[queryable_peak_memory]
+        pub fn locations()
+            resources peak(memory) <= value_size(location_array!())
+                + value_size(location_array!()),
+        {}
+    }
+    pub mod deeper {
+        use vstd::prelude::*;
+        verus! {
+            #[queryable_peak_memory]
+            pub fn work() resources peak(memory) <= value_size(super::super::Buffer) {
+                let scratch = [0u8; 64];
+            }
+        }
+    }
+}
+fn main() {
+    assert_eq!(nested::direct::peak_memory_bound().unwrap().to_u64(), Ok(64));
+    assert_eq!(nested::helper::peak_memory_bound().unwrap().to_u64(), Ok(64));
+    assert_eq!(nested::array::peak_memory_bound().unwrap().to_u64(), Ok(64));
+    assert_eq!(nested::deeper::work::peak_memory_bound().unwrap().to_u64(), Ok(64));
+    assert_eq!(nested::local_type::peak_memory_bound().unwrap().to_u64(), Ok(7));
+    assert_eq!(nested::named_parameter::peak_memory_bound(1).unwrap().to_u64(), Ok(1));
+    assert_eq!(nested::locations::peak_memory_bound().unwrap().to_u64(), Ok(EXPECTED_LOCATION_BYTES));
+    assert_eq!(function_name::QueryData::peak_memory_bound(1).unwrap().to_u64(), Ok(1));
+}
+"#;
+    let location_bytes: usize = source
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.contains("value_size(location_array!())"))
+        .map(|(index, _)| index + 1)
+        .sum();
+    let source = source.replace("EXPECTED_LOCATION_BYTES", &location_bytes.to_string());
+    let directory = tempfile::tempdir().unwrap();
+    let (output, executable) = compile(&source, directory.path());
+    succeeds(&output);
+    succeeds(&Command::new(executable).output().unwrap());
+}
+
+#[test]
+#[ignore = "requires prepared verifier and runtime bundle; see runtime README"]
+fn repeated_helper_bindings_and_applications_remain_shared() {
+    let mut helpers = "spec fn step0(n: nat) -> nat { n }\n".to_owned();
+    for level in 1..=24 {
+        let previous = level - 1;
+        helpers.push_str(&format!(
+            "spec fn step{level}(n: nat) -> nat {{ step{previous}(n) + step{previous}(n) }}\n"
+        ));
+    }
+    let bindings = "let n = n + n;\n".repeat(24);
+    let source = format!(
+        r#"
+use vstd::prelude::*;
+verus! {{
+    {helpers}
+    spec fn budget(n: nat) -> nat {{ {bindings} 1024 + n }}
+    #[queryable_peak_memory]
+    fn bound(n: u8) resources peak(memory) <= budget(n as nat) {{}}
+    #[queryable_peak_memory]
+    fn application(n: u8) resources peak(memory) <= 1024 + step24(n as nat) {{}}
+}}
+fn main() {{
+    assert_eq!(bound::peak_memory_bound(1).unwrap().to_u64(), Ok(16778240));
+    assert_eq!(bound::peak_memory_bound(2).unwrap().to_u64(), Ok(33555456));
+    assert_eq!(application::peak_memory_bound(1).unwrap().to_u64(), Ok(16778240));
+    assert_eq!(application::peak_memory_bound(2).unwrap().to_u64(), Ok(33555456));
+}}
+"#
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let (output, executable) = compile(&source, directory.path());
+    succeeds(&output);
+    succeeds(&Command::new(executable).output().unwrap());
+}
+
+#[test]
+#[ignore = "requires prepared verifier and runtime bundle; see runtime README"]
 fn numeric_inputs_and_queries_outside_preconditions() {
     let source = r#"
 use vstd::prelude::*;

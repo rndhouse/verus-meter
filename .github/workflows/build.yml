@@ -83,6 +83,7 @@ jobs:
           cargo clean
           cargo build --release
           cargo run --release -p cargo-verus -- build --release --manifest-path vstd/Cargo.toml
+          cargo run --release -p verus_meter_tools --bin prepare-resource-runtime -- target-verus/release
 
       - name: stage external dependencies
         working-directory: ./source

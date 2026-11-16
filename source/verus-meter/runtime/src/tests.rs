@@ -1,4 +1,9 @@
+use super::Evaluator;
 use crate::{BooleanExpression as B, Comparison as C, Expression as E, *};
+
+fn boolean(expression: &B, inputs: &[Input]) -> Result<bool, QueryError> {
+    expression.boolean(&mut Evaluator::new(inputs, &[]))
+}
 
 #[test]
 fn exact_large_arithmetic_and_native_boundaries() {
@@ -76,8 +81,8 @@ fn branches_and_boolean_operators_are_lazy() {
         (true, true, true, true),
     ] {
         let inputs = [left.into(), right.into()];
-        assert_eq!(AND.boolean(&inputs), Ok(conjunction));
-        assert_eq!(OR.boolean(&inputs), Ok(disjunction));
+        assert_eq!(boolean(&AND, &inputs), Ok(conjunction));
+        assert_eq!(boolean(&OR, &inputs), Ok(disjunction));
     }
 }
 
@@ -95,7 +100,7 @@ fn compares_mathematical_integers() {
         const TEN: E = E::constant(10);
         let predicate = B::compare(operation, &PARAMETER, &TEN);
         for (input, expected) in [9u64, 10, 11].into_iter().zip(expected) {
-            assert_eq!(predicate.boolean(&[input.into()]), Ok(expected));
+            assert_eq!(boolean(&predicate, &[input.into()]), Ok(expected));
         }
     }
     const LARGE: E = E::conditional(
@@ -128,4 +133,55 @@ fn model_sizes_use_source_storage_instead_of_abi_padding() {
     assert_eq!(<[u32; 3] as ValueSize>::BYTES, 12);
     assert_eq!(<&[u32] as ReferenceSize>::BYTES, 16);
     assert_eq!(<&mut [u32; 3] as ReferenceSize>::BYTES, 8);
+}
+
+#[test]
+fn shared_bindings_are_evaluated_once_per_query() {
+    const DOUBLINGS: usize = 24;
+    let mut bindings = vec![BindingExpression::Integer(E::parameter(0))];
+    for index in 1..=DOUBLINGS {
+        // Generated programs have static references. Leak this small test graph
+        // to construct the same representation without hand-writing every node.
+        let previous = Box::leak(Box::new(E::binding(index - 1)));
+        bindings.push(BindingExpression::Integer(E::add(previous, previous)));
+    }
+    let bindings = Box::leak(bindings.into_boxed_slice());
+    let program = Program::new(E::binding(DOUBLINGS), bindings);
+    let inputs = [1u8.into()];
+    let mut evaluator = Evaluator::new(&inputs, bindings);
+    assert_eq!(program.expression.integer(&mut evaluator).unwrap().to_string(), "16777216");
+    assert_eq!(evaluator.evaluated_bindings, DOUBLINGS + 1);
+    assert_eq!(evaluate_program(&program, &[2u8.into()]).unwrap().to_u64(), Ok(33554432));
+    assert_eq!(evaluate_program(&program, &[3u8.into()]).unwrap().to_u64(), Ok(50331648));
+}
+
+#[test]
+fn shared_bindings_preserve_lazy_branches_and_validate_references() {
+    const LAZY: Program = Program::new(
+        E::conditional(&B::or(&B::binding(0), &B::binding(1)), &E::binding(2), &E::binding(3)),
+        &[
+            BindingExpression::Boolean(B::constant(true)),
+            BindingExpression::Boolean(B::parameter(99)),
+            BindingExpression::Integer(E::constant(7)),
+            BindingExpression::Integer(E::parameter(99)),
+        ],
+    );
+    assert_eq!(evaluate_program(&LAZY, &[]).unwrap().to_u64(), Ok(7));
+
+    const FORWARD: Program = Program::new(
+        E::add(&E::binding(1), &E::binding(0)),
+        &[BindingExpression::Integer(E::binding(1)), BindingExpression::Integer(E::constant(7))],
+    );
+    assert_eq!(evaluate_program(&FORWARD, &[]), Err(QueryError::InvalidBinding { index: 1 }));
+    const CYCLE: Program =
+        Program::new(E::binding(0), &[BindingExpression::Integer(E::binding(0))]);
+    assert_eq!(evaluate_program(&CYCLE, &[]), Err(QueryError::InvalidBinding { index: 0 }));
+    const WRONG_TYPE: Program =
+        Program::new(E::binding(0), &[BindingExpression::Boolean(B::constant(true))]);
+    assert_eq!(evaluate_program(&WRONG_TYPE, &[]), Err(QueryError::InvalidBinding { index: 0 }));
+    const MISSING: Program = Program::new(E::binding(usize::MAX), &[]);
+    assert_eq!(
+        evaluate_program(&MISSING, &[]),
+        Err(QueryError::InvalidBinding { index: usize::MAX })
+    );
 }

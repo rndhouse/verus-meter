@@ -112,8 +112,11 @@ pub(in crate::syntax) fn expand(items: &mut Vec<Item>) {
             }
             query(function, &functions)
         });
-        let tokens = result.unwrap_or_else(|e| e.to_compile_error());
-        generated.push(Item::Verbatim(quote!(#(#cfg)* #tokens)));
+        let tokens = result.unwrap_or_else(|e| {
+            let error = e.to_compile_error();
+            quote!(#(#cfg)* #error)
+        });
+        generated.push(Item::Verbatim(tokens));
     }
     items.extend(generated);
 }
@@ -163,15 +166,8 @@ fn query(function: &ItemFn, functions: &HashMap<String, ItemFn>) -> verus_syn::R
         }
         let name = &parameter.ident;
         let ty = &argument.ty;
-        let constructor = kind.constructor();
-        environment.insert(
-            name.unraw().to_string(),
-            Binding {
-                tokens: quote!(#constructor::parameter(#index)),
-                kind,
-                ty: Some((**ty).clone()),
-            },
-        );
+        environment
+            .insert(name.unraw().to_string(), Binding::parameter(kind, (**ty).clone(), index));
         parameters.push(quote!(#name: #ty));
         inputs.push(quote!(::verus_meter_runtime::Input::from(#name)));
     }
@@ -181,31 +177,47 @@ fn query(function: &ItemFn, functions: &HashMap<String, ItemFn>) -> verus_syn::R
             "queryable_peak_memory requires resources peak(memory) <= bound",
         )
     })?;
-    let expression = Extractor::new(functions).budget(&contract.budget, &environment)?;
+    let mut extractor = Extractor::new(functions);
+    let expression = extractor.budget(&contract.budget, &environment)?;
+    let nodes = extractor.nodes();
     let name = &sig.ident;
     let visibility = &function.vis;
     let documentation = format!("Runtime resource queries for the `{name}` function.");
     let allowances = attributes::allowances(&function.attrs);
-    let data = verus_syn::Ident::new("__VERUS_QUERY_EXPRESSION", proc_macro2::Span::mixed_site());
+    let cfg = attributes::configuration(&function.attrs);
+    // Keep the marker distinct from the function module imported by super::*.
+    let marker = if name.unraw() == "QueryData" { "QueryDataStorage" } else { "QueryData" };
+    let data = verus_syn::Ident::new(marker, proc_macro2::Span::mixed_site());
     Ok(quote! {
+        #(#cfg)*
         #[verifier::external]
         #[doc = #documentation]
         #(#allowances)*
         #visibility mod #name {
-            // Size types may be aliases in the surrounding module.
+            // The parent-scope implementation owns the expression constants.
+            pub(super) enum #data {}
+
+            // Preserve aliases used by the source parameter types.
             use super::*;
             // Keep the namespace import used even for formulas containing no
             // named types, without overriding a caller's unused-import policy.
             const _: () = { let _ = #name::peak_memory_bound; };
             /// Evaluate the declared allowance. Execution preconditions remain the caller's responsibility.
             pub fn peak_memory_bound(#(#parameters),*) -> ::core::result::Result<::verus_meter_runtime::ModelBytes, ::verus_meter_runtime::QueryError> {
-                // Item names are not hygienic locals. Confine the static so it
-                // cannot shadow a source parameter while binding the inputs.
-                ::verus_meter_runtime::evaluate({
-                    static #data: ::verus_meter_runtime::Expression = #expression;
-                    &#data
-                }, &[#(#inputs),*])
+                ::verus_meter_runtime::evaluate_program(&#data::PROGRAM, &[#(#inputs),*])
             }
+        }
+
+        // An impl does not introduce a module scope. Resolve every source type
+        // and array-length path here, where self/super have their original meaning.
+        #(#cfg)*
+        #[verifier::external]
+        impl #name::#data {
+            const PROGRAM: ::verus_meter_runtime::Program =
+                ::verus_meter_runtime::Program::new(#expression, &[#(#nodes),*]);
         }
     })
 }
+
+#[cfg(test)]
+mod tests;

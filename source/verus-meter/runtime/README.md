@@ -32,6 +32,10 @@ Helper and peak targets controlled by configuration attributes are rejected to
 avoid selecting an incorrect declaration before Rust evaluates the conditions;
 use an unconditional helper containing a supported conditional expression.
 
+Immutable bindings and identical helper applications share retained expression
+nodes. Evaluation caches demanded values within one query, preserving lazy
+conditions without expanding repeated uses into copies of the whole formula.
+
 `peak(helper(arguments))` expands the local checked function's declared allowance
 with the same argument substitution. Cycles and missing contracts are errors.
 Argument-free `peak(helper)` remains unsupported by runtime queries; its existing
@@ -48,6 +52,8 @@ still validate layouts and supported contents. Methods and generic query
 functions remain outside this version. Size queries on computed helper locals
 need an explicit source type annotation when their type is not retained from an
 input or helper declaration.
+Model-size type and array-length paths resolve in the original module, including
+`self`, `super`, and aliases, before the generated query module accesses the data.
 
 The original function receives normal Verus resource verification. The generated
 query module is external Rust tooling: its evaluator and connection to the source
@@ -69,8 +75,10 @@ incorrectly typed arguments produce `QueryError`. An allowance greater than `u64
 remains a valid result; a small evaluated allowance does not certify execution
 preconditions. Source resource verification retains its existing `u64` obligations.
 
-Evaluation uses stack space proportional to expression depth and storage
-proportional to integer size. There is no custom evaluation-limit framework;
+Evaluation uses stack space proportional to dependency depth, one cache slot per
+retained binding, and integer storage for the bindings actually evaluated.
+Invalid binding references produce `QueryError`; unused bindings and unselected
+branches are not evaluated. There is no custom evaluation-limit framework;
 stack or allocator exhaustion is not reported as a recoverable query error.
 
 ## Run the example
@@ -121,6 +129,7 @@ existing in-tree build. Standalone Verus discovers `resource-runtime/` beside it
 other artifacts and uses its isolated library dependencies. Release staging copies
 the bundle. Older distributions without it remain usable for programs that do not
 query bounds. Explicit runtime `--extern` arguments take precedence.
+The release workflow also prepares the runtime explicitly before staging archives.
 
 For Cargo projects, add an unrenamed `verus_meter_runtime` path dependency pointing
 to this fork's `source/verus-meter/runtime`, alongside the project's vstd dependency,
@@ -141,6 +150,8 @@ prepared runtime bundle, `cargo-verus`, `create-release`, and
 `prepare-resource-runtime` binaries. Set `VERUS_Z3_PATH` to the prepared solver.
 It checks the interface and compiled examples, a relocated release distribution,
 runtime bundle refresh, and a Cargo client rebuilt after its formula changes.
+Release checks prepare a missing runtime bundle before staging a relocated
+distribution, so they cover the clean-build path used by the release workflow.
 Regression cases also check exact input conversion and arithmetic, helper
 substitution and local size queries, queries outside preconditions, and resource
 verification failures with and without the query attribute.

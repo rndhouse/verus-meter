@@ -352,16 +352,34 @@ fn standalone_bundle_is_relocatable_and_refreshable() {
     std::fs::copy(solver, temporary.path().join(format!("z3{}", std::env::consts::EXE_SUFFIX)))
         .unwrap();
     let distribution = temporary.path().join("distribution");
-    succeeds(
-        &Command::new(artifacts.join(format!("create-release{}", std::env::consts::EXE_SUFFIX)))
+    let clean_build = temporary.path().join("clean-build");
+    let stage = |build: &Path, output: &Path| {
+        succeeds(
+            &Command::new(
+                artifacts.join(format!("create-release{}", std::env::consts::EXE_SUFFIX)),
+            )
             .current_dir(temporary.path())
             .arg("--build-dir")
-            .arg(artifacts)
+            .arg(build)
             .arg("--output-dir")
-            .arg(&distribution)
+            .arg(output)
             .output()
             .unwrap(),
+        );
+    };
+    // Reuse the real release inventory to obtain core artifacts, then exercise
+    // the workflow's explicit preparation step from a build with no runtime bundle.
+    stage(artifacts, &clean_build);
+    std::fs::remove_dir_all(clean_build.join("resource-runtime")).unwrap();
+    succeeds(
+        &Command::new(
+            artifacts.join(format!("prepare-resource-runtime{}", std::env::consts::EXE_SUFFIX)),
+        )
+        .arg(&clean_build)
+        .output()
+        .unwrap(),
     );
+    stage(&clean_build, &distribution);
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../examples/resource/memory/contracts/runtime_query.rs");
     let executable = temporary.path().join(format!("application{}", std::env::consts::EXE_SUFFIX));
