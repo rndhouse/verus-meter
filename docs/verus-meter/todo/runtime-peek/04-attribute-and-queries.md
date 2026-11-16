@@ -2,26 +2,29 @@
 
 ## Goal
 
-Expose retained memory bounds through a typed Rust interface that survives ghost
-erasure and works in compiled application code.
+Finish integrating the prototype's typed query interface, including visibility,
+diagnostics, and ordinary build workflows.
 
 ## Work
 
-- [ ] Recognise `#[queryable_peak_memory]` through Verus's macro machinery. Select
-  the function signature's declared `peak(memory)` bound structurally; ignore
+- [ ] Review `#[queryable_peak_memory]` handling through Verus's macro machinery.
+  Select the function signature's declared `peak(memory)` bound structurally; ignore
   body sections and checkpoint assertions when selecting the exported allowance.
 - [ ] Preserve existing resource-clause syntax. No syntax expansion for work or CPU
   cycles is part of this task; avoid an architecture that prevents selecting a
   specific quantity if multiple resource kinds are added later.
-- [ ] Generate the agreed `foo::peak_memory_bound(...)` interface or explain any
+- [ ] Finalize the `foo::peak_memory_bound(...)` interface or explain any
   compiler-driven adjustment before establishing a different public convention.
   Mirror supported parameter types and visibility, with hygienic bindings and
   explicit collision handling.
 - [ ] Emit only wrappers and expression data. Delegate evaluation to the shared
   runtime library, without per-function duplicated arithmetic or runtime Z3 calls.
-- [ ] Connect generation to the checked retained artifact across verification and
+- [ ] Check generation uses the current retained expression across verification and
   compilation passes. Preserve the project's existing verification/compilation
   guarantees and describe any bypass modes without overstating enforcement.
+- [ ] Document that querying evaluates an allowance and does not automatically
+  check the target function's preconditions. Specify query behavior outside those
+  preconditions without generating runtime precondition checks in this version.
 - [ ] Reject missing contracts, duplicate attributes, unsupported signatures, and
   unsupported queried expressions with actionable diagnostics. Do not accidentally
   expose a private function's query publicly.

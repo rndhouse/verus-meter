@@ -12,11 +12,11 @@ authoritative task documents in the primary checkout under
 worktree and branch supplied with the handoff. Execute the tasks in order. Keep
 instructions and references repository-relative so the plan survives relocation.
 
-1. [Contract and compilation architecture](01-contract-and-architecture.md)
+1. [Working prototype](01-working-prototype.md)
 2. [Runtime expressions and evaluator](02-runtime-evaluator.md)
-3. [Retain resolved bounds](03-retain-resolved-bounds.md)
+3. [Additional expressions and spec helpers](03-expression-support.md)
 4. [Attribute and executable queries](04-attribute-and-queries.md)
-5. [Formal correspondence and regression boundaries](05-proof-and-regressions.md)
+5. [Correctness tests and regressions](05-tests-and-regressions.md)
 6. [User example and integration validation](06-example-and-validation.md)
 
 ## Completing tasks
@@ -31,6 +31,11 @@ or experimental result alone.
 
 ## First-version boundary
 
+Task 1 delivers a small working path from a resource clause to a callable query
+and budget comparison. Start the user example there and grow it through later
+tasks. Expand the evaluator and expression coverage after the compilation path
+works; settle interface details as the implementation supplies evidence.
+
 - Opt in on verified, safe, nongeneric free functions with supported scalar inputs.
   Target `foo::peak_memory_bound(...)`, with argument types matching `foo`.
 - Support constants, numeric inputs, addition, multiplication, comparisons,
@@ -39,7 +44,9 @@ or experimental result alone.
   mathematical integers and local bindings needed by those helpers.
 - Use arbitrary-precision arithmetic internally. Expose model bytes through a
   small public API that supports budget comparisons without leaking a third-party
-  integer type. Final error and return signatures are decided in task 1.
+  integer type. Task 1 establishes a minimal interface; task 2 settles the numeric
+  result and error API. Checked native arithmetic is acceptable for the narrowly
+  bounded task-1 experiment, with arbitrary precision required by task 2.
 - Reject unsupported queried expressions during compilation. Existing resource
   contracts without the attribute retain their current supported scope.
 - Defer recursion, functions returning functions, collection-dependent specs,
@@ -61,10 +68,12 @@ standalone runtime crate under `source/verus-meter/runtime/`, with final naming 
 packaging established in task 1. Keep upstream syntax, attribute, driver, and
 workspace hooks thin. Do not introduce a runtime dependency on VIR, rustc, or Z3.
 
-The runtime interpreter and its numeric backend must have an explicit proof/trust
-boundary. The discussion did not settle whether a trusted arbitrary-precision
-adapter is sufficient for the final guarantee; task 1 must resolve and document
-that choice. Tests alone do not establish formal correspondence.
+Validate extraction, interpretation, and generated interfaces with ordinary Rust
+tests and compiled integration examples. New formal proofs, equivalence lemmas,
+verified arithmetic adapters, and verification of the integer library are outside
+this work. Verus continues to verify the target function's existing resource
+contract. Describe runtime queries as tested tooling for evaluating that contract;
+do not claim the query implementation itself is formally verified.
 
 Follow [AGENTS.md](../../../../AGENTS.md), the [build instructions](../../../../BUILD.md),
 and the [memory model](../../model.md). Commit coherent, validated implementation

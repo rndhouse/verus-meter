@@ -2,12 +2,12 @@
 
 ## Goal
 
-Ship one small executable example that lets a new user understand and run the
-complete query-and-admit workflow, with a documented supported boundary.
+Polish the example started in task 1 so a new user can understand and run the
+complete query-and-admit workflow, then finish integration validation.
 
 ## Work
 
-- [ ] Add one focused example under `examples/resource/memory/`, selecting an
+- [ ] Finish the one focused example under `examples/resource/memory/`, using an
   existing supported allocation pattern with a simple input-dependent allowance.
   Verify the actual function body against that allowance; avoid an empty body
   used only to demonstrate macro expansion.
@@ -26,7 +26,8 @@ complete query-and-admit workflow, with a documented supported boundary.
   costs are separate, and that OS RAM discovery/reservation are future work. Keep
   comments focused on the user workflow rather than compiler implementation.
 - [ ] Update the memory model documentation with the runtime-query API, supported
-  expressions, precondition distinction, and formal/trust boundary.
+  expressions, and precondition distinction. State that the target's resource
+  contract is verified while the query implementation is tested Rust tooling.
 - [ ] Integrate compiled example checks into existing Rust orchestration. Do not
   add Bash test scripts. Exercise both paths and ensure the successful path really
   calls the target function.
