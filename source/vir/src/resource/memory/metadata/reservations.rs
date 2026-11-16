@@ -266,7 +266,7 @@ impl Analysis<'_> {
         if let Some(elements) = &mut owner.elements {
             elements.source = Some((typ.clone(), value.clone()));
         }
-        if self.layouts.option(typ) {
+        if self.layouts.option(typ) || owner.closure.is_some() {
             return Ok(());
         }
         for (slot, child_type) in self.layouts.owned_children(typ, span)? {
@@ -309,6 +309,10 @@ impl Analysis<'_> {
             OwnerSlot::Element(_) => {
                 Err(unsupported(span, "a runtime index used as a fixed reservation path"))
             }
+            OwnerSlot::Capture(_) => Err(unsupported(
+                span,
+                "a closure field projection without a checked capture summary",
+            )),
         }
     }
 

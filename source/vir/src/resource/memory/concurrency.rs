@@ -27,6 +27,9 @@ pub enum CaptureMode {
 pub struct Capture {
     /// Canonical source binding in the enclosing function/worker.
     pub source: VarIdent,
+    /// Type of the source root before following the compiler's capture path.
+    /// A partial capture must not be mistaken for a whole-root move.
+    pub source_typ: Typ,
     /// Fixed path from that binding to the captured object.
     pub projection: Vec<flow::Projection>,
     /// Runtime field type, including reference decoration for borrowed captures.
@@ -52,6 +55,9 @@ pub struct Closure {
     /// Whether the source uses a move capture clause; scoped borrowing is outside
     /// the selected worker API even when ordinary closure syntax permits it.
     pub by_move: bool,
+    /// Rust's original Copy decision. The accounting layout also derives Copy
+    /// from the surviving fields because proof erasure can remove non-Copy state.
+    pub copy: bool,
     /// Canonical closure body, retaining actual return and cleanup edges.
     pub body: flow::Graph,
     /// Actual FnOnce adapter for Fn/FnMut closures. Its cleanup destroys the

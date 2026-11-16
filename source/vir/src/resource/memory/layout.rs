@@ -5,6 +5,20 @@ use crate::ast::*;
 use crate::messages::Span;
 use std::collections::{HashMap, HashSet};
 
+/// Datatype and compiler closure identities occupy separate recursion domains.
+#[derive(PartialEq, Eq, Hash)]
+enum LayoutNode {
+    Datatype(Dt),
+    Closure(usize),
+}
+
+struct ClosureLayout {
+    /// Copy in the original checked program is a sufficient, but not necessary,
+    /// condition after proof-only captures disappear.
+    source_copy: bool,
+    fields: Vec<(Typ, super::concurrency::CaptureMode)>,
+}
+
 /// Storage within one allocation. Element storage includes inline fields/handles;
 /// allocations owned by those elements require separate ownership accounting.
 pub(super) enum AllocationLayout {
@@ -21,6 +35,8 @@ pub(super) struct Layouts {
     option: Option<Dt>,
     field_slots: HashMap<Ident, i128>,
     synchronization_types: super::synchronization::LibraryTypes,
+    /// Only actual executable capture types contribute to closure storage.
+    closures: std::collections::BTreeMap<usize, ClosureLayout>,
 }
 
 impl Layouts {
@@ -50,6 +66,7 @@ impl Layouts {
             option,
             field_slots,
             synchronization_types: HashMap::new(),
+            closures: Default::default(),
         }
     }
 
@@ -66,8 +83,61 @@ impl Layouts {
         match slot {
             super::heap::OwnerSlot::Contents => -1,
             super::heap::OwnerSlot::Field(name) => self.field_slots[name],
+            super::heap::OwnerSlot::Capture(index) => {
+                -2 - self.field_slots.len() as i128 - *index as i128
+            }
             super::heap::OwnerSlot::Element(_) => unreachable!("runtime indices are expressions"),
         }
+    }
+
+    /// Capture layouts arrive after Verus mode checking. No lifetime-check-only
+    /// field may be substituted for this compiler-owned runtime information.
+    pub(super) fn with_closures(mut self, evidence: &super::concurrency::Evidence) -> Self {
+        self.closures = evidence
+            .closures
+            .iter()
+            .map(|(id, closure)| {
+                (
+                    *id,
+                    ClosureLayout {
+                        source_copy: closure.copy,
+                        fields: closure
+                            .captures
+                            .iter()
+                            .map(|capture| (capture.typ.clone(), capture.mode))
+                            .collect(),
+                    },
+                )
+            })
+            .collect();
+        self
+    }
+
+    /// Rust implements Copy for a closure whose executable fields are all Copy.
+    /// A tracked non-Copy capture can disappear during erasure; retaining the
+    /// pre-erasure move decision would then lose a live source/argument copy.
+    pub(super) fn copy_closure(&self, typ: &Typ) -> bool {
+        fn copy(
+            layouts: &Layouts,
+            id: usize,
+            visiting: &mut std::collections::BTreeSet<usize>,
+        ) -> bool {
+            let Some(layout) = layouts.closures.get(&id) else { return false };
+            if layout.source_copy {
+                return true;
+            }
+            if !visiting.insert(id) {
+                return false;
+            }
+            let result = layout.fields.iter().all(|(typ, mode)| {
+                *mode == super::concurrency::CaptureMode::Copy
+                    || matches!(&**typ, TypX::AnonymousClosure(_, _, _, inner) if copy(layouts, *inner, visiting))
+            });
+            visiting.remove(&id);
+            result
+        }
+        let TypX::AnonymousClosure(_, _, _, id) = &**typ else { return false };
+        copy(self, *id, &mut Default::default())
     }
 
     pub(super) fn vector(&self, typ: &Typ) -> bool {
@@ -79,6 +149,18 @@ impl Layouts {
         (matches!(&**typ, TypX::MutRef(_) | TypX::Decorate(TypDecoration::Ref, None, _))
             && self.owner(inner))
         .then_some(inner)
+    }
+
+    /// Resolved handle payload and whether this is the native standard API.
+    pub(super) fn join_handle<'t>(&self, typ: &'t Typ) -> Option<(&'t Typ, bool)> {
+        use super::synchronization::LibraryType;
+        let TypX::Datatype(name, args, _) = &**typ else { return None };
+        let native = match self.synchronization_types.get(name)? {
+            LibraryType::StdJoinHandle => true,
+            LibraryType::VstdJoinHandle => false,
+            _ => return None,
+        };
+        (args.len() == 1).then(|| (&args[0], native))
     }
 
     pub(super) fn option(&self, typ: &Typ) -> bool {
@@ -112,11 +194,17 @@ impl Layouts {
     }
 
     fn owner_inner(&self, typ: &Typ, visiting: &mut HashSet<Dt>) -> bool {
+        if self.join_handle(typ).is_some() {
+            return true;
+        }
         if super::heap::boxed(typ)
             || self.vector(typ)
             || matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _))
         {
             return true;
+        }
+        if let TypX::AnonymousClosure(_, _, _, id) = &**typ {
+            return self.closures.contains_key(id) && !self.copy_closure(typ);
         }
         if self.option(typ) {
             let TypX::Datatype(_, args, _) = &**typ else { unreachable!() };
@@ -162,7 +250,7 @@ impl Layouts {
         &self,
         typ: &Typ,
         span: &Span,
-        visiting: &mut HashSet<Dt>,
+        visiting: &mut HashSet<LayoutNode>,
     ) -> Result<u64, VirErr> {
         if matches!(&**typ, TypX::MutRef(_))
             || matches!(&**typ, TypX::Decorate(d, _, _) if *d != TypDecoration::Box)
@@ -180,6 +268,20 @@ impl Layouts {
     ) -> Result<std::collections::BTreeMap<super::heap::OwnerSlot, Typ>, VirErr> {
         use super::heap::OwnerSlot;
         let mut children = std::collections::BTreeMap::new();
+        if self.join_handle(typ).is_some() {
+            return Ok(children);
+        }
+        if let TypX::AnonymousClosure(_, _, _, id) = &**typ {
+            let layout = self.closures.get(id).ok_or_else(|| {
+                unsupported(span, "a closure without executable capture layout information")
+            })?;
+            for (index, (typ, _)) in layout.fields.iter().enumerate() {
+                if self.owner(typ) {
+                    children.insert(OwnerSlot::Capture(index), typ.clone());
+                }
+            }
+            return Ok(children);
+        }
         if matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _)) {
             // Payload ownership is canonical in Heap::shared, not duplicated
             // beneath each strong handle's structural path.
@@ -286,7 +388,7 @@ impl Layouts {
         &self,
         typ: &Typ,
         span: &Span,
-        visiting: &mut HashSet<Dt>,
+        visiting: &mut HashSet<LayoutNode>,
     ) -> Result<Option<AllocationLayout>, VirErr> {
         let TypX::Decorate(TypDecoration::Box, allocator, inner) = &**typ else {
             return Ok(None);
@@ -320,7 +422,7 @@ impl Layouts {
         &self,
         typ: &Typ,
         span: &Span,
-        visiting: &mut HashSet<Dt>,
+        visiting: &mut HashSet<LayoutNode>,
     ) -> Result<u64, VirErr> {
         let TypX::Primitive(Primitive::Slice, args) = &**typ else {
             return Err(unsupported(span, "this slice type"));
@@ -335,13 +437,13 @@ impl Layouts {
         &self,
         typ: &Typ,
         span: &Span,
-        visiting: &mut HashSet<Dt>,
+        visiting: &mut HashSet<LayoutNode>,
     ) -> Result<u64, VirErr> {
         if let TypX::Datatype(name, args, _) = &**typ
             && let Some(kind) = self.synchronization_types.get(name)
         {
             use super::synchronization::LibraryType;
-            let size = |index: usize, visiting: &mut HashSet<Dt>| {
+            let size = |index: usize, visiting: &mut HashSet<LayoutNode>| {
                 let typ =
                     args.get(index).ok_or_else(|| unsupported(span, "this primitive layout"))?;
                 self.size_inner(typ, span, visiting)
@@ -365,6 +467,21 @@ impl Layouts {
             return bytes.ok_or_else(|| unsupported(span, "primitive sizes exceeding u64"));
         }
         match &**typ {
+            TypX::AnonymousClosure(_, _, _, id) => {
+                let layout = self.closures.get(id).ok_or_else(|| {
+                    unsupported(span, "a closure without executable capture layout information")
+                })?;
+                if !visiting.insert(LayoutNode::Closure(*id)) {
+                    return Err(unsupported(span, "recursive executable closure layouts"));
+                }
+                let bytes = layout.fields.iter().try_fold(0u64, |bytes, (field, _)| {
+                    bytes
+                        .checked_add(self.size_inner(field, span, visiting)?)
+                        .ok_or_else(|| unsupported(span, "closure storage exceeding u64"))
+                })?;
+                visiting.remove(&LayoutNode::Closure(*id));
+                Ok(bytes)
+            }
             TypX::Decorate(TypDecoration::Ghost | TypDecoration::Tracked, _, _) => Ok(0),
             TypX::Decorate(TypDecoration::Box, allocator, inner)
                 if matches!(&**inner, TypX::Primitive(Primitive::ThreadPanicPayload, _)) =>
@@ -424,7 +541,7 @@ impl Layouts {
             TypX::Datatype(Dt::Tuple(0), _, _) => Ok(0),
             TypX::Datatype(name @ Dt::Path(_), _, _) => {
                 let variant = self.struct_variant(typ, span)?;
-                if !visiting.insert(name.clone()) {
+                if !visiting.insert(LayoutNode::Datatype(name.clone())) {
                     return Err(unsupported(span, "recursive struct layouts"));
                 }
                 let mut bytes = 0u64;
@@ -443,7 +560,7 @@ impl Layouts {
                         .checked_add(field_bytes)
                         .ok_or_else(|| unsupported(span, "struct sizes exceeding u64"))?;
                 }
-                visiting.remove(name);
+                visiting.remove(&LayoutNode::Datatype(name.clone()));
                 Ok(bytes)
             }
             TypX::Primitive(Primitive::Array, args)

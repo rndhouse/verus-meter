@@ -173,16 +173,20 @@ pub(super) fn closure(
             ty::UpvarCapture::ByRef(_) => CaptureMode::Borrow,
             _ => return Err(vir::messages::error(span, "unsupported worker capture kind")),
         };
-        let typ = crate::rust_to_vir_base::mid_ty_to_vir(
-            tcx,
-            &ctxt.verus_items,
-            None::<&mut std::collections::HashMap<_, _>>,
-            owner.to_def_id(),
-            expr.span,
-            &typ,
-            None,
-        )?;
-        captures.push(Capture { source, projection: path, typ, mode, body_place });
+        let convert = |typ| {
+            crate::rust_to_vir_base::mid_ty_to_vir(
+                tcx,
+                &ctxt.verus_items,
+                None::<&mut std::collections::HashMap<_, _>>,
+                owner.to_def_id(),
+                expr.span,
+                typ,
+                None,
+            )
+        };
+        let source_typ = convert(&capture.place.base_ty)?;
+        let typ = convert(&typ)?;
+        captures.push(Capture { source, source_typ, projection: path, typ, mode, body_place });
     }
     let function = |id| std::sync::Arc::new(vir::ast::FunX { path: ctxt.def_id_to_vir_path(id) });
     let body = super::cleanup::lower(tcx, owner, &function, &|span| ctxt.spans.to_air_span(span));
@@ -199,6 +203,10 @@ pub(super) fn closure(
         span: span.clone(),
         captures,
         by_move: matches!(source.capture_clause, rustc_hir::CaptureBy::Value { .. }),
+        copy: tcx.type_is_copy_modulo_regions(
+            ty::TypingEnv::post_analysis(tcx, owner),
+            typeck.expr_ty(expr),
+        ),
         body,
         once_adapter,
     })

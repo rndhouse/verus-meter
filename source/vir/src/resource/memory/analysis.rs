@@ -39,6 +39,10 @@ pub(super) struct Checkpoint {
 
 /// One function's evolving ownership state and already checked callee facts.
 pub(super) struct Analysis<'a> {
+    /// Runtime capture types and bodies recovered by mode checking and rustc.
+    pub(super) concurrency: &'a super::concurrency::Evidence,
+    /// Current checked worker body; None denotes the enclosing accounting function.
+    pub(super) current_worker: Option<super::workers::WorkerId>,
     /// Reachable fallthrough and pending lexical exits share one lifetime model.
     pub(super) flow: super::control::Flow,
     /// Executable ownership transitions accepted by this body's accounting.
@@ -257,6 +261,9 @@ impl Analysis<'_> {
     /// Evaluate source expressions. Only a standalone aggregate leaves a storage
     /// charge; scalar/reference operations introduce no implicit objects.
     pub(super) fn expr(&mut self, expr: &Expr) -> Result<u64, VirErr> {
+        if let Some(copied) = self.copied_closure_read(expr) {
+            return self.expr(&copied);
+        }
         match &expr.x {
             ExprX::UnaryOpr(UnaryOpr::LoopIsolationBoundary(_), inner) => return self.expr(inner),
             ExprX::NeverToAny(inner) => return self.expr(inner),
@@ -555,6 +562,8 @@ pub(super) fn check(
     })?;
     super::control::validate(body, &modes.var_modes)?;
     let mut analysis = Analysis {
+        concurrency,
+        current_worker: None,
         flow: Default::default(),
         transitions: Default::default(),
         slots: HashMap::new(),
@@ -648,6 +657,7 @@ pub(super) fn check(
 
     let result = analysis.produce(body)?;
     let result = analysis.finish_returns(&function.span, result)?;
+    analysis.heap.workers.check_closed(&function.span)?;
     let return_parameter = result.parameter;
     let zero_charges = analysis.growth.zero_charges();
     let zero_forests = analysis.growth.zero_forests();

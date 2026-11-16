@@ -74,6 +74,7 @@ impl Analysis<'_> {
         copy: bool,
         span: &Span,
     ) -> Result<Value, VirErr> {
+        let copy = copy || self.layouts.copy_closure(typ);
         if let PlaceX::Temporary(expr) = &place.x {
             if crate::ast_util::types_equal(&expr.typ, typ) {
                 return self.produce(expr);
@@ -95,7 +96,12 @@ impl Analysis<'_> {
 
     /// Partial moves keep the parent's inline storage until its lifetime ends.
     /// The extracted value receives a new slot, while its allocations transfer.
-    fn owner_value(&mut self, place: &Place, typ: &Typ, span: &Span) -> Result<Value, VirErr> {
+    pub(super) fn owner_value(
+        &mut self,
+        place: &Place,
+        typ: &Typ,
+        span: &Span,
+    ) -> Result<Value, VirErr> {
         if matches!(place.x, PlaceX::Local(_)) && crate::ast_util::types_equal(&place.typ, typ) {
             self.take_value(place)
         } else {
@@ -105,6 +111,9 @@ impl Analysis<'_> {
     }
 
     pub(super) fn produce(&mut self, expr: &Expr) -> Result<Value, VirErr> {
+        if let Some(copied) = self.copied_closure_read(expr) {
+            return self.produce(&copied);
+        }
         if let ExprX::UnaryOpr(UnaryOpr::LoopIsolationBoundary(_), inner) = &expr.x {
             return self.produce(inner);
         }
@@ -132,6 +141,9 @@ impl Analysis<'_> {
             });
         }
         match &expr.x {
+            ExprX::NonSpecClosure { proof_fn_modes: None, .. } => {
+                return self.capture_closure(expr);
+            }
             ExprX::Loop { .. } => {
                 self.analyze_loop(expr)?;
                 return if self.flow.reachable {
@@ -258,8 +270,13 @@ impl Analysis<'_> {
         self.result_owner = None;
     }
     pub(super) fn join_branch(&mut self, span: &Span, state: &BranchState) -> Result<(), VirErr> {
-        if !self.heap.shared.compatible(&state.heap.shared) {
-            return Err(unsupported(span, "branch-dependent shared roots or strong ownership"));
+        if !self.heap.shared.compatible(&state.heap.shared)
+            || !self.heap.workers.compatible(&state.heap.workers)
+        {
+            return Err(unsupported(
+                span,
+                "branch-dependent shared roots or outstanding worker ownership",
+            ));
         }
         self.storage.join_live(&state.storage)?;
         let mut peak = self.storage.peak();

@@ -14,6 +14,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone, Default)]
 pub(super) struct Heap {
+    /// Executing workers and completed results survive their source handle slots.
+    pub(super) workers: super::workers::Workers,
     /// Shared allocations live once in the closed domain, independently of
     /// which local, aggregate or worker currently retains each strong handle.
     pub(super) shared: super::shared::SharedRoots,
@@ -36,6 +38,8 @@ pub(super) struct Heap {
 pub(super) enum OwnerSlot {
     Contents,
     Field(Ident),
+    /// Executable closure field in the compiler's post-erasure capture order.
+    Capture(usize),
     /// Operation-local borrowed projection; never exported in an ownership summary.
     Element(u64),
 }
@@ -46,6 +50,10 @@ pub(super) type OwnerPath = Vec<OwnerSlot>;
 /// its inline storage belongs to the enclosing value or allocation layout.
 #[derive(Clone)]
 pub(super) struct Owner {
+    /// A join handle names storage kept in the domain's worker registry.
+    pub(super) worker: Option<super::workers::WorkerId>,
+    /// Concrete closure definition; its owned fields occupy Capture child slots.
+    pub(super) closure: Option<usize>,
     /// A strong handle links to canonical backing instead of owning a copy of it.
     pub(super) shared: Option<super::shared::RootId>,
     /// Whether descriptors include incoming allocations or only this frame's charges.
@@ -81,6 +89,8 @@ pub(super) struct Owner {
 impl Default for Owner {
     fn default() -> Self {
         Self {
+            worker: None,
+            closure: None,
             shared: None,
             view: Default::default(),
             source: None,
@@ -352,6 +362,15 @@ impl Analysis<'_> {
         path: &mut OwnerPath,
         capacities: &HashMap<super::paths::LocalPath, Expr>,
     ) -> Result<Owner, VirErr> {
+        if matches!(&**typ, TypX::AnonymousClosure(..)) {
+            return Err(unsupported(span, "closure inputs without a checked capture summary"));
+        }
+        if self.layouts.join_handle(typ).is_some() {
+            return Err(unsupported(
+                span,
+                "worker inputs without a checked accounting-domain descriptor",
+            ));
+        }
         if matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _)) {
             return Err(unsupported(span, "shared input roots without a checked alias descriptor"));
         }
@@ -438,6 +457,9 @@ impl Analysis<'_> {
     /// Evaluate into an existing handle destination and retain its allocation.
     pub(super) fn owner_expr(&mut self, expr: &Expr) -> Result<Owner, VirErr> {
         self.layouts.size(&expr.typ, &expr.span)?;
+        if let Some(owner) = self.spawn_owner(expr)? {
+            return Ok(owner);
+        }
         if let Some(owner) = self.shared_owner(expr)? {
             return Ok(owner);
         }
@@ -507,14 +529,16 @@ impl Analysis<'_> {
         inputs: bool,
     ) -> Result<(), VirErr> {
         let mut shared = false;
-        owner.visit(&mut |node| shared |= node.shared.is_some());
+        owner.visit(&mut |node| {
+            shared |= node.shared.is_some() || node.closure.is_some() || node.worker.is_some()
+        });
         if shared {
             // The old forest stores unique-owner byte charges. It cannot yet
             // carry a strong root link or justify destroying that handle when
             // merely transferring the charge to a symbolic collection sum.
             return Err(unsupported(
                 span,
-                "shared handles in runtime ownership forests without a strong-identity summary",
+                "shared handles, closures or workers in runtime ownership forests without an identity summary",
             ));
         }
         self.destroy_owner(owner, span, inputs);
@@ -522,6 +546,18 @@ impl Analysis<'_> {
     }
 
     fn destroy_owner(&mut self, owner: Owner, span: &Span, inputs: bool) {
+        if let Some(worker) = owner.worker {
+            assert!(
+                owner.bytes == 0
+                    && owner.children.is_empty()
+                    && owner.dynamic.is_none()
+                    && owner.shared.is_none()
+                    && owner.closure.is_none()
+                    && owner.input.is_none()
+            );
+            self.heap.workers.detach(worker, span);
+            return;
+        }
         if let Some(root) = owner.shared {
             // A handle node owns only its link. Backing/payload destruction is
             // deferred while any other strong handle remains in the domain.
@@ -564,6 +600,16 @@ impl Analysis<'_> {
             let ExprX::Call { target: CallTarget::Fun(_, _, types, _, _), .. } = &expr.x else {
                 unreachable!()
             };
+            if types.len() == 1
+                && matches!(&*types[0], TypX::AnonymousClosure(..))
+                && !self.layouts.owner(&types[0])
+            {
+                // Rust copies this closure into the drop argument. Its original
+                // source value stays live until its own move or scope exit.
+                let value = self.produce(&args[0])?;
+                self.release_value(value, &expr.span);
+                return Ok(Some(0));
+            }
             if types.len() != 1 || !self.layouts.owner(&types[0]) {
                 return Err(unsupported(
                     &expr.span,

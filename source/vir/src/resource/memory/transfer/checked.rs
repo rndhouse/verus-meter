@@ -110,6 +110,8 @@ pub(in super::super) enum Operation {
     Vector { capacity: Expr, element: u64 },
     /// Allocate a fixed payload; an owning payload is nested under Contents.
     Box { payload: Expr, bytes: u64 },
+    /// Capture transport happens at construction; it does not execute the body.
+    Closure { captures: Vec<(super::super::concurrency::CaptureMode, Place)> },
     /// Initialize checked child slots. The tag distinguishes optional payloads.
     Aggregate { fields: Vec<(Expr, Option<OwnerSlot>)>, tag: u64 },
     /// Append one value, retaining its complete forest beneath the next index.
@@ -238,6 +240,13 @@ impl Checked {
 
     pub(in super::super) fn operation(&mut self, span: &Span, operation: Operation) {
         match &operation {
+            Operation::Closure { captures } => {
+                for (mode, capture) in captures {
+                    if *mode == super::super::concurrency::CaptureMode::Move {
+                        self.mutations.push(capture.location.clone());
+                    }
+                }
+            }
             Operation::Push { receiver, .. } | Operation::Remove { receiver, .. } => {
                 self.mutations.push(receiver.location.clone());
             }

@@ -170,7 +170,9 @@ impl Inference<'_> {
             &mut air::scope_map::ScopeMap::new(),
             &mut (),
             &mut |_, _, expr| {
-                if super::execution::ignored_expression(expr) {
+                if super::execution::ignored_expression(expr)
+                    || matches!(expr.x, ExprX::NonSpecClosure { .. })
+                {
                     return VisitorControlFlow::Return;
                 }
                 if let ExprX::If(condition, yes, no) = &expr.x {

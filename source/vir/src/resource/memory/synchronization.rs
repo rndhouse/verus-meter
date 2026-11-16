@@ -370,7 +370,8 @@ pub fn needs_cleanup(
 ) -> bool {
     let empty = HashMap::new();
     let modes = modes.map(|m| &m.var_modes).unwrap_or(&empty);
-    reject_unaccounted(function, modes, types, datatypes).is_err()
+    super::closures::needs_evidence(function, modes)
+        || reject_unaccounted(function, modes, types, datatypes).is_err()
 }
 
 /// Distinguish executable roots from tracked protocol witnesses and specification
@@ -466,6 +467,11 @@ pub(super) fn reject_unaccounted(
         }
         fn visit_expr(&mut self, expr: &Expr) -> Result<(), VirErr> {
             if super::execution::ignored_expression(expr) {
+                return Ok(());
+            }
+            if matches!(expr.x, ExprX::NonSpecClosure { .. }) {
+                // Creation transfers its executable captures. The body runs
+                // only through an accounted invocation/publication boundary.
                 return Ok(());
             }
             if let ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), .. } = &expr.x

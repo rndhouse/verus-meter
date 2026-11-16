@@ -1,5 +1,157 @@
 //! Native thread/shared-storage surface and executable compiler evidence.
-use super::support::{rejects, verifies};
+use super::support::{exact_peak, rejects, verifies};
+
+#[test]
+fn move_closure_retains_actual_allocations_until_its_drop() {
+    let code = r#"
+        fn f() resources peak(memory) <= BUDGET {
+            let owner = Box::new([0u8;64]);
+            let closure = move || {
+                let latent = Box::new([0u8;8192]);
+                drop(owner); drop(latent);
+            };
+            let scratch = [0u8;128];
+            drop(closure);
+        }
+    "#;
+    exact_peak("moved_capture", code, 200);
+    rejects(
+        "edited_capture_allocation",
+        &code.replace("BUDGET", "200").replace("[0u8;64]", "[0u8;96]"),
+        "memory budget exceeded",
+    );
+}
+
+#[test]
+fn invoking_a_latent_body_requires_a_checked_memory_effect() {
+    rejects(
+        "invoked_capture_body",
+        r#"
+        fn f() resources peak(memory) <= 200 {
+            let owner = Box::new([0u8;64]);
+            let closure = move || {
+                let scratch = Box::new([0u8;8192]);
+                drop(owner);
+                drop(scratch);
+            };
+            closure();
+        }
+    "#,
+        "calls with generic, dynamic, or unsupported targets",
+    );
+}
+
+#[test]
+fn simultaneous_owned_and_copied_captures_keep_every_charge() {
+    exact_peak(
+        "simultaneous_captures",
+        r#"
+        fn f() resources peak(memory) <= BUDGET {
+            let first = Box::new([0u8;64]);
+            let second = Box::new([0u8;96]);
+            let count = 7u16;
+            let closure = move || {
+                drop(first);
+                drop(second);
+                count
+            };
+            let scratch = [0u8;128];
+            drop(closure);
+        }
+    "#,
+        308,
+    );
+}
+
+#[test]
+fn copy_closures_keep_the_source_and_charge_the_drop_argument() {
+    exact_peak(
+        "copied_capture",
+        r#"
+        fn f() resources peak(memory) <= BUDGET {
+            let value = 7u64;
+            let closure = move || value;
+            drop(closure);
+        }
+    "#,
+        24,
+    );
+}
+
+#[test]
+fn erased_noncopy_proof_capture_cannot_hide_executable_closure_copies() {
+    exact_peak(
+        "erased_capture_copy",
+        r#"
+        fn f() resources peak(memory) <= BUDGET {
+            let value = 7u64;
+            let tracked token = Box::new(9u64);
+            let closure = move || {
+                proof { let tracked consumed = token; }
+                value
+            };
+            drop(closure);
+        }
+    "#,
+        24,
+    );
+}
+
+#[test]
+fn executable_copy_decisions_propagate_through_nested_capture_fields() {
+    exact_peak(
+        "nested_erased_capture_copy",
+        r#"
+        fn f() resources peak(memory) <= BUDGET {
+            let value = 7u64;
+            let tracked token = Box::new(9u64);
+            let first = move || {
+                proof { let tracked consumed = token; }
+                value
+            };
+            let second = move || first();
+            drop(second);
+        }
+    "#,
+        32,
+    );
+}
+
+#[test]
+fn partial_capture_transfers_only_the_selected_child_owner() {
+    exact_peak(
+        "partial_capture",
+        r#"
+        struct State { left: Box<[u8;64]>, right: Box<[u8;128]> }
+        fn f() resources peak(memory) <= BUDGET {
+            let state = State { left: Box::new([0u8;64]), right: Box::new([0u8;128]) };
+            let closure = move || { drop(state.left); };
+            drop(state.right);
+            let scratch = [0u8;128];
+            drop(closure);
+        }
+    "#,
+        216,
+    );
+}
+
+#[test]
+fn proof_only_capture_fields_occupy_no_executable_storage() {
+    verifies(
+        "proof_capture_storage",
+        r#"
+        fn f() resources peak(memory) <= 0 {
+            let ghost value = 7int;
+            let tracked token = 9u64;
+            let closure = move || {
+                proof { assert(value == 7); assert(token == 9); }
+                0u8
+            };
+            drop(closure);
+        }
+    "#,
+    );
+}
 
 #[test]
 fn shared_and_worker_handles_have_source_sizes() {

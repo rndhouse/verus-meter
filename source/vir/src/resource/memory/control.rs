@@ -50,6 +50,9 @@ pub(super) fn validate(
             if super::execution::ignored_expression(value) {
                 return Ok(());
             }
+            if matches!(value.x, ExprX::NonSpecClosure { .. }) {
+                return Ok(());
+            }
             let structural = self.structural;
             match &value.x {
                 ExprX::Return(result) | ExprX::BreakOrContinue { value: result, .. } => {
@@ -273,7 +276,8 @@ fn direct_result(value: &Expr) -> bool {
 /// Continuing roles may share mutable proof state, but fixed allocation and
 /// provenance identities cannot change implicitly at a loop exit.
 pub(super) fn compatible_heap(a: &super::heap::Heap, b: &super::heap::Heap) -> bool {
-    a.shared.compatible(&b.shared)
+    a.workers.compatible(&b.workers)
+        && a.shared.compatible(&b.shared)
         && [(&a.owners, &b.owners), (&a.borrowed, &b.borrowed)].iter().all(|(left, right)| {
             left.len() == right.len()
                 && left.iter().all(|(name, a)| right.get(name).is_some_and(|b| compatible(a, b)))
@@ -328,7 +332,9 @@ pub(super) fn compatible(a: &Owner, b: &Owner) -> bool {
             _ => false,
         }
     }
-    a.shared == b.shared
+    a.worker == b.worker
+        && a.closure == b.closure
+        && a.shared == b.shared
         && a.bytes == b.bytes
         && a.kind == b.kind
         && a.dynamic == b.dynamic

@@ -209,8 +209,11 @@ mod tests {
             let functions = HashMap::new();
             let summaries = HashMap::new();
             let budgets = HashMap::new();
+            let concurrency = super::super::concurrency::Evidence::default();
             let site = span();
             let mut analysis = Analysis {
+                concurrency: &concurrency,
+                current_worker: None,
                 flow: Default::default(),
                 transitions: Default::default(),
                 slots: HashMap::new(),

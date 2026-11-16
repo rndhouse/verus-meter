@@ -68,6 +68,18 @@ pub(super) fn summarize(
         path: &mut super::heap::OwnerPath,
         capacities: &mut std::collections::BTreeMap<super::heap::OwnerPath, Expr>,
     ) -> Result<ReturnedOwner, VirErr> {
+        if owner.worker.is_some() {
+            return Err(unsupported(
+                &function.span,
+                "a live worker returned from its accounting scope",
+            ));
+        }
+        if owner.closure.is_some() {
+            return Err(unsupported(
+                &function.span,
+                "a returned closure without a checked capture summary",
+            ));
+        }
         if owner.shared.is_some() {
             return Err(unsupported(
                 &function.span,

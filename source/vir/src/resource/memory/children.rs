@@ -15,6 +15,16 @@ impl Analysis<'_> {
     }
 
     pub(super) fn move_owner_to(&mut self, place: &Place, typ: &Typ) -> Result<Owner, VirErr> {
+        self.take_owner_to(place, typ, true)
+    }
+
+    /// A closure construction records all captures as one checked operation;
+    /// individual fields cannot overwrite each other's move at the same AST ID.
+    pub(super) fn capture_owner(&mut self, place: &Place, typ: &Typ) -> Result<Owner, VirErr> {
+        self.take_owner_to(place, typ, false)
+    }
+
+    fn take_owner_to(&mut self, place: &Place, typ: &Typ, record: bool) -> Result<Owner, VirErr> {
         let (name, path) = super::paths::place(place, typ)
             .ok_or_else(|| unsupported(&place.span, "heap ownership outside a fixed child path"))?;
         if super::paths::indexed(&path) {
@@ -32,21 +42,23 @@ impl Analysis<'_> {
                 || unsupported(&place.span, "moving a missing or borrowed child owner"),
             )?
         };
-        self.transitions.movement(
-            &place.span,
-            super::transfer::checked::Place {
-                source: SpannedTyped::new(
-                    &place.span,
-                    typ,
-                    ExprX::ReadPlace(
-                        place.clone(),
-                        UnfinalizedReadKind { preliminary_kind: ReadKind::Copy, id: 0 },
+        if record {
+            self.transitions.movement(
+                &place.span,
+                super::transfer::checked::Place {
+                    source: SpannedTyped::new(
+                        &place.span,
+                        typ,
+                        ExprX::ReadPlace(
+                            place.clone(),
+                            UnfinalizedReadKind { preliminary_kind: ReadKind::Copy, id: 0 },
+                        ),
                     ),
-                ),
-                typ: typ.clone(),
-                location: (name.clone(), path.clone()),
-            },
-        );
+                    typ: typ.clone(),
+                    location: (name.clone(), path.clone()),
+                },
+            );
+        }
         self.growth.forget_element_places(&owner);
         self.storage
             .event(&place.span, "transfer child ownership without copying allocations".into());

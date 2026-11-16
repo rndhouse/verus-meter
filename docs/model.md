@@ -127,6 +127,16 @@ storage is the sum of its captures after proof erasure, excluding separately
 owned descendants. These rules follow the
 [concurrent storage policy](concurrent-model.md#library-trust-and-source-storage-policy).
 
+Resource-contracted code supports constructing and dropping concrete `move`
+closures with supported executable capture layouts. Moved captures retain their
+allocations; partial captures transfer only the selected owners, while the
+enclosing inline slot remains live. Copy captures create inline storage. The
+analysis derives closure Copy behavior from the surviving executable fields,
+including nested closures: erased tracked state cannot hide runtime copies.
+Creating a closure does not execute its body. General closure invocation,
+capture summaries across function interfaces and closure `value_size` queries
+remain unsupported.
+
 Primitive identification uses compiler definitions, including through aliases.
 Compiler-derived synchronization graphs preserve moves, acquisition outcomes and
 actual guard cleanup. Runtime synchronization values still reject in
@@ -134,6 +144,10 @@ resource-contracted code until concurrent allocation coverage and bound checking
 are connected. Native functional specifications assume neither acquisition
 success nor a protected payload invariant. The
 [concurrent TODOs](todo/concurrent/README.md) track the remaining requirements.
+An internal worker-storage ledger separates publication, execution, completion
+and collection; it does not yet enable source worker proofs. Worker-body effects,
+join-result adapters and symbolic worker populations remain required before
+concurrent contracts can be checked.
 
 ## Concurrent extension specification
 

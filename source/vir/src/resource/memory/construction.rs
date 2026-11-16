@@ -31,6 +31,9 @@ impl Analysis<'_> {
 
     /// Evaluate into storage already charged to a local, field, or parameter.
     pub(super) fn initialize_expr(&mut self, expr: &Expr) -> Result<(), VirErr> {
+        if let Some(copied) = self.copied_closure_read(expr) {
+            return self.initialize_expr(&copied);
+        }
         if let ExprX::ReadPlace(place, kind) = &expr.x {
             if matches!(kind.preliminary_kind, ReadKind::Move(_))
                 && crate::ast_util::types_equal(&place.typ, &expr.typ)

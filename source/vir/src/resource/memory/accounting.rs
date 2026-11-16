@@ -288,6 +288,37 @@ impl Accounting {
         }
         id
     }
+
+    /// Pack disjoint field lifetimes into one aggregate without creating another
+    /// inline charge. Alternatives within a field are distinct from simultaneous
+    /// fields: each reachable path contributes that field's storage exactly once.
+    pub(super) fn pack_values(&mut self, fields: &[(&HashSet<u64>, u64)], bytes: u64) -> u64 {
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        for path in &mut self.paths {
+            let mut amount = 0u64;
+            let mut seen = HashSet::new();
+            for (ids, expected) in fields {
+                let live: Vec<_> =
+                    ids.iter().filter_map(|id| path.values.get(id).map(|c| (*id, c))).collect();
+                assert!(
+                    live.len() == 1 || (*expected == 0 && live.is_empty()),
+                    "one inline lifetime per captured field and path"
+                );
+                for (source, charge) in live {
+                    assert!(seen.insert(source), "capture fields are disjoint");
+                    assert_eq!(charge.kind, MemoryKind::host_local());
+                    assert_eq!(charge.amount, *expected);
+                    amount = amount.checked_add(charge.amount).expect("validated capture layout");
+                }
+            }
+            assert_eq!(amount, bytes, "capture packing preserves storage");
+            for source in seen {
+                path.values.remove(&source);
+            }
+            path.values.insert(id, Charge { kind: MemoryKind::host_local(), amount });
+        }
+        id
+    }
     pub(super) fn release_values(&mut self, ids: &HashSet<u64>) {
         for path in &mut self.paths {
             for id in ids {
@@ -648,6 +679,27 @@ mod tests {
         storage.release_values(&[a, b].into_iter().collect());
         assert_eq!(storage.live(), 0);
     }
+    #[test]
+    fn packing_fields_preserves_simultaneous_storage_and_branch_alternatives() {
+        let span = span();
+        let mut storage = Accounting::new(&span, 20);
+        let first = storage.reserve_value(&span, MemoryKind::host_local(), 8).unwrap();
+        let second = storage.reserve_value(&span, MemoryKind::host_local(), 12).unwrap();
+        let mut sibling = storage.clone();
+        sibling.release_values(&[first].into());
+        let alternative = sibling.reserve_value(&span, MemoryKind::host_local(), 8).unwrap();
+        storage.join_live(&sibling).unwrap();
+        let packed =
+            storage.pack_values(&[(&[first, alternative].into(), 8), (&[second].into(), 12)], 20);
+        assert_eq!(storage.live(), 20);
+        assert_eq!(selected(&storage, MemorySelection::All), 20);
+        // The old field identities no longer own inline storage on either path.
+        storage.release_values(&[first, alternative, second].into());
+        assert_eq!(storage.live(), 20);
+        storage.release_values(&[packed].into());
+        assert_eq!(storage.live(), 0);
+    }
+
     #[test]
     fn excessive_distinct_states_produce_a_diagnostic() {
         let span = span();

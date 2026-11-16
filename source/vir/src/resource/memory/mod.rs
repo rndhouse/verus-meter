@@ -39,6 +39,7 @@ mod budget;
 mod call_graph;
 mod calls;
 mod children;
+mod closures;
 pub mod concurrency;
 mod construction;
 mod contracts;
@@ -72,6 +73,7 @@ mod transfer;
 mod values;
 mod vector_calls;
 mod vectors;
+mod workers;
 
 pub use accounting::{MemoryEvent, MemoryReport};
 pub use budget::{BudgetExpr, BudgetExprX};
@@ -122,7 +124,8 @@ pub fn check_crate(
         synchronization::reject_unaccounted(function, modes, &synchronization.types, datatypes)?;
     }
     let layouts = layout::Layouts::new(datatypes, global_allocator, vector, option)
-        .with_synchronization_types(&synchronization.types);
+        .with_synchronization_types(&synchronization.types)
+        .with_closures(&synchronization.concurrency);
     let budgets = budget::resolve(functions, &function_map, &layouts)?;
     let mut reports = Vec::new();
     let mut summaries = HashMap::new();
