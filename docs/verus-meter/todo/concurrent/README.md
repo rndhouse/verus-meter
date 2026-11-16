@@ -2,7 +2,9 @@
 
 Implement the [approved plan](../plan-concurrent-symbolic-analysis.md) as one
 complete core feature. These tasks divide implementation responsibilities; they
-are not separate prototypes or releases. No implementation is marked complete.
+are not separate prototypes or releases. TODOs 01–02 are complete on
+`feature/concurrent-symbolic-analysis`; their implementation is not yet merged
+into this checkout. TODO 03 is in progress on that branch.
 The parent plan is the capability checklist; this index tracks the work that
 satisfies it. Read both before starting a task.
 
@@ -15,8 +17,8 @@ from their first implementation.
 
 | Done | TODO | Delivers |
 | --- | --- | --- |
-| [ ] | [01 — Semantics and supported scope](01-semantics-and-supported-scope.md) | Accounting, proof interface, trust boundary and concrete operation matrix. |
-| [ ] | [02 — Synchronization contracts and identities](02-synchronization-contracts-and-identities.md) | Common representation and trusted standard mutex integration. |
+| [x] | [01 — Semantics and supported scope](complete/01-semantics-and-supported-scope.md) | Accounting, proof interface, trust boundary and concrete operation matrix. |
+| [x] | [02 — Synchronization contracts and identities](complete/02-synchronization-contracts-and-identities.md) | Common representation and trusted standard mutex integration. |
 | [ ] | [03 — Worker lifetimes and shared storage](03-worker-lifetimes-and-shared-storage.md) | Spawn/join, captures, shared allocations, symbolic populations and retained results. |
 | [ ] | [04 — Allocation and synchronization lifetimes](04-allocation-and-synchronization-lifetimes.md) | Compiler-derived containment, escape and release relationships. |
 | [ ] | [05 — Function and worker summaries](05-function-and-worker-summaries.md) | Precise identities, ownership and synchronization effects across calls. |
