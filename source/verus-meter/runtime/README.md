@@ -159,3 +159,10 @@ substitution and local size queries, queries outside preconditions, and resource
 verification failures with and without the query attribute.
 The ordinary resource-example suite also verifies this example, using standalone
 artifact discovery for its runtime dependency.
+
+Synchronization type-size queries use the shared source model: `Mutex<T>` stores
+nine model bytes plus inline `T`, `MutexGuard<T>` is an eight-byte reference,
+`PoisonError<T>` stores inline `T`, and `Result`/`TryLockError` add one tag byte to
+the largest inline variant. Payloads must implement the existing supported size
+interface. These constants describe source storage; querying them does not enable
+runtime synchronization memory verification or measure OS lock storage.

@@ -185,3 +185,17 @@ fn shared_bindings_preserve_lazy_branches_and_validate_references() {
         Err(QueryError::InvalidBinding { index: usize::MAX })
     );
 }
+
+#[test]
+fn synchronization_layouts_count_payload_once_and_keep_result_variants() {
+    use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
+    type Guard = MutexGuard<'static, u64>;
+    assert_eq!(<Mutex<u64> as ValueSize>::BYTES, 17);
+    assert_eq!(<Guard as ValueSize>::BYTES, 8);
+    assert_eq!(<PoisonError<Guard> as ValueSize>::BYTES, 8);
+    assert_eq!(<TryLockError<Guard> as ValueSize>::BYTES, 9);
+    assert_eq!(<Result<Guard, TryLockError<Guard>> as ValueSize>::BYTES, 10);
+    assert_eq!(<Mutex<Vec<u8>> as ValueSize>::BYTES, 33);
+    assert_eq!(verus_meter_model::mutex_bytes(u64::MAX), None);
+    assert_eq!(verus_meter_model::result_bytes(0, u64::MAX), None);
+}

@@ -23,3 +23,18 @@ pub const fn array_bytes(element: u64, count: u64) -> Option<u64> {
 pub const fn reference_bytes(slice: bool) -> u64 {
     if slice { 2 * WORD_BYTES } else { WORD_BYTES }
 }
+
+/// Inline mutex source storage: synchronization state, poison flag and payload.
+/// This describes source storage, not the platform lock ABI or OS workspace.
+pub const fn mutex_bytes(payload: u64) -> Option<u64> {
+    match payload.checked_add(WORD_BYTES) {
+        Some(bytes) => bytes.checked_add(BOOL_BYTES),
+        None => None,
+    }
+}
+
+/// Inline variant tag plus the larger Result payload; allocations stay separate.
+pub const fn result_bytes(ok: u64, err: u64) -> Option<u64> {
+    let payload = if ok > err { ok } else { err };
+    payload.checked_add(BOOL_BYTES)
+}

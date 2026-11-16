@@ -64,6 +64,7 @@ mod sections;
 mod spec_budget;
 mod summary;
 mod symbolic;
+pub mod synchronization;
 mod transfer;
 mod values;
 mod vector_calls;
@@ -92,6 +93,7 @@ pub fn check_crate(
     global_allocator: Option<Dt>,
     vector: Option<Dt>,
     option: Option<Dt>,
+    synchronization_types: &synchronization::LibraryTypes,
     fresh_span: &dyn Fn(&Span) -> Span,
 ) -> Result<Vec<(Span, MemoryReport)>, VirErr> {
     for function in functions.iter_mut() {
@@ -99,8 +101,14 @@ pub fn check_crate(
         let modes = modes.get(&function.x.name).map(|modes| &modes.var_modes).unwrap_or(&empty);
         *function = for_loops::prepare(function, modes, fresh_span)?;
     }
+    for function in functions.iter().filter(|f| f.x.attrs.resource_contract.is_some()) {
+        let empty = HashMap::new();
+        let modes = modes.get(&function.x.name).map(|modes| &modes.var_modes).unwrap_or(&empty);
+        synchronization::reject_unaccounted(function, modes, synchronization_types, datatypes)?;
+    }
     let function_map = functions.iter().map(|f| (f.x.name.clone(), f.clone())).collect();
-    let layouts = layout::Layouts::new(datatypes, global_allocator, vector, option);
+    let layouts = layout::Layouts::new(datatypes, global_allocator, vector, option)
+        .with_synchronization_types(synchronization_types);
     let budgets = budget::resolve(functions, &function_map, &layouts)?;
     let graph = call_graph::CallGraph::new(&function_map, modes)?;
     let mut reports = Vec::new();
@@ -182,8 +190,10 @@ pub fn resolve_sizes(
     global_allocator: Option<Dt>,
     vector: Option<Dt>,
     option: Option<Dt>,
+    synchronization_types: &synchronization::LibraryTypes,
 ) -> Result<Function, VirErr> {
-    let layouts = layout::Layouts::new(datatypes, global_allocator, vector, option);
+    let layouts = layout::Layouts::new(datatypes, global_allocator, vector, option)
+        .with_synchronization_types(synchronization_types);
     crate::ast_visitor::map_function_visitor_env(
         function,
         &mut air::scope_map::ScopeMap::new(),

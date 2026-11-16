@@ -20,6 +20,7 @@ pub(super) struct Layouts {
     vector: Option<Dt>,
     option: Option<Dt>,
     field_slots: HashMap<Ident, i128>,
+    synchronization_types: super::synchronization::LibraryTypes,
 }
 
 impl Layouts {
@@ -48,7 +49,17 @@ impl Layouts {
             vector,
             option,
             field_slots,
+            synchronization_types: HashMap::new(),
         }
+    }
+
+    /// Install compiler-supplied identities instead of guessing by source names.
+    pub(super) fn with_synchronization_types(
+        mut self,
+        types: &super::synchronization::LibraryTypes,
+    ) -> Self {
+        self.synchronization_types = types.clone();
+        self
     }
 
     pub(super) fn metadata_slot(&self, slot: &super::heap::OwnerSlot) -> i128 {
@@ -318,6 +329,29 @@ impl Layouts {
         span: &Span,
         visiting: &mut HashSet<Dt>,
     ) -> Result<u64, VirErr> {
+        if let TypX::Datatype(name, args, _) = &**typ
+            && let Some(kind) = self.synchronization_types.get(name)
+        {
+            use super::synchronization::LibraryType;
+            let size = |index: usize, visiting: &mut HashSet<Dt>| {
+                let typ =
+                    args.get(index).ok_or_else(|| unsupported(span, "this primitive layout"))?;
+                self.size_inner(typ, span, visiting)
+            };
+            let bytes = match kind {
+                LibraryType::Mutex => verus_meter_model::mutex_bytes(size(0, visiting)?),
+                LibraryType::MutexGuard => {
+                    size(0, visiting)?;
+                    Some(verus_meter_model::reference_bytes(false))
+                }
+                LibraryType::PoisonError => Some(size(0, visiting)?),
+                LibraryType::TryLockError => verus_meter_model::result_bytes(size(0, visiting)?, 0),
+                LibraryType::Result => {
+                    verus_meter_model::result_bytes(size(0, visiting)?, size(1, visiting)?)
+                }
+            };
+            return bytes.ok_or_else(|| unsupported(span, "primitive sizes exceeding u64"));
+        }
         match &**typ {
             _ if super::iterators::kind(typ).is_some() => super::iterators::size(typ, span),
             _ if self.option(typ) => {

@@ -1066,6 +1066,8 @@ pub enum ResourceIntrinsic {
     ValueSize,
     /// Size of the reference itself, excluding its referent.
     RefSize,
+    /// Resolved synchronization primitive; never an allocation-lifetime proof.
+    Synchronization(crate::resource::memory::synchronization::Operation),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToDebugSNode)]

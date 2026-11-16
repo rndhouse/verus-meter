@@ -106,6 +106,22 @@ Internally, charges distinguish `host.local` and `host.heap`. Current source
 contracts bound total `memory`; separate kind-specific limits and GPU allocator
 models are not yet provided.
 
+## Synchronization size queries
+
+The `source-values-v39-64` model adds type-only sizes for standard `Mutex<T>`,
+`MutexGuard<T>`, poison/try-lock wrappers and `Result<T, E>` with supported concrete
+payload layouts. A mutex occupies nine source-state bytes plus its inline payload;
+a guard occupies an eight-byte reference. A poison wrapper occupies its payload,
+and a variant stores one tag byte plus its largest inline payload. Separately
+owned allocations remain separate from these inline sizes. Static and runtime
+queries use the same policy, which does not describe OS lock storage or ABI layout.
+
+Primitive identification uses compiler definitions, including through aliases.
+Runtime synchronization values still reject in resource-contracted code: type
+sizes and exclusion contracts alone do not establish guard cleanup or concurrent
+allocation coverage. The [concurrent TODOs](todo/concurrent/README.md) track those
+remaining requirements.
+
 ## Concurrent extension specification
 
 The [concurrent semantics](concurrent-model.md) define the required core scope,

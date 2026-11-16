@@ -22,6 +22,7 @@ pub(crate) fn check(
     trace: bool,
 ) -> Result<Vec<VirErrAs>, VirErr> {
     let (global_allocator, vector, option) = identities(ctxt);
+    let synchronization_types = synchronization_types(ctxt);
     let reports = vir::resource::memory::check_crate(
         &mut krate.functions,
         &krate.datatypes,
@@ -29,6 +30,7 @@ pub(crate) fn check(
         global_allocator,
         vector,
         option,
+        &synchronization_types,
         &|span| {
             let mut span = span.clone();
             span.id = ctxt.spans.get_next_span_id();
@@ -75,5 +77,50 @@ pub(crate) fn resolve_sizes(
         global_allocator,
         vector,
         option,
+        &synchronization_types(ctxt),
     )
+}
+
+/// Register the library definitions even when a type appears only in a budget.
+/// `name_def_id_map` is not exhaustive: nested type translation can intentionally
+/// avoid registering paths there. Acquire signatures identify the poison wrappers
+/// without trusting source names or relying on a runtime use of those types.
+fn synchronization_types(
+    ctxt: &Context<'_>,
+) -> vir::resource::memory::synchronization::LibraryTypes {
+    use rustc_middle::ty::{Ty, TyKind};
+    use vir::resource::memory::synchronization::LibraryTypes;
+    fn record<'tcx>(ctxt: &Context<'tcx>, typ: Ty<'tcx>, types: &mut LibraryTypes) {
+        if let TyKind::Adt(adt, arguments) = typ.kind() {
+            if let Some(kind) = super::intrinsics::synchronization_type(ctxt.tcx, adt.did()) {
+                types.insert(Dt::Path(ctxt.def_id_to_vir_path(adt.did())), kind);
+            }
+            for argument in arguments.types() {
+                record(ctxt, argument, types);
+            }
+        }
+    }
+    let tcx = ctxt.tcx;
+    let mut types = LibraryTypes::new();
+    for name in ["Mutex", "MutexGuard", "Result"] {
+        if let Some(id) = tcx.get_diagnostic_item(rustc_span::Symbol::intern(name))
+            && let Some(kind) = super::intrinsics::synchronization_type(tcx, id)
+        {
+            types.insert(Dt::Path(ctxt.def_id_to_vir_path(id)), kind);
+            if name == "Mutex" {
+                for imp in tcx.inherent_impls(id) {
+                    for method in tcx.associated_items(*imp).in_definition_order() {
+                        if matches!(tcx.item_name(method.def_id).as_str(), "lock" | "try_lock") {
+                            record(
+                                ctxt,
+                                tcx.fn_sig(method.def_id).skip_binder().output().skip_binder(),
+                                &mut types,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    types
 }

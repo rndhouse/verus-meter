@@ -51,6 +51,7 @@ mod storage_initialization;
 mod storage_model;
 mod storage_slices;
 mod storage_structs;
+mod synchronization;
 mod transformed_loops;
 mod vectors;
 

@@ -936,6 +936,8 @@ pub(crate) enum RustItem {
     Debug,
     Rc,
     Arc,
+    PoisonError,
+    TryLockError,
     BoxNew,
     ArcNew,
     RcNew,
@@ -1050,6 +1052,12 @@ pub(crate) fn get_rust_item_str(rust_path: Option<&str>) -> Option<RustItem> {
     // and they may get changed without us noticing, so we are using paths instead
     if rust_path == Some("core::cmp::Eq") {
         return Some(RustItem::Eq);
+    }
+    if rust_path == Some("std::sync::poison::PoisonError") {
+        return Some(RustItem::PoisonError);
+    }
+    if rust_path == Some("std::sync::poison::TryLockError") {
+        return Some(RustItem::TryLockError);
     }
     if rust_path == Some("alloc::rc::Rc") {
         return Some(RustItem::Rc);

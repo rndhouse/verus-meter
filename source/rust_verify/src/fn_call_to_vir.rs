@@ -353,7 +353,12 @@ fn fn_call_or_assoc_const_to_vir<'tcx>(
     let typ_args = mk_typ_args(bctx, node_substs, f, expr.span)?;
     let impl_paths = get_impl_paths(bctx, f, node_substs, None, const_var, expr.span)?;
     let call_target_attrs = vir::ast::CallTargetAttrs {
-        resource_intrinsic: crate::resource::memory::intrinsics::call(tcx, f, rust_item),
+        resource_intrinsic: crate::resource::memory::intrinsics::call(
+            tcx,
+            f,
+            rust_item,
+            node_substs,
+        ),
         autospec: autospec_usage,
         assume_external_allowed,
         const_var,

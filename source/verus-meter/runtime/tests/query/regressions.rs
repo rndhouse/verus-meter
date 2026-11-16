@@ -333,3 +333,30 @@ fn main() {{}}
         );
     }
 }
+
+#[test]
+#[ignore = "requires prepared verifier and runtime bundle; see runtime README"]
+fn synchronization_model_sizes_match_the_verified_allowance() {
+    let source = r#"
+use vstd::prelude::*;
+use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
+type Guard = MutexGuard<'static, u64>;
+verus! {
+    #[queryable_peak_memory]
+    fn queried() resources peak(memory) <= value_size(Mutex<u64>)
+        + value_size(Result<Guard, PoisonError<Guard>>)
+        + value_size(Result<Guard, TryLockError<Guard>>),
+    {
+        assert(value_size(Mutex<u64>) + value_size(Result<Guard, PoisonError<Guard>>)
+            + value_size(Result<Guard, TryLockError<Guard>>) == 36);
+    }
+}
+fn main() {
+    assert_eq!(queried::peak_memory_bound().unwrap().to_u64(), Ok(36));
+}
+"#;
+    let directory = tempfile::tempdir().unwrap();
+    let (output, executable) = compile(source, directory.path());
+    succeeds(&output);
+    succeeds(&Command::new(executable).output().unwrap());
+}

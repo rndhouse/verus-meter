@@ -140,3 +140,32 @@ impl<T> sealed::Reference for &mut [T] {}
 impl<T> ReferenceSize for &mut [T] {
     const BYTES: u64 = reference_bytes(true);
 }
+
+impl<T: ValueSize> ValueSize for std::sync::Mutex<T> {
+    const BYTES: u64 = match verus_meter_model::mutex_bytes(T::BYTES) {
+        Some(bytes) => bytes,
+        None => panic!("model mutex size exceeds u64"),
+    };
+}
+
+impl<T: ValueSize> ValueSize for std::sync::MutexGuard<'_, T> {
+    const BYTES: u64 = WORD_BYTES;
+}
+
+impl<T: ValueSize> ValueSize for std::sync::PoisonError<T> {
+    const BYTES: u64 = T::BYTES;
+}
+
+impl<T: ValueSize> ValueSize for std::sync::TryLockError<T> {
+    const BYTES: u64 = match verus_meter_model::result_bytes(T::BYTES, 0) {
+        Some(bytes) => bytes,
+        None => panic!("model try-lock error size exceeds u64"),
+    };
+}
+
+impl<T: ValueSize, E: ValueSize> ValueSize for Result<T, E> {
+    const BYTES: u64 = match verus_meter_model::result_bytes(T::BYTES, E::BYTES) {
+        Some(bytes) => bytes,
+        None => panic!("model result size exceeds u64"),
+    };
+}

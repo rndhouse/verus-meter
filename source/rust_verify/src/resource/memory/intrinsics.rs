@@ -1,7 +1,7 @@
 //! Identify supported operations using compiler identities, including through aliases.
 
 use crate::verus_items::RustItem;
-use rustc_middle::ty::{TyCtxt, TyKind};
+use rustc_middle::ty::{GenericArgsRef, TyCtxt, TyKind};
 use rustc_span::def_id::DefId;
 use vir::ast::ResourceIntrinsic;
 
@@ -10,12 +10,15 @@ use vir::ast::ResourceIntrinsic;
 /// Recognized calls receive a tag for the later accounting pass, which handles
 /// their effects without analyzing the library implementation. An unrecognized
 /// call is left to normal call handling; it is not assumed to be free.
-pub(crate) fn call(
-    tcx: TyCtxt<'_>,
+pub(crate) fn call<'tcx>(
+    tcx: TyCtxt<'tcx>,
     id: DefId,
     rust_item: Option<RustItem>,
+    substitutions: GenericArgsRef<'tcx>,
 ) -> Option<ResourceIntrinsic> {
-    if let Some(intrinsic) = iterator_intrinsic(tcx, id, rust_item) {
+    if let Some(operation) = synchronization_call(tcx, id, substitutions) {
+        Some(ResourceIntrinsic::Synchronization(operation))
+    } else if let Some(intrinsic) = iterator_intrinsic(tcx, id, rust_item) {
         Some(intrinsic)
     } else if let Some(intrinsic) = option_intrinsic(tcx, id) {
         Some(intrinsic)
@@ -125,3 +128,81 @@ fn option_intrinsic(tcx: TyCtxt<'_>, id: DefId) -> Option<vir::ast::ResourceIntr
         _ => None,
     }
 }
+
+/// Identify library types by rustc identity. Poison wrappers have no diagnostic
+/// items in the pinned toolchain, so use the frontend's standard-item registry.
+pub(crate) fn synchronization_type(
+    tcx: TyCtxt<'_>,
+    id: DefId,
+) -> Option<vir::resource::memory::synchronization::LibraryType> {
+    use vir::resource::memory::synchronization::LibraryType;
+    if !matches!(tcx.def_kind(id), rustc_hir::def::DefKind::Struct | rustc_hir::def::DefKind::Enum)
+    {
+        return None;
+    }
+    let diagnostic = |name| tcx.is_diagnostic_item(rustc_span::Symbol::intern(name), id);
+    if diagnostic("Mutex") {
+        Some(LibraryType::Mutex)
+    } else if diagnostic("MutexGuard") {
+        Some(LibraryType::MutexGuard)
+    } else if diagnostic("Result") {
+        Some(LibraryType::Result)
+    } else {
+        match crate::verus_items::get_rust_item(tcx, id) {
+            Some(RustItem::PoisonError) => Some(LibraryType::PoisonError),
+            Some(RustItem::TryLockError) => Some(LibraryType::TryLockError),
+            _ => None,
+        }
+    }
+}
+
+/// Check both the actual receiver datatype and the defining trait. Unrelated
+/// methods named drop/deref/lock cannot acquire trusted synchronization effects.
+fn synchronization_call<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    id: DefId,
+    substitutions: GenericArgsRef<'tcx>,
+) -> Option<vir::resource::memory::synchronization::Operation> {
+    use vir::resource::memory::synchronization::{LibraryType, Operation};
+    let (receiver, defining_trait) = if let Some(imp) = tcx.impl_of_assoc(id) {
+        (
+            tcx.type_of(imp).skip_binder(),
+            tcx.trait_impl_of_assoc(id)
+                .map(|trait_impl| tcx.impl_trait_ref(trait_impl).skip_binder().def_id),
+        )
+    } else {
+        // Trait calls carry their concrete Self type in the substitutions.
+        // Both Self and trait must match; method spelling alone is insufficient.
+        let defining_trait = tcx.trait_of_assoc(id)?;
+        (substitutions.types().next()?, Some(defining_trait))
+    };
+    let TyKind::Adt(adt, _) = receiver.kind() else {
+        return None;
+    };
+    let ty = synchronization_type(tcx, adt.did())?;
+    let name = tcx.item_name(id);
+    match (ty, defining_trait, name.as_str()) {
+        (LibraryType::Mutex, None, "new") => Some(Operation::MutexNew),
+        (LibraryType::Mutex, None, "lock") => Some(Operation::MutexLock),
+        (LibraryType::Mutex, None, "try_lock") => Some(Operation::MutexTryLock),
+        (LibraryType::MutexGuard, Some(tr), "drop")
+            if tcx.lang_items().drop_trait() == Some(tr) =>
+        {
+            Some(Operation::GuardDrop)
+        }
+        (LibraryType::MutexGuard, Some(tr), "deref")
+            if tcx.lang_items().deref_trait() == Some(tr) =>
+        {
+            Some(Operation::GuardBorrow)
+        }
+        (LibraryType::MutexGuard, Some(tr), "deref_mut")
+            if tcx.lang_items().deref_mut_trait() == Some(tr) =>
+        {
+            Some(Operation::GuardBorrowMut)
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests;
