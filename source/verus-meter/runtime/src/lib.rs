@@ -1,49 +1,90 @@
-//! Runtime evaluation of retained resource expressions.
+//! Runtime evaluation of retained resource expressions using exact integers.
 //!
-//! This prototype uses checked `u64` arithmetic. Queries evaluate declared model
-//! allowances; they do not check execution preconditions or physical RAM.
+//! Queries evaluate declared model allowances. Callers remain responsible for
+//! execution preconditions; evaluating a query does not reserve physical memory.
 
-/// A query could not represent its result in the prototype's numeric range.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Overflow;
+mod expression;
 
-/// Expression data emitted by the query macro, interpreted by [`evaluate`].
 #[doc(hidden)]
-pub enum Expression {
-    /// A model-byte constant.
-    Constant(u64),
-    /// The query's single unsigned input.
-    Parameter,
-    /// Mathematical sum of two expressions.
-    Add(&'static Expression, &'static Expression),
-    /// Mathematical product of two expressions.
-    Multiply(&'static Expression, &'static Expression),
+pub use expression::{BooleanExpression, Comparison, Expression, Input, evaluate};
+
+use num_bigint::BigUint;
+use num_traits::ToPrimitive;
+use std::fmt;
+
+/// A nonnegative memory allowance in bytes of the source-level memory model.
+///
+/// The value may exceed native integer ranges. Compare it directly with a budget
+/// before requesting a native representation.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ModelBytes(BigUint);
+
+impl ModelBytes {
+    /// Whether this allowance is at most the supplied model-byte budget.
+    ///
+    /// ```
+    /// # use verus_meter_runtime::{evaluate, Expression};
+    /// # let required = evaluate(&Expression::constant(1124), &[]).unwrap();
+    /// assert!(required.fits_within(1200));
+    /// assert!(!required.fits_within(1000));
+    /// assert_eq!(required.to_u64()?, 1124);
+    /// # Ok::<(), verus_meter_runtime::NativeRangeError>(())
+    /// ```
+    pub fn fits_within(&self, budget: u64) -> bool {
+        self.0 <= BigUint::from(budget)
+    }
+
+    /// Convert to a native integer, failing when the allowance exceeds `u64`.
+    pub fn to_u64(&self) -> Result<u64, NativeRangeError> {
+        self.0.to_u64().ok_or(NativeRangeError)
+    }
 }
 
-/// Evaluate generated expression data without wrapping on overflow.
-#[doc(hidden)]
-pub fn evaluate(expression: &Expression, parameter: u64) -> Result<u64, Overflow> {
-    match expression {
-        Expression::Constant(value) => Ok(*value),
-        Expression::Parameter => Ok(parameter),
-        Expression::Add(left, right) => {
-            evaluate(left, parameter)?.checked_add(evaluate(right, parameter)?).ok_or(Overflow)
-        }
-        Expression::Multiply(left, right) => {
-            evaluate(left, parameter)?.checked_mul(evaluate(right, parameter)?).ok_or(Overflow)
+impl fmt::Display for ModelBytes {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+/// An allowance cannot be represented by the requested native integer type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeRangeError;
+
+impl fmt::Display for NativeRangeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("model-byte allowance exceeds u64")
+    }
+}
+
+impl std::error::Error for NativeRangeError {}
+
+/// A retained expression could not produce a nonnegative byte allowance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueryError {
+    /// A generated expression referred to an absent argument.
+    MissingInput {
+        /// Position in the query's argument list.
+        index: usize,
+    },
+    /// An argument had a different type from the expression's parameter node.
+    InputType {
+        /// Position in the query's argument list.
+        index: usize,
+    },
+    /// The resulting mathematical integer was negative.
+    NegativeResult,
+}
+
+impl fmt::Display for QueryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingInput { index } => write!(formatter, "missing query argument {index}"),
+            Self::InputType { index } => {
+                write!(formatter, "incorrect type for query argument {index}")
+            }
+            Self::NegativeResult => formatter.write_str("memory allowance is negative"),
         }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{Expression::*, *};
-
-    #[test]
-    fn evaluates_input_and_reports_overflow() {
-        let bound = Add(&Constant(1024), &Multiply(&Constant(8), &Parameter));
-        assert_eq!(evaluate(&bound, 100), Ok(1824));
-        assert_eq!(evaluate(&bound, 0), Ok(1024));
-        assert_eq!(evaluate(&bound, u64::MAX), Err(Overflow));
-    }
-}
+impl std::error::Error for QueryError {}

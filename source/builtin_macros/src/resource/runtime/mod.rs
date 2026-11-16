@@ -88,9 +88,9 @@ fn query(function: &ItemFn) -> verus_syn::Result<TokenStream> {
         #visibility mod #name {
             /// Evaluate the declared peak-memory allowance in model bytes.
             /// The caller remains responsible for execution preconditions.
-            pub fn peak_memory_bound(input: #ty) -> ::core::result::Result<u64, ::verus_meter_runtime::Overflow> {
+            pub fn peak_memory_bound(input: #ty) -> ::core::result::Result<::verus_meter_runtime::ModelBytes, ::verus_meter_runtime::QueryError> {
                 static EXPRESSION: ::verus_meter_runtime::Expression = #expression;
-                ::verus_meter_runtime::evaluate(&EXPRESSION, input as u64)
+                ::verus_meter_runtime::evaluate(&EXPRESSION, &[::verus_meter_runtime::Input::from(input)])
             }
         }
     })
@@ -102,16 +102,16 @@ fn retain(
 ) -> verus_syn::Result<TokenStream> {
     let constructor = quote!(::verus_meter_runtime::Expression);
     Ok(match expression {
-        ResourceExpr::Literal(value) => quote!(#constructor::Constant(#value)),
-        ResourceExpr::Quantity(name) if name == parameter => quote!(#constructor::Parameter),
+        ResourceExpr::Literal(value) => quote!(#constructor::constant(#value)),
+        ResourceExpr::Quantity(name) if name == parameter => quote!(#constructor::parameter(0)),
         ResourceExpr::Paren(_, inner) => retain(inner, parameter)?,
         ResourceExpr::Add(left, _, right) | ResourceExpr::Mul(left, _, right) => {
             let left = retain(left, parameter)?;
             let right = retain(right, parameter)?;
             if matches!(expression, ResourceExpr::Add(..)) {
-                quote!(#constructor::Add(&#left, &#right))
+                quote!(#constructor::add(&#left, &#right))
             } else {
-                quote!(#constructor::Multiply(&#left, &#right))
+                quote!(#constructor::multiply(&#left, &#right))
             }
         }
         _ => {

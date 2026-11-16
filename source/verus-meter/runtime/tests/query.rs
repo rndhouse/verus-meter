@@ -18,6 +18,8 @@ fn compile(source: &str, directory: &Path) -> (Output, PathBuf) {
             "verus_meter_runtime={}",
             release.join("libverus_meter_runtime.rlib").display()
         ))
+        .arg("-L")
+        .arg(format!("dependency={}", release.join("deps").display()))
         .arg("-o")
         .arg(&executable);
     if let Some(dependencies) = std::env::var_os("VERUS_QUERY_TEST_DEPS") {
@@ -69,6 +71,29 @@ fn compiled_query_tracks_contract_and_types() {
     let output = Command::new(executable).arg("2000").output().unwrap();
     succeeds(&output);
     assert!(String::from_utf8(output.stdout).unwrap().contains("allowance 1824"));
+
+    // Verification still constrains execution inputs. A query outside that domain
+    // may return a larger allowance, which must remain exact and decline admission.
+    let large_source = source
+        .replace("count: u16", "count: u64")
+        .replace("100u16", "100u64")
+        .replace("count must fit u16", "count must fit u64")
+        .replace("with_capacity(count as usize)", "with_capacity(100usize)")
+        .replace(
+            "    resources peak(memory) <= 1024 + count,",
+            "    requires count <= 100,\n    resources peak(memory) <= 1024 + 8 * count,",
+        );
+    let (output, executable) = compile(&large_source, directory.path());
+    succeeds(&output);
+    let output = Command::new(executable)
+        .args(["18446744073709551615", "18446744073709551615"])
+        .output()
+        .unwrap();
+    succeeds(&output);
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        "Declined: allowance 147573952589676413944 exceeds budget 18446744073709551615"
+    );
 
     for (source, message) in [
         (

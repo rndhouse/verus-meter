@@ -3268,6 +3268,8 @@ dependencies = [
 name = "verus_meter_runtime"
 version = "0.1.0"
 dependencies = [
+ "num-bigint 0.5.1",
+ "num-traits",
  "tempfile",
 ]
 

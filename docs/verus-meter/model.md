@@ -28,8 +28,13 @@ bounds. See [contract examples](../../examples/resource/memory/README.md#contrac
 `#[queryable_peak_memory]` exposes a nongeneric free function's allowance through
 `function_name::peak_memory_bound(input)`. The prototype supports one unsigned
 scalar parameter, constants, addition, and multiplication, and returns model bytes
-as `Result<u64, Overflow>` using checked arithmetic. It interprets retained
-expression data; the query implementation is tested Rust tooling, not formally
+as `Result<ModelBytes, QueryError>` using exact arbitrary-precision arithmetic.
+Use `fits_within(budget)` to compare with a `u64` budget or `to_u64()` for an
+explicit conversion that fails if the allowance is too large. Negative results
+are errors; results above `u64` remain representable. Existing verification of
+the target function still enforces its resource arithmetic constraints.
+The runtime interprets retained expression data; the query implementation is
+tested Rust tooling, not formally
 verified. The caller must still establish the function's execution preconditions.
 See the [example and run instructions](../../source/verus-meter/runtime/README.md).
 

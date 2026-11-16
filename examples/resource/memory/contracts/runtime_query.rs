@@ -20,8 +20,8 @@ fn main() {
     let count = std::env::args().nth(2).map_or(100u16, |value| {
         value.parse().expect("count must fit u16")
     });
-    let required = allocate::peak_memory_bound(count).expect("example bound fits u64");
-    if required <= budget {
+    let required = allocate::peak_memory_bound(count).expect("example query is valid");
+    if required.fits_within(budget) {
         let buffer = allocate(count);
         println!("Admitted: allowance {required}, capacity {}", buffer.capacity());
     } else {
