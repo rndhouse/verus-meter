@@ -12,7 +12,7 @@ authoritative task documents in the primary checkout under
 worktree and branch supplied with the handoff. Execute the tasks in order. Keep
 instructions and references repository-relative so the plan survives relocation.
 
-1. [Working prototype](01-working-prototype.md)
+1. [Working prototype](complete/01-working-prototype.md) — complete
 2. [Runtime expressions and evaluator](02-runtime-evaluator.md)
 3. [Additional expressions and spec helpers](03-expression-support.md)
 4. [Attribute and executable queries](04-attribute-and-queries.md)
