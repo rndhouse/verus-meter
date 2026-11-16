@@ -6,14 +6,15 @@ and the wiring needed to run them; exclude inherited test cases.
 ## Process
 
 Review the integration test files alphabetically, one file at a time. Check a
-box only after discussing the file and recording its disposition. Preliminary
-inspection does not count as a completed review.
+box only after reviewing the file and validating any fixes. Preliminary
+inspection does not count as a completed review. Preserve detailed findings and
+validation results in commit messages; this checklist tracks current status.
 
 For each file, check distinct behavior, assertion strength, overlap, placement,
 and maintenance cost. Recommend keep, strengthen, consolidate, move, or remove.
 Record unresolved overlaps with later files and revisit them when reached.
-Review completion does not imply cleanup has been implemented. Discuss findings
-before changing tests; track agreed follow-up work separately below.
+Fix and commit problems found during review. Track unresolved work separately
+below; do not accumulate a history of completed changes here.
 
 When new test files are added, insert unchecked entries in alphabetical order.
 Reopen a reviewed entry when substantive additions need review.
@@ -21,11 +22,11 @@ Reopen a reviewed entry when substantive additions need review.
 ## Integration tests
 
 Directory: `source/rust_verify_test/tests/resource/memory/`.
-All entries are pending; start with `array_copy.rs`.
+Progress: 3 of 48 files reviewed. Next: `call_budgets.rs`.
 
-- [ ] [array_copy.rs](../../../source/rust_verify_test/tests/resource/memory/array_copy.rs)
-- [ ] [borrowed_vectors.rs](../../../source/rust_verify_test/tests/resource/memory/borrowed_vectors.rs)
-- [ ] [boxed_slices.rs](../../../source/rust_verify_test/tests/resource/memory/boxed_slices.rs)
+- [x] [array_copy.rs](../../../source/rust_verify_test/tests/resource/memory/array_copy.rs)
+- [x] [borrowed_vectors.rs](../../../source/rust_verify_test/tests/resource/memory/borrowed_vectors.rs)
+- [x] [boxed_slices.rs](../../../source/rust_verify_test/tests/resource/memory/boxed_slices.rs)
 - [ ] [call_budgets.rs](../../../source/rust_verify_test/tests/resource/memory/call_budgets.rs)
 - [ ] [call_forests.rs](../../../source/rust_verify_test/tests/resource/memory/call_forests.rs)
 - [ ] [call_graph.rs](../../../source/rust_verify_test/tests/resource/memory/call_graph.rs)
@@ -89,10 +90,9 @@ reviewing all applicable fork additions within it.
 - [ ] Executable examples under `examples/resource/memory/`, including expected failures.
 - [ ] Fork additions to `source/rust_verify_test/tests/examples.rs` that register and run memory examples.
 
-## Review decisions and follow-up work
+## Open work
 
-For each completed file, add a short disposition here. Keep investigation detail
-in the discussion or subsequent commit messages. Use unchecked tasks for agreed
-cleanup, and distinguish tentative overlap candidates from confirmed duplication.
+Keep only unresolved follow-up tasks and cross-file overlap questions here.
+Remove resolved items; distinguish tentative candidates from confirmed duplicates.
 
-No file reviews or cleanup decisions have been completed yet.
+None from the completed file reviews.

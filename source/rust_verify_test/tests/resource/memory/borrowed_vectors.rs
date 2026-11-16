@@ -69,17 +69,12 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] borrowed_push_requires_room verus_code! {
+    #[test] unbounded_borrowed_growth_exceeds_fixed_budget verus_code! {
         use vstd::prelude::*;
-        fn append(v: &mut Vec<u32>, cap: usize) resources peak(memory) <= 16 { v.push(1); }
-    } => Err(err) => assert_vir_error_msg(err, "memory budget exceeded")
-}
-
-test_verify_one_file! {
-    #[test] borrowed_push_requires_growth_budget verus_code! {
-        use vstd::prelude::*;
-        fn append(v: &mut Vec<u32>) resources peak(memory) <= 8 { v.push(1); }
-    } => Err(err) => assert_vir_error_msg(err, "memory budget exceeded")
+        // Without a length restriction or an inferred reservation, growth can
+        // overlap arbitrarily large backing. Even a generous fixed bound fails.
+        fn append(v: &mut Vec<u32>) resources peak(memory) <= 10000 { v.push(1); }
+    } => Err(err) => assert_vir_error_msg(err, "conditional memory budget exceeded")
 }
 
 test_verify_one_file! {
@@ -146,23 +141,6 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] owned_vector_capacity_is_inferred verus_code! {
-        use vstd::prelude::*;
-        fn append(mut v: Vec<u32>, cap: usize) -> (result: Vec<u32>)
-            requires v.len() < cap,
-            ensures result@ == v@.push(3),
-            resources peak(memory) <= 32,
-        { v.push(3); v }
-        fn run() resources peak(memory) <= 64 {
-            let v = Vec::<u32>::with_capacity(2);
-            let mut v = append(v, 1);
-            v.push(4);
-            assert(v.len() == 2);
-        }
-    } => Ok(())
-}
-
-test_verify_one_file! {
     #[test] zero_size_elements_can_grow verus_code! {
         use vstd::prelude::*;
         fn push(v: &mut Vec<()>) resources peak(memory) <= 8 { v.push(()); }
@@ -184,7 +162,7 @@ test_verify_one_file! {
     #[test] borrowed_vector_growth_remains_unsupported verus_code! {
         use vstd::prelude::*;
         fn grow(v: &mut Vec<u32>) resources peak(memory) <= 100 { v.reserve(1); }
-    } => Err(err) => assert_vir_error_msg(err, "does not support")
+    } => Err(err) => assert_vir_error_msg(err, "does not support calls with generic, dynamic, or unsupported targets")
 }
 
 test_verify_one_file! {
@@ -219,7 +197,7 @@ test_verify_one_file! {
             let v = Vec::<u32>::with_capacity(2);
             inspect(&v);
         }
-    } => Err(err) => assert_vir_error_msg(err, "memory budget exceeded")
+    } => Err(err) => assert_vir_error_msg(err, "conditional memory budget exceeded")
 }
 
 test_verify_one_file! {

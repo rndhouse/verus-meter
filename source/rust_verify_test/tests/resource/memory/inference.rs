@@ -1,6 +1,23 @@
 use crate::common::*;
 
 test_verify_one_file! {
+    #[test] owned_vector_capacity_is_inferred verus_code! {
+        use vstd::prelude::*;
+        fn append(mut v: Vec<u32>, cap: usize) -> (result: Vec<u32>)
+            requires v.len() < cap,
+            ensures result@ == v@.push(3),
+            resources peak(memory) <= 32,
+        { v.push(3); v }
+        fn run() resources peak(memory) <= 64 {
+            let v = Vec::<u32>::with_capacity(2);
+            let mut v = append(v, 1);
+            v.push(4);
+            assert(v.len() == 2);
+        }
+    } => Ok(())
+}
+
+test_verify_one_file! {
     #[test] consecutive_pushes_infer_all_required_slots verus_code! {
         use vstd::prelude::*;
         fn append(v: &mut Vec<u32>)

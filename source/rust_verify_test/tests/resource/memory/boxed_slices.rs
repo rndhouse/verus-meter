@@ -54,19 +54,21 @@ fn runtime_conversion_crosses_helper_boundaries() {
 
 #[test]
 fn borrowing_does_not_duplicate_backing_storage() {
-    verifies(
-        "boxed_slice_borrow",
-        "
+    // Make the borrow call determine the peak: the slice's 16-byte handle,
+    // four-byte payload, 64-byte scratch, and callee's 16-byte allowance coexist.
+    let code = "
         fn update(s: &mut [u32]) requires old(s).len() == 1,
             ensures final(s)[0] == 8, resources peak(memory) <= 16 { s[0] = 8; }
-        fn f() resources peak(memory) <= 100 {
+        fn f() resources peak(memory) <= BOUND {
             let mut v = Vec::<u32>::with_capacity(1); v.push(1);
             let mut b = v.into_boxed_slice();
+            let scratch = [0u8;64];
             update(&mut *b);
             assert(b[0] == 8);
             let n = b.len();
-        }",
-    );
+        }";
+    verifies("boxed_slice_borrow", &code.replace("BOUND", "100"));
+    rejects("boxed_slice_borrow_short", &code.replace("BOUND", "99"), "memory budget exceeded");
 }
 
 #[test]
