@@ -1,6 +1,35 @@
 use quote::ToTokens;
 use verus_syn::{parse_str, ItemFn};
 
+fn assert_tokens_equal(actual: proc_macro2::TokenStream, expected: proc_macro2::TokenStream) {
+    let actual: Vec<_> = actual.into_iter().collect();
+    let expected: Vec<_> = expected.into_iter().collect();
+    assert_eq!(actual.len(), expected.len());
+    for (actual, expected) in actual.into_iter().zip(expected) {
+        match (actual, expected) {
+            (proc_macro2::TokenTree::Group(actual), proc_macro2::TokenTree::Group(expected)) => {
+                assert_eq!(actual.delimiter(), expected.delimiter());
+                assert_tokens_equal(actual.stream(), expected.stream());
+            }
+            // ToTokens may separate :: and < in a turbofish. Individual token
+            // spellings preserve syntax without depending on joint spacing.
+            (actual, expected) => assert_eq!(actual.to_string(), expected.to_string()),
+        }
+    }
+}
+
+fn assert_budget_round_trip(budget: &str) {
+    let code = format!("fn f(x: u32) resources peak(memory) <= {budget}, {{}}");
+    let parsed: ItemFn = parse_str(&code).unwrap();
+    let printed = parsed.to_token_stream().to_string();
+    let reparsed: ItemFn = parse_str(&printed).unwrap();
+    let expected: proc_macro2::TokenStream = budget.parse().unwrap();
+    let resources = reparsed.sig.spec.resources.as_ref().unwrap();
+    // A fixed point alone could hide syntax lost during the first print.
+    assert_tokens_equal(resources.budget.to_token_stream(), expected);
+    assert_eq!(printed, reparsed.to_token_stream().to_string());
+}
+
 #[test]
 fn resource_clause_survives_clone_and_printing() {
     let function: ItemFn =
@@ -22,7 +51,12 @@ fn resource_clause_survives_clone_and_printing() {
 fn resource_clause_is_erased_for_rust() {
     let mut function: ItemFn = parse_str("fn f() resources peak(memory) <= 0 {}").unwrap();
     function.sig.spec.erase_spec_fields();
-    assert!(!function.to_token_stream().to_string().contains("peak"));
+    assert!(function.sig.spec.resources.is_none());
+    let expected: ItemFn = parse_str("fn f() {}").unwrap();
+    assert_eq!(
+        function.to_token_stream().to_string(),
+        expected.to_token_stream().to_string()
+    );
 }
 
 #[test]
@@ -92,11 +126,7 @@ fn expressive_budgets_round_trip() {
         "peak(helper(false))",
         "peak(module::helper(count <= 4, !flag)) + peak(empty())",
     ] {
-        let code = format!("fn f(x: u32) resources peak(memory) <= {budget}, {{}}");
-        let parsed: ItemFn = parse_str(&code).unwrap();
-        let printed = parsed.to_token_stream().to_string();
-        let reparsed: ItemFn = parse_str(&printed).unwrap();
-        assert_eq!(printed, reparsed.to_token_stream().to_string());
+        assert_budget_round_trip(budget);
     }
 }
 
@@ -166,7 +196,10 @@ fn checkpoints_reject_proof_overrides_and_malformed_budgets() {
         "assert(peak(memory) <= value_size(make()));",
         "assert(peak(memory) <= 4 - 1);",
     ] {
-        assert!(parse_str::<ItemFn>(&format!("fn f() {{ {statement} }}")).is_err());
+        assert!(
+            parse_str::<ItemFn>(&format!("fn f() {{ {statement} }}")).is_err(),
+            "unexpectedly parsed checkpoint: {statement}"
+        );
     }
 }
 
@@ -201,7 +234,10 @@ fn memory_sections_reject_invalid_budgets() {
         "peak <= 4 {}",
         "resources current(memory) <= 4 {}",
     ] {
-        assert!(parse_str::<ItemFn>(&format!("fn f() {{ {body} }}")).is_err());
+        assert!(
+            parse_str::<ItemFn>(&format!("fn f() {{ {body} }}")).is_err(),
+            "unexpectedly parsed section: {body}"
+        );
     }
 }
 
@@ -213,11 +249,7 @@ fn conditional_resource_budgets_round_trip() {
         "if flag { 4 } else { runtime_value }",
         "2 * (if a && !b { 32 } else { if b { 16 } else { 0 } })",
     ] {
-        let parsed: ItemFn =
-            parse_str(&format!("fn f() resources peak(memory) <= {budget}, {{}}")).unwrap();
-        let printed = parsed.to_token_stream().to_string();
-        let reparsed: ItemFn = parse_str(&printed).unwrap();
-        assert_eq!(printed, reparsed.to_token_stream().to_string());
+        assert_budget_round_trip(budget);
     }
 }
 
@@ -226,7 +258,8 @@ fn conditional_resource_budgets_require_both_formula_branches() {
     for budget in ["if flag { 4 }", "if flag { let x = 4; x } else { 0 }"] {
         assert!(
             parse_str::<ItemFn>(&format!("fn f() resources peak(memory) <= {budget} {{}}"))
-                .is_err()
+                .is_err(),
+            "unexpectedly parsed conditional budget: {budget}"
         );
     }
 }

@@ -85,8 +85,9 @@ After the integration suite, review these areas. Check each area only after
 reviewing all applicable fork additions within it.
 
 - [x] Internal unit tests under `source/vir/src/resource/memory/` (42 tests in 10 files).
-- [ ] Parser tests under `dependencies/syn/tests/resource/memory/` and their entry point.
-- [ ] The two memory prettyprinter tests added to `dependencies/prettyplease/tests/test.rs`.
+- [x] Parser tests under `dependencies/syn/tests/resource/memory/` and their entry point (14 tests).
+- [x] Prettyprinter tests under `dependencies/prettyplease/tests/resource/memory/`
+  and their entry point (7 tests, including the four formerly embedded in source).
 - [ ] Executable examples under `examples/resource/memory/`, including expected failures.
 - [ ] Fork additions to `source/rust_verify_test/tests/examples.rs` that register and run memory examples.
 
