@@ -36,6 +36,7 @@ mod pattern_ownership;
 mod progress_loops;
 mod projections;
 mod proof_obligations;
+mod proof_state;
 mod reachability;
 mod return_sharing;
 mod returns;

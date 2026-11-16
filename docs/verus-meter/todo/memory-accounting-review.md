@@ -389,3 +389,70 @@ coverage audit. No dropped supported proof-state action was reproduced here.
 The broad core checklist remains open. Runtime-query evaluation and the earlier
 solver-limit sensitivity were not revisited. Unrelated documentation moves remain
 outside this pass.
+
+## Proof-state scheduling
+
+- [x] Inspect `symbolic.rs` attachment of `growth.before`, `updates`, `after`,
+  loop invariants, loop ensures, and single-visit/exit annotations. Follow snapshot
+  substitution in `growth.rs`, vector growth commits in `vectors.rs`, and
+  `EvalAndResolve` execution order in `ast_to_sst.rs`.
+- [x] Check discarded extraction against frontend temporary wrappers. The
+  frontend gives wrappers fresh VIR identities; the survivor-bound source probe
+  passes before the fix. No duplicate source transition was reproduced.
+- [x] Reproduce silently omitted proof-state schedules through the instrumenter
+  interface, reject unmatched or ambiguous execution sites, and check action
+  ordering directly. Require loop annotations to match actual loop expressions;
+  permit entry snapshots without treating entry sites as operation commits.
+- [x] Add eight independently calculated passing/one-byte-short pairs in
+  [`proof_state.rs`](../../../source/rust_verify_test/tests/resource/memory/proof_state.rs).
+- [x] Finish broad validation and commit this bounded pass.
+
+Previously, an unmatched required budget inequality was rejected, but an
+unmatched scheduled metadata action or loop annotation was silently ignored.
+A direct VIR test failed against that implementation: a `growth.before` action
+with no matching expression was accepted. Such a lowering mismatch could leave
+initialized proof counters in place of required transitions. No accepted
+Rust-source byte-bound violation was demonstrated through this interface issue.
+
+The instrumenter now distinguishes assertion sites, expression attachment sites,
+and loop sites. Every nonempty snapshot/transition/commit schedule must attach to
+its supported site; loop maps and flags must attach to loops. Repeated action
+sites and collisions between entry snapshots and expression sites are rejected.
+The unit tests cover every schedule class, wrong-kind loop sites, entry-only
+sites, duplicate execution sites, and the order snapshot, budget assertion,
+transition, source operation, commit. `EvalAndResolve` executes the commit only
+after a normally completing operation and preserves its result.
+
+| Cases | Passing / failing bound (bytes) | Independent peak calculation |
+| --- | --- | --- |
+| Discarded vector removal | 360 / 359 | Handle 24 + unchanged backing 16 + surviving payload 64 + scratch 256 |
+| Growth replacement overlap | 44 / 43 | Handle 24 + old buffer 4 + new buffer 16 |
+| Committed growth and later scratch | 168 / 167 | Handle 24 + retained backing 16 + scratch 128 |
+| Conditional growth / two loop iterations | 169 / 168 each | Same 168 + flag or counter 1; the loop recreates and releases its vector and scratch each visit |
+| Growth through a struct field | 192 / 191 | Struct slot 32 + backing 16 + tag payload 16 + scratch 128 |
+| Helper replacement summary | 176 / 175 | Handle 24 + retained declared helper allowance 24 + scratch 128 |
+| Growth inside a memory section | 168 / 167 | Section handle 24 + retained backing 16 + scratch 128 |
+
+Validation against the rebuilt verifier: all 928 memory integration tests and 44
+resource examples passed without retries. Memory unit tests passed 48 tests with
+one existing manual measurement ignored. Formatting for `vir` and
+`rust_verify_test`, Clippy for `vir --lib --tests` and
+`rust_verify_test --test resource`, whitespace checks, and all 26 tracker links
+passed. Five new unit tests cover the instrumentation boundary; four new
+integration tests exercise the eight bound pairs. The memory-model rules and
+runtime-query implementation are unchanged.
+
+Precision follow-up: preliminary loops growing an enclosing `Vec<u32>` rejected
+`current(memory) <= 41`, although the concrete retained buffer is 16 bytes.
+Scalar-element vectors do not use the length-linked invariant enabled for owning
+elements; their loop summary bounds backing in terms of capacity metadata.
+This rejection does not demonstrate undercounting. Exact post-loop capacity
+precision remains outside this pass; the regression repeats a local allocation
+to check transition execution on every visit with a precise bound.
+
+Remaining audit: generated loop invariant entry/back-edge/exit proofs,
+verification selection and bypass flags, and metadata/summary agreement. These
+attachment checks do not establish the semantic correctness of every scheduled
+action or invariant. Runtime-query evaluation and the earlier solver-limit
+sensitivity were not revisited. Unrelated documentation moves remain outside
+this pass.

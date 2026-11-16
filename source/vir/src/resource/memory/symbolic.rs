@@ -159,6 +159,18 @@ fn range_checks(expr: &Expr, guard: &Expr, checks: &mut Vec<Stmt>) {
     }
 }
 
+/// Actual attachment sites, kept distinct because a declaration can host a
+/// budget assertion but cannot implicitly host an operation's state commit.
+#[derive(Default)]
+struct AttachedSites {
+    /// Required inequalities inserted at expressions, declarations, or calls.
+    obligations: HashSet<u64>,
+    /// Expression sites around which operation state actions are inserted.
+    expressions: HashSet<u64>,
+    /// Actual loops receiving resource invariants or exit annotations.
+    loops: HashSet<u64>,
+}
+
 pub(super) fn instrument(
     function: &Function,
     bound: Option<&Expr>,
@@ -212,7 +224,7 @@ pub(super) fn instrument(
             .push(Spanned::new(span.clone(), StmtX::Expr(check)));
     }
     let body = function.x.body.as_ref().unwrap();
-    let mut seen = HashSet::new();
+    let mut seen = AttachedSites::default();
     let body = crate::ast_visitor::map_expr_visitor_env(
         body,
         &mut air::scope_map::ScopeMap::new(),
@@ -224,6 +236,16 @@ pub(super) fn instrument(
             if matches!(expr.x, ExprX::TwoPhaseBorrowMut(_)) {
                 return Ok(expr.clone());
             }
+            let scheduled =
+                [&growth.before, &growth.updates, &growth.after].iter().any(|schedule| {
+                    schedule.get(&expr.span.id).is_some_and(|actions| !actions.is_empty())
+                });
+            let repeated = !seen.expressions.insert(expr.span.id);
+            let entry_snapshot = parameter_spans.contains(&expr.span.id)
+                && growth.before.get(&expr.span.id).is_some_and(|actions| !actions.is_empty());
+            if (repeated && scheduled) || entry_snapshot {
+                return Err(error(&expr.span, "ambiguous memory proof-state execution site"));
+            }
             let mut checks = growth.before.get(&expr.span.id).cloned().unwrap_or_default();
             let mut rewritten = expr.clone();
             if let ExprX::Loop {
@@ -234,6 +256,9 @@ pub(super) fn instrument(
                 ..
             } = &mut Arc::make_mut(&mut rewritten).x
             {
+                if !seen.loops.insert(expr.span.id) {
+                    return Err(error(&expr.span, "ambiguous memory loop proof site"));
+                }
                 if growth.single_visit_loops.contains(&expr.span.id) {
                     *loop_isolation = false;
                     *known_no_back_edge = true;
@@ -276,13 +301,13 @@ pub(super) fn instrument(
             if let ExprX::Call { args, .. } = &expr.x {
                 for arg in args.iter().filter(|arg| matches!(arg.x, ExprX::TwoPhaseBorrowMut(_))) {
                     if let Some((_, statements)) = sites.get(&arg.span.id) {
-                        seen.insert(arg.span.id);
+                        seen.obligations.insert(arg.span.id);
                         checks.extend(statements.iter().cloned());
                     }
                 }
             }
             if let Some((_, statements)) = sites.get(&expr.span.id) {
-                seen.insert(expr.span.id);
+                seen.obligations.insert(expr.span.id);
                 checks.extend(statements.iter().cloned());
             }
             if let Some(updates) = growth.updates.get(&expr.span.id) {
@@ -314,7 +339,7 @@ pub(super) fn instrument(
             if let StmtX::Decl { .. } = &stmt.x
                 && let Some((_, statements)) = sites.get(&stmt.span.id)
             {
-                seen.insert(stmt.span.id);
+                seen.obligations.insert(stmt.span.id);
                 Ok(statements
                     .iter()
                     .map(|s| crate::ast_visitor::map_stmt_spans(s, &mut |span| fresh_span(span)))
@@ -331,8 +356,40 @@ pub(super) fn instrument(
     // Never silently omit a charge if a future lowering introduces a new kind
     // of reservation site that this instrumentation does not recognize.
     for (id, (span, _)) in &sites {
-        if !seen.contains(id) {
+        if !seen.obligations.contains(id) {
             return Err(error(span, "unsupported conditional memory reservation site"));
+        }
+    }
+    // State actions carry the same proof significance as budget assertions.
+    // Missing snapshots or commits must never leave their initialized zero
+    // counters standing in for an operation that was actually executed.
+    for (phase, schedule, entry_allowed) in [
+        ("snapshot", &growth.before, true),
+        ("transition", &growth.updates, false),
+        ("commit", &growth.after, false),
+    ] {
+        for (id, actions) in schedule {
+            if let Some(action) = actions.first() {
+                if !seen.expressions.contains(id)
+                    && !(entry_allowed && parameter_spans.contains(id))
+                {
+                    return Err(error(
+                        &action.span,
+                        format!("unsupported memory proof-state {phase} site"),
+                    ));
+                }
+            }
+        }
+    }
+    for id in growth
+        .loops
+        .keys()
+        .chain(growth.loop_ensures.keys())
+        .chain(&growth.single_visit_loops)
+        .chain(&growth.exiting_loops)
+    {
+        if !seen.loops.contains(id) {
+            return Err(error(&function.span, "unsupported memory loop proof site"));
         }
     }
     if let Some(bound) = bound {
@@ -447,6 +504,140 @@ mod tests {
             });
         let error = result.unwrap_err();
         assert!(error.note.contains("unsupported conditional memory reservation site"));
+    }
+
+    #[test]
+    fn unmatched_proof_state_sites_are_rejected() {
+        // These schedules were previously ignored when no AST site matched.
+        // A future lowering mismatch must stop before publishing a proof body.
+        for phase in ["before", "updates", "after", "invariants", "ensures", "single", "exits"] {
+            let function = function(mk_block(&span(2), vec![], None));
+            let mut growth = super::super::growth::Growth::default();
+            let action = Spanned::new(
+                span(99),
+                StmtX::Expr(SpannedTyped::new(
+                    &span(99),
+                    &unit_typ(),
+                    ExprX::AssertAssume {
+                        is_assume: false,
+                        expr: mk_bool(&span(99), false),
+                        msg: None,
+                    },
+                )),
+            );
+            match phase {
+                "before" => {
+                    growth.before.insert(99, vec![action]);
+                }
+                "updates" => {
+                    growth.updates.insert(99, vec![action]);
+                }
+                "after" => {
+                    growth.after.insert(99, vec![action]);
+                }
+                "invariants" => {
+                    growth.loops.insert(99, vec![mk_bool(&span(99), false)]);
+                }
+                "ensures" => {
+                    growth.loop_ensures.insert(99, vec![mk_bool(&span(99), false)]);
+                }
+                "single" => {
+                    growth.single_visit_loops.insert(99);
+                }
+                "exits" => {
+                    growth.exiting_loops.insert(99);
+                }
+                _ => unreachable!(),
+            }
+            let result =
+                instrument(&function, None, &[], &[], &growth, &|original| original.clone());
+            assert!(result.is_err(), "unmatched {phase} schedule was accepted");
+        }
+    }
+
+    #[test]
+    fn loop_proofs_require_a_loop_site() {
+        let function = function(mk_block(&span(2), vec![], None));
+        let mut growth = super::super::growth::Growth::default();
+        growth.loops.insert(2, vec![mk_bool(&span(2), false)]);
+        let error = instrument(&function, None, &[], &[], &growth, &|original| original.clone())
+            .unwrap_err();
+        assert!(error.note.contains("unsupported memory loop proof site"));
+    }
+
+    fn marker(value: u64, id: u64) -> Stmt {
+        Spanned::new(span(id), StmtX::Expr(contracts::literal(&span(id), value)))
+    }
+
+    #[test]
+    fn proof_state_order_preserves_checks_and_operation() {
+        let function = function(mk_block(&span(2), vec![marker(30, 3)], None));
+        let mut growth = super::super::growth::Growth::default();
+        growth.before.insert(3, vec![marker(10, 4)]);
+        growth.updates.insert(3, vec![marker(20, 5)]);
+        growth.after.insert(3, vec![marker(40, 6)]);
+        let next_id = std::cell::Cell::new(100);
+        let updated = instrument(
+            &function,
+            None,
+            &[failing_obligation(span(3))],
+            &[],
+            &growth,
+            &|original| {
+                let mut fresh = original.clone();
+                fresh.id = next_id.get();
+                next_id.set(fresh.id + 1);
+                fresh
+            },
+        )
+        .unwrap();
+        let mut events = Vec::new();
+        crate::ast_visitor::expr_visitor_check(updated.x.body.as_ref().unwrap(), &mut |_, expr| {
+            if matches!(expr.x, ExprX::AssertAssume { is_assume: false, .. }) {
+                events.push("check".to_string());
+            } else if let Some(value @ (10 | 20 | 30 | 40)) = contracts::constant(expr) {
+                events.push(value.to_string());
+            }
+            Ok::<(), VirErr>(())
+        })
+        .unwrap();
+        assert_eq!(events, ["10", "check", "20", "30", "40"]);
+    }
+
+    #[test]
+    fn ambiguous_state_action_site_is_rejected() {
+        let function = function(mk_block(&span(2), vec![marker(30, 3), marker(31, 3)], None));
+        let mut growth = super::super::growth::Growth::default();
+        growth.before.insert(3, vec![marker(10, 4)]);
+        let error = instrument(&function, None, &[], &[], &growth, &|original| original.clone())
+            .unwrap_err();
+        assert!(error.note.contains("ambiguous memory proof-state execution site"));
+    }
+
+    #[test]
+    fn entry_sites_accept_only_snapshots_and_execute_them_once() {
+        let function = function(mk_block(&span(2), vec![], None));
+        let mut growth = super::super::growth::Growth::default();
+        growth.before.insert(function.span.id, vec![marker(10, 4)]);
+        instrument(&function, None, &[], &[], &growth, &|original| original.clone()).unwrap();
+
+        for phase in ["transition", "commit"] {
+            let mut growth = super::super::growth::Growth::default();
+            let schedule =
+                if phase == "transition" { &mut growth.updates } else { &mut growth.after };
+            schedule.insert(function.span.id, vec![marker(20, 5)]);
+            let error =
+                instrument(&function, None, &[], &[], &growth, &|original| original.clone())
+                    .unwrap_err();
+            assert!(error.note.contains(&format!("unsupported memory proof-state {phase} site")));
+        }
+
+        let body = mk_block(&function.span, vec![], None);
+        let mut colliding = function.clone();
+        Arc::make_mut(&mut colliding).x.body = Some(body);
+        let error = instrument(&colliding, None, &[], &[], &growth, &|original| original.clone())
+            .unwrap_err();
+        assert!(error.note.contains("ambiguous memory proof-state execution site"));
     }
 
     #[test]
