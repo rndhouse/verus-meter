@@ -220,3 +220,57 @@ nested runtime-collection results remain unfinished. This pass does not establis
 general equivalence of prepared metadata and execution, revisit runtime-query
 evaluation, or resolve the previously recorded solver-limit sensitivity.
 Unrelated documentation moves remain outside this pass.
+
+## Partial moves and early exits
+
+- [x] Follow field detachment and exit cleanup in `children.rs`, `lifetime.rs`,
+  `control.rs`, and `heap.rs`; match bindings in `values.rs`; and restored parent
+  charges in `sections.rs` and `accounting.rs`. Check caller profiles/adoption in
+  `calls.rs` and `ownership.rs`. Inspect loop edge classification/consumption in
+  `loops/exits.rs` and `loops/analysis.rs`, and symbolic exit cleanup in
+  `transfer/trace/{evaluation,exits,branches,patterns}.rs`.
+- [x] Add 15 independently calculated passing/one-byte-short pairs in
+  [`exit_ownership.rs`](../../../source/rust_verify_test/tests/resource/memory/exit_ownership.rs),
+  including current-memory checks after break, continue, return, and drop.
+- [x] Finish broad validation and commit this bounded pass.
+
+A partial move leaves the parent's inline slot charged and detaches only the
+selected child's allocation tree. Exit results are evaluated before lexical
+cleanup; each scope cleans its remaining owners on each detached edge. A break
+preserves an enclosing parent's remaining fields, whereas leaving the parent's
+scope drops them. Sampled ordinary and labelled continues restore the next
+iteration's retained frame. No new incorrect acceptance was confirmed; the
+accounting implementation is unchanged.
+
+| Case | Passing / failing bound (bytes) | Independent peak calculation |
+| --- | --- | --- |
+| Field returned from one branch | 121 / 120 | Flag 1 + parent slot 16 + both payloads 96 + result handle 8 |
+| Field moved before an early-return branch | 249 / 248 | Same 121 + scratch 128 on the continuing path |
+| Return from stored / temporary Option match | 120 / 119; 137 / 136 | Parent binding 16 + payloads 96 + result handle 8; temporary input adds 17 |
+| Return through a nested loop | 137 / 136 | Branch case 121 + nested box 16 |
+| Return from boxed parent | 129 / 128 | Branch case 121 + outer box handle 8 |
+| Return from matched field of an enclosing owner | 161 / 160 | Enclosing slot 25 + tag payload 16 + pair payloads 96 + binding 16 + result handle 8 |
+| Break preserves an enclosing parent | 248 / 247 | Remaining parent/sibling 48 + detached child 72 + later scratch 128 |
+| Labelled break leaves parent and nested scopes | 136 / 135 | Pair slot 16 + both payloads 96 + nested box 16 + result handle 8 |
+| Ordinary / labelled continue after a partial move | 145 / 144; 161 / 160 | Retained box/counter 25 + pair slot 16 + both payloads 96 + moved handle 8; nested box adds 16 |
+| Caller retains a returned field | 265 / 264 | Flag 1 + returned child 72 + scratch 192 |
+| Incoming field exit / retained caller result | 121 / 120; 264 / 263 | Helper parameters 17 + result handle 8 + incoming payloads 96; or returned child 72 + scratch 192 |
+| Partial return from a memory section | 120 / 119 | Parent slot/payloads 112 + section result handle 8 |
+
+Stored matches construct the Option payload directly in its destination. A
+temporary match additionally keeps its 17-byte input alive through the arm.
+Separate return sites may each report the one-byte-short failure; tests require
+every diagnostic to be a budget violation. All six focused tests pass.
+
+Validation against the rebuilt verifier: all 919 memory integration tests and 44
+resource examples passed without retries. Memory unit tests passed 41 tests with
+one existing manual measurement ignored. Formatting for `vir` and
+`rust_verify_test`, Clippy for `rust_verify_test --test resource`, whitespace
+checks, and all eleven tracker links passed. This pass changes only tests and
+this tracker; the accounting and runtime-query implementations are unchanged.
+
+Remaining coverage: deeper runtime-collection results and broader combinations
+of conditional replacements, input provenance, and multiple exits remain open.
+These samples do not establish exhaustive exit coverage or resolve the earlier
+solver-limit sensitivity. Runtime-query evaluation was not revisited. Unrelated
+documentation moves remain outside this pass.

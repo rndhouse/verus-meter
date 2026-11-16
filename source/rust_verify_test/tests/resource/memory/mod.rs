@@ -14,6 +14,7 @@ mod conditional_loops;
 mod control_flow;
 mod element_transfers;
 mod elements;
+mod exit_ownership;
 mod for_loops;
 mod growth;
 mod heap;
