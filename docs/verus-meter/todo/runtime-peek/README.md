@@ -1,23 +1,23 @@
 # Queryable peak-memory bounds
 
-Implement `#[queryable_peak_memory]` so an application can evaluate a function's
+`#[queryable_peak_memory]` lets an application evaluate a function's
 declared peak-memory allowance for concrete arguments before deciding to run it.
 The authoritative formula remains `resources peak(memory) <= expression`.
 Retain that formula as data and evaluate it with a shared runtime interpreter;
 generate typed query wrappers, not a separate arithmetic implementation per bound.
 
-These documents are an implementation handoff, not completed work. Maintain the
-authoritative task documents in the primary checkout under
-`docs/verus-meter/todo/runtime-peek/`; implement the feature in the dedicated
-worktree and branch supplied with the handoff. Execute the tasks in order. Keep
-instructions and references repository-relative so the plan survives relocation.
+These documents record the implementation plan and completed task boundaries.
+Maintain the authoritative task documents in the primary checkout under
+`docs/verus-meter/todo/runtime-peek/`. The implementation lives on
+`feature/queryable-peak-memory` in the dedicated worktree supplied with the handoff.
+Keep instructions and references repository-relative so the plan survives relocation.
 
 1. [Working prototype](complete/01-working-prototype.md) — complete
 2. [Runtime expressions and evaluator](complete/02-runtime-evaluator.md) — complete
 3. [Additional expressions and spec helpers](complete/03-expression-support.md) — complete
 4. [Attribute and executable queries](complete/04-attribute-and-queries.md) — complete
 5. [Correctness tests and regressions](complete/05-tests-and-regressions.md) — complete
-6. [User example and integration validation](06-example-and-validation.md)
+6. [User example and integration validation](complete/06-example-and-validation.md) — complete
 
 ## Completing tasks
 
