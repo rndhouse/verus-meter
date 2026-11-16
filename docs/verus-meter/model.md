@@ -23,6 +23,16 @@ conditionals, and local verified numeric specification functions. Budget
 arithmetic must fit in `u64`; sections and checkpoints currently require fixed
 bounds. See [contract examples](../../examples/resource/memory/README.md#contracts).
 
+## Runtime queries (prototype)
+
+`#[queryable_peak_memory]` exposes a nongeneric free function's allowance through
+`function_name::peak_memory_bound(input)`. The prototype supports one unsigned
+scalar parameter, constants, addition, and multiplication, and returns model bytes
+as `Result<u64, Overflow>` using checked arithmetic. It interprets retained
+expression data; the query implementation is tested Rust tooling, not formally
+verified. The caller must still establish the function's execution preconditions.
+See the [example and run instructions](../../source/verus-meter/runtime/README.md).
+
 ## What the guarantee covers
 
 The model calculates storage sizes for source values and separately owned

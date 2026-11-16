@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+  "verus-meter/runtime",
   "air",
   "builtin",
   "builtin_macros",

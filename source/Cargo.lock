@@ -3265,6 +3265,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "verus_meter_runtime"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
 name = "verus_prettyplease"
 version = "0.0.0-2026-11-01-0251"
 dependencies = [

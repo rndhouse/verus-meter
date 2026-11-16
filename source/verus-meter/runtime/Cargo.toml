@@ -1,0 +1,11 @@
+[package]
+name = "verus_meter_runtime"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
