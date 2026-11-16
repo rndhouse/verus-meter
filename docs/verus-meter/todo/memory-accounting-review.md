@@ -123,3 +123,47 @@ one-byte-short delegated-extraction loop probe needed `--rlimit 100` to obtain
 the intended budget failure; its passing bound succeeded at the default limit.
 Solver-limit sensitivity remains a verification robustness concern for a future
 review; no bound violation was accepted in these supplemental pairs.
+
+## Discarded-expression review
+
+- [x] Inspect discarded results and partial moves in `analysis.rs`, `lifetime.rs`,
+  `construction.rs`, `places.rs`, `heap.rs`, `children.rs`, and `extraction.rs`;
+  follow cleanup through `control.rs` and `sections.rs`, and call composition
+  through `calls.rs` and transfer tracing (`evaluation.rs`, `places.rs`, and
+  `operations.rs`). Check frontend `ExprOrPlace::unused` distinguishes copies
+  from moves and wraps non-unit expression results in temporary places.
+- [x] Add eight independently calculated passing/one-byte-short pairs in
+  [`lifetimes.rs`](../../../source/rust_verify_test/tests/resource/memory/lifetimes.rs).
+- [x] Finish broad validation and commit this bounded pass.
+
+The invariant is that statement cleanup releases only the discarded result's
+tree. A partial move keeps the parent's inline storage and sibling allocations;
+callee profiles preserve surviving original inputs after a discarded field.
+No new incorrect acceptance was found in these samples; no accounting source
+change was needed.
+
+| Case | Passing / failing bound (bytes) | Independent peak calculation |
+| --- | --- | --- |
+| Discarded field, directly and through a helper | 208 / 207 each | 16-byte parent slot + 64-byte surviving payload + 128-byte workspace |
+| Discarded factory result, directly, through a block, and in a section | 200 / 199 each | 72-byte retained box + 128-byte workspace |
+| Discarded factory result in either branch or two loop iterations | 201 / 200 each | Same 200 bytes + Boolean input or loop counter |
+| Discarded owning value from a single-visit break | 200 / 199 | Same retained box and workspace; loop result has ended |
+
+The factory declares 104 bytes, including slack over its 96-byte scratch peak;
+that allowance overlaps the retained caller box but stays below the later
+workspace peak. Both the loop result's 32-byte payload and its 8-byte handle end
+before that workspace. The focused lifetime suite passes all 15 tests.
+
+Validation against the rebuilt verifier: 904 memory integration tests and all 44
+resource examples passed without retries. Memory unit tests passed 41 tests with
+one existing manual measurement ignored. Formatting for `vir` and
+`rust_verify_test`, Clippy for `rust_verify_test --test resource`, whitespace
+checks, and all nine tracker links passed. Only tests and this tracker changed;
+the accounting and runtime-query implementations were not modified.
+
+Remaining coverage: nested runtime-collection results, partial moves on separate
+early-exit paths, and effectful later operands while an earlier result is pending
+were not newly probed here. The earlier runtime-query evidence is unchanged;
+this pass did not revisit query evaluation. Exhaustive release-site coverage and
+the previously recorded solver-limit sensitivity remain open. Existing unrelated
+documentation moves remain outside this pass.
