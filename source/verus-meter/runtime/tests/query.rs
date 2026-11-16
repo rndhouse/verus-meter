@@ -36,20 +36,20 @@ fn compiled_query_tracks_contract_and_types() {
     let (output, executable) = compile(&source, directory.path());
     succeeds(&output);
     for (budget, message) in [
-        ("1200", "Admitted: allowance 1124, capacity 100"),
-        ("1124", "Admitted: allowance 1124, capacity 100"),
-        ("1000", "Declined: allowance 1124 exceeds budget 1000"),
+        ("150", "Admitted: allowance 134, capacity 100"),
+        ("134", "Admitted: allowance 134, capacity 100"),
+        ("100", "Declined: allowance 134 exceeds budget 100"),
     ] {
         let output = Command::new(&executable).arg(budget).output().unwrap();
         succeeds(&output);
         assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), message);
     }
-    let output = Command::new(&executable).args(["2000", "200"]).output().unwrap();
+    let output = Command::new(&executable).args(["300", "200"]).output().unwrap();
     succeeds(&output);
-    assert!(String::from_utf8(output.stdout).unwrap().contains("allowance 1224, capacity 200"));
+    assert!(String::from_utf8(output.stdout).unwrap().contains("allowance 234, capacity 200"));
     for (arguments, diagnostic) in [
         (vec![], "usage: runtime-query BUDGET [COUNT]"),
-        (vec!["1200", "0"], "count must be greater than zero"),
+        (vec!["150", "0"], "count must be greater than zero"),
     ] {
         let output = Command::new(&executable).args(arguments).output().unwrap();
         assert!(!output.status.success());
@@ -57,27 +57,30 @@ fn compiled_query_tracks_contract_and_types() {
         assert!(String::from_utf8_lossy(&output.stderr).contains(diagnostic));
     }
     let (output, executable) =
-        compile(&source.replace("1024 + count", "2048 + count"), directory.path());
+        compile(&source.replace("value_size(usize)", "value_size(u128)"), directory.path());
     succeeds(&output);
-    let output = Command::new(executable).arg("3000").output().unwrap();
+    let output = Command::new(executable).arg("150").output().unwrap();
     succeeds(&output);
-    assert!(String::from_utf8(output.stdout).unwrap().contains("allowance 2148"));
+    assert!(String::from_utf8(output.stdout).unwrap().contains("allowance 142"));
 
-    let (output, executable) =
-        compile(&source.replace("1024 + count", "1024 + 8 * count"), directory.path());
+    let backing_expression = "(count as nat) * value_size(u8)";
+    let (output, executable) = compile(
+        &source.replace(backing_expression, "(count as nat) * value_size(u64)"),
+        directory.path(),
+    );
     succeeds(&output);
-    let output = Command::new(executable).arg("2000").output().unwrap();
+    let output = Command::new(executable).arg("1000").output().unwrap();
     succeeds(&output);
-    assert!(String::from_utf8(output.stdout).unwrap().contains("allowance 1824"));
+    assert!(String::from_utf8(output.stdout).unwrap().contains("allowance 834"));
 
     // Verification still constrains execution inputs. A query outside that domain
     // may return a larger allowance, which must remain exact and decline admission.
     let large_source = source
         .replace("count: u16", "count: u64")
         .replace("100u16", "100u64")
-        .replace("requires count > 0,", "requires count > 0, count <= 100,")
+        .replace("requires count > 0,", "requires count == 100,")
         .replace("with_capacity(count as usize)", "with_capacity(100usize)")
-        .replace("1024 + count", "1024 + 8 * count");
+        .replace(backing_expression, "(count as nat) * value_size(u64)");
     let (output, executable) = compile(&large_source, directory.path());
     succeeds(&output);
     let output = Command::new(executable)
@@ -87,17 +90,17 @@ fn compiled_query_tracks_contract_and_types() {
     succeeds(&output);
     assert_eq!(
         String::from_utf8(output.stdout).unwrap().trim(),
-        "Declined: allowance 147573952589676413944 exceeds budget 18446744073709551615"
+        "Declined: allowance 147573952589676412960 exceeds budget 18446744073709551615"
     );
 
     for (source, message) in [
         (
-            source.replace("    resources peak(memory) <= 1024 + count,", ""),
+            source.replace("    resources peak(memory) <= allocation_memory(count),", ""),
             "queryable_peak_memory requires resources",
         ),
         (source.replace("peak_memory_bound(count)", "peak_memory_bound(true)"), "mismatched types"),
         (
-            source.replace("1024 + count", "peak(allocate)"),
+            source.replace("allocation_memory(count)", "peak(allocate)"),
             "runtime peak(helper) queries are unsupported",
         ),
     ] {
@@ -375,9 +378,9 @@ fn standalone_bundle_is_relocatable_and_refreshable() {
     };
     // No extern or dependency-search flags: every library comes from this copy.
     succeeds(&run_compiler(&source));
-    let output = Command::new(&executable).arg("1200").output().unwrap();
+    let output = Command::new(&executable).arg("150").output().unwrap();
     succeeds(&output);
-    assert!(String::from_utf8(output.stdout).unwrap().contains("Admitted: allowance 1124"));
+    assert!(String::from_utf8(output.stdout).unwrap().contains("Admitted: allowance 134"));
 
     let stale = distribution.join("resource-runtime/deps/stale.rlib");
     std::fs::write(&stale, "stale dependency").unwrap();

@@ -77,6 +77,8 @@ stack or allocator exhaustion is not reported as a recoverable query error.
 
 The [runtime-query example](../../../examples/resource/memory/contracts/runtime_query.rs)
 declares one input-dependent allowance on a function that reserves a byte buffer.
+Its `allocation_memory` spec helper names the input, capacity argument, vector
+handle, and backing-storage contributions, using `value_size` for their model sizes.
 The caller checks that the count is positive, queries the allowance, and calls
 the function only when it fits the supplied budget. No arithmetic formula is
 repeated in the caller. Query errors terminate with `memory query failed`,
@@ -89,17 +91,17 @@ Run from `source/`:
 ```sh
 cargo run --release -p verus_meter_tools --bin prepare-resource-runtime -- target-verus/release
 ./target-verus/release/verus ../examples/resource/memory/contracts/runtime_query.rs --compile -o target-verus/runtime-query
-./target-verus/runtime-query 1200
-./target-verus/runtime-query 1000
-./target-verus/runtime-query 2000 200
+./target-verus/runtime-query 150
+./target-verus/runtime-query 100
+./target-verus/runtime-query 300 200
 ```
 
 The three runs print:
 
 ```text
-Admitted: allowance 1124, capacity 100
-Declined: allowance 1124 exceeds budget 1000
-Admitted: allowance 1224, capacity 200
+Admitted: allowance 134, capacity 100
+Declined: allowance 134 exceeds budget 100
+Admitted: allowance 234, capacity 200
 ```
 
 The first argument is a `u64` model-byte budget; the optional second argument is a

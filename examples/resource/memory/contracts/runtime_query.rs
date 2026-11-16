@@ -6,10 +6,19 @@ use vstd::prelude::*;
 
 verus! {
 
+// Account for the input, reservation argument, vector handle, and reserved bytes.
+spec fn allocation_memory(count: u16) -> nat {
+    let input = value_size(count);
+    let capacity_argument = value_size(usize);
+    let buffer_handle = value_size(Vec<u8>);
+    let backing = (count as nat) * value_size(u8);
+    input + capacity_argument + buffer_handle + backing
+}
+
 #[queryable_peak_memory]
 fn allocate(count: u16) -> Vec<u8>
     requires count > 0,
-    resources peak(memory) <= 1024 + count,
+    resources peak(memory) <= allocation_memory(count),
 {
     Vec::<u8>::with_capacity(count as usize)
 }
