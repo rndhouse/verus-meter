@@ -76,6 +76,56 @@ fn partial_exits_keep_retained_allocations() {
 }
 
 #[test]
+fn partial_breaks_export_checked_storage_for_later_allocations() {
+    for count in [1, 7, 17] {
+        let current = 233 + 16 * count;
+        let peak = current + 128;
+        let code = format!(
+            "fn f() resources peak(memory) <= BOUND {{
+                let root = Box::new([0u8;64]);
+                let mut values = Vec::<Box<[u8;16]>>::with_capacity(17);
+                let mut i = 0u8;
+                while i < 17
+                    invariant_except_break i < {count}, values.len() == i as int,
+                    invariant values.len() <= {count},
+                    decreases 17-i,
+                {{
+                    let child = Box::new([0u8;16]); values.push(child);
+                    if i == {count} - 1 {{ break; }}
+                    i += 1;
+                }}
+                assert(current(memory) <= {current});
+                let scratch = [0u8;128];
+            }}"
+        );
+        // Root 72 + handle/backing 160 + counter 1 + surviving payloads.
+        bound_pair(&format!("partial_exit_storage_{count}"), &code, peak);
+    }
+    // Either exit retains its actual forest. The Boolean adds one byte to
+    // the worst case, where all 17 appends complete: 633 + 1 = 634.
+    bound_pair(
+        "partial_or_normal_exit_storage",
+        "fn f(early: bool) resources peak(memory) <= BOUND {
+            let root = Box::new([0u8;64]);
+            let mut values = Vec::<Box<[u8;16]>>::with_capacity(17);
+            let mut i = 0u8;
+            while i < 17
+                invariant_except_break i <= 17, values.len() == i as int,
+                invariant values.len() <= 17,
+                decreases 17-i,
+            {
+                let child = Box::new([0u8;16]); values.push(child);
+                if early && i == 6 { break; }
+                i += 1;
+            }
+            assert(current(memory) <= 506);
+            let scratch = [0u8;128];
+        }",
+        634,
+    );
+}
+
+#[test]
 fn generated_facts_do_not_hide_reachable_assertion_failures() {
     for (name, before, after, suffix) in [
         ("entry", "assert(false);", "", ""),

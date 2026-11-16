@@ -70,7 +70,7 @@ The broad core checklist above remains review coverage, not a list of confirmed
 bugs.
 
 - [x] Restore the tight append-only scalar vector bound after a loop.
-- [ ] Preserve checked metadata on partial loop exits for later allocations.
+- [x] Preserve checked metadata on partial loop exits for later allocations.
 - [ ] Admit scalar-only argument loops without disabling allocation-effect guards.
 - [ ] Reproduce and address the recorded delegated-extraction solver-limit
   sensitivity without raising the default limit or weakening failure checks.
@@ -571,3 +571,28 @@ is now retained as `fixed_role_extraction_short` in
 This evidence keeps the solver-robustness queue item open. Formatting, Clippy for
 `vir --lib --tests` and the resource test target, whitespace checks, and tracker
 references passed. No limit was raised and no failure assertion was relaxed.
+
+## Partial-loop exit metadata fix
+
+The retained-allocation probe reproduced rejection of a post-break current-memory
+check. `loops/analysis.rs` now emits separate checked exit predicates for current
+vector backing, element metadata, element charge bounds, and unchanged backing
+frames. Verus must prove these predicates at every break and normal completion.
+Progress, conservation, and frozen head observations remain head-only; they are
+not promoted to exit assumptions for a partial visit.
+
+The new regression retains 1, 7, or 17 payloads after a partial break, then
+allocates scratch outside the loop. Passing/one-byte-short peaks are 377/376,
+473/472, and 633/632 bytes: root 72 + vector handle/backing 160 + counter 1 +
+payloads of 16 + scratch 128. A Boolean-controlled early break also permits full
+normal completion and passes at 634, rejecting 633. All eight focused loop-proof
+tests pass, including the existing reachable-assertion and invalid-invariant
+controls. The confirmed fitting-program rejection is resolved without assuming
+completed-visit facts on the partial exit.
+
+Validation: rebuilt verifier; all 938 memory integration tests and 44 resource
+examples passed on their full runs without retries. Memory unit tests passed
+48 tests with one existing manual measurement ignored. Formatting for `vir` and
+`rust_verify_test`, Clippy for `vir --lib --tests` and the resource test target,
+whitespace checks, and tracker references passed. The intermittent solver-limit
+case passed in this run; its robustness fix remains separately queued.

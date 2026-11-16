@@ -231,6 +231,21 @@ impl Analysis<'_> {
         let mut invariants = self.growth.invariants(&expr.span, &ids, &loop_scalars, &self.bound);
         invariants.extend(self.element_metadata_invariants(&expr.span));
         invariants.extend(self.element_reservation_invariants(&expr.span, &loop_scalars)?);
+        if self.growth.exiting_loops.contains(&expr.span.id) {
+            // These describe current allocations, not completed visits. Prove
+            // them separately on every normal exit and break so later code can
+            // still account for storage retained by a partial final visit.
+            // Progress, conservation, and frozen head facts remain head-only.
+            let mut exits = invariants.clone();
+            exits.extend(frame_invariants.iter().cloned());
+            exits.extend(self.growth.element_invariants(
+                &expr.span,
+                &elements,
+                &loop_scalars,
+                &self.bound,
+            ));
+            self.growth.loop_ensures.entry(expr.span.id).or_default().extend(exits);
+        }
         invariants.extend(forest_bounds);
         invariants.extend(frame_invariants);
         invariants.extend(entry_facts);
