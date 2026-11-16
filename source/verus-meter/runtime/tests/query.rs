@@ -37,6 +37,7 @@ fn compiled_query_tracks_contract_and_types() {
     succeeds(&output);
     for (budget, message) in [
         ("1200", "Admitted: allowance 1124, capacity 100"),
+        ("1124", "Admitted: allowance 1124, capacity 100"),
         ("1000", "Declined: allowance 1124 exceeds budget 1000"),
     ] {
         let output = Command::new(&executable).arg(budget).output().unwrap();
@@ -46,6 +47,15 @@ fn compiled_query_tracks_contract_and_types() {
     let output = Command::new(&executable).args(["2000", "200"]).output().unwrap();
     succeeds(&output);
     assert!(String::from_utf8(output.stdout).unwrap().contains("allowance 1224, capacity 200"));
+    for (arguments, diagnostic) in [
+        (vec![], "usage: runtime-query BUDGET [COUNT]"),
+        (vec!["1200", "0"], "count must be greater than zero"),
+    ] {
+        let output = Command::new(&executable).args(arguments).output().unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains(diagnostic));
+    }
     let (output, executable) =
         compile(&source.replace("1024 + count", "2048 + count"), directory.path());
     succeeds(&output);
@@ -65,12 +75,9 @@ fn compiled_query_tracks_contract_and_types() {
     let large_source = source
         .replace("count: u16", "count: u64")
         .replace("100u16", "100u64")
-        .replace("count must fit u16", "count must fit u64")
+        .replace("requires count > 0,", "requires count > 0, count <= 100,")
         .replace("with_capacity(count as usize)", "with_capacity(100usize)")
-        .replace(
-            "    resources peak(memory) <= 1024 + count,",
-            "    requires count <= 100,\n    resources peak(memory) <= 1024 + 8 * count,",
-        );
+        .replace("1024 + count", "1024 + 8 * count");
     let (output, executable) = compile(&large_source, directory.path());
     succeeds(&output);
     let output = Command::new(executable)

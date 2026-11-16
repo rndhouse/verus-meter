@@ -4,7 +4,7 @@ The macro retains constants, unsigned parameters (`u8`, `u16`, `u32`, `u64`, or
 `usize`), Boolean parameters, addition, multiplication, comparisons, Boolean
 operators, and conditionals as expression data. A generated
 module shares the function's name and visibility. Its `peak_memory_bound` function
-accepts the original parameter type and returns `Result<ModelBytes, QueryError>`.
+accepts the original parameter types and returns `Result<ModelBytes, QueryError>`.
 Evaluation uses the workspace's arbitrary-precision integer library. `ModelBytes`
 supports `fits_within(budget: u64)`, decimal display, ordering against another
 allowance, and explicit `to_u64()` conversion returning `NativeRangeError` when
@@ -73,21 +73,45 @@ Evaluation uses stack space proportional to expression depth and storage
 proportional to integer size. There is no custom evaluation-limit framework;
 stack or allocator exhaustion is not reported as a recoverable query error.
 
-After preparing a matching verifier, macro library, and vstd as described in the
-repository's BUILD.md, run from `source/`:
+## Run the example
+
+The [runtime-query example](../../../examples/resource/memory/contracts/runtime_query.rs)
+declares one input-dependent allowance on a function that reserves a byte buffer.
+The caller checks that the count is positive, queries the allowance, and calls
+the function only when it fits the supplied budget. No arithmetic formula is
+repeated in the caller. Query errors terminate with `memory query failed`,
+separately from a budget rejection.
+
+Prepare a matching verifier, macro library, and vstd as described in
+[BUILD.md](../../../BUILD.md), and set `VERUS_Z3_PATH` to the prepared solver.
+Run from `source/`:
 
 ```sh
 cargo run --release -p verus_meter_tools --bin prepare-resource-runtime -- target-verus/release
 ./target-verus/release/verus ../examples/resource/memory/contracts/runtime_query.rs --compile -o target-verus/runtime-query
 ./target-verus/runtime-query 1200
 ./target-verus/runtime-query 1000
+./target-verus/runtime-query 2000 200
 ```
 
-The example queries `allocate(100)` and prints admission with allowance 1124 or
-rejection when that allowance exceeds the supplied model-byte budget. The admitted
-path allocates a vector and reports its capacity. The budget is an explicit input;
-OS memory discovery and physical-memory correspondence remain separate work.
-An optional second argument changes the buffer count at runtime (default 100).
+The three runs print:
+
+```text
+Admitted: allowance 1124, capacity 100
+Declined: allowance 1124 exceeds budget 1000
+Admitted: allowance 1224, capacity 200
+```
+
+The first argument is a `u64` model-byte budget; the optional second argument is a
+positive `u16` byte count (default 100). The precondition check is independent of
+the allowance query: a successful query alone does not justify calling the target.
+A rejection says the declared allowance exceeds the budget; it does not prove
+execution cannot fit. The admitted path reserves a real vector and reports its
+capacity. The allowance covers the target under the existing abstract model;
+the caller and query have separate costs. OS RAM discovery, reservation, and
+correspondence with physical memory remain future work.
+
+## Build integration
 
 The normal `cargo make build` and legacy default `vargo build` prepare the runtime
 bundle automatically. The explicit preparation command above also works for an
@@ -101,7 +125,9 @@ to this fork's `source/verus-meter/runtime`, alongside the project's vstd depend
 and use `cargo verus build`. Cargo supplies that runtime and its dependency graph;
 the standalone bundle is not injected into Cargo builds.
 
-Run unit tests and the compiled integration test from `source/`:
+## Checks
+
+Run unit tests and the compiled integration suite from `source/`:
 
 ```sh
 cargo test --release -p verus_meter_runtime
@@ -116,3 +142,5 @@ runtime bundle refresh, and a Cargo client rebuilt after its formula changes.
 Regression cases also check exact input conversion and arithmetic, helper
 substitution and local size queries, queries outside preconditions, and resource
 verification failures with and without the query attribute.
+The ordinary resource-example suite also verifies this example, using standalone
+artifact discovery for its runtime dependency.

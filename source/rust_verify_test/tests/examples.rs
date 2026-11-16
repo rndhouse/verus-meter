@@ -58,6 +58,9 @@ fn run_example_for_file(file_path: &str) {
     if let ["//", "rust_verify/tests/example.rs", command, ..] = &first_line_elements[..] {
         match *command {
             "expect-success" => mode = Mode::ExpectSuccess,
+            // Use ordinary artifact discovery for examples with runtime queries
+            // instead of the internal fixtures' explicitly supplied libraries.
+            "standalone" => options.push("--disable-internal-test-mode"),
             "expect-errors" => mode = Mode::ExpectErrors,
             "expect-failures" => mode = Mode::ExpectFailures,
             "expect-warnings" => mode = Mode::ExpectWarnings,
@@ -92,7 +95,7 @@ fn run_example_for_file(file_path: &str) {
                 return;
             }
             _ => panic!(
-                "invalid command {:?} for example file test: use one of 'expect-success', 'expect-errors', 'expect-failures', 'expand-errors', 'no-report-long-running', or 'ignore'",
+                "invalid command {:?} for example file test: use one of 'expect-success', 'standalone', 'expect-errors', 'expect-failures', 'expand-errors', 'no-report-long-running', or 'ignore'",
                 command
             ),
         }

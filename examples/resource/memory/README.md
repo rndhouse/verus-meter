@@ -13,7 +13,9 @@ ordinary Verus correctness checks. Start with the basics, then explore a topic.
 ## Contracts
 
 - [Runtime queries](contracts/runtime_query.rs): query a declared allowance before
-  allocating, using an explicit budget. See the [run instructions](../../../source/verus-meter/runtime/README.md).
+  allocating, using an explicit model-byte budget and a positive byte count. See
+  the [run instructions](../../../source/verus-meter/runtime/README.md#run-the-example)
+  for admission and rejection paths.
 - [Conditional budgets](contracts/conditional.rs): give different inputs different allowances.
 - [Budgets across calls](contracts/call_budgets.rs): preserve input-specific allowances through helpers.
 - [Named formulas](contracts/spec_budgets.rs): reuse a spec function to describe memory needs.

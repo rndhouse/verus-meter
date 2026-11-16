@@ -44,7 +44,11 @@ The query namespace follows the function's visibility and configuration. A
 prepared standalone verifier discovers its runtime bundle automatically; Cargo
 clients declare the runtime dependency explicitly. Querying does not enforce
 execution preconditions or override verification bypass flags.
-See the [example and run instructions](../../source/verus-meter/runtime/README.md).
+Compare an allowance with an explicit model-byte budget before calling the target,
+after establishing its execution preconditions separately. An allowance exceeding
+the budget does not prove that execution cannot fit. Query and caller costs are
+separate; OS RAM discovery and reservation remain future work.
+See the [example and run instructions](../../source/verus-meter/runtime/README.md#run-the-example).
 
 ## What the guarantee covers
 
