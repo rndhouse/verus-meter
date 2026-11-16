@@ -1,4 +1,4 @@
-use super::support::{rejects, verifies};
+use super::support::{exact_peak, rejects, verifies};
 use crate::common::*;
 use crate::verify_one_file;
 
@@ -40,16 +40,18 @@ test_verify_one_file! {
     } => Ok(())
 }
 
-test_verify_one_file! {
-    #[test] move_and_drop verus_code! {
-        use vstd::prelude::*;
-        fn f() resources peak(memory) <= 76 {
+#[test]
+fn move_and_drop() {
+    exact_peak(
+        "move_and_drop",
+        "fn f() resources peak(memory) <= BUDGET {
             let mut values = Vec::<u32>::with_capacity(1);
             values.push(1);
             let moved = values; drop(moved);
             let another = Vec::<u32>::with_capacity(1);
-        }
-    } => Ok(())
+        }",
+        28,
+    );
 }
 
 test_verify_one_file! {
@@ -123,13 +125,6 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] runtime_budget_must_fit_u64 verus_code! {
-        use vstd::prelude::*;
-        fn f(capacity: usize) resources peak(memory) <= value_size(capacity) + capacity * value_size(u64) {}
-    } => Err(err) => assert!(!err.errors.is_empty() && err.errors.iter().all(|e| e.message.contains("memory budget arithmetic exceeds u64")))
-}
-
-test_verify_one_file! {
     #[test] runtime_budget_call verus_code! {
         use vstd::prelude::*;
         fn helper(capacity: usize) requires capacity <= 4,
@@ -155,10 +150,6 @@ test_verify_one_file! {
 #[test]
 fn empty_vector_has_no_backing_charge() {
     verifies("empty_vector", "fn f() resources peak(memory) <= 24 { let v = Vec::<u32>::new(); }");
-    verifies(
-        "new_can_grow",
-        "fn f() resources peak(memory) <= 100 { let mut v = Vec::<u32>::new(); v.push(1); }",
-    );
 }
 
 #[test]
@@ -289,7 +280,7 @@ fn reject_unsupported_vector_operations() {
     rejects(
         "vector_reserve",
         "fn f() resources peak(memory) <= 100 { let mut v = Vec::<u32>::with_capacity(1); v.reserve(2); }",
-        "does not support",
+        "does not support calls with generic, dynamic, or unsupported targets",
     );
     rejects(
         "vector_reassign",
@@ -302,39 +293,6 @@ fn reject_unsupported_vector_operations() {
         "vector_conditional_drop",
         "fn f(flag: bool) resources peak(memory) <= 100 { let v = Vec::<u32>::with_capacity(1); if flag { drop(v); } }",
         "moving or dropping an enclosing heap owner",
-    );
-}
-
-#[test]
-fn runtime_queries_require_arguments() {
-    rejects(
-        "query_runtime_envelope",
-        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= value_size(cap) + cap {} fn g() resources peak(memory) <= peak(f) {}",
-        "runtime memory budgets require peak(helper(arguments))",
-    );
-}
-
-#[test]
-fn quantities_require_stable_unsigned_inputs() {
-    rejects(
-        "named_constant_quantity",
-        "const BUDGET: u64 = 16; fn f() resources peak(memory) <= BUDGET {}",
-        "memory budget predicates currently support scalar input comparisons and Boolean operators",
-    );
-    rejects(
-        "signed_quantity",
-        "fn f(n: i32) resources peak(memory) <= value_size(n) + n {}",
-        "memory quantities require immutable unsigned integers",
-    );
-    rejects(
-        "mutable_quantity",
-        "fn f(mut n: usize) resources peak(memory) <= value_size(n) + n {}",
-        "immutable Boolean or native integer input parameters",
-    );
-    rejects(
-        "mutable_capacity",
-        "fn f(mut n: usize) resources peak(memory) <= 100 { let v = Vec::<u32>::with_capacity(n); }",
-        "immutable Boolean or native integer input parameters",
     );
 }
 
@@ -366,31 +324,6 @@ fn direct_index_mutation_and_slice_local() {
     verifies(
         "vector_index_mut",
         "fn f() resources peak(memory) <= 44 { let mut v = Vec::<u32>::with_capacity(1); v.push(1); v[0] = 9; let slice = v.as_slice(); assert(slice[0] == 9); }",
-    );
-}
-
-#[test]
-fn runtime_constant_call_has_a_fixed_envelope() {
-    verifies(
-        "constant_call_envelope",
-        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= value_size(cap) + cap {} fn g() resources peak(memory) <= peak(f(4)) { f(4); } fn h() resources peak(memory) <= peak(g) { g(); }",
-    );
-}
-
-#[test]
-fn hidden_runtime_overflow_is_rejected() {
-    rejects(
-        "hidden_runtime_overflow",
-        "fn f(n: usize) resources peak(memory) <= value_size(n) + (n + 18446744073709551615) * 0 {}",
-        "memory budget arithmetic exceeds u64",
-    );
-}
-
-#[test]
-fn conditional_arithmetic_is_guarded() {
-    verifies(
-        "guarded_runtime_arithmetic",
-        "fn f(n: usize) resources peak(memory) <= value_size(n) + if n <= 4 { n * 4 } else { 0 } {}",
     );
 }
 

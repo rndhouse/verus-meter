@@ -1,5 +1,16 @@
+use super::support::{rejects, verifies};
 use crate::common::*;
 use crate::verify_one_file;
+
+test_verify_one_file! {
+    #[test] runtime_budget_must_fit_u64 verus_code! {
+        // Multiplication and the enclosing addition each require a range proof.
+        fn f(capacity: usize) resources peak(memory) <= value_size(capacity) + capacity * value_size(u64) {}
+    } => Err(err) => assert_vir_error_msgs(err, &[
+        "memory budget arithmetic exceeds u64",
+        "memory budget arithmetic exceeds u64",
+    ])
+}
 
 test_verify_one_file! {
     #[test] ordinary_peak_names_remain_logical_outside_resource_queries verus_code! {
@@ -159,7 +170,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] unsupported_type_query_rejected verus_code! {
         fn f() resources peak(memory) <= value_size(char) {}
-    } => Err(err) => assert_vir_error_msg(err, "resource model")
+    } => Err(err) => assert_vir_error_msg(err, "does not support this type")
 }
 
 test_verify_one_file! {
@@ -203,7 +214,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] compound_query_still_requires_a_supported_type verus_code! {
         fn f() resources peak(memory) <= value_size([[u32; 2]; 3]) {}
-    } => Err(err) => assert_vir_error_msg(err, "resource model")
+    } => Err(err) => assert_vir_error_msg(err, "does not support this type")
 }
 
 test_verify_one_file! {
@@ -250,4 +261,45 @@ test_verify_one_file! {
             assert(n == 4);
         }
     } => Ok(())
+}
+
+#[test]
+fn quantities_require_stable_unsigned_inputs() {
+    rejects(
+        "named_constant_quantity",
+        "const BUDGET: u64 = 16; fn f() resources peak(memory) <= BUDGET {}",
+        "memory budget predicates currently support scalar input comparisons and Boolean operators",
+    );
+    rejects(
+        "signed_quantity",
+        "fn f(n: i32) resources peak(memory) <= value_size(n) + n {}",
+        "memory quantities require immutable unsigned integers",
+    );
+    rejects(
+        "mutable_quantity",
+        "fn f(mut n: usize) resources peak(memory) <= value_size(n) + n {}",
+        "immutable Boolean or native integer input parameters",
+    );
+    rejects(
+        "mutable_capacity",
+        "fn f(mut n: usize) resources peak(memory) <= 100 { let v = Vec::<u32>::with_capacity(n); }",
+        "immutable Boolean or native integer input parameters",
+    );
+}
+
+#[test]
+fn hidden_runtime_overflow_is_rejected() {
+    rejects(
+        "hidden_runtime_overflow",
+        "fn f(n: usize) resources peak(memory) <= value_size(n) + (n + 18446744073709551615) * 0 {}",
+        "memory budget arithmetic exceeds u64",
+    );
+}
+
+#[test]
+fn conditional_arithmetic_is_guarded() {
+    verifies(
+        "guarded_runtime_arithmetic",
+        "fn f(n: usize) resources peak(memory) <= value_size(n) + if n <= 4 { n * 4 } else { 0 } {}",
+    );
 }

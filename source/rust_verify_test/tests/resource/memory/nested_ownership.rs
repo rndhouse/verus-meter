@@ -147,16 +147,24 @@ fn recursive_layout_is_rejected_without_recursing_forever() {
 }
 
 #[test]
-fn sibling_boxed_slice_summaries_keep_independent_dynamic_charges() {
+fn empty_sibling_slices_preserve_declared_factory_allowance() {
+    // Conversion uses the logical length, so both payloads are empty even
+    // though their source vectors reserve n bytes. Check the factory allowance,
+    // including declared slack, rather than claim dynamic retained payloads.
     let code = "struct Pair { a: Box<[u8]>, b: Box<[u8]> }
-        fn slice(n: usize) -> Box<[u8]> requires n <= 4, resources peak(memory) <= 48 + n {
+        fn slice(n: usize) -> (b: Box<[u8]>)
+            requires n <= 4, ensures b.len() == 0,
+            resources peak(memory) <= 48 + n {
             let v = Vec::<u8>::with_capacity(n); v.into_boxed_slice()
         }
-        fn make(n: usize) -> Pair requires n <= 4, resources peak(memory) <= 200 + 2*n {
+        fn make(n: usize) -> (p: Pair)
+            requires n <= 4, ensures p.a.len() == 0, p.b.len() == 0,
+            resources peak(memory) <= 200 + 2*n {
             Pair { a: slice(n), b: slice(n) }
         }
         fn f(n: usize) requires n <= 4, resources peak(memory) <= BOUND + 2*n {
-            let p = make(n); let scratch = [0u8;100];
+            let p = make(n); assert(p.a.len() == 0 && p.b.len() == 0);
+            let scratch = [0u8;100];
         }";
     verifies("nested_slices", &code.replace("BOUND", "208"));
     rejects("nested_slices_short", &code.replace("BOUND", "207"), "memory budget exceeded");

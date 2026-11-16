@@ -30,7 +30,7 @@ fn existing_destination_keeps_early_call_work() {
         &[],
     )
     .unwrap_err();
-    assert!(!err.errors.is_empty());
+    assert_vir_error_msg(err, "peak 80 bytes exceeds budget 64 bytes");
 }
 
 #[test]
@@ -41,17 +41,6 @@ fn moves_transfer_one_value() {
         fn f() -> Data resources peak(memory) <= 16 {
             let first = Data { values: [0u32;4] }; let second = first;
             let third = second; third
-        }",
-    );
-}
-
-#[test]
-fn different_return_sources_do_not_create_a_third_value() {
-    verifies(
-        "branch_result",
-        "struct Data { value: u32 }
-        fn f(a: Data, b: Data, flag: bool) -> Data resources peak(memory) <= 9 {
-            if flag { a } else { b }
         }",
     );
 }
@@ -117,7 +106,7 @@ fn keeping_input_alive_still_costs_memory() {
         &[],
     )
     .unwrap_err();
-    assert!(!err.errors.is_empty());
+    assert_vir_error_msg(err, "peak 200 bytes exceeds budget 136 bytes");
 }
 
 #[test]
@@ -159,5 +148,5 @@ fn unused_copy_keeps_original_value_live() {
         &[],
     )
     .unwrap_err();
-    assert_any_vir_error_msg(err, "peak 32 bytes exceeds budget 16 bytes");
+    assert_vir_error_msg(err, "peak 32 bytes exceeds budget 16 bytes");
 }

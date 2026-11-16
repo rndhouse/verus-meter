@@ -13,15 +13,11 @@ pub(super) fn verifies(name: &str, code: &str) {
     verify_one_file(name, source(code), &[]).unwrap();
 }
 
-/// Require real diagnostics and check that every error contains the expected message.
+/// Require exactly one diagnostic containing the expected message.
 #[track_caller]
 pub(super) fn rejects(name: &str, code: &str, message: &str) {
     let err = verify_one_file(name, source(code), &[]).unwrap_err();
-    assert!(
-        !err.errors.is_empty() && err.errors.iter().all(|e| e.message.contains(message)),
-        "expected {message}: {error:?}",
-        error = err
-    );
+    assert_vir_error_msg(err, message);
 }
 
 /// Accept the predicted bound and reject one byte less with a single diagnostic.

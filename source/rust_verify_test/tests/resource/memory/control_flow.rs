@@ -52,7 +52,7 @@ fn condition_effects_survive_a_skipped_single_visit() {
     verify_one_file("condition_charge", code.replace("BOUND", "72"), &[]).unwrap();
     let err =
         verify_one_file("condition_charge_short", code.replace("BOUND", "71"), &[]).unwrap_err();
-    assert_vir_error_msg(err, "memory budget");
+    assert_vir_error_msg(err, "conditional memory budget exceeded");
 }
 
 // The same collection can return at different points with different forests.

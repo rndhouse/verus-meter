@@ -76,7 +76,7 @@ fn range_constructors_preserve_field_evaluation_order() {
     verify_one_file("range_field_order", code.replace("RETAINED_BOUND", "40"), &[]).unwrap();
     let err = verify_one_file("range_field_order_short", code.replace("RETAINED_BOUND", "39"), &[])
         .unwrap_err();
-    assert_vir_error_msg(err, "memory budget");
+    assert_vir_error_msg(err, "conditional memory budget exceeded");
 }
 
 // Checked factories preserve scalar iterator observations across calls. A local
@@ -306,7 +306,7 @@ fn adapted_ranges_keep_yielded_sizes_and_empty_selections() {
         .unwrap();
     let err = verify_one_file("adapted_ranges_short", code.replace("RETAINED_BOUND", "31"), &[])
         .unwrap_err();
-    assert_vir_error_msg(err, "memory budget");
+    assert_vir_error_msg(err, "conditional memory budget exceeded");
 }
 
 // Breaking a single visit still exports a conditional, complete returned forest.
@@ -402,7 +402,7 @@ fn unsupported_iterator_classes_and_adapters_reject() {
             "use vstd::prelude::*; verus! {{ fn example() resources peak(memory) <= 100000 {{ {code} }} }}"
         );
         let err = verify_one_file(name, source, &[]).unwrap_err();
-        assert_vir_error_msg(err, "does not support");
+        assert_vir_error_msg(err, "does not support struct layouts outside this crate");
     }
 }
 

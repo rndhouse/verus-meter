@@ -65,24 +65,6 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] scalar_arithmetic_exact_budget verus_code! {
-        fn f(x: u32, y: u32)
-            requires x <= 10, y <= 10,
-            resources peak(memory) <= 12,
-        { let z = x + y; assert(z == x + y); }
-    } => Ok(())
-}
-
-test_verify_one_file! {
-    #[test] arithmetic_result_local_is_charged verus_code! {
-        fn f(x: u32, y: u32)
-            requires x <= 10, y <= 10,
-            resources peak(memory) <= 11,
-        { let z = x + y; }
-    } => Err(err) => assert_vir_error_msg(err, "peak 12 bytes exceeds budget 11 bytes")
-}
-
-test_verify_one_file! {
     #[test] overflow_checks_remain_active verus_code! {
         fn f(x: u32) resources peak(memory) <= 100 {
             let z = x + 1; // FAILS

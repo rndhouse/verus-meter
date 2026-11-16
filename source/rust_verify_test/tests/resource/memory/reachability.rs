@@ -1,4 +1,5 @@
 use super::support::verifies;
+use crate::common::assert_vir_error_msg;
 use crate::verify_one_file;
 
 #[test]
@@ -43,5 +44,5 @@ fn reachable_cost_still_fails() {
         &[],
     )
     .unwrap_err();
-    assert!(err.errors.iter().any(|e| e.message.contains("peak 68 bytes exceeds budget 4 bytes")));
+    assert_vir_error_msg(err, "peak 68 bytes exceeds budget 4 bytes");
 }

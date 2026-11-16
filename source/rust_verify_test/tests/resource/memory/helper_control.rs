@@ -2,7 +2,9 @@
 use super::support::{rejects, verifies};
 
 #[test]
-fn loop_carried_helper_appends_preserve_precision() {
+fn loop_carried_helper_appends_are_supported() {
+    // Check acceptance of repeated helper effects. This allowance does not
+    // claim an exact retained footprint for the caller's local loop state.
     verifies(
         "helper_append_loop",
         "fn append(v: &mut Vec<Vec<u32>>)
@@ -17,6 +19,7 @@ fn loop_carried_helper_appends_preserve_precision() {
             while i < 2 invariant i <= 2, v.len() == i, decreases 2-i, {
                 append(&mut v); i += 1;
             }
+            assert(v.len() == 2);
         }",
     );
 }

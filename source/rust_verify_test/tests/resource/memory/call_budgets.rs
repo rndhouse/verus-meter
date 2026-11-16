@@ -1,3 +1,4 @@
+use super::support::{rejects, verifies};
 use crate::common::*;
 use crate::verify_one_file;
 
@@ -628,4 +629,21 @@ test_verify_one_file! {
         fn helper() resources peak(memory) <= 0 {}
         fn f() { let x = verus_builtin::resource_peak_call(helper()); }
     } => Err(err) => assert_vir_error_msg(err, "peak is only allowed inside a memory clause or checkpoint")
+}
+
+#[test]
+fn runtime_queries_require_arguments() {
+    rejects(
+        "query_runtime_envelope",
+        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= value_size(cap) + cap {} fn g() resources peak(memory) <= peak(f) {}",
+        "runtime memory budgets require peak(helper(arguments))",
+    );
+}
+
+#[test]
+fn runtime_constant_call_has_a_fixed_envelope() {
+    verifies(
+        "constant_call_envelope",
+        "fn f(cap: usize) requires cap <= 4, resources peak(memory) <= value_size(cap) + cap {} fn g() resources peak(memory) <= peak(f(4)) { f(4); } fn h() resources peak(memory) <= peak(g) { g(); }",
+    );
 }

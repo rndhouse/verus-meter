@@ -234,11 +234,3 @@ test_verify_one_file! {
         }
     } => Err(err) => assert_vir_error_msg(err, "peak 32 bytes exceeds budget 31 bytes")
 }
-
-test_verify_one_file! {
-    #[test] unreachable_recursion_is_still_rejected verus_code! {
-        fn recursive() resources peak(memory) <= 1 {
-            if false { recursive(); }
-        }
-    } => Err(err) => assert_vir_error_msg(err, "recursive memory contracts")
-}

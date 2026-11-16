@@ -290,6 +290,10 @@ fn f() resources peak(memory) <= BOUND {
     for operation in ["append", "forward"] {
         let code = code.replace("OPERATION", operation);
         verifies(operation, &code.replace("BOUND", "9248"));
-        rejects(&format!("{operation}_short"), &code.replace("BOUND", "9247"), "memory budget exceeded");
+        rejects(
+            &format!("{operation}_short"),
+            &code.replace("BOUND", "9247"),
+            "memory budget exceeded",
+        );
     }
 }

@@ -39,17 +39,6 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] one_byte_short_fails verus_code! {
-        use vstd::prelude::*;
-        fn example()
-            resources peak(memory) <= 255,
-        {
-            let first = [0u32; 64];
-        }
-    } => Err(err) => assert_vir_error_msg(err, "peak 256 bytes exceeds budget 255 bytes")
-}
-
-test_verify_one_file! {
     #[test] alternatives_use_maximum verus_code! {
         use vstd::prelude::*;
         fn example(condition: bool)
@@ -152,22 +141,6 @@ test_verify_one_file! {
             let scratch = [0u32; 64];
         }
     } => Err(err) => assert_vir_error_msg(err, "peak 512 bytes exceeds budget 256 bytes")
-}
-
-test_verify_one_file! {
-    #[test] array_literal_uses_only_its_destination verus_code! {
-        use vstd::prelude::*;
-        fn example() resources peak(memory) <= 8 { let x = [1u32, 2u32]; }
-    } => Ok(())
-}
-
-test_verify_one_file! {
-    #[test] initializer_copy_is_counted verus_code! {
-        use vstd::prelude::*;
-        fn example(input: [u32; 64]) resources peak(memory) <= 511 {
-            let copy = input;
-        }
-    } => Err(err) => assert_vir_error_msg(err, "peak 512 bytes exceeds budget 511 bytes")
 }
 
 test_verify_one_file! {

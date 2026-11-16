@@ -310,6 +310,6 @@ fn size_query_does_not_evaluate_argument() {
         spec fn bytes() -> nat { value_size(make()) }
         fn f() resources peak(memory) <= bytes() {}
     "#,
-        "expected",
+        "expected one size-query type or name",
     );
 }

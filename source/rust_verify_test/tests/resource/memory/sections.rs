@@ -123,7 +123,7 @@ test_verify_one_file! {
 test_verify_one_file! {
     #[test] sections_cannot_hide_recursive_calls verus_code! {
         fn f() resources peak(memory) <= 0 { resources peak(memory) <= 0 { f(); } }
-    } => Err(err) => assert_vir_error_msg(err, "recursive")
+    } => Err(err) => assert_vir_error_msg(err, "recursive memory contracts")
 }
 
 test_verify_one_file! {
