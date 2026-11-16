@@ -62,6 +62,8 @@ pub struct Closure {
 /// A real operation whose ordinary functional translation is an identity.
 #[derive(Clone, Debug)]
 pub struct ErasedOperation {
+    /// Actual compiler-resolved callee, retained for the accounting-only AST.
+    pub function: Fun,
     /// Reviewed native operation; currently strong Arc cloning.
     pub operation: Operation,
     /// Actual executable result type, not the identity expression's borrowed type.
@@ -102,6 +104,74 @@ pub fn capture_storage(
     })
 }
 
+/// Restore executable operations in a private accounting copy. The functional
+/// VIR still represents Arc cloning as logical identity; changing that AST would
+/// change Verus's established functional/erasure semantics. No restored call is
+/// exported or used as a logical assumption.
+pub(super) fn accounting_body(
+    function: &crate::ast::Function,
+    evidence: &Evidence,
+) -> Result<crate::ast::Function, crate::ast::VirErr> {
+    use std::sync::Arc;
+    let Some(body) = &function.x.body else { return Ok(function.clone()) };
+    if evidence.erased_operations.is_empty() {
+        return Ok(function.clone());
+    }
+    let body = accounting_expression(body, evidence)?;
+    let mut function = function.clone();
+    Arc::make_mut(&mut function).x.body = Some(body);
+    Ok(function)
+}
+
+fn accounting_expression(
+    expression: &crate::ast::Expr,
+    evidence: &Evidence,
+) -> Result<crate::ast::Expr, crate::ast::VirErr> {
+    use crate::ast::*;
+    use std::sync::Arc;
+    crate::ast_visitor::map_expr_visitor(expression, &|expr| {
+        let mut restored = expr.clone();
+        if let Some(operations) = evidence.erased_operations.get(&expr.span.id) {
+            for operation in operations {
+                if operation.operation != Operation::ArcClone {
+                    return Err(super::model::unsupported(
+                        &operation.span,
+                        "an unmodeled executable identity operation",
+                    ));
+                }
+                restored = SpannedTyped::new(
+                    // Proof instrumentation must attach to an expression that
+                    // still exists in functional VIR. Detailed native call
+                    // locations remain in compiler evidence; creating a new
+                    // AST ID here would strand the generated assertions.
+                    &expr.span,
+                    &operation.result,
+                    ExprX::Call {
+                        target: CallTarget::Fun(
+                            CallTargetKind::Static,
+                            operation.function.clone(),
+                            Arc::new(vec![]),
+                            Arc::new(vec![]),
+                            CallTargetAttrs {
+                                autospec: AutospecUsage::Final,
+                                const_var: false,
+                                assume_external_allowed: false,
+                                resource_intrinsic: Some(ResourceIntrinsic::Concurrency(
+                                    operation.operation,
+                                )),
+                            },
+                        ),
+                        args: Arc::new(vec![restored]),
+                        post_args: None,
+                        body: None,
+                    },
+                );
+            }
+        }
+        Ok(restored)
+    })
+}
+
 /// Compiler-identified operations in the supported concurrent execution model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToDebugSNode)]
 pub enum Operation {
@@ -132,5 +202,53 @@ impl Operation {
     /// Joining waits without releasing the caller's frame or retained storage.
     pub fn joins(self) -> bool {
         matches!(self, Self::StdJoin | Self::VstdJoin)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn accounting_restores_all_identity_operations_without_mutating_functional_vir() {
+        let original_span = Span {
+            raw_span: Arc::new(()),
+            id: 10,
+            data: Arc::new([]),
+            as_string: "logical identity".into(),
+        };
+        let original_type = Arc::new(TypX::Bool);
+        let original =
+            SpannedTyped::new(&original_span, &original_type, ExprX::Const(Constant::Bool(true)));
+        let mut evidence = Evidence::default();
+        let result = Arc::new(TypX::Int(IntRange::U(64)));
+        evidence.erased_operations.insert(
+            original_span.id,
+            [11, 12]
+                .map(|id| {
+                    let mut site = original_span.clone();
+                    site.id = id;
+                    ErasedOperation {
+                        function: crate::fun!(CrateId::Alloc => "sync"; "clone"),
+                        operation: Operation::ArcClone,
+                        result: result.clone(),
+                        span: site,
+                    }
+                })
+                .to_vec(),
+        );
+        let restored = accounting_expression(&original, &evidence).unwrap();
+        assert!(matches!(original.x, ExprX::Const(_)));
+        assert!(crate::ast_util::types_equal(&original.typ, &original_type));
+        let ExprX::Call { args, .. } = &restored.x else { panic!("outer clone") };
+        assert_eq!(restored.span.id, original_span.id);
+        assert!(crate::ast_util::types_equal(&restored.typ, &result));
+        let ExprX::Call { args: inner, .. } = &args[0].x else { panic!("inner clone") };
+        assert_eq!(args[0].span.id, original_span.id);
+        assert!(matches!(inner[0].x, ExprX::Const(Constant::Bool(true))));
+        assert_eq!(inner[0].span.id, original.span.id);
+        assert!(crate::ast_util::types_equal(&inner[0].typ, &original_type));
     }
 }

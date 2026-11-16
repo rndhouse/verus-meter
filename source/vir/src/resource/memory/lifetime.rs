@@ -257,7 +257,10 @@ impl Analysis<'_> {
         self.produced = None;
         self.result_owner = None;
     }
-    pub(super) fn join_branch(&mut self, state: &BranchState) -> Result<(), VirErr> {
+    pub(super) fn join_branch(&mut self, span: &Span, state: &BranchState) -> Result<(), VirErr> {
+        if !self.heap.shared.compatible(&state.heap.shared) {
+            return Err(unsupported(span, "branch-dependent shared roots or strong ownership"));
+        }
         self.storage.join_live(&state.storage)?;
         let mut peak = self.storage.peak();
         peak.merge(&state.storage.peak());
@@ -400,7 +403,7 @@ impl Analysis<'_> {
         }
         if yes_state.reachable && self.flow.reachable {
             self.join_conditional_inputs(&expr.span, &mut yes_state)?;
-            self.join_branch(&yes_state)?;
+            self.join_branch(&expr.span, &yes_state)?;
         } else if yes_state.reachable {
             self.restore_branch(&yes_state);
         }

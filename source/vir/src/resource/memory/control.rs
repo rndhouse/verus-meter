@@ -224,7 +224,7 @@ impl Analysis<'_> {
                 "path-dependent ownership roles or input regions on control-flow exits",
             ));
         }
-        self.join_branch(state)
+        self.join_branch(span, state)
     }
 
     pub(super) fn finish_returns(&mut self, span: &Span, normal: Value) -> Result<Value, VirErr> {
@@ -273,10 +273,11 @@ fn direct_result(value: &Expr) -> bool {
 /// Continuing roles may share mutable proof state, but fixed allocation and
 /// provenance identities cannot change implicitly at a loop exit.
 pub(super) fn compatible_heap(a: &super::heap::Heap, b: &super::heap::Heap) -> bool {
-    [(&a.owners, &b.owners), (&a.borrowed, &b.borrowed)].iter().all(|(left, right)| {
-        left.len() == right.len()
-            && left.iter().all(|(name, a)| right.get(name).is_some_and(|b| compatible(a, b)))
-    })
+    a.shared.compatible(&b.shared)
+        && [(&a.owners, &b.owners), (&a.borrowed, &b.borrowed)].iter().all(|(left, right)| {
+            left.len() == right.len()
+                && left.iter().all(|(name, a)| right.get(name).is_some_and(|b| compatible(a, b)))
+        })
 }
 
 /// Fixed result storage can agree across distinct exit sites. Dynamic vectors
@@ -319,7 +320,7 @@ pub(super) fn merge_result(
 
 /// Shared proof-state identities can vary in value along an edge. Frozen
 /// descriptors and reservations must actually agree before they can be reused.
-fn compatible(a: &Owner, b: &Owner) -> bool {
+pub(super) fn compatible(a: &Owner, b: &Owner) -> bool {
     fn expression(a: &Option<Expr>, b: &Option<Expr>) -> bool {
         match (a, b) {
             (None, None) => true,
@@ -327,7 +328,8 @@ fn compatible(a: &Owner, b: &Owner) -> bool {
             _ => false,
         }
     }
-    a.bytes == b.bytes
+    a.shared == b.shared
+        && a.bytes == b.bytes
         && a.kind == b.kind
         && a.dynamic == b.dynamic
         && a.vector == b.vector

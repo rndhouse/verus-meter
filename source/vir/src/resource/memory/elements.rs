@@ -204,7 +204,7 @@ impl Analysis<'_> {
             // executable value, which would discard frame/count information
             // and multiply nested selection proofs at loop conditions.
             self.retire_element_loan(span, &child);
-            self.release_owner_storage(child, span, false);
+            self.release_owner_storage(child, span, false)?;
             self.growth.after.entry(span.id).or_default().push(super::metadata::expr::assign(
                 span,
                 &elements.records,
@@ -304,7 +304,7 @@ impl Analysis<'_> {
                 elements.precise = false;
             }
         });
-        self.release_owner_storage(child, span, false);
+        self.release_owner_storage(child, span, false)?;
         self.set_element_records(span, elements, true);
         self.assert_element_minima(span, elements, true)?;
         for id in elements.states.values() {
@@ -575,7 +575,7 @@ impl Analysis<'_> {
         let charges = self.owner_charges(span, &child);
         let upper = self.owner_upper(span, &child);
         elements.inputs.extend(child.inputs());
-        self.release_owner_storage(child, span, false);
+        self.release_owner_storage(child, span, false)?;
         self.add_element_bytes(span, elements, charges, &upper, Some(length))?;
         self.assert_element_minima(span, elements, true)
     }

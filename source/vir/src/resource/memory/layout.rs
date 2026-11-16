@@ -112,7 +112,10 @@ impl Layouts {
     }
 
     fn owner_inner(&self, typ: &Typ, visiting: &mut HashSet<Dt>) -> bool {
-        if super::heap::boxed(typ) || self.vector(typ) {
+        if super::heap::boxed(typ)
+            || self.vector(typ)
+            || matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _))
+        {
             return true;
         }
         if self.option(typ) {
@@ -177,6 +180,11 @@ impl Layouts {
     ) -> Result<std::collections::BTreeMap<super::heap::OwnerSlot, Typ>, VirErr> {
         use super::heap::OwnerSlot;
         let mut children = std::collections::BTreeMap::new();
+        if matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _)) {
+            // Payload ownership is canonical in Heap::shared, not duplicated
+            // beneath each strong handle's structural path.
+            return Ok(children);
+        }
         if self.option(typ) {
             let payload = self.option_payload(typ, span)?;
             if self.owner(payload) {

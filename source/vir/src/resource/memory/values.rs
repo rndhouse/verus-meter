@@ -297,7 +297,7 @@ impl Analysis<'_> {
             self.cleanup_scope(&locals, arm_exits);
             if self.flow.reachable {
                 if let Some(joined) = &joined {
-                    self.join_branch(joined)?;
+                    self.join_branch(&expr.span, joined)?;
                 }
                 joined = Some(self.branch_state());
             }

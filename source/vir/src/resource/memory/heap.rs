@@ -14,6 +14,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone, Default)]
 pub(super) struct Heap {
+    /// Shared allocations live once in the closed domain, independently of
+    /// which local, aggregate or worker currently retains each strong handle.
+    pub(super) shared: super::shared::SharedRoots,
     pub(super) owners: HashMap<VarIdent, Owner>,
     /// Borrowed inputs use the same structural paths as owned inputs. Original
     /// allocations remain charged to the caller; replacements are charged here.
@@ -43,6 +46,8 @@ pub(super) type OwnerPath = Vec<OwnerSlot>;
 /// its inline storage belongs to the enclosing value or allocation layout.
 #[derive(Clone)]
 pub(super) struct Owner {
+    /// A strong handle links to canonical backing instead of owning a copy of it.
+    pub(super) shared: Option<super::shared::RootId>,
     /// Whether descriptors include incoming allocations or only this frame's charges.
     pub(super) view: super::metadata::View,
     /// Current logical value, used to serialize collection geometry before a call.
@@ -76,6 +81,7 @@ pub(super) struct Owner {
 impl Default for Owner {
     fn default() -> Self {
         Self {
+            shared: None,
             view: Default::default(),
             source: None,
             geometry: None,
@@ -346,6 +352,9 @@ impl Analysis<'_> {
         path: &mut OwnerPath,
         capacities: &HashMap<super::paths::LocalPath, Expr>,
     ) -> Result<Owner, VirErr> {
+        if matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _)) {
+            return Err(unsupported(span, "shared input roots without a checked alias descriptor"));
+        }
         let mut owner = Owner {
             view: super::metadata::View::Local,
             geometry_known: !self.layouts.cardinality(typ),
@@ -429,6 +438,9 @@ impl Analysis<'_> {
     /// Evaluate into an existing handle destination and retain its allocation.
     pub(super) fn owner_expr(&mut self, expr: &Expr) -> Result<Owner, VirErr> {
         self.layouts.size(&expr.typ, &expr.span)?;
+        if let Some(owner) = self.shared_owner(expr)? {
+            return Ok(owner);
+        }
         if let Some(owner) = self.extracted_owner(expr, false)? {
             return Ok(owner);
         }
@@ -483,19 +495,55 @@ impl Analysis<'_> {
     }
 
     pub(super) fn release_owner(&mut self, owner: Owner, span: &Span) {
-        self.release_owner_storage(owner, span, true);
+        self.destroy_owner(owner, span, true);
     }
 
     /// Transfers into an aggregate release the old charge identities while
     /// keeping incoming allocation lifetimes attached to their new owner.
-    pub(super) fn release_owner_storage(&mut self, owner: Owner, span: &Span, inputs: bool) {
+    pub(super) fn release_owner_storage(
+        &mut self,
+        owner: Owner,
+        span: &Span,
+        inputs: bool,
+    ) -> Result<(), VirErr> {
+        let mut shared = false;
+        owner.visit(&mut |node| shared |= node.shared.is_some());
+        if shared {
+            // The old forest stores unique-owner byte charges. It cannot yet
+            // carry a strong root link or justify destroying that handle when
+            // merely transferring the charge to a symbolic collection sum.
+            return Err(unsupported(
+                span,
+                "shared handles in runtime ownership forests without a strong-identity summary",
+            ));
+        }
+        self.destroy_owner(owner, span, inputs);
+        Ok(())
+    }
+
+    fn destroy_owner(&mut self, owner: Owner, span: &Span, inputs: bool) {
+        if let Some(root) = owner.shared {
+            // A handle node owns only its link. Backing/payload destruction is
+            // deferred while any other strong handle remains in the domain.
+            assert!(
+                owner.bytes == 0
+                    && owner.dynamic.is_none()
+                    && owner.children.is_empty()
+                    && owner.elements.is_none()
+                    && owner.input.is_none()
+            );
+            if let Some(backing) = self.heap.shared.release(root) {
+                self.destroy_owner(backing, span, inputs);
+            }
+            return;
+        }
         if inputs {
             for input in owner.inputs() {
                 self.storage.release_input(input);
             }
         }
         for child in owner.children.into_values() {
-            self.release_owner_storage(child, span, false);
+            self.destroy_owner(child, span, false);
         }
         if let Some(elements) = owner.elements {
             for state in elements.states.into_values() {

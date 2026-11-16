@@ -123,7 +123,7 @@ impl Analysis<'_> {
         }
         let mut typ = &place.typ;
         while let TypX::Decorate(TypDecoration::Ref, None, inner)
-        | TypX::Decorate(TypDecoration::Box, _, inner) = &**typ
+        | TypX::Decorate(TypDecoration::Box | TypDecoration::Arc, _, inner) = &**typ
         {
             if crate::ast_util::types_equal(inner, target) {
                 self.layouts.size(&place.typ, &place.span)?;

@@ -117,6 +117,7 @@ pub(crate) fn fn_call_to_vir<'tcx>(
                         .entry(arg.span.id)
                         .or_default()
                         .push(vir::resource::memory::concurrency::ErasedOperation {
+                            function: Arc::new(FunX { path: bctx.ctxt.def_id_to_vir_path(f) }),
                             operation: vir::resource::memory::concurrency::Operation::ArcClone,
                             result: expr_typ()?,
                             span: bctx.ctxt.spans.to_air_span(expr.span),

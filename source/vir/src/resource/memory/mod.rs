@@ -4,7 +4,8 @@
 //! fields; `budget` resolves declared budget expressions and their dependencies;
 //! `accounting` owns live/peak totals and traces; `sections` checks nested
 //! workspace contracts and composes their bounds with the parent.
-//! `heap` tracks allocation lifetimes; `ownership` derives transfer summaries
+//! `heap` tracks allocation lifetimes; `shared` retains canonical strong backing
+//! independently of inline handles; `ownership` derives transfer summaries
 //! for checked helpers; `allocations` shares byte-size, transfer, replacement, and
 //! retained-storage effects across containers. `vector_calls` adapts vector facts
 //! at call boundaries; `vectors` handles operations and `growth` maintains erased
@@ -62,6 +63,7 @@ mod places;
 mod projections;
 mod provenance;
 mod sections;
+mod shared;
 mod spec_budget;
 mod summary;
 mod symbolic;
@@ -132,6 +134,7 @@ pub fn check_crate(
             &layouts,
             &budgets,
             &summaries,
+            &synchronization.concurrency,
         )? {
             summaries.insert(function.x.name.clone(), checked.summary.clone());
             graph.validate_calls(function, &checked.calls)?;

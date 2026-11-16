@@ -68,6 +68,12 @@ pub(super) fn summarize(
         path: &mut super::heap::OwnerPath,
         capacities: &mut std::collections::BTreeMap<super::heap::OwnerPath, Expr>,
     ) -> Result<ReturnedOwner, VirErr> {
+        if owner.shared.is_some() {
+            return Err(unsupported(
+                &function.span,
+                "shared ownership returned without a checked alias/strong-lifetime summary",
+            ));
+        }
         let mut children = std::collections::BTreeMap::new();
         for (slot, child) in &owner.children {
             path.push(slot.clone());

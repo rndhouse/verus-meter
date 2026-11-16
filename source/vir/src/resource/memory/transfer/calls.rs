@@ -435,7 +435,7 @@ impl Analysis<'_> {
                     &effects,
                     &bound,
                 )?;
-                self.release_owner_storage(predicted, &value.span, false);
+                self.release_owner_storage(predicted, &value.span, false)?;
                 old
             };
             self.apply_call_origins(

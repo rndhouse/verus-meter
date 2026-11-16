@@ -517,6 +517,7 @@ pub(super) fn check(
     layouts: &Layouts,
     budgets: &HashMap<Fun, u64>,
     summaries: &HashMap<Fun, super::summary::FunctionSummary>,
+    concurrency: &super::concurrency::Evidence,
 ) -> Result<Option<FunctionAnalysis>, VirErr> {
     let Some(&budget) = budgets.get(&function.x.name) else {
         if let Some(body) = &function.x.body {
@@ -541,6 +542,8 @@ pub(super) fn check(
         }
         return Ok(None);
     };
+    let accounting_function = super::concurrency::accounting_body(function, concurrency)?;
+    let function = &accounting_function;
     let f = &function.x;
     eligible(function)?;
     let body = f
@@ -671,6 +674,12 @@ pub(super) fn check(
         &analysis.growth,
         &analysis.bound,
     )?;
+    if !analysis.heap.shared.is_empty() {
+        return Err(unsupported(
+            &function.span,
+            "shared backing surviving without a checked outgoing ownership descriptor",
+        ));
+    }
     let mut child_replacements = HashMap::new();
     for (name, path) in &analysis.heap.replaced {
         // Runtime positions belong to the collection effect, never to the
