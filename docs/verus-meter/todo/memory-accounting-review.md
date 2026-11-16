@@ -328,3 +328,64 @@ of conditional replacements, input provenance, and multiple exits remain open.
 These samples do not establish exhaustive exit coverage or resolve the earlier
 solver-limit sensitivity. Runtime-query evaluation was not revisited. Unrelated
 documentation moves remain outside this pass.
+
+## Proof-obligation placement and erasure
+
+- [x] Inspect obligation creation in `analysis.rs`, checkpoint and section checks,
+  and `symbolic.rs` site attachment. Follow `memory::check_crate` through frontend
+  `pipeline.rs` and `query.rs` to annotation erasure and ordinary `ast_to_sst.rs`
+  assertion lowering. Inspect budget specialization in `contracts.rs` and
+  proof-state scheduling in `growth.rs` and `vectors.rs`.
+- [x] Add direct VIR tests in
+  [`symbolic.rs`](../../../source/vir/src/resource/memory/symbolic.rs): an unmatched
+  required site is rejected, and erasure removes a checkpoint marker while
+  preserving a failing generated inequality as an assertion, without replacing
+  it with an assumption.
+- [x] Add 12 independently calculated passing/one-byte-short pairs and two
+  additional controls in
+  [`proof_obligations.rs`](../../../source/rust_verify_test/tests/resource/memory/proof_obligations.rs).
+- [x] Finish broad validation and commit this bounded pass.
+
+The frontend invokes the memory pass on mode-checked, unsimplified local bodies.
+It instruments checks before erasing annotations. Generated inequalities use
+`AssertAssume { is_assume: false }`; ordinary assertion lowering retains a proof
+obligation. The instrumenter rejects unmatched required inequality sites and
+attaches entry, declaration, and expression checks at their respective sites.
+No incorrect acceptance was confirmed in these samples; implementation behavior
+is unchanged, with additions confined to tests and this tracker.
+
+| Cases | Passing / failing bound (bytes) | Independent peak calculation |
+| --- | --- | --- |
+| Function entry | 8 / 7 | One u64 input |
+| Initialized slot, uninitialized slot, standalone aggregate, and returned aggregate | 72 / 71 each | Input 8 + array 64 |
+| Unit-valued helper call | 72 / 71 | Caller input 8 + callee allowance 64 |
+| Later call argument | 88 / 87 | Caller input 8 + pending first argument 16 + later scratch 64 |
+| Active branch and suffix after an early return | 73 / 72 each | Inputs 9 + scratch 64 |
+| Skipped branch and early-return suffix | 9 / 8 each | Inputs 9; scratch is unreachable |
+| Repeated loop body | 74 / 73 | Inputs/counter 10 + per-iteration scratch 64 |
+
+Each contract uses an immutable runtime `limit` parameter, fixed only by a
+precondition. Short-bound tests require budget diagnostics at the charged source
+site. Positive skipped-path controls reject unconditional hoisting of unreachable
+charges. A zero-visit loop fits 10 bytes despite a syntactic 64-byte body
+allocation; another control checks that valid current/peak checkpoints do not
+prove `assert(false)`. All five focused integration tests and three symbolic
+unit tests pass, including the existing memory-kind selection test.
+
+Validation against the rebuilt verifier: all 924 memory integration tests and 44
+resource examples passed without retries. Memory unit tests passed 43 tests with
+one existing manual measurement ignored. Formatting for `vir` and
+`rust_verify_test`, Clippy for `vir --lib --tests` and
+`rust_verify_test --test resource`, whitespace checks, and all 25 tracker links
+passed. Changes are limited to tests and this tracker; no public API, accounting
+rule, or runtime-query implementation changed.
+
+Remaining audit: snapshot/update ordering and complete attachment of scheduled
+proof-state actions, generated loop invariant entry/back-edge/exit proofs,
+verification selection and bypass flags, and metadata/summary agreement. The
+instrumenter's unmatched-site guard covers required inequalities and capacity
+checks; the `growth.before`, `updates`, `after`, and loop maps need a separate
+coverage audit. No dropped supported proof-state action was reproduced here.
+The broad core checklist remains open. Runtime-query evaluation and the earlier
+solver-limit sensitivity were not revisited. Unrelated documentation moves remain
+outside this pass.

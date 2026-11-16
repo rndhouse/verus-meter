@@ -359,6 +359,151 @@ mod tests {
     use super::super::footprint::{Footprint, MemoryBudget, MemoryKind, MemorySelection};
     use super::*;
 
+    fn span(id: u64) -> Span {
+        Span {
+            raw_span: Arc::new(()),
+            id,
+            data: Arc::new([]),
+            as_string: "memory instrumentation".into(),
+        }
+    }
+
+    /// Minimal executable signature for exercising the instrumentation/erasure
+    /// boundary independently of layout accounting and Rust frontend lowering.
+    fn function(body: Expr) -> Function {
+        let span = span(1);
+        let visibility = Visibility { restricted_to: None };
+        let ret = Spanned::new(
+            span.clone(),
+            ParamX {
+                name: VarIdent(Arc::new("result".into()), VarIdentDisambiguate::VirTemp(0)),
+                typ: unit_typ(),
+                mode: Mode::Exec,
+                user_mut: false,
+                unwrapped_info: None,
+            },
+        );
+        Spanned::new(
+            span.clone(),
+            FunctionX {
+                name: crate::fun!(CrateId::Internal => "tests"; "memory_instrumentation"),
+                proxy: None,
+                kind: FunctionKind::Static,
+                visibility: visibility.clone(),
+                body_visibility: BodyVisibility::Visibility(visibility.clone()),
+                opaqueness: Opaqueness::Revealed { visibility },
+                owning_module: None,
+                mode: Mode::Exec,
+                typ_params: Arc::new(vec![]),
+                typ_bounds: Arc::new(vec![]),
+                params: Arc::new(vec![]),
+                outer_ret: ret.clone(),
+                inner_ret: ret,
+                require: Arc::new(vec![]),
+                ensure: (Arc::new(vec![]), Arc::new(vec![])),
+                returns: None,
+                decrease: Arc::new(vec![]),
+                decrease_when: None,
+                decrease_by: None,
+                fndef_axioms: None,
+                mask_spec: None,
+                atomic_update: None,
+                unwind_spec: None,
+                item_kind: ItemKind::Function,
+                attrs: Arc::new(FunctionAttrsX {
+                    resource_contract: Some(super::super::model::ResourceContract {
+                        budget: Spanned::new(span, super::super::BudgetExprX::Literal(0)),
+                    }),
+                    ..Default::default()
+                }),
+                body: Some(body),
+                return_opaque_type_eqs: Arc::new(vec![]),
+                extra_dependencies: vec![],
+                hidden: Arc::new(vec![]),
+            },
+        )
+    }
+
+    fn failing_obligation(span: Span) -> Obligation {
+        Obligation {
+            cost: Footprint::allowance(contracts::literal(&span, 1)),
+            bound: MemoryBudget::total(contracts::literal(&span, 0)),
+            kind: CheckKind::Function,
+            span,
+        }
+    }
+
+    #[test]
+    fn unmatched_obligation_site_is_rejected() {
+        let function = function(mk_block(&span(2), vec![], None));
+        let obligation = failing_obligation(span(99));
+        let next_id = std::cell::Cell::new(100);
+        let result =
+            instrument(&function, None, &[obligation], &[], &Default::default(), &|original| {
+                let mut fresh = original.clone();
+                fresh.id = next_id.get();
+                next_id.set(fresh.id + 1);
+                fresh
+            });
+        let error = result.unwrap_err();
+        assert!(error.note.contains("unsupported conditional memory reservation site"));
+    }
+
+    #[test]
+    fn annotation_erasure_preserves_generated_assertions() {
+        let marker_span = span(3);
+        let marker = SpannedTyped::new(
+            &marker_span,
+            &unit_typ(),
+            ExprX::ResourceAssert(Spanned::new(
+                marker_span.clone(),
+                super::super::BudgetExprX::Literal(0),
+            )),
+        );
+        let body = mk_block(&span(2), vec![Spanned::new(marker_span, StmtX::Expr(marker))], None);
+        let function = function(body);
+        let next_id = std::cell::Cell::new(100);
+        let updated = instrument(
+            &function,
+            None,
+            &[failing_obligation(span(2))],
+            &[],
+            &Default::default(),
+            &|original| {
+                let mut fresh = original.clone();
+                fresh.id = next_id.get();
+                next_id.set(fresh.id + 1);
+                fresh
+            },
+        )
+        .unwrap();
+        let mut functions = [updated];
+        super::super::erase_annotations(&mut functions).unwrap();
+        let mut assertions = Vec::new();
+        crate::ast_visitor::expr_visitor_check(
+            functions[0].x.body.as_ref().unwrap(),
+            &mut |_, expr| {
+                match &expr.x {
+                    ExprX::AssertAssume { is_assume: false, expr, .. } => {
+                        assertions.push(expr.clone());
+                    }
+                    ExprX::AssertAssume { is_assume: true, .. }
+                    | ExprX::ResourceAssert(_)
+                    | ExprX::ResourceAssertCurrent(_)
+                    | ExprX::ResourceSection(_) => panic!("unexpected erased obligation"),
+                    _ => {}
+                }
+                Ok::<(), VirErr>(())
+            },
+        )
+        .unwrap();
+        assert_eq!(assertions.len(), 1);
+        assert!(matches!(
+            contracts::simplify(&assertions[0]).x,
+            ExprX::Const(Constant::Bool(false))
+        ));
+    }
+
     #[test]
     fn budget_obligations_select_the_requested_memory_kind() {
         let span = Span {
