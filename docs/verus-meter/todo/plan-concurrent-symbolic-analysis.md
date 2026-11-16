@@ -16,8 +16,9 @@ locks or semaphores.
 
 This document defines one core feature and its completion checklist. The work
 areas below are parts of that feature, not separate prototypes or releases.
-Nothing in this plan is marked implemented. Future detailed TODO documents should
-map back to this checklist so that outstanding work remains visible.
+Nothing in this plan is marked implemented. The [numbered implementation TODOs](concurrent/README.md)
+map back to this checklist and define the workflow for moving completed tasks
+into `concurrent/complete/`.
 
 Background: [high-level explanation](../high-level-concurrent-symbolic-analysis.md),
 [technical assessment](../concurrent-symbolic-analysis.md), and the existing
@@ -291,7 +292,7 @@ thread accounting and proof integration, complete composition and symbolic bound
 checking, and finish the full validation matrix.
 Add regression tests alongside each behavior rather than waiting until the end.
 
-Each future TODO should identify the checklist items it delivers, its dependencies
-and concrete completion evidence. Keep this checklist as the single overview of
+Each numbered TODO identifies the work it delivers, its dependencies and concrete
+completion evidence; the TODO index maps that work to this checklist. Keep this checklist as the single overview of
 what remains. Implementation commits can be incremental while the definition of
 core completion stays fixed; scope changes must be explicit.
