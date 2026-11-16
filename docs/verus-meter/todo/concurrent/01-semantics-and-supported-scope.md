@@ -28,6 +28,8 @@ summaries together. This task completes the specification, not the feature.
 - [ ] Define a developer-facing proof interface that keeps symbolic byte contracts
   and permits additional invariants/lemmas without manual allocation counters or
   byte credits. Separate supplied primitive guarantees from generated obligations.
+  Define the admitted symbolic expression forms and concurrent section, checkpoint
+  and peak-query meanings or explicit restrictions; preserve existing query guarantees.
 - [ ] Record a concrete supported-operation matrix: thread APIs and captures,
   shared-ownership operations, standard mutex operations, a concrete semaphore
   implementation/interface, atomic primitives/orderings, and custom protocol proof
