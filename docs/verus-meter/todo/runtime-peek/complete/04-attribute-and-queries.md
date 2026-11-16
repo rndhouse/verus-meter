@@ -52,7 +52,7 @@ the generated interface. A clean rebuild does not rely on stale expression data.
 
 ## Implemented boundary
 
-Implemented on `feature/queryable-peak-memory` in commit `70463f9c3`. The
+Implemented on `feature/queryable-peak-memory` in commit `bb5161675`. The
 `foo::peak_memory_bound(...)` namespace follows the source function's visibility,
 argument types and order, configuration, and test-only removal. Diagnostics cover
 duplicate attributes, unsupported signatures or placement, and occupied namespaces.

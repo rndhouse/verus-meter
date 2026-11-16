@@ -53,7 +53,7 @@ erasure.
 
 ## Implemented boundary
 
-Implemented on `feature/queryable-peak-memory` in commit `d195ed1d3`. Queries
+Implemented on `feature/queryable-peak-memory` in commit `f21c21d4d`. Queries
 retain multiple unsigned and Boolean inputs, comparisons and logical operators,
 conditionals, immutable local bindings with shadowing, nested spec-helper calls,
 and nonnegative casts to mathematical integers. Both spec calls and

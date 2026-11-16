@@ -41,7 +41,7 @@ require no new formal proofs; describe their correctness evidence as testing.
 
 ## Implemented boundary
 
-Implemented on `feature/queryable-peak-memory` in commit `7086d2c29`.
+Implemented on `feature/queryable-peak-memory` in commit `00007255d`.
 
 Compiled regressions cover every supported scalar input type, argument positions,
 zero inputs, budget equality, and explicit conversion failure for results above

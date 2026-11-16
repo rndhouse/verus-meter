@@ -70,8 +70,8 @@ authorization. Mark tasks complete only after their criteria are met.
 
 ## Implemented boundary
 
-Implemented on `feature/queryable-peak-memory` in commit `6e89ec880`, with runtime
-bundle isolation in `aa099546e`. The example checks its positive-count precondition,
+Implemented on `feature/queryable-peak-memory` in commit `4fb114354`, with runtime
+bundle isolation in `8bfb9bc0b`. The example checks its positive-count precondition,
 queries the single declared allowance, compares it with a configurable model-byte
 budget, and reserves a real byte buffer only on admission. Query errors are distinct
 from allowance-based rejection. Instructions show both paths and a changed count,

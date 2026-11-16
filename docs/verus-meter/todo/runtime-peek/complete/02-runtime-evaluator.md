@@ -51,7 +51,7 @@ directly support arbitrary mathematical `nat`/`int` representations.
 
 ## Implemented boundary
 
-Implemented on `feature/queryable-peak-memory` in commit `5d8682581`. The runtime
+Implemented on `feature/queryable-peak-memory` in commit `db98d4c17`. The runtime
 uses the existing arbitrary-precision dependency behind `ModelBytes`; callers can
 compare with a native budget, display an exact allowance, or explicitly request a
 fallible `u64` conversion. Negative final results and absent or mistyped inputs

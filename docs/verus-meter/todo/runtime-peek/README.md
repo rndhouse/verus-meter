@@ -8,8 +8,8 @@ generate typed query wrappers, not a separate arithmetic implementation per boun
 
 These documents record the implementation plan and completed task boundaries.
 Maintain the authoritative task documents in the primary checkout under
-`docs/verus-meter/todo/runtime-peek/`. The implementation lives on
-`feature/queryable-peak-memory` in the dedicated worktree supplied with the handoff.
+`docs/verus-meter/todo/runtime-peek/`. Implementation commits are recorded in the
+completed task documents.
 Keep instructions and references repository-relative so the plan survives relocation.
 
 1. [Working prototype](complete/01-working-prototype.md) — complete

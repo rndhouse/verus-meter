@@ -52,7 +52,7 @@ restriction so task 2 can extend it directly.
 
 ## Implemented boundary
 
-Implemented on `feature/queryable-peak-memory` in commit `ae32c5cea`. The macro
+Implemented on `feature/queryable-peak-memory` in commit `ddbdebf44`. The macro
 retains constants, its single unsigned input, sums, products, and parentheses as
 static expression data in both compilation passes. The shared interpreter uses
 checked `u64` arithmetic and the wrapper returns `Result<u64, Overflow>`.
