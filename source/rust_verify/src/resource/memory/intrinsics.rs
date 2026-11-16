@@ -16,7 +16,9 @@ pub(crate) fn call<'tcx>(
     rust_item: Option<RustItem>,
     substitutions: GenericArgsRef<'tcx>,
 ) -> Option<ResourceIntrinsic> {
-    if let Some(operation) = synchronization_call(tcx, id, substitutions) {
+    if let Some(operation) = super::concurrency::operation(tcx, id, substitutions) {
+        Some(ResourceIntrinsic::Concurrency(operation))
+    } else if let Some(operation) = synchronization_call(tcx, id, substitutions) {
         Some(ResourceIntrinsic::Synchronization(operation))
     } else if let Some(intrinsic) = iterator_intrinsic(tcx, id, rust_item) {
         Some(intrinsic)
@@ -147,10 +149,13 @@ pub(crate) fn synchronization_type(
         Some(LibraryType::MutexGuard)
     } else if diagnostic("Result") {
         Some(LibraryType::Result)
+    } else if diagnostic("verus::vstd::thread::JoinHandle") {
+        Some(LibraryType::VstdJoinHandle)
     } else {
         match crate::verus_items::get_rust_item(tcx, id) {
             Some(RustItem::PoisonError) => Some(LibraryType::PoisonError),
             Some(RustItem::TryLockError) => Some(LibraryType::TryLockError),
+            Some(RustItem::ThreadJoinHandle) => Some(LibraryType::StdJoinHandle),
             _ => None,
         }
     }

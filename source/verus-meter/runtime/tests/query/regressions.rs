@@ -360,3 +360,28 @@ fn main() {
     succeeds(&output);
     succeeds(&Command::new(executable).output().unwrap());
 }
+
+#[test]
+#[ignore = "requires prepared verifier and runtime bundle; see runtime README"]
+fn concurrent_model_sizes_match_the_verified_allowance() {
+    let source = r#"
+use vstd::prelude::*;
+verus! {
+    #[queryable_peak_memory]
+    fn queried() resources peak(memory) <= value_size(std::sync::Arc<u64>)
+        + value_size(std::thread::JoinHandle<u64>)
+        + value_size(std::thread::Result<u64>),
+    {
+        assert(value_size(std::sync::Arc<u64>) + value_size(std::thread::JoinHandle<u64>)
+            + value_size(std::thread::Result<u64>) == 33);
+    }
+}
+fn main() {
+    assert_eq!(queried::peak_memory_bound().unwrap().to_u64(), Ok(33));
+}
+"#;
+    let directory = tempfile::tempdir().unwrap();
+    let (output, executable) = compile(source, directory.path());
+    succeeds(&output);
+    succeeds(&Command::new(executable).output().unwrap());
+}

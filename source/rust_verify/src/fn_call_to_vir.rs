@@ -105,6 +105,23 @@ pub(crate) fn fn_call_to_vir<'tcx>(
                 || matches!(arg_typ.kind(), TyKind::Tuple(ts) if ts.is_empty())
             {
                 let arg = mk_one_vir_arg(bctx, expr.span, &args)?;
+                if !bctx.in_ghost
+                    && crate::resource::memory::concurrency::operation(tcx, f, node_substs)
+                        == Some(vir::resource::memory::concurrency::Operation::ArcClone)
+                {
+                    // Logical Arc cloning is identity, but execution creates
+                    // a new strong handle. Keep that event for memory analysis.
+                    bctx.erasure_info
+                        .borrow_mut()
+                        .resource_operations
+                        .entry(arg.span.id)
+                        .or_default()
+                        .push(vir::resource::memory::concurrency::ErasedOperation {
+                            operation: vir::resource::memory::concurrency::Operation::ArcClone,
+                            result: expr_typ()?,
+                            span: bctx.ctxt.spans.to_air_span(expr.span),
+                        });
+                }
                 record_misc(bctx, expr, MiscCall::IdentityClone { is_method });
                 return Ok(arg);
             }
@@ -2700,7 +2717,12 @@ fn extract_ensures<'tcx>(
         ExprKind::Closure(closure) => {
             bctx.push_body_erasure(
                 closure.def_id,
-                BodyErasure { erase_body: true, ret_spec: true, erase_absolutely: false },
+                BodyErasure {
+                    runtime: false,
+                    erase_body: true,
+                    ret_spec: true,
+                    erase_absolutely: false,
+                },
             );
 
             let typs: Vec<Typ> = closure_param_typs(bctx, expr)?;
@@ -2743,7 +2765,12 @@ fn extract_quant<'tcx>(
         ExprKind::Closure(closure) => {
             bctx.push_body_erasure(
                 closure.def_id,
-                BodyErasure { erase_body: true, ret_spec: true, erase_absolutely: false },
+                BodyErasure {
+                    runtime: false,
+                    erase_body: true,
+                    ret_spec: true,
+                    erase_absolutely: false,
+                },
             );
 
             let body = tcx.hir_body(closure.body);
@@ -2814,7 +2841,12 @@ fn extract_assert_forall_by<'tcx>(
         ExprKind::Closure(closure) => {
             bctx.push_body_erasure(
                 closure.def_id,
-                BodyErasure { erase_body: true, ret_spec: true, erase_absolutely: false },
+                BodyErasure {
+                    runtime: false,
+                    erase_body: true,
+                    ret_spec: true,
+                    erase_absolutely: false,
+                },
             );
 
             let body = tcx.hir_body(closure.body);
@@ -2874,7 +2906,12 @@ fn extract_choose<'tcx>(
         ExprKind::Closure(closure) => {
             bctx.push_body_erasure(
                 closure.def_id,
-                BodyErasure { erase_body: true, ret_spec: true, erase_absolutely: false },
+                BodyErasure {
+                    runtime: false,
+                    erase_body: true,
+                    ret_spec: true,
+                    erase_absolutely: false,
+                },
             );
 
             let closure_body = tcx.hir_body(closure.body);

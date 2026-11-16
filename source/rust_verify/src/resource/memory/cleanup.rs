@@ -23,6 +23,17 @@ pub(crate) fn lower<'tcx>(
     // Borrow rather than steal the compiler body; the ordinary borrow checker
     // and code generator must still consume their own query results.
     let body = tcx.mir_drops_elaborated_and_const_checked(owner).borrow();
+    lower_body(tcx, &body, Some(owner), function, span)
+}
+
+/// Project a real compiler body, including generated FnOnce cleanup adapters.
+pub(super) fn lower_body<'tcx>(
+    tcx: ty::TyCtxt<'tcx>,
+    body: &mir::Body<'tcx>,
+    owner: Option<LocalDefId>,
+    function: &dyn Fn(DefId) -> Fun,
+    span: &dyn Fn(rustc_span::Span) -> Span,
+) -> Graph {
     let blocks = body
         .basic_blocks
         .iter()
@@ -68,17 +79,36 @@ pub(crate) fn lower<'tcx>(
                         Some(result_place) => {
                             let call = match func.ty(&body.local_decls, tcx).kind() {
                                 ty::FnDef(id, arguments) => {
-                                    match super::intrinsics::call(
-                                        tcx,
-                                        *id,
-                                        None,
-                                        arguments.skip_binder(),
-                                    ) {
-                                        Some(ResourceIntrinsic::Synchronization(operation)) => {
-                                            Call::Primitive(operation)
+                                    let arguments = arguments.skip_binder();
+                                    let closure = arguments.types().next().and_then(|typ| {
+                                        if let ty::Closure(closure, _) = typ.kind() {
+                                            Some(*closure)
+                                        } else {
+                                            None
                                         }
-                                        Some(ResourceIntrinsic::HeapDrop) => Call::Drop,
-                                        _ => Call::Function(function(*id)),
+                                    });
+                                    let fn_trait = tcx.trait_of_assoc(*id);
+                                    if let Some(closure) = closure
+                                        && fn_trait.is_some()
+                                        && [
+                                            tcx.lang_items().fn_trait(),
+                                            tcx.lang_items().fn_mut_trait(),
+                                            tcx.lang_items().fn_once_trait(),
+                                        ]
+                                        .contains(&fn_trait)
+                                    {
+                                        Call::Closure(function(closure))
+                                    } else {
+                                        match super::intrinsics::call(tcx, *id, None, arguments) {
+                                            Some(ResourceIntrinsic::Synchronization(operation)) => {
+                                                Call::Primitive(operation)
+                                            }
+                                            Some(ResourceIntrinsic::Concurrency(operation)) => {
+                                                Call::Concurrent(operation)
+                                            }
+                                            Some(ResourceIntrinsic::HeapDrop) => Call::Drop,
+                                            _ => Call::Function(function(*id)),
+                                        }
                                     }
                                 }
                                 _ => Call::Indirect,
@@ -88,7 +118,7 @@ pub(crate) fn lower<'tcx>(
                                     tcx,
                                     operation,
                                     &result_place,
-                                    destination_type(&body, tcx, *destination),
+                                    destination_type(body, tcx, *destination),
                                 ) {
                                     Some(outcomes) => outcomes,
                                     None => {
@@ -142,7 +172,7 @@ pub(crate) fn lower<'tcx>(
         .collect();
     Graph {
         blocks,
-        bindings: bindings(tcx, owner, &body),
+        bindings: owner.map(|owner| bindings(tcx, owner, body)).unwrap_or_default(),
         locals: body.local_decls.len(),
         arguments: body.arg_count,
     }

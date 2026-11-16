@@ -275,6 +275,7 @@ pub(crate) fn setup_verus_ctxt_for_thir_erasure<'tcx>(
     }
 
     let mut locals = HashMap::<HirId, VarErasure>::new();
+    let mut runtime_locals = HashMap::new();
     for (span, (var_mode, mode)) in erasure_modes.local_modes.iter() {
         if crate::spans::from_raw_span(&span.raw_span).is_none() {
             continue;
@@ -288,6 +289,7 @@ pub(crate) fn setup_verus_ctxt_for_thir_erasure<'tcx>(
             ));
         }
         for hir_id in &local_id_to_hir[&span.id] {
+            runtime_locals.insert(*hir_id, *var_mode == Mode::Exec && *mode == Mode::Exec);
             locals.insert(
                 *hir_id,
                 mode_to_var_erase(*var_mode, *mode, erasure_hints.shadow_check.contains(hir_id)),
@@ -296,6 +298,7 @@ pub(crate) fn setup_verus_ctxt_for_thir_erasure<'tcx>(
     }
 
     let mut binders = HashMap::<HirId, VarErasure>::new();
+    let mut runtime_binders = HashMap::new();
     for (span, mode) in erasure_modes.binder_modes.iter() {
         if crate::spans::from_raw_span(&span.raw_span).is_none() {
             continue;
@@ -309,6 +312,7 @@ pub(crate) fn setup_verus_ctxt_for_thir_erasure<'tcx>(
             ));
         }
         for hir_id in &binder_id_to_hir[&span.id] {
+            runtime_binders.insert(*hir_id, *mode == Mode::Exec);
             binders.insert(
                 *hir_id,
                 match mode {
@@ -326,11 +330,13 @@ pub(crate) fn setup_verus_ctxt_for_thir_erasure<'tcx>(
         if let Some(hir_ids) = local_id_to_hir.get(&span.id) {
             for hir_id in hir_ids.iter() {
                 locals.insert(*hir_id, VarErasure::Erase);
+                runtime_locals.insert(*hir_id, false);
             }
         }
         if let Some(hir_ids) = binder_id_to_hir.get(&span.id) {
             for hir_id in hir_ids.iter() {
                 binders.insert(*hir_id, VarErasure::Erase);
+                runtime_binders.insert(*hir_id, false);
             }
         }
     }
@@ -406,6 +412,8 @@ pub(crate) fn setup_verus_ctxt_for_thir_erasure<'tcx>(
     }
 
     let verus_erasure_ctxt = VerusErasureCtxt {
+        runtime_locals,
+        runtime_binders,
         locals,
         binders,
         calls,

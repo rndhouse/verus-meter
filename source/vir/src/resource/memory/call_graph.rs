@@ -1,4 +1,4 @@
-//! One executable-call graph supplies ordering, cycle checks, and traversal validation.
+//! Synchronous and worker dependencies share cycle checking, not call composition.
 
 use super::{execution, model::unsupported};
 use crate::ast::*;
@@ -12,6 +12,11 @@ use std::sync::Arc;
 pub(super) struct CallGraph {
     // Per-function call sites in source order, keeping cycle diagnostics deterministic.
     edges: HashMap<Fun, Vec<(Fun, Span)>>,
+    /// Publication starts a child that may run immediately. These dependencies
+    /// participate in recursion checks but never in synchronous call validation.
+    spawns: HashMap<Fun, Vec<(Fun, Span)>>,
+    /// Diagnostic locations for both named functions and concrete worker bodies.
+    spans: HashMap<Fun, Span>,
 }
 
 struct Collector<'a> {
@@ -21,12 +26,21 @@ struct Collector<'a> {
     modes: &'a HashMap<VarIdent, Mode>,
     // Calls found in this body, retaining their original diagnostic spans.
     edges: Vec<(Fun, Span)>,
+    /// Compiler identities of the concrete executable closures in this crate.
+    closures: &'a HashMap<usize, super::concurrency::Closure>,
+    /// Asynchronous publications found in this body.
+    spawns: Vec<(Fun, Span)>,
 }
 
 impl AstVisitor<Walk, VirErr, NoScoper> for Collector<'_> {
     /// Collect calls in executed expressions and arguments, excluding specifications.
     fn visit_expr(&mut self, expr: &Expr) -> Result<(), VirErr> {
         if execution::ignored_expression(expr) {
+            return Ok(());
+        }
+        if matches!(expr.x, ExprX::NonSpecClosure { .. }) {
+            // Creation transfers captures; it does not execute the body. Worker
+            // publication and the worker's own dependencies are separate edges.
             return Ok(());
         }
         // Invariants and decreases are specifications, not executable loop work.
@@ -42,6 +56,23 @@ impl AstVisitor<Walk, VirErr, NoScoper> for Collector<'_> {
             ..
         } = &expr.x
         {
+            if let Some(ResourceIntrinsic::Concurrency(operation)) = attrs.resource_intrinsic
+                && operation.spawns()
+            {
+                let closure = args
+                    .first()
+                    .and_then(|arg| match &*arg.typ {
+                        TypX::AnonymousClosure(_, _, _, id) => self.closures.get(id),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        unsupported(
+                            &expr.span,
+                            "worker publication without a concrete compiler-derived closure",
+                        )
+                    })?;
+                self.spawns.push((closure.function.clone(), expr.span.clone()));
+            }
             if attrs.resource_intrinsic.is_none()
                 && self.functions.get(target).is_some_and(|f| f.x.attrs.resource_contract.is_some())
             {
@@ -90,23 +121,53 @@ impl CallGraph {
     pub(super) fn new(
         functions: &HashMap<Fun, Function>,
         modes: &HashMap<Fun, Arc<ResolutionInfo>>,
+        concurrency: &super::concurrency::Evidence,
     ) -> Result<Self, VirErr> {
         let mut edges = HashMap::new();
+        let mut spawns = HashMap::new();
+        let mut spans = HashMap::new();
         let empty = HashMap::new();
         for (name, function) in functions {
+            let var_modes = modes.get(name).map(|m| &m.var_modes).unwrap_or(&empty);
             let mut collector = Collector {
                 functions,
-                modes: modes.get(name).map(|m| &m.var_modes).unwrap_or(&empty),
+                modes: var_modes,
                 edges: Vec::new(),
+                closures: &concurrency.closures,
+                spawns: Vec::new(),
             };
             if function.x.attrs.resource_contract.is_some() {
                 if let Some(body) = &function.x.body {
                     collector.visit_expr(body)?;
+                    // Register bodies independently of creation/execution. Only
+                    // publication edges make them reachable in the dependency
+                    // traversal. Nested workers keep the enclosing mode map.
+                    crate::ast_visitor::expr_visitor_check(body, &mut |_, expr| {
+                        if let ExprX::NonSpecClosure { body, proof_fn_modes: None, .. } = &expr.x
+                            && let TypX::AnonymousClosure(_, _, _, id) = &*expr.typ
+                            && let Some(closure) = concurrency.closures.get(id)
+                        {
+                            let mut worker = Collector {
+                                functions,
+                                modes: var_modes,
+                                edges: Vec::new(),
+                                closures: &concurrency.closures,
+                                spawns: Vec::new(),
+                            };
+                            worker.visit_expr(body)?;
+                            edges.insert(closure.function.clone(), worker.edges);
+                            spawns.insert(closure.function.clone(), worker.spawns);
+                            spans.insert(closure.function.clone(), closure.span.clone());
+                        }
+                        Ok::<(), VirErr>(())
+                    })?;
                 }
             }
             edges.insert(name.clone(), collector.edges);
+            spawns.insert(name.clone(), collector.spawns);
+            spans.insert(name.clone(), function.span.clone());
         }
-        Ok(Self { edges })
+        Ok(Self { edges, spawns, spans })
     }
 
     /// Visit callees first; a back edge rejects recursion at the originating call.
@@ -114,30 +175,31 @@ impl CallGraph {
         // Emit a callee before its callers, or diagnose the edge closing a cycle.
         fn visit(
             graph: &CallGraph,
-            function: &Function,
+            name: &Fun,
             functions: &HashMap<Fun, Function>,
             active: &mut HashSet<Fun>,
             done: &mut HashSet<Fun>,
             ordered: &mut Vec<Function>,
         ) -> Result<(), VirErr> {
-            let name = &function.x.name;
             if done.contains(name) {
                 return Ok(());
             }
             active.insert(name.clone());
-            for (callee, span) in &graph.edges[name] {
+            for (callee, span) in graph.edges[name].iter().chain(&graph.spawns[name]) {
                 if active.contains(callee) {
                     return Err(unsupported(
                         span,
                         "recursive memory contracts (including mutual recursion)",
                     )
-                    .secondary_span(&functions[callee].span));
+                    .secondary_span(&graph.spans[callee]));
                 }
-                visit(graph, &functions[callee], functions, active, done, ordered)?;
+                visit(graph, callee, functions, active, done, ordered)?;
             }
             active.remove(name);
             done.insert(name.clone());
-            ordered.push(function.clone());
+            if let Some(function) = functions.get(name) {
+                ordered.push(function.clone());
+            }
             Ok(())
         }
         let map = functions.iter().map(|f| (f.x.name.clone(), f.clone())).collect();
@@ -145,7 +207,7 @@ impl CallGraph {
         let mut active = HashSet::new();
         let mut done = HashSet::new();
         for function in functions {
-            visit(self, function, &map, &mut active, &mut done, &mut ordered)?;
+            visit(self, &function.x.name, &map, &mut active, &mut done, &mut ordered)?;
         }
         Ok(ordered)
     }

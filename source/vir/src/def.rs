@@ -89,6 +89,7 @@ const STRSLICE_TYPE: &str = "strslice%";
 const ARRAY_TYPE: &str = "array%";
 const PTR_TYPE: &str = "ptr_mut%";
 const GLOBAL_TYPE: &str = "allocator_global%";
+const THREAD_PANIC_PAYLOAD_TYPE: &str = "thread_panic_payload%";
 const PREFIX_SNAPSHOT: &str = "snap%";
 const SUBST_RENAME_SEPARATOR: &str = "$$";
 const EXPAND_ERRORS_DECL_SEPARATOR: &str = "$$$";
@@ -206,6 +207,8 @@ pub const TYPE_ID_SLICE: &str = "SLICE";
 pub const TYPE_ID_STRSLICE: &str = "STRSLICE";
 pub const TYPE_ID_PTR: &str = "PTR";
 pub const TYPE_ID_GLOBAL: &str = "ALLOCATOR_GLOBAL";
+/// Nominal SMT identity for the opaque native join-error pointee.
+pub const TYPE_ID_THREAD_PANIC_PAYLOAD: &str = "THREAD_PANIC_PAYLOAD";
 pub const TYPE_ID_MUT_REF: &str = "MUTREF";
 pub const HAS_TYPE: &str = "has_type";
 pub const AS_TYPE: &str = "as_type";
@@ -585,6 +588,11 @@ pub fn ptr_type() -> Path {
 
 pub fn global_type() -> Path {
     internal_path(GLOBAL_TYPE.to_string())
+}
+
+/// Internal sort for native panic payloads, without an Any/dyn-dispatch interface.
+pub fn thread_panic_payload_type() -> Path {
+    internal_path(THREAD_PANIC_PAYLOAD_TYPE.to_string())
 }
 
 impl NameCtxt {

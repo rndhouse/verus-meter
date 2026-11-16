@@ -375,6 +375,9 @@ pub(crate) enum SetItem {
 
 #[derive(PartialEq, Eq, Debug, Clone, Hash)]
 pub(crate) enum VstdItem {
+    ThreadSpawn,
+    ThreadJoin,
+    ThreadJoinHandle,
     SeqFn(vir::interpreter::SeqFn),
     SetItem(SetItem),
     ISetItem(SetItem),
@@ -515,6 +518,9 @@ pub(crate) enum DummyCaptureItem {
 #[rustfmt::skip]
 fn verus_items_map() -> Vec<(&'static str, VerusItem)> {
     vec![
+        ("verus::vstd::thread::spawn", VerusItem::Vstd(VstdItem::ThreadSpawn, None)),
+        ("verus::vstd::thread::JoinHandle::join", VerusItem::Vstd(VstdItem::ThreadJoin, None)),
+        ("verus::vstd::thread::JoinHandle", VerusItem::Vstd(VstdItem::ThreadJoinHandle, None)),
         ("verus::verus_builtin::admit",                   VerusItem::Spec(SpecItem::Admit)),
         ("verus::verus_builtin::assume_",                 VerusItem::Spec(SpecItem::Assume)),
         ("verus::verus_builtin::no_method_body",          VerusItem::Spec(SpecItem::NoMethodBody)),
@@ -940,6 +946,8 @@ pub(crate) enum RustItem {
     TryLockError,
     BoxNew,
     ArcNew,
+    ThreadSpawn,
+    ThreadJoinHandle,
     RcNew,
     CloneClone,
     CloneFrom,
@@ -1052,6 +1060,12 @@ pub(crate) fn get_rust_item_str(rust_path: Option<&str>) -> Option<RustItem> {
     // and they may get changed without us noticing, so we are using paths instead
     if rust_path == Some("core::cmp::Eq") {
         return Some(RustItem::Eq);
+    }
+    if rust_path == Some("std::thread::functions::spawn") {
+        return Some(RustItem::ThreadSpawn);
+    }
+    if rust_path == Some("std::thread::join_handle::JoinHandle") {
+        return Some(RustItem::ThreadJoinHandle);
     }
     if rust_path == Some("std::sync::poison::PoisonError") {
         return Some(RustItem::PoisonError);

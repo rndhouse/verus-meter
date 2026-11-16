@@ -13,6 +13,7 @@ verus! {
 /// See the documentation of [`spawn()`](spawn) for more details.
 #[verifier::external_body]
 #[verifier::reject_recursive_types(Ret)]
+#[cfg_attr(verus_keep_ghost, rustc_diagnostic_item = "verus::vstd::thread::JoinHandle")]
 pub struct JoinHandle<Ret> {
     handle: std::thread::JoinHandle<Ret>,
 }
@@ -24,6 +25,7 @@ impl<Ret> JoinHandle<Ret> {
 
     /// Wait for a thread to complete.
     #[verifier::external_body]
+    #[cfg_attr(verus_keep_ghost, rustc_diagnostic_item = "verus::vstd::thread::JoinHandle::join")]
     pub fn join(self) -> (r_result: Result<Ret, ()>)
         ensures
             match r_result {
@@ -104,6 +106,7 @@ impl<Ret> JoinHandle<Ret> {
 /// }
 /// ```
 #[verifier::external_body]
+#[cfg_attr(verus_keep_ghost, rustc_diagnostic_item = "verus::vstd::thread::spawn")]
 pub fn spawn<F, Ret>(f: F) -> (handle: JoinHandle<Ret>) where
     F: FnOnce() -> Ret,
     F: Send + 'static,

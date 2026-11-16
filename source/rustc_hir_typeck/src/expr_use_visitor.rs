@@ -182,9 +182,18 @@ pub trait TypeInformationCtxt<'tcx> {
     fn body_owner_def_id(&self) -> LocalDefId;
 
     fn tcx(&self) -> TyCtxt<'tcx>;
+
+    /// Resource analysis selects post-proof-erasure captures. Existing lifetime
+    /// and shadow analyses retain their established behavior.
+    fn runtime_captures_only(&self) -> bool {
+        false
+    }
 }
 
 impl<'tcx> TypeInformationCtxt<'tcx> for &crate::upvar::FnCtxt<'_, 'tcx> {
+    fn runtime_captures_only(&self) -> bool {
+        self.purpose == crate::upvar::CapturePurpose::Runtime
+    }
     type TypeckResults<'a>
         = &'tcx ty::TypeckResults<'tcx>
     where
@@ -541,6 +550,7 @@ impl<'tcx, Cx: TypeInformationCtxt<'tcx>, D: Delegate<'tcx>> ExprUseVisitor<'tcx
                 if !crate::verus::erase_closure_body_for_closure_captures(
                     self.cx.tcx(),
                     closure.def_id,
+                    self.cx.runtime_captures_only(),
                 ) {
                     self.cx.recursive_analyze_closure(expr, closure);
                     self.walk_captures(closure)?;
@@ -1406,7 +1416,11 @@ impl<'tcx, Cx: TypeInformationCtxt<'tcx>, D: Delegate<'tcx>> ExprUseVisitor<'tcx
 
             Res::Local(var_id) => {
                 if self.upvars.is_some_and(|upvars| upvars.contains_key(&var_id)) {
-                    if crate::verus::erase_var_for_closure_captures(self.cx.tcx(), hir_id) {
+                    if crate::verus::erase_var_for_closure_captures(
+                        self.cx.tcx(),
+                        hir_id,
+                        self.cx.runtime_captures_only(),
+                    ) {
                         return Ok(PlaceWithHirId::new(
                             hir_id,
                             expr_ty,

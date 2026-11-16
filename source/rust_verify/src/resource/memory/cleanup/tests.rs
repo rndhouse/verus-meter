@@ -6,6 +6,52 @@ use rustc_interface::interface::Compiler;
 use std::sync::Arc;
 use vir::resource::memory::synchronization::Operation;
 
+#[test]
+fn compiler_identifies_native_publication_join_and_shared_aliases() {
+    use vir::resource::memory::concurrency::Operation as C;
+    let graphs = compile(
+        r#"
+        use std::sync::Arc as Shared;
+        pub fn native() {
+            let first = Shared::new(7u64);
+            let alias = Shared::clone(&first);
+            let _view = <Shared<u64> as std::ops::Deref>::deref(&first);
+            let handle = std::thread::spawn(move || alias);
+            let result = handle.join();
+            drop(result);
+        }
+        mod fake {
+            pub struct Arc;
+            impl Arc {
+                pub fn new() -> Self { Self }
+                pub fn clone(&self) -> Self { Self }
+            }
+            pub struct JoinHandle;
+            impl JoinHandle { pub fn join(self) {} }
+            pub fn spawn(_: Arc) -> JoinHandle { JoinHandle }
+        }
+        pub fn unrelated() {
+            let original = fake::Arc::new();
+            fake::spawn(original.clone()).join();
+        }
+    "#,
+    );
+    let native = &graphs["native"];
+    let operations: Vec<_> = native
+        .blocks
+        .iter()
+        .filter_map(|block| match block.terminator {
+            Terminator::Call { call: Call::Concurrent(operation), .. } => Some(operation),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(operations, [C::ArcNew, C::ArcClone, C::ArcBorrow, C::StdSpawn, C::StdJoin]);
+    assert!(!graphs["unrelated"].blocks.iter().any(|block| matches!(
+        block.terminator,
+        Terminator::Call { call: Call::Concurrent(_), .. }
+    )));
+}
+
 fn compile(source: &str) -> HashMap<String, Graph> {
     struct Test {
         source: String,

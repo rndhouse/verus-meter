@@ -19,6 +19,11 @@ use vir::messages::{AstId, ToAny, WarningAllow};
 
 #[derive(Clone)]
 pub struct ErasureInfo {
+    /// Executable effects whose ordinary logical translation is an identity.
+    pub(crate) resource_operations:
+        HashMap<AstId, Vec<vir::resource::memory::concurrency::ErasedOperation>>,
+    /// Executable closure expressions and their compiler body identities.
+    pub(crate) resource_closures: Vec<(vir::messages::Span, LocalDefId)>,
     /// Connect every PlaceX::Local, ExprX::Var, and ExprX::VarAt node to its
     /// HirId (an ExprKind::Path node that resolves to Local).
     ///
@@ -354,6 +359,8 @@ impl<'tcx> BodyCtxt<'tcx> {
 impl ErasureInfo {
     pub fn new() -> Self {
         ErasureInfo {
+            resource_operations: HashMap::new(),
+            resource_closures: vec![],
             local_hir_vir_ids: vec![],
             binder_hir_vir_ids: vec![],
             ctor_hir_vir_ids: vec![],

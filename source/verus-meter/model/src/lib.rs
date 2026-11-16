@@ -38,3 +38,15 @@ pub const fn result_bytes(ok: u64, err: u64) -> Option<u64> {
     let payload = if ok > err { ok } else { err };
     payload.checked_add(BOOL_BYTES)
 }
+
+/// Shared backing contains two source count words and the inline payload.
+/// Handle bytes and payload-owned descendant allocations are separate charges.
+pub const fn arc_backing_bytes(payload: u64) -> Option<u64> {
+    payload.checked_add(2 * WORD_BYTES)
+}
+
+/// A completion starts with its state tag and acquires inline result storage
+/// only when the worker produces its result. Descendant allocations stay separate.
+pub const fn completion_bytes(result: u64) -> Option<u64> {
+    result.checked_add(BOOL_BYTES)
+}

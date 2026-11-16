@@ -349,10 +349,33 @@ impl Layouts {
                 LibraryType::Result => {
                     verus_meter_model::result_bytes(size(0, visiting)?, size(1, visiting)?)
                 }
+                LibraryType::StdJoinHandle | LibraryType::VstdJoinHandle => {
+                    size(0, visiting)?;
+                    Some(WORD_BYTES)
+                }
             };
             return bytes.ok_or_else(|| unsupported(span, "primitive sizes exceeding u64"));
         }
         match &**typ {
+            TypX::Decorate(TypDecoration::Ghost | TypDecoration::Tracked, _, _) => Ok(0),
+            TypX::Decorate(TypDecoration::Box, allocator, inner)
+                if matches!(&**inner, TypX::Primitive(Primitive::ThreadPanicPayload, _)) =>
+            {
+                if !allocator.as_ref().is_some_and(|a| self.standard_allocator(&a.allocator_typ)) {
+                    return Err(unsupported(span, "boxed trait objects with custom allocators"));
+                }
+                // Inline sizing is sufficient for the native join Result. The
+                // allocation layout still rejects opaque pointees; this cannot
+                // establish a bound on a panic payload or enable its recovery.
+                Ok(2 * WORD_BYTES)
+            }
+            TypX::Decorate(TypDecoration::Arc, allocator, payload) => {
+                if !allocator.as_ref().is_some_and(|a| self.standard_allocator(&a.allocator_typ)) {
+                    return Err(unsupported(span, "shared owners with custom allocators"));
+                }
+                self.size_inner(payload, span, visiting)?;
+                Ok(WORD_BYTES)
+            }
             _ if super::iterators::kind(typ).is_some() => super::iterators::size(typ, span),
             _ if self.option(typ) => {
                 let payload = self.option_payload(typ, span)?;

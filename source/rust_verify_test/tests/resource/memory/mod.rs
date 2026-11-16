@@ -9,6 +9,7 @@ mod call_forests;
 mod call_graph;
 mod checkpoints;
 mod children;
+mod concurrency;
 mod conditional;
 mod conditional_loops;
 mod control_flow;

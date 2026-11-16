@@ -51,3 +51,6 @@ pub struct VstdSpecsForRustStdLib;
 
 #[cfg(feature = "std")]
 pub mod sync;
+
+#[cfg(feature = "std")]
+pub mod thread;

@@ -70,6 +70,9 @@ pub enum CallErasure {
 /// Information for a body (function or closure).
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct BodyErasure {
+    /// Whether this body executes after proof erasure. Tracked proof bodies are
+    /// retained for lifetime checking but cannot contribute runtime captures.
+    pub runtime: bool,
     pub erase_body: bool,
     pub ret_spec: bool,
     /// If erase_body, erase with TreeErase::EraseAbsolutely rather than IncludeBasicChecks
@@ -105,6 +108,10 @@ pub struct LocalInvariantBody {
 /// This is created after mode-checking and passed here via the VERUS_ERASURE_CTXT global.
 #[derive(Debug)]
 pub struct VerusErasureCtxt {
+    /// Mode-checked executable uses, separate from tracked lifetime-check uses.
+    pub runtime_locals: HashMap<HirId, bool>,
+    /// Mode-checked executable binders, including explicit proof exclusions.
+    pub runtime_binders: HashMap<HirId, bool>,
     /// For a given var use, should we erase it?
     pub locals: HashMap<HirId, VarErasure>,
 
@@ -799,19 +806,32 @@ pub(crate) fn erase_body<'tcx>(
 pub(crate) fn erase_closure_body_for_closure_captures<'tcx>(
     tcx: TyCtxt<'tcx>,
     local_def_id: LocalDefId,
+    runtime_only: bool,
 ) -> bool {
     let fn_def_id = enclosing_fn_local_def_id(tcx, local_def_id);
     let erasure_ctxt = get_verus_erasure_ctxt(fn_def_id);
-    matches!(erasure_ctxt.bodies.get(&local_def_id), Some(BodyErasure { erase_body: true, .. }))
+    erasure_ctxt
+        .bodies
+        .get(&local_def_id)
+        .is_some_and(|body| body.erase_body || (runtime_only && !body.runtime))
 }
 
 pub(crate) static ATOMIC_CLOSURE_CAPTURE_SHADOW: AtomicBool = AtomicBool::new(false);
 
-pub(crate) fn erase_var_for_closure_captures<'tcx>(tcx: TyCtxt<'tcx>, hir_id: HirId) -> bool {
+pub(crate) fn erase_var_for_closure_captures<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    hir_id: HirId,
+    runtime_only: bool,
+) -> bool {
     let parent_owner_id = tcx.hir_get_parent_item(hir_id);
     let fn_def_id = parent_owner_id.def_id;
 
     let erasure_ctxt = get_verus_erasure_ctxt(fn_def_id);
+    if runtime_only {
+        // Unknown uses stay conservative: missing mode information cannot
+        // silently remove a runtime capture.
+        return erasure_ctxt.runtime_locals.get(&hir_id) == Some(&false);
+    }
     let capture_shadow = ATOMIC_CLOSURE_CAPTURE_SHADOW.load(Ordering::SeqCst);
     if capture_shadow {
         matches!(erasure_ctxt.locals.get(&hir_id), Some(VarErasure::Erase))
@@ -820,11 +840,18 @@ pub(crate) fn erase_var_for_closure_captures<'tcx>(tcx: TyCtxt<'tcx>, hir_id: Hi
     }
 }
 
-pub(crate) fn erase_binder_for_closure_captures<'tcx>(tcx: TyCtxt<'tcx>, hir_id: HirId) -> bool {
+pub(crate) fn erase_binder_for_closure_captures<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    hir_id: HirId,
+    runtime_only: bool,
+) -> bool {
     let parent_owner_id = tcx.hir_get_parent_item(hir_id);
     let fn_def_id = parent_owner_id.def_id;
 
     let erasure_ctxt = get_verus_erasure_ctxt(fn_def_id);
+    if runtime_only {
+        return erasure_ctxt.runtime_binders.get(&hir_id) == Some(&false);
+    }
     let capture_shadow = ATOMIC_CLOSURE_CAPTURE_SHADOW.load(Ordering::SeqCst);
     if capture_shadow {
         matches!(erasure_ctxt.binders.get(&hir_id), Some(VarErasure::Erase))
@@ -1330,6 +1357,7 @@ pub(crate) fn get_closure_captures_accounting_for_ghost<'tcx>(
         closure_expr,
         closure_def_id,
         cx.typeck_results,
+        crate::upvar::CapturePurpose::Lifetime,
     );
 
     let closure_min_captures = capture_results.closure_min_captures;

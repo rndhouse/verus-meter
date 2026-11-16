@@ -95,6 +95,7 @@ pub(crate) fn primitive_path(name: &Primitive) -> Path {
         Primitive::StrSlice => crate::def::strslice_type(),
         Primitive::Ptr => crate::def::ptr_type(),
         Primitive::Global => crate::def::global_type(),
+        Primitive::ThreadPanicPayload => crate::def::thread_panic_payload_type(),
     }
 }
 
@@ -105,6 +106,7 @@ pub(crate) fn primitive_type_id(name: &Primitive) -> Ident {
         Primitive::StrSlice => crate::def::TYPE_ID_STRSLICE,
         Primitive::Ptr => crate::def::TYPE_ID_PTR,
         Primitive::Global => crate::def::TYPE_ID_GLOBAL,
+        Primitive::ThreadPanicPayload => crate::def::TYPE_ID_THREAD_PANIC_PAYLOAD,
     })
 }
 
@@ -180,7 +182,11 @@ pub(crate) fn typ_to_air(ctx: &Ctx, typ: &Typ) -> air::ast::Typ {
         TypX::Boxed(_) => str_typ(POLY),
         TypX::TypParam(_) => str_typ(POLY),
         TypX::Primitive(
-            Primitive::Slice | Primitive::StrSlice | Primitive::Ptr | Primitive::Global,
+            Primitive::Slice
+            | Primitive::StrSlice
+            | Primitive::Ptr
+            | Primitive::Global
+            | Primitive::ThreadPanicPayload,
             _,
         ) => match typ_as_mono(typ) {
             None => panic!("should be boxed"),
@@ -301,6 +307,7 @@ fn decoration_base_for_primitive(name: Primitive) -> &'static str {
     match name {
         Primitive::Array | Primitive::Ptr | Primitive::Global => crate::def::DECORATE_NIL_SIZED,
         Primitive::Slice | Primitive::StrSlice => crate::def::DECORATE_NIL_SLICE,
+        Primitive::ThreadPanicPayload => crate::def::DECORATE_NIL_DYN,
     }
 }
 
@@ -590,7 +597,7 @@ pub(crate) fn typ_invariant(ctx: &Ctx, typ: &Typ, expr: &Expr) -> Option<Expr> {
                         panic!("abstract datatype should be boxed")
                     }
                 }
-                Primitive::StrSlice | Primitive::Global => {}
+                Primitive::StrSlice | Primitive::Global | Primitive::ThreadPanicPayload => {}
             }
             None
         }

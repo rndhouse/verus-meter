@@ -1308,6 +1308,25 @@ pub(crate) fn mid_ty_to_vir_ghost<'tcx>(
         }
         TyKind::Dynamic(preds, _) => {
             use rustc_middle::ty::ExistentialPredicate;
+            // Native join errors need an opaque carrier, not dyn dispatch for
+            // Any (whose unsized blanket impl Verus deliberately rejects).
+            // Keep a distinct nominal type and Rust's original Send/lifetime
+            // checks, without relaxing general dyn compatibility.
+            if preds.len() == 2
+                && preds.iter().any(|p| {
+                    matches!(p.skip_binder(), ExistentialPredicate::Trait(tr)
+                    if verus_items::get_rust_item(tcx, tr.def_id) == Some(RustItem::Any))
+                })
+                && preds.iter().any(|p| {
+                    matches!(p.skip_binder(), ExistentialPredicate::AutoTrait(id)
+                    if verus_items::get_rust_item(tcx, id) == Some(RustItem::Send))
+                })
+            {
+                return Ok((
+                    Arc::new(TypX::Primitive(Primitive::ThreadPanicPayload, Arc::new(vec![]))),
+                    false,
+                ));
+            }
             if preds.len() != 1 {
                 unsupported_err!(span, "dyn with more than one trait");
             }

@@ -116,6 +116,11 @@ pub enum Unwind {
 pub enum Call {
     /// A resolved and reviewed synchronization primitive.
     Primitive(Operation),
+    /// Worker/shared-owner operations; publication is not a completed helper call.
+    Concurrent(super::super::concurrency::Operation),
+    /// Statically identified closure invocation, including a compiler FnOnce
+    /// adapter calling its Fn/FnMut body. It still requires a checked summary.
+    Closure(Fun),
     /// Actual `core::mem::drop`: consume the argument and execute its drop glue.
     Drop,
     /// A resolved helper or unsupported external function.

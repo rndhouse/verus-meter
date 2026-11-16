@@ -108,13 +108,24 @@ models are not yet provided.
 
 ## Synchronization size queries
 
-The `source-values-v39-64` model adds type-only sizes for standard `Mutex<T>`,
+The `source-values-v40-64` model supports type-only sizes for standard `Mutex<T>`,
 `MutexGuard<T>`, poison/try-lock wrappers and `Result<T, E>` with supported concrete
 payload layouts. A mutex occupies nine source-state bytes plus its inline payload;
 a guard occupies an eight-byte reference. A poison wrapper occupies its payload,
 and a variant stores one tag byte plus its largest inline payload. Separately
 owned allocations remain separate from these inline sizes. Static and runtime
 queries use the same policy, which does not describe OS lock storage or ABI layout.
+
+Strong `Arc<T>` and standard/vstd thread join handles occupy eight source bytes
+each. An Arc's separate backing costs sixteen control bytes plus its inline
+payload; separately owned payload allocations retain their own charges. Thread
+completion storage has a one-byte state tag and retains the inline result once
+produced. A native join error has a sixteen-byte opaque handle, so
+`value_size(std::thread::Result<u64>)` is seventeen bytes. This inline size does
+not provide an allocation bound for arbitrary panic payloads. Executable closure
+storage is the sum of its captures after proof erasure, excluding separately
+owned descendants. These rules follow the
+[concurrent storage policy](concurrent-model.md#library-trust-and-source-storage-policy).
 
 Primitive identification uses compiler definitions, including through aliases.
 Compiler-derived synchronization graphs preserve moves, acquisition outcomes and

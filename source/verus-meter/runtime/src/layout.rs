@@ -99,6 +99,17 @@ impl<T> ValueSize for Vec<T> {
     const BYTES: u64 = 3 * WORD_BYTES;
 }
 
+impl<T: ValueSize> sealed::Value for std::sync::Arc<T> {}
+
+impl<T: ValueSize> ValueSize for std::sync::Arc<T> {
+    const BYTES: u64 = WORD_BYTES;
+}
+
+impl<T: ValueSize> sealed::Value for std::thread::JoinHandle<T> {}
+
+impl<T: ValueSize> ValueSize for std::thread::JoinHandle<T> {
+    const BYTES: u64 = WORD_BYTES;
+}
 impl<T: ValueSize> sealed::Value for Option<T> {}
 
 impl<T: ValueSize> ValueSize for Option<T> {
@@ -117,6 +128,11 @@ impl<T> ValueSize for Box<[T]> {
     const BYTES: u64 = 2 * WORD_BYTES;
 }
 
+impl sealed::Value for Box<dyn std::any::Any + Send> {}
+
+impl ValueSize for Box<dyn std::any::Any + Send> {
+    const BYTES: u64 = 2 * WORD_BYTES;
+}
 impl<T> sealed::Reference for &T {}
 
 impl<T> ReferenceSize for &T {
@@ -141,6 +157,8 @@ impl<T> ReferenceSize for &mut [T] {
     const BYTES: u64 = reference_bytes(true);
 }
 
+impl<T: ValueSize> sealed::Value for std::sync::Mutex<T> {}
+
 impl<T: ValueSize> ValueSize for std::sync::Mutex<T> {
     const BYTES: u64 = match verus_meter_model::mutex_bytes(T::BYTES) {
         Some(bytes) => bytes,
@@ -148,13 +166,19 @@ impl<T: ValueSize> ValueSize for std::sync::Mutex<T> {
     };
 }
 
+impl<T: ValueSize> sealed::Value for std::sync::MutexGuard<'_, T> {}
+
 impl<T: ValueSize> ValueSize for std::sync::MutexGuard<'_, T> {
     const BYTES: u64 = WORD_BYTES;
 }
 
+impl<T: ValueSize> sealed::Value for std::sync::PoisonError<T> {}
+
 impl<T: ValueSize> ValueSize for std::sync::PoisonError<T> {
     const BYTES: u64 = T::BYTES;
 }
+
+impl<T: ValueSize> sealed::Value for std::sync::TryLockError<T> {}
 
 impl<T: ValueSize> ValueSize for std::sync::TryLockError<T> {
     const BYTES: u64 = match verus_meter_model::result_bytes(T::BYTES, 0) {
@@ -162,6 +186,8 @@ impl<T: ValueSize> ValueSize for std::sync::TryLockError<T> {
         None => panic!("model try-lock error size exceeds u64"),
     };
 }
+
+impl<T: ValueSize, E: ValueSize> sealed::Value for Result<T, E> {}
 
 impl<T: ValueSize, E: ValueSize> ValueSize for Result<T, E> {
     const BYTES: u64 = match verus_meter_model::result_bytes(T::BYTES, E::BYTES) {

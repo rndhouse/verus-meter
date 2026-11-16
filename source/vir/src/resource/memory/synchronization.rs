@@ -44,6 +44,10 @@ pub enum LibraryType {
     TryLockError,
     /// Standard `Result<T, E>`; sizing alone gives no ownership interface.
     Result,
+    /// Native Rust join handle; its completion record is separate storage.
+    StdJoinHandle,
+    /// Reviewed vstd join wrapper, with the same source handle size.
+    VstdJoinHandle,
 }
 
 /// Resolved library identities; unrelated types cannot receive opaque layouts.
@@ -54,6 +58,8 @@ pub type LibraryTypes = HashMap<Dt, LibraryType>;
 /// a concurrent byte bound.
 #[derive(Default)]
 pub struct CompilerEvidence {
+    /// Worker captures and executable operations hidden by logical identity erasure.
+    pub concurrency: super::concurrency::Evidence,
     /// Resolved native types used for source layouts and primitive contracts.
     pub types: LibraryTypes,
     /// Drop-elaborated transport for local resource-contracted functions.
@@ -410,6 +416,15 @@ pub(super) fn reject_unaccounted(
             visiting: &mut std::collections::HashSet<Dt>,
         ) -> Result<(), VirErr> {
             match &**typ {
+                TypX::Decorate(TypDecoration::Ghost | TypDecoration::Tracked, _, _) => {
+                    return Ok(());
+                }
+                TypX::Decorate(TypDecoration::Arc, _, _) => {
+                    return Err(super::model::unsupported(
+                        span,
+                        "runtime shared ownership before concurrent lifetime accounting is available",
+                    ));
+                }
                 TypX::Datatype(name, args, _) => {
                     if self.types.get(name).is_some_and(|kind| *kind != LibraryType::Result) {
                         return Err(super::model::unsupported(
@@ -461,6 +476,16 @@ pub(super) fn reject_unaccounted(
                     &expr.span,
                     &format!(
                         "synchronization operation {operation:?} before concurrent lifetime accounting is available"
+                    ),
+                ));
+            }
+            if let ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), .. } = &expr.x
+                && let Some(ResourceIntrinsic::Concurrency(operation)) = attrs.resource_intrinsic
+            {
+                return Err(super::model::unsupported(
+                    &expr.span,
+                    &format!(
+                        "concurrent operation {operation:?} before concurrent lifetime accounting is available"
                     ),
                 ));
             }

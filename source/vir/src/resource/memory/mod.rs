@@ -38,6 +38,7 @@ mod budget;
 mod call_graph;
 mod calls;
 mod children;
+pub mod concurrency;
 mod construction;
 mod contracts;
 mod control;
@@ -101,6 +102,9 @@ pub fn check_crate(
         let modes = modes.get(&function.x.name).map(|modes| &modes.var_modes).unwrap_or(&empty);
         *function = for_loops::prepare(function, modes, fresh_span)?;
     }
+    let function_map = functions.iter().map(|f| (f.x.name.clone(), f.clone())).collect();
+    let graph = call_graph::CallGraph::new(&function_map, modes, &synchronization.concurrency)?;
+    let ordered = graph.order(functions)?;
     for function in functions.iter().filter(|f| f.x.attrs.resource_contract.is_some()) {
         let empty = HashMap::new();
         let resolution = modes.get(&function.x.name).map(Arc::as_ref);
@@ -115,14 +119,12 @@ pub fn check_crate(
         }
         synchronization::reject_unaccounted(function, modes, &synchronization.types, datatypes)?;
     }
-    let function_map = functions.iter().map(|f| (f.x.name.clone(), f.clone())).collect();
     let layouts = layout::Layouts::new(datatypes, global_allocator, vector, option)
         .with_synchronization_types(&synchronization.types);
     let budgets = budget::resolve(functions, &function_map, &layouts)?;
-    let graph = call_graph::CallGraph::new(&function_map, modes)?;
     let mut reports = Vec::new();
     let mut summaries = HashMap::new();
-    for function in &graph.order(functions)? {
+    for function in &ordered {
         if let Some(checked) = analysis::check(
             function,
             modes.get(&function.x.name).map(Arc::as_ref),

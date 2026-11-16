@@ -19,13 +19,55 @@ pub(crate) fn check(
     ctxt: &Context<'_>,
     krate: &mut KrateX,
     modes: &HashMap<Fun, Arc<ResolutionInfo>>,
+    erasure: &HashMap<Fun, Arc<crate::context::ErasureInfo>>,
     trace: bool,
     lifetime_checks: bool,
 ) -> Result<Vec<VirErrAs>, VirErr> {
     let (global_allocator, vector, option) = identities(ctxt);
     let synchronization_types = synchronization_types(ctxt);
-    let synchronization =
-        synchronization_evidence(ctxt, krate, modes, synchronization_types, lifetime_checks)?;
+    let synchronization = synchronization_evidence(
+        ctxt,
+        krate,
+        modes,
+        erasure,
+        synchronization_types,
+        lifetime_checks,
+    )?;
+    if trace {
+        let mut closures: Vec<_> = synchronization.concurrency.closures.values().collect();
+        closures.sort_by_key(|closure| closure.id);
+        for closure in closures {
+            let storage = vir::resource::memory::concurrency::capture_storage(
+                closure,
+                &krate.datatypes,
+                global_allocator.clone(),
+                vector.clone(),
+                option.clone(),
+                &synchronization.types,
+            );
+            // Tracing cannot strengthen the acceptance boundary. Unsupported
+            // capture layouts are diagnosed by accounting when consumed.
+            let storage = match storage {
+                Ok(bytes) => format!("{bytes} inline source bytes"),
+                Err(_) => "inline source size unresolved".to_owned(),
+            };
+            ctxt.diagnostics.borrow_mut().push(vir::ast::VirErrAs::Note(vir::messages::note(
+                &closure.span,
+                format!(
+                    "memory closure captures: {} executable fields, {storage}",
+                    closure.captures.len()
+                ),
+            )));
+        }
+        let mut operations: Vec<_> = synchronization.concurrency.erased_operations.iter().collect();
+        operations.sort_by_key(|(id, _)| *id);
+        for operation in operations.into_iter().flat_map(|(_, operations)| operations) {
+            ctxt.diagnostics.borrow_mut().push(vir::ast::VirErrAs::Note(vir::messages::note(
+                &operation.span,
+                format!("memory executable effect: {:?}", operation.operation),
+            )));
+        }
+    }
     let reports = vir::resource::memory::check_crate(
         &mut krate.functions,
         &krate.datatypes,
@@ -57,6 +99,7 @@ fn synchronization_evidence(
     ctxt: &Context<'_>,
     krate: &KrateX,
     modes: &HashMap<Fun, Arc<ResolutionInfo>>,
+    erasure: &HashMap<Fun, Arc<crate::context::ErasureInfo>>,
     types: vir::resource::memory::synchronization::LibraryTypes,
     lifetime_checks: bool,
 ) -> Result<vir::resource::memory::synchronization::CompilerEvidence, VirErr> {
@@ -92,6 +135,13 @@ fn synchronization_evidence(
             &|span| ctxt.spans.to_air_span(span),
         );
         vir::resource::memory::synchronization::attach_binding_modes(&mut graph, function, modes);
+        if let Some(erasure) = erasure.get(&function.x.name) {
+            evidence.concurrency.erased_operations.extend(erasure.resource_operations.clone());
+            for (span, closure) in &erasure.resource_closures {
+                let info = super::concurrency::closure(ctxt, *closure, span)?;
+                evidence.concurrency.closures.insert(info.id, info);
+            }
+        }
         evidence.cleanup.insert(function.x.name.clone(), graph);
     }
     Ok(evidence)
@@ -172,6 +222,17 @@ fn synchronization_types(
                     }
                 }
             }
+        }
+    }
+    for id in [
+        super::concurrency::standard_join_handle(tcx),
+        tcx.get_diagnostic_item(rustc_span::Symbol::intern("verus::vstd::thread::JoinHandle")),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Some(kind) = super::intrinsics::synchronization_type(tcx, id) {
+            types.insert(Dt::Path(ctxt.def_id_to_vir_path(id)), kind);
         }
     }
     types

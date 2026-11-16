@@ -564,10 +564,13 @@ impl<'tcx> Query<'tcx> {
         let mut cratex = (*pre_crate.krate_without_funs).clone();
         let mut found_err = None;
         let mut resource_modes = HashMap::new();
+        let mut resource_erasure = HashMap::new();
         let mut all_dyn_compatability_checks = vec![initial_wf_results.dyn_compatability_checks];
         for stub in pre_crate.infos.iter().flat_map(|info| info.iter_stubs()) {
             match self.get_checked_function(&stub.x.name) {
                 Ok((function, _, modes, dyn_compatability_checks)) => {
+                    resource_erasure
+                        .insert(function.x.name.clone(), self.get_erasure_info(&function.x.name)?);
                     if let Some(modes) = modes {
                         resource_modes.insert(function.x.name.clone(), modes);
                     }
@@ -595,6 +598,7 @@ impl<'tcx> Query<'tcx> {
             &pre_crate.ctxt,
             &mut cratex,
             &resource_modes,
+            &resource_erasure,
             self.args.trace,
             !self.args.no_lifetime,
         )

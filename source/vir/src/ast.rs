@@ -270,6 +270,9 @@ pub enum Primitive {
     StrSlice,
     Ptr, // Mut ptr, unless Const decoration is applied
     Global,
+    /// Opaque unsized pointee of Rust's boxed join error. It has no dyn-dispatch
+    /// interface and cannot expose its payload's allocation size.
+    ThreadPanicPayload,
 }
 
 #[derive(Debug, Serialize, Deserialize, Hash, ToDebugSNode, Clone)]
@@ -1068,6 +1071,8 @@ pub enum ResourceIntrinsic {
     RefSize,
     /// Resolved synchronization primitive; never an allocation-lifetime proof.
     Synchronization(crate::resource::memory::synchronization::Operation),
+    /// Reviewed worker publication/join and strong shared-ownership operations.
+    Concurrency(crate::resource::memory::concurrency::Operation),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToDebugSNode)]

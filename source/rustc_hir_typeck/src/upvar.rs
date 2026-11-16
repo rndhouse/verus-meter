@@ -72,12 +72,23 @@ pub struct CaptureResults<'tcx> {
     pub upvar_tys: Vec<Ty<'tcx>>,
 }
 
+/// Lifetime checking retains tracked proof captures; resource accounting needs
+/// the capture set of executable uses after proof erasure instead.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CapturePurpose {
+    /// Existing Verus ownership and shadow checks.
+    Lifetime,
+    /// Source-level runtime storage and ownership transport.
+    Runtime,
+}
+
 pub fn compute_captures_accounting_for_ghost<'tcx>(
     tcx: TyCtxt<'tcx>,
     param_env: rustc_middle::ty::ParamEnv<'tcx>,
     closure_expr: &'tcx hir::Expr<'tcx>,
     closure_def_id: LocalDefId,
     typeck_results: &'tcx TypeckResults<'tcx>,
+    purpose: CapturePurpose,
 ) -> CaptureResults<'tcx> {
     let hir::ExprKind::Closure(hir::Closure { body: body_id, capture_clause, .. }) =
         &closure_expr.kind
@@ -90,8 +101,14 @@ pub fn compute_captures_accounting_for_ghost<'tcx>(
         closure_min_captures: Default::default(),
         closure_fake_reads: Default::default(),
     });
-    let fn_ctxt =
-        FnCtxt { tcx, param_env, closure_def_id, typeck_results, fresh_typeck_results: &cell };
+    let fn_ctxt = FnCtxt {
+        tcx,
+        param_env,
+        closure_def_id,
+        typeck_results,
+        fresh_typeck_results: &cell,
+        purpose,
+    };
 
     let upvar_tys = fn_ctxt.analyze_closure(
         closure_expr.hir_id,
@@ -115,6 +132,8 @@ pub struct UpvarResults<'tcx> {
 }
 
 pub struct FnCtxt<'a, 'tcx> {
+    /// Select executable capture analysis without changing lifetime-check behavior.
+    pub(crate) purpose: CapturePurpose,
     pub(crate) tcx: TyCtxt<'tcx>,
     pub(crate) param_env: rustc_middle::ty::ParamEnv<'tcx>,
     pub(crate) closure_def_id: rustc_hir::def_id::LocalDefId,
@@ -130,6 +149,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         body_id: LocalDefId,
     ) -> FnCtxt<'a, 'tcx> {
         FnCtxt {
+            purpose: self.purpose,
             tcx: self.tcx,
             param_env: param_env,
             closure_def_id: body_id,
@@ -387,7 +407,11 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
 
             if let Some(upvars) = self.tcx.upvars_mentioned(closure_def_id) {
                 for var_hir_id in upvars.keys() {
-                    if crate::verus::erase_binder_for_closure_captures(self.tcx, *var_hir_id) {
+                    if crate::verus::erase_binder_for_closure_captures(
+                        self.tcx,
+                        *var_hir_id,
+                        self.purpose == CapturePurpose::Runtime,
+                    ) {
                         continue;
                     }
                     let place = closure_fcx.place_for_root_variable(closure_def_id, *var_hir_id);

@@ -1377,7 +1377,12 @@ pub(crate) fn check_proof_with_callee<'tcx>(
             if let ExprKind::Closure(closure) = &e.kind {
                 self.0.push_body_erasure(
                     closure.def_id,
-                    BodyErasure { erase_body: true, ret_spec: true, erase_absolutely: true },
+                    BodyErasure {
+                        runtime: false,
+                        erase_body: true,
+                        ret_spec: true,
+                        erase_absolutely: true,
+                    },
                 );
             }
             rustc_hir::intravisit::walk_expr(self, e);
@@ -4805,7 +4810,12 @@ pub(crate) fn closure_to_vir<'tcx>(
         let exprx = if is_spec_fn {
             bctx.push_body_erasure(
                 *def_id,
-                BodyErasure { erase_body: true, ret_spec: true, erase_absolutely: false },
+                BodyErasure {
+                    runtime: false,
+                    erase_body: true,
+                    ret_spec: true,
+                    erase_absolutely: false,
+                },
             );
 
             if require.len() > 0 || ensure.0.len() > 0 {
@@ -4824,6 +4834,7 @@ pub(crate) fn closure_to_vir<'tcx>(
             bctx.push_body_erasure(
                 *def_id,
                 BodyErasure {
+                    runtime: proof_fn_modes.is_none(),
                     erase_body: false,
                     ret_spec: match proof_fn_modes {
                         None => false,
@@ -4865,7 +4876,14 @@ pub(crate) fn closure_to_vir<'tcx>(
                 external_spec: None, // filled in by ast_simplify
             }
         };
-        Ok(bctx.spanned_typed_new(closure_expr.span, &closure_vir_typ, exprx))
+        let translated = bctx.spanned_typed_new(closure_expr.span, &closure_vir_typ, exprx);
+        if matches!(&translated.x, ExprX::NonSpecClosure { proof_fn_modes: None, .. }) {
+            bctx.erasure_info
+                .borrow_mut()
+                .resource_closures
+                .push((translated.span.clone(), *def_id));
+        }
+        Ok(translated)
     } else {
         panic!("closure_to_vir expects ExprKind::Closure");
     }

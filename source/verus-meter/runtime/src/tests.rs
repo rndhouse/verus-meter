@@ -199,3 +199,14 @@ fn synchronization_layouts_count_payload_once_and_keep_result_variants() {
     assert_eq!(verus_meter_model::mutex_bytes(u64::MAX), None);
     assert_eq!(verus_meter_model::result_bytes(0, u64::MAX), None);
 }
+
+#[test]
+fn concurrent_layouts_separate_handles_backing_and_completion() {
+    assert_eq!(<std::sync::Arc<[u8; 32]> as ValueSize>::BYTES, 8);
+    assert_eq!(<std::thread::JoinHandle<Vec<u8>> as ValueSize>::BYTES, 8);
+    assert_eq!(<std::thread::Result<u64> as ValueSize>::BYTES, 17);
+    assert_eq!(verus_meter_model::arc_backing_bytes(32), Some(48));
+    assert_eq!(verus_meter_model::completion_bytes(24), Some(25));
+    assert_eq!(verus_meter_model::arc_backing_bytes(u64::MAX - 15), None);
+    assert_eq!(verus_meter_model::completion_bytes(u64::MAX), None);
+}
