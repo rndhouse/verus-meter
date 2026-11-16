@@ -22,16 +22,16 @@ Reopen a reviewed entry when substantive additions need review.
 ## Integration tests
 
 Directory: `source/rust_verify_test/tests/resource/memory/`.
-Progress: 3 of 48 files reviewed. Next: `call_budgets.rs`.
+Progress: 8 of 48 files reviewed. Next: `conditional.rs`.
 
 - [x] [array_copy.rs](../../../source/rust_verify_test/tests/resource/memory/array_copy.rs)
 - [x] [borrowed_vectors.rs](../../../source/rust_verify_test/tests/resource/memory/borrowed_vectors.rs)
 - [x] [boxed_slices.rs](../../../source/rust_verify_test/tests/resource/memory/boxed_slices.rs)
-- [ ] [call_budgets.rs](../../../source/rust_verify_test/tests/resource/memory/call_budgets.rs)
-- [ ] [call_forests.rs](../../../source/rust_verify_test/tests/resource/memory/call_forests.rs)
-- [ ] [call_graph.rs](../../../source/rust_verify_test/tests/resource/memory/call_graph.rs)
-- [ ] [checkpoints.rs](../../../source/rust_verify_test/tests/resource/memory/checkpoints.rs)
-- [ ] [children.rs](../../../source/rust_verify_test/tests/resource/memory/children.rs)
+- [x] [call_budgets.rs](../../../source/rust_verify_test/tests/resource/memory/call_budgets.rs)
+- [x] [call_forests.rs](../../../source/rust_verify_test/tests/resource/memory/call_forests.rs)
+- [x] [call_graph.rs](../../../source/rust_verify_test/tests/resource/memory/call_graph.rs)
+- [x] [checkpoints.rs](../../../source/rust_verify_test/tests/resource/memory/checkpoints.rs)
+- [x] [children.rs](../../../source/rust_verify_test/tests/resource/memory/children.rs)
 - [ ] [conditional.rs](../../../source/rust_verify_test/tests/resource/memory/conditional.rs)
 - [ ] [conditional_loops.rs](../../../source/rust_verify_test/tests/resource/memory/conditional_loops.rs)
 - [ ] [control_flow.rs](../../../source/rust_verify_test/tests/resource/memory/control_flow.rs)
@@ -95,4 +95,5 @@ reviewing all applicable fork additions within it.
 Keep only unresolved follow-up tasks and cross-file overlap questions here.
 Remove resolved items; distinguish tentative candidates from confirmed duplicates.
 
-None from the completed file reviews.
+- [ ] Resolve the apparent duplicate unreachable self-recursion checks in
+  `call_graph.rs` and `storage_calls.rs` when reviewing `storage_calls.rs`.

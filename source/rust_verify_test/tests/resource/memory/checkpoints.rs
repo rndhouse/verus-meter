@@ -299,7 +299,7 @@ test_verify_one_file! {
     #[test] checkpoint_rejects_unsupported_types verus_code! {
         use vstd::prelude::*;
         fn f() resources peak(memory) <= 0 { assert(peak(memory) <= value_size(char)); }
-    } => Err(err) => assert_vir_error_msg(err, "resource model")
+    } => Err(err) => assert_vir_error_msg(err, "does not support this type")
 }
 
 test_verify_one_file! {

@@ -2,8 +2,7 @@ use crate::common::*;
 use crate::verify_one_file;
 
 fn assert_memory_failure(err: TestErr) {
-    assert!(!err.errors.is_empty());
-    assert!(err.errors.iter().any(|e| e.message.contains("conditional memory budget exceeded")));
+    assert_vir_error_msg(err, "conditional memory budget exceeded");
 }
 
 test_verify_one_file! {
@@ -99,7 +98,7 @@ test_verify_one_file! {
         {}
         fn caller(flag: bool) requires !flag, resources peak(memory) <= 2 {
             helper(flag);
-            assert(peak(memory) <= 18446744073709551615);
+            assert(peak(memory) <= 2);
         }
     } => Ok(())
 }
