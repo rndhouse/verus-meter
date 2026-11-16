@@ -167,3 +167,56 @@ were not newly probed here. The earlier runtime-query evidence is unchanged;
 this pass did not revisit query evaluation. Exhaustive release-site coverage and
 the previously recorded solver-limit sensitivity remain open. Existing unrelated
 documentation moves remain outside this pass.
+
+## Argument-evaluation overlap review
+
+- [x] Follow pending inline values and allocation trees through `calls.rs`,
+  `lifetime.rs`, `accounting.rs`, and `ownership.rs`. Inspect prepared metadata
+  and original-input lifetimes in `transfer/calls.rs`, `transfer/origins.rs`, and
+  `transfer/trace/operations.rs`, with the selection and effect guards in
+  `transfer/mod.rs`, `projections.rs`, `growth.rs`, and `vector_calls.rs`.
+- [x] Add 17 independently calculated passing/one-byte-short pairs and one
+  unsupported-boundary check in
+  [`argument_ownership.rs`](../../../source/rust_verify_test/tests/resource/memory/argument_ownership.rs).
+- [x] Complete broad validation and commit this bounded pass.
+
+Earlier arguments retain their inline charges and allocation trees while later
+arguments execute. `calls.rs` releases parameter values only after all argument
+evaluation, then composes the callee's allowance and input-lifetime profiles.
+Branch snapshots retain unnamed pending charges. Both native summaries and the
+prepared collection interface preserve returned owners and release consumed
+owners independently. No new incorrect acceptance was confirmed in these samples;
+the accounting implementation is unchanged.
+
+| Cases | Passing / failing bound (bytes) | Independent peak calculation |
+| --- | --- | --- |
+| Consume, forward then drop, nested forwarding, later owning result consumed, and incoming helper consumption | 240 / 239 each | Retained caller box 40 + pending argument 72 + later workspace 128 |
+| Caller branch, later-argument branch, repeated caller loop, and later loop helper | 241 / 240 each | Same 240 + Boolean input or caller/helper counter |
+| Forwarded result retained, with unit or owning later result | 304 / 303 each | Retained caller box 40 + returned box 72 + later scratch 192 |
+| Later helper's declared slack | 272 / 271 | 40 + 72 + declared allowance 160, despite only 128 used |
+| Incoming helper result or collection result retained | 328 / 327 each | Returned box 72 + scratch 256; or caller box 40 + returned collection 96 + scratch 192 |
+| Later argument drops a different incoming owner | 200 / 199 | Pending box 72 + workspace 128; the other box has ended |
+| Pending partial move | 248 / 247 | Parent slot 16 + pending handle 8 + both payloads 96 + workspace 128 |
+| Pending collection consumed | 264 / 263 | Caller box 40 + collection handle/backing/child 96 + workspace 128 |
+
+The collection cases exercise required prepared transfer metadata. Current-memory
+checks additionally verify post-call release of consumed and explicitly dropped
+results. A loop written directly inside a later argument is rejected even under
+a generous allowance: `growth.revision()` also observes scalar loop proof
+instrumentation, triggering the existing vector-allocation-change guard. The
+equivalent checked loop helper passes at 241 bytes and fails at 240. This
+conservative support boundary is recorded separately from successful byte proofs.
+All nine focused tests pass.
+
+Validation against the rebuilt verifier: all 913 memory integration tests and 44
+resource examples passed without retries. Memory unit tests passed 41 tests with
+one existing manual measurement ignored. Formatting for `vir` and
+`rust_verify_test`, Clippy for `rust_verify_test --test resource`, whitespace
+checks, and all ten tracker links passed. This pass changes only tests and this
+tracker; runtime-query implementation and its prior validation are unchanged.
+
+Remaining coverage: partial moves across distinct early-exit paths and deeper
+nested runtime-collection results remain unfinished. This pass does not establish
+general equivalence of prepared metadata and execution, revisit runtime-query
+evaluation, or resolve the previously recorded solver-limit sensitivity.
+Unrelated documentation moves remain outside this pass.
