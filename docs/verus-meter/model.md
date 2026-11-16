@@ -40,6 +40,10 @@ The runtime interprets retained expression data; the query implementation is
 tested Rust tooling, not formally verified. The caller must still establish the
 function's execution preconditions. Unsupported queried bodies fail compilation;
 unannotated resource contracts retain their existing supported scope.
+The query namespace follows the function's visibility and configuration. A
+prepared standalone verifier discovers its runtime bundle automatically; Cargo
+clients declare the runtime dependency explicitly. Querying does not enforce
+execution preconditions or override verification bypass flags.
 See the [example and run instructions](../../source/verus-meter/runtime/README.md).
 
 ## What the guarantee covers

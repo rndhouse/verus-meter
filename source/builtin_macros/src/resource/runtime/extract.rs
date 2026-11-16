@@ -3,6 +3,7 @@
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
 use std::collections::HashMap;
+use verus_syn::ext::IdentExt;
 use verus_syn::{
     BinOp, Block, Expr, ExprCall, FnArgKind, FnMode, ItemFn, Lit, Pat, ResourceExpr, ReturnType,
     Stmt, Type, UnOp,
@@ -110,7 +111,7 @@ impl<'a> Extractor<'a> {
         let ty = match ty {
             Type::Paren(paren) => return self.size(name, &paren.elem, env),
             Type::Path(path) if path.qself.is_none() => {
-                match path.path.get_ident().and_then(|id| env.get(&id.to_string())) {
+                match path.path.get_ident().and_then(|id| env.get(&id.unraw().to_string())) {
                     Some(binding) => binding.ty.as_ref().ok_or_else(|| {
                         error(ty, "runtime size query needs a declared source type")
                     })?,
@@ -140,7 +141,7 @@ impl<'a> Extractor<'a> {
                     .path
                     .get_ident()
                     .ok_or_else(|| error(path, "runtime queries require local scalar bindings"))?;
-                env.get(&name.to_string()).cloned().ok_or_else(|| {
+                env.get(&name.unraw().to_string()).cloned().ok_or_else(|| {
                     error(path, "unknown scalar binding in runtime resource query")
                 })?
             }
@@ -271,7 +272,7 @@ impl<'a> Extractor<'a> {
                     if let Some(ty) = annotation {
                         binding.ty = Some(ty);
                     }
-                    env.insert(name.ident.to_string(), binding);
+                    env.insert(name.ident.unraw().to_string(), binding);
                 }
                 Stmt::Expr(expr, None) if index + 1 == block.stmts.len() => {
                     return self.expression(expr, &env);
@@ -303,9 +304,15 @@ impl<'a> Extractor<'a> {
             };
             return Ok(Binding::new(Kind::Integer, self.size(&query, &ty, env)?));
         }
-        let function = self.functions.get(&name.to_string()).cloned().ok_or_else(|| {
+        let function = self.functions.get(&name.unraw().to_string()).cloned().ok_or_else(|| {
             error(call, "runtime spec helper is unavailable in this verus item scope")
         })?;
+        if !super::attributes::configuration(&function.attrs).is_empty() {
+            return Err(error(
+                call,
+                "runtime helper targets with cfg attributes are unsupported; use an unconditional helper with a conditional expression",
+            ));
+        }
         if !matches!(function.sig.mode, FnMode::Spec(_))
             || crate::syntax::has_external_code(&function.attrs)
             || function.semi_token.is_some()
@@ -318,11 +325,11 @@ impl<'a> Extractor<'a> {
                 "runtime queries require a local nongeneric spec helper with a checked body and matching scalar arguments",
             ));
         }
-        if self.visiting.contains(&name.to_string()) {
+        if self.visiting.contains(&name.unraw().to_string()) {
             return Err(error(call, "recursive spec helpers are unsupported in runtime queries"));
         }
         let bound = self.arguments(&function, call, env)?;
-        self.visiting.push(name.to_string());
+        self.visiting.push(name.unraw().to_string());
         let result = self.block(&function.block, bound);
         self.visiting.pop();
         let mut result = result?;
@@ -356,7 +363,7 @@ impl<'a> Extractor<'a> {
             }
             let mut value = self.expression(argument, env)?;
             value.ty = Some((*typed.ty).clone());
-            bound.insert(id.ident.to_string(), value);
+            bound.insert(id.ident.unraw().to_string(), value);
         }
         Ok(bound)
     }
@@ -368,9 +375,15 @@ impl<'a> Extractor<'a> {
         let name = path.path.get_ident().ok_or_else(|| {
             error(call, "runtime peak queries require a function in the same verus item scope")
         })?;
-        let function = self.functions.get(&name.to_string()).cloned().ok_or_else(|| {
+        let function = self.functions.get(&name.unraw().to_string()).cloned().ok_or_else(|| {
             error(call, "runtime peak target unavailable in this verus item scope")
         })?;
+        if !super::attributes::configuration(&function.attrs).is_empty() {
+            return Err(error(
+                call,
+                "runtime peak targets with cfg attributes are unsupported; use an unconditional helper with a conditional expression",
+            ));
+        }
         if !matches!(function.sig.mode, FnMode::Exec(_) | FnMode::Default)
             || !function.sig.generics.params.is_empty()
             || crate::syntax::has_external_code(&function.attrs)
@@ -386,14 +399,14 @@ impl<'a> Extractor<'a> {
             .resources
             .as_ref()
             .ok_or_else(|| error(call, "runtime peak target requires a resource contract"))?;
-        if self.visiting.contains(&name.to_string()) {
+        if self.visiting.contains(&name.unraw().to_string()) {
             return Err(error(
                 call,
                 "recursive peak references are unsupported in runtime queries",
             ));
         }
         let bound = self.arguments(&function, call, env)?;
-        self.visiting.push(name.to_string());
+        self.visiting.push(name.unraw().to_string());
         let result = self.budget(&contract.budget, &bound);
         self.visiting.pop();
         result

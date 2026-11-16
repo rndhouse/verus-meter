@@ -8,6 +8,8 @@ use std::{
 use anyhow::{Context, bail};
 use clap::Parser;
 
+mod resource;
+
 /// Stage the artifacts needed for a Verus release archive.
 #[derive(Debug, Parser)]
 struct Cli {
@@ -51,6 +53,9 @@ fn main() -> anyhow::Result<()> {
             format!("copying {} to {}", source.display(), destination.display())
         })?;
     }
+
+    resource::runtime::copy_bundle(&cli.build_dir, &cli.output_dir)
+        .context("staging resource runtime bundle")?;
 
     let verus = cli.output_dir.join(format!("verus{EXE_SUFFIX}"));
     let output = Command::new(&verus)

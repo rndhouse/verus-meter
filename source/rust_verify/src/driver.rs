@@ -273,6 +273,9 @@ pub fn run(
                 has_builtin: !matches!(verifier.args.vstd, Vstd::IsCore | Vstd::ImportedViaCore),
             };
             rustc_args.extend(externs.to_args());
+            if verifier.via_cargo_args.is_none() {
+                crate::resource::runtime::extend_args(&mut rustc_args, &verusroot);
+            }
             if in_vargo && !std::env::var("VERUS_Z3_PATH").is_ok() {
                 panic!("we are in vargo, but VERUS_Z3_PATH is not set; this is a bug");
             }

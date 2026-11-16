@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "verus-meter/runtime",
   "verus-meter/model",
+  "verus-meter/tools",
   "air",
   "builtin",
   "builtin_macros",

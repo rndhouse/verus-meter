@@ -1,9 +1,9 @@
-// rust_verify/tests/example.rs ignore --- Compiled coverage in verus_meter_runtime/tests/query.rs supplies the runtime dependency.
+// rust_verify/tests/example.rs ignore --- Dedicated compiled coverage in verus_meter_runtime/tests/query.rs checks the prepared runtime bundle.
 // Query a declared allowance before choosing whether to allocate a buffer.
 // Run with an explicit model-byte budget; OS memory discovery is separate work.
 use vstd::prelude::*;
 
-verus_builtin_macros::verus! {
+verus! {
 
 #[queryable_peak_memory]
 fn allocate(count: u16) -> Vec<u8>

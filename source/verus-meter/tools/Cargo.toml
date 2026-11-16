@@ -1,0 +1,18 @@
+[package]
+name = "verus_meter_tools"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "prepare-resource-runtime"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+cargo_metadata = { workspace = true }
+clap = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

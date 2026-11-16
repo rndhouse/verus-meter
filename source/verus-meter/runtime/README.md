@@ -11,6 +11,15 @@ allowance, and explicit `to_u64()` conversion returning `NativeRangeError` when
 the result is too large. Third-party numeric types stay private. Attribute
 expansion must occur inside `verus!`.
 
+The query module has the function's name and visibility; its callable method is
+`peak_memory_bound` with the original argument order and types. Existing types or
+modules with that name must be renamed to leave the query namespace available.
+Rust checks imported names and conditional namespace conflicts. Function-level
+`cfg` conditions, configuration inside `cfg_attr`, and test-only removal also
+apply to the query module. Put the query attribute directly on the function;
+conditional query markers inside `cfg_attr` are rejected. Methods, traits, and
+other non-function items receive explicit diagnostics.
+
 Local nongeneric spec helpers in the same `verus!` item scope can supply the
 formula. Supported bodies contain immutable scalar lets, nested supported helper
 calls, and a final scalar expression. Local shadowing and nonnegative casts to
@@ -19,6 +28,9 @@ are inspected, including unused initializers. Recursion, higher-order applicatio
 native casts, other arithmetic operations, executable or external helper bodies,
 and helpers outside that item scope are rejected. Source parameters retain their
 order and Rust types, including unused parameters.
+Helper and peak targets controlled by configuration attributes are rejected to
+avoid selecting an incorrect declaration before Rust evaluates the conditions;
+use an unconditional helper containing a supported conditional expression.
 
 `peak(helper(arguments))` expands the local checked function's declared allowance
 with the same argument substitution. Cycles and missing contracts are errors.
@@ -44,6 +56,10 @@ preconditions or reserve RAM. Each macro pass emits data from the parsed resourc
 clause before ordinary signature erasure, with no generated files shared between
 compiler passes. Keep typed resolution for additional expressions in the focused
 resource modules when extending this path.
+Queries can evaluate well-typed inputs outside the function's preconditions, but
+that result does not establish that execution is valid. Existing verification
+bypass flags such as `--no-verify` retain their behavior; the attribute does not
+enforce verification or make an unchecked build verified.
 
 The runtime has separate integer and Boolean expression types, indexed scalar
 inputs, comparisons, lazy logical operators, and conditional integer expressions.
@@ -57,11 +73,12 @@ Evaluation uses stack space proportional to expression depth and storage
 proportional to integer size. There is no custom evaluation-limit framework;
 stack or allocator exhaustion is not reported as a recoverable query error.
 
-After preparing Verus as described in the repository's BUILD.md, run from `source/`:
+After preparing a matching verifier, macro library, and vstd as described in the
+repository's BUILD.md, run from `source/`:
 
 ```sh
-cargo build --release -p verus_builtin_macros -p verus_meter_runtime
-./target-verus/release/verus ../examples/resource/memory/contracts/runtime_query.rs --compile --extern verus_meter_runtime=target-verus/release/libverus_meter_runtime.rlib -L dependency=target-verus/release/deps -o target-verus/runtime-query
+cargo run --release -p verus_meter_tools --bin prepare-resource-runtime -- target-verus/release
+./target-verus/release/verus ../examples/resource/memory/contracts/runtime_query.rs --compile -o target-verus/runtime-query
 ./target-verus/runtime-query 1200
 ./target-verus/runtime-query 1000
 ```
@@ -72,15 +89,27 @@ path allocates a vector and reports its capacity. The budget is an explicit inpu
 OS memory discovery and physical-memory correspondence remain separate work.
 An optional second argument changes the buffer count at runtime (default 100).
 
+The normal `cargo make build` and legacy default `vargo build` prepare the runtime
+bundle automatically. The explicit preparation command above also works for an
+existing in-tree build. Standalone Verus discovers `resource-runtime/` beside its
+other artifacts and uses its isolated library dependencies. Release staging copies
+the bundle. Older distributions without it remain usable for programs that do not
+query bounds. Explicit runtime `--extern` arguments take precedence.
+
+For Cargo projects, add an unrenamed `verus_meter_runtime` path dependency pointing
+to this fork's `source/verus-meter/runtime`, alongside the project's vstd dependency,
+and use `cargo verus build`. Cargo supplies that runtime and its dependency graph;
+the standalone bundle is not injected into Cargo builds.
+
 Run unit tests and the compiled integration test from `source/`:
 
 ```sh
 cargo test --release -p verus_meter_runtime
-VERUS_QUERY_TEST_VERIFIER="$PWD/target-verus/release/verus" cargo test --release -p verus_meter_runtime --test query -- --ignored
+VERUS_QUERY_TEST_VERIFIER="$PWD/target-verus/release/verus" cargo test --release -p verus_meter_runtime --test query -- --ignored --test-threads=1
 ```
 
-The integration test is explicit because it requires prepared verifier artifacts
-and the preceding runtime build. When using a separately staged distribution,
-`VERUS_QUERY_TEST_DEPS` can supply its dependency search directory. The verifier
-distribution must contain this branch's macro library; the example uses the direct
-macro path so a prepared vstd's re-export cannot select an older macro version.
+The explicit integration suite requires this branch's matching verifier artifacts,
+prepared runtime bundle, `cargo-verus`, `create-release`, and
+`prepare-resource-runtime` binaries. Set `VERUS_Z3_PATH` to the prepared solver.
+It checks the interface and compiled examples, a relocated release distribution,
+runtime bundle refresh, and a Cargo client rebuilt after its formula changes.

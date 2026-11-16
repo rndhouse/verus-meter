@@ -123,7 +123,7 @@ pub fn build(
     context: &VargoContext,
     vargo_cmd: &VargoBuild,
 ) -> anyhow::Result<()> {
-    const PACKAGES: &[&str; 7] = &[
+    const PACKAGES: &[&str; 9] = &[
         "rust_verify",
         "verus_builtin",
         "verus_builtin_macros",
@@ -131,6 +131,8 @@ pub fn build(
         "vstd_build",
         "verus",
         "cargo-verus",
+        "verus_meter_runtime",
+        "verus_meter_tools",
     ];
 
     if context.in_nextest {
@@ -244,6 +246,31 @@ cd "$( dirname "${{BASH_SOURCE[0]}}" )"
         &context.target_verus_artifact_dir_absolute,
         &mut macos_prepare_script,
     )?;
+    let profile = if vargo_cmd.build_options.release {
+        "release"
+    } else {
+        "debug"
+    };
+    let prepare_runtime = context
+        .target_dir
+        .join(profile)
+        .join(format!("prepare-resource-runtime{EXE}"));
+    if prepare_runtime.is_file() {
+        let status = std::process::Command::new(prepare_runtime)
+            .arg(&context.target_verus_artifact_dir_absolute)
+            .args([
+                "--profile",
+                if vargo_cmd.build_options.release {
+                    "release"
+                } else {
+                    "dev"
+                },
+            ])
+            .env("CARGO_TARGET_DIR", &context.target_dir)
+            .status()
+            .context("preparing resource runtime")?;
+        anyhow::ensure!(status.success(), "resource runtime preparation failed");
+    }
     if let Some(cvc5) = &context.solver_binary_cvc5 {
         cvc5.copy_to_target_dir(
             &context.target_verus_artifact_dir_absolute,

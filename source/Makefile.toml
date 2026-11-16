@@ -70,7 +70,13 @@ command = "cargo"
 args = ["install", "--path", "rust_verify"]
 
 [tasks.build]
-dependencies = ["build-exclude-vstd", "build-vstd"]
+dependencies = ["build-exclude-vstd", "build-vstd", "prepare-resource-runtime"]
+
+[tasks.prepare-resource-runtime]
+description = "Prepare the runtime query library and its Cargo dependency closure."
+command = "cargo"
+args = ["run", "--release", "-p", "verus_meter_tools", "--bin", "prepare-resource-runtime", "--", "target-verus/release"]
+dependencies = ["build-exclude-vstd"]
 
 [tasks.build-exclude-vstd]
 command = "cargo"
