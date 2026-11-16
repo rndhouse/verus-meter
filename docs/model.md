@@ -105,3 +105,11 @@ See [heap and loop examples](../examples/resource/memory/README.md#heap).
 Internally, charges distinguish `host.local` and `host.heap`. Current source
 contracts bound total `memory`; separate kind-specific limits and GPU allocator
 models are not yet provided.
+
+## Concurrent extension specification
+
+The [concurrent semantics](concurrent-model.md) define the required core scope,
+synchronization effects, ownership rules and proof interfaces for the planned
+extension. They include standard primitive contracts and custom Verus protocols.
+This specification does not enable concurrent memory checking; implementation
+progress is tracked in the [numbered TODOs](todo/concurrent/README.md).
