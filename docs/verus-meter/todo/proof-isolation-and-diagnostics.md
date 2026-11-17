@@ -57,28 +57,31 @@ change or that a new metadata representation is necessary.
   with those boundaries rather than mechanically replacing every `Option`.
   Preserve legitimate speculative fallback: an inapplicable candidate is not
   necessarily an unsupported program, and optional summaries may remain absent.
-- [ ] Carry the purpose and source origin of generated obligations through
+- [x] Carry the purpose and source origin of generated obligations through
   instrumentation. Distinguish byte bounds, descriptor validity, ownership
   transport, worker membership and backing-storage bounds, including loop-entry,
   back-edge and exit obligations where applicable.
-- [ ] Use existing Verus messages, proof notes, assertion identities and logging
+- [x] Use existing Verus messages, proof notes, assertion identities and logging
   facilities where appropriate. Identify any necessary narrow integration change
   before extending upstream IR. Avoid introducing a parallel diagnostic framework.
-- [ ] Keep unsupported analysis, failed verification obligations and solver
+- [x] Keep unsupported analysis, failed verification obligations and solver
   resource exhaustion distinguishable. A failed proof alone cannot establish
   whether the proposed relationship is false or supporting facts are missing;
   diagnostics must not claim that distinction without evidence.
-- [ ] Add focused regressions for distinct inference failures and generated
+- [x] Add focused regressions for distinct inference failures and generated
   obligation labels. Confirm source locations and failure purposes, while
   retaining rejection of unsupported behavior and invalid bounds.
 
 Implementation evidence: `efba6233a` preserves summary-boundary explanations and
-terminal loop/checked-operation source locations. Speculative loop plans retain
-transactional diagnostics; optional summaries may still be absent. Its source
-regression checks the loop location and required-function context, and accepts
-the same body when no summary is required. The commit records 110 focused
-regressions and supporting checks. Generated-obligation labels and their distinct
-failure regressions remain to be completed below this same section.
+terminal loop/checked-operation source locations, retaining speculative fallback
+and optional summaries. `b7ac6f98a` labels generated memory invariants and carries
+existing Verus proof-note text through loop entry, back-edge, continue and exit
+checks. Neither change alters proof formulas or solver limits. Unsupported
+analysis, failed obligations and resource exhaustion retain distinct diagnostics;
+a failed obligation does not claim to distinguish a false property from missing
+supporting facts. Source regressions check inference locations, optional-summary
+acceptance and loop labels. Validation includes 1,030 memory regressions, 44
+resource examples and 361 upstream regressions; details are in the commits.
 
 Completion: a developer can identify the failed analysis stage or generated
 obligation and its source origin without reverse-engineering an entire generated
