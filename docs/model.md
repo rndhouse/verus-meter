@@ -188,7 +188,9 @@ description from every possible checked body; an unknown result cannot borrow
 another family's value. Existing expression and functional-proof requirements
 still apply; these descriptions add no assumptions about source scalar values.
 Other loops require the outstanding-worker state to match at the back edge.
-Dropping a transferred handle remains a rejected detach.
+A worker can also capture a handle popped from a supported population and join
+it. The outer join can recover the resulting scalar or buffer size through the
+collecting worker's summary. Dropping the transferred handle is a detach.
 
 The proof boundary separates construction, transport and byte accounting.
 Generated builders establish worker-description properties; verified one-step

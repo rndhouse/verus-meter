@@ -373,6 +373,58 @@ fn discarding_a_selected_mixed_family_handle_is_still_detach() {
 }
 
 #[test]
+fn a_collecting_worker_can_receive_a_selected_population_handle() {
+    let code = r#"
+        fn f(n: u16) resources peak(memory) <= n * 128 + 131072 {
+            let mut handles = Vec::with_capacity(n as usize);
+            let mut i = 0u16;
+            while i < n invariant i <= n, handles.len() == i, decreases n - i, {
+                let worker = std::thread::spawn(move || i);
+                handles.push(worker);
+                i += 1;
+            }
+            while handles.len() > 0 decreases handles.len(), {
+                let selected = handles.pop().unwrap();
+                let collector = std::thread::spawn(move || selected.join().unwrap());
+                let size = collector.join().unwrap();
+                let storage = Vec::<u8>::with_capacity(size as usize);
+                drop(storage);
+            }
+        }
+    "#;
+    rejects("worker_collects_selected_handle", code, GLOBAL);
+    let detached = code.replace("selected.join().unwrap()", "{ drop(selected); 0u16 }");
+    rejects("worker_detaches_selected_handle", &detached, "detached workers");
+}
+
+#[test]
+fn a_buffer_keeps_its_allocation_across_two_worker_joins() {
+    let code = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f() resources peak(memory) <= 4096 {
+            let mut handles = Vec::with_capacity(1);
+            let child = std::thread::spawn(move || Vec::<u8>::with_capacity(1024));
+            handles.push(child);
+            let selected = handles.pop().unwrap();
+            drop(handles);
+            let collector = std::thread::spawn(move || selected.join().unwrap());
+            let result = collector.join().unwrap();
+            assert(current(memory) <= 1048);
+            drop(result);
+            assert(current(memory) <= 0);
+        }
+        }
+    "#;
+    let valid = crate::verify_one_file("worker_double_join_buffer", code.into(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+    let enlarged = code.replace("with_capacity(1024)", "with_capacity(1025)");
+    let error =
+        crate::verify_one_file("worker_double_join_buffer_short", enlarged, &[]).unwrap_err();
+    crate::common::assert_vir_error_msgs(error, &["conditional memory budget exceeded", GLOBAL]);
+}
+
+#[test]
 fn retained_workers_keep_each_construction_until_collection() {
     rejects(
         "retained_worker_inputs",

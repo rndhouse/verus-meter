@@ -503,6 +503,20 @@ impl Analysis<'_> {
         {
             return Err(unsupported(&expr.span, "inconsistent primitive join result payloads"));
         }
+        // A locally published handle can use its own checked publication in
+        // the enclosing transfer trace, including when the body joined a
+        // handle selected from another population. Imported fixed handles
+        // require a caller-supplied publication description.
+        if worker.parent == self.current_worker
+            && self.growth.worker_observations.contains_key(&id)
+            && worker.entry_shared.is_empty()
+            && execution.shared.is_empty()
+        {
+            self.transitions.operation(
+                &expr.span,
+                super::transfer::checked::Operation::WorkerJoin { source: argument.clone() },
+            );
+        }
         self.heap.workers.complete(id, &expr.span)?;
         let mut retained = execution.retained.clone();
         let mut result_owner = execution.result.owner.clone();

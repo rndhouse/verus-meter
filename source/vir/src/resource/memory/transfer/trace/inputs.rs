@@ -18,6 +18,13 @@ impl Trace<'_> {
         forest: &Expr,
         path: &mut Vec<OwnerSlot>,
     ) -> Option<Expr> {
+        // A captured handle carries the selected worker observation. Rebuilding
+        // it from allocation fields would erase its identity and result.
+        if self.layouts.join_handle(typ).is_some() {
+            return Some(path.iter().fold(forest.clone(), |memory, slot| {
+                expr::subtree(span, memory, expr::path(span, [self.layouts.metadata_slot(slot)]))
+            }));
+        }
         let mut property =
             |field| self.symbol(span, Input::Property(parameter, path.clone(), field), int_typ());
         let bytes = property("bytes");

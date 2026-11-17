@@ -193,17 +193,23 @@ impl Analysis<'_> {
         }
         let mut needs_template = false;
         owner.visit(&mut |node| {
-            needs_template |= node.vector.is_some_and(|id| self.growth.vectors[id].backing.changed)
-                || node
-                    .elements
-                    .as_ref()
-                    .is_some_and(|elements| !elements.zero_charge(&self.growth));
+            if !result || execution.transfer.is_none() || needs_template {
+                return;
+            }
+            // A selected worker result can have unchanged backing whose size
+            // references a proof local in the collecting actor. Its checked
+            // template closes that observation over the captured handle.
+            needs_template |= node.vector.is_some_and(|id| {
+                let backing = &self.growth.vectors[id].backing;
+                backing.changed
+                    || close(&backing.initial_bytes, &execution.inputs, &allowed).is_none()
+            }) || node
+                .elements
+                .as_ref()
+                .is_some_and(|elements| !elements.zero_charge(&self.growth));
         });
-        let memory = if needs_template && result {
-            self.worker_result_memory(execution, span)?
-        } else {
-            None
-        };
+        let memory =
+            if needs_template { self.worker_result_memory(execution, span)? } else { None };
         self.rebind_worker_node(owner, retained, execution, span, &allowed, memory)
     }
 
