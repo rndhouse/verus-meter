@@ -160,6 +160,15 @@ impl Analysis<'_> {
             unsupported(&expr.span, "Result match without checked outcome ownership")
         })?;
         self.checked_result(&owner, &expr.span)?;
+        self.transitions.operation(
+            &expr.span,
+            super::super::transfer::checked::Operation::JoinedMatch {
+                source: scrutinee.clone(),
+                pattern: pattern.clone(),
+                body: arm.x.body.clone(),
+                observed_scalar: self.observed_worker_scalar(&owner),
+            },
+        );
         let payload_owner = owner.children.remove(&OwnerSlot::Contents);
         owner.joined = None;
         self.release_owner(owner, &expr.span);
@@ -221,11 +230,7 @@ impl Analysis<'_> {
             unsupported(&expr.span, "Result extraction without checked outcome ownership")
         })?;
         self.checked_result(&owner, &expr.span)?;
-        let observed_scalar = owner.joined.as_ref().unwrap().iter().all(|actor| {
-            self.growth.worker_executions[actor].transfer.as_ref().is_some_and(|template| {
-                matches!(template.result, super::super::transfer::Value::Scalar(_))
-            })
-        });
+        let observed_scalar = self.observed_worker_scalar(&owner);
         self.transitions.operation(
             &expr.span,
             super::super::transfer::checked::Operation::Unwrap {
@@ -239,6 +244,14 @@ impl Analysis<'_> {
         self.release_owner(owner, &expr.span);
         self.release_value(value, &expr.span);
         Ok(Some(result))
+    }
+
+    fn observed_worker_scalar(&self, owner: &super::super::heap::Owner) -> bool {
+        owner.joined.as_ref().unwrap().iter().all(|actor| {
+            self.growth.worker_executions[actor].transfer.as_ref().is_some_and(|template| {
+                matches!(template.result, super::super::transfer::Value::Scalar(_))
+            })
+        })
     }
 
     pub(in super::super) fn checked_result(

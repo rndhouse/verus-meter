@@ -179,6 +179,13 @@ fn scalar_worker_functional_proofs_support_input_dependent_allocations() {
         }
         "#;
     rejects("worker_scalar_functional_bounds", source, GLOBAL);
+    // An explicit match must receive the selected occurrence even when Err
+    // comes first. Its arm-local binding supplies the executable capacity.
+    let matched = source.replace(
+        "handles.pop().unwrap().join().unwrap()",
+        "match handles.pop().unwrap().join() { Err(_) => 0u16, Ok(size) => size }",
+    );
+    rejects("worker_scalar_match_bounds", &matched, GLOBAL);
 
     let false_contract = source.replace("result == i { i }", "result == i { 2000u16 }");
     let error = crate::verify_one_file(
@@ -194,7 +201,7 @@ fn scalar_worker_functional_proofs_support_input_dependent_allocations() {
 
     // Change the executable result and its functional proof together. The
     // unchanged allocation now exceeds the budget for small positive n.
-    let enlarged = source
+    let enlarged = matched
         .replace("value == j", "value == 2000")
         .replace("result == i { i }", "result == 2000 { 2000u16 }");
     let error = crate::verify_one_file(

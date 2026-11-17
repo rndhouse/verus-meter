@@ -153,6 +153,13 @@ pub(in super::super) enum Operation {
         /// Ordinary optional values and unknown worker results have none.
         observed_scalar: bool,
     },
+    /// The reachable arm and payload of a match on a checked worker join.
+    JoinedMatch {
+        source: crate::ast::Place,
+        pattern: crate::ast::Pattern,
+        body: Expr,
+        observed_scalar: bool,
+    },
     /// Consume the owner selected by the recorded operand move.
     Drop { source: Expr },
     /// Inspect the presence tag without consuming its owner.

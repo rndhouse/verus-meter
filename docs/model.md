@@ -181,7 +181,7 @@ the selected occurrence's own result description. Local proofs cover finite
 mixed-family collections, separate symbolic collections and supported symbolic
 batches containing several worker families per iteration, including partial joins
 within a batch. Shared captures/results still need further population support.
-Retained scalar results preserve checked body expressions through `join().unwrap()`,
+Retained scalar results preserve checked body expressions through `join().unwrap()` and explicit `Ok`/`Err` matches,
 including Boolean and signed values. They can supply allocation sizes directly or
 through supported helpers after partial collection. Scalar inference requires a
 description from every possible checked body; an unknown result cannot borrow

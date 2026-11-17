@@ -29,18 +29,7 @@ impl Trace<'_> {
             let condition = exits::and(span, remaining.clone(), condition.clone());
             self.path = exits::and(span, outer.clone(), condition.clone());
             let result = self.value(&arm.x.body)?;
-            for edge in &mut self.exits[first_exit..] {
-                for name in &locals {
-                    edge.state.values.remove(name);
-                    edge.state.definitions.remove(name);
-                    edge.state.written.remove(name);
-                }
-            }
-            for name in &locals {
-                self.state.values.remove(name);
-                self.state.definitions.remove(name);
-                self.state.written.remove(name);
-            }
+            self.end_pattern_scope(first_exit, &locals);
             self.guard_effects(first_effect, &condition);
             all_continue &= self.reachable;
             if self.reachable {
@@ -69,6 +58,37 @@ impl Trace<'_> {
         self.path = if all_continue { outer } else { path };
         self.branch_depth -= 1;
         Some(result)
+    }
+
+    /// Body accounting has established this specific join's success. Trace the
+    /// selected payload and expire its bindings on normal and early exits.
+    pub(super) fn joined_arm(
+        &mut self,
+        pattern: &Pattern,
+        payload: Value,
+        body: &Expr,
+    ) -> Option<Value> {
+        let mut locals = Vec::new();
+        let first_exit = self.exits.len();
+        let condition = self.pattern(pattern, payload, &mut locals)?;
+        if !matches!(condition.x, ExprX::Const(Constant::Bool(true))) {
+            return None;
+        }
+        let result = self.value(body)?;
+        self.end_pattern_scope(first_exit, &locals);
+        Some(result)
+    }
+
+    fn end_pattern_scope(&mut self, first_exit: usize, locals: &[VarIdent]) {
+        for state in std::iter::once(&mut self.state)
+            .chain(self.exits[first_exit..].iter_mut().map(|edge| &mut edge.state))
+        {
+            for name in locals {
+                state.values.remove(name);
+                state.definitions.remove(name);
+                state.written.remove(name);
+            }
+        }
     }
 
     fn pattern(

@@ -4,6 +4,37 @@ use super::*;
 use crate::resource::memory::metadata::operations::Removal;
 
 impl Trace<'_> {
+    /// Unwrap and a successful join match project the same Contents slot.
+    fn extracted_payload(
+        &self,
+        span: &Span,
+        node: Node,
+        typ: &Typ,
+        observed_scalar: bool,
+    ) -> Option<Value> {
+        let memory = expr::subtree(
+            span,
+            node.memory,
+            expr::path(span, [self.layouts.metadata_slot(&OwnerSlot::Contents)]),
+        );
+        if contracts::scalar(typ) {
+            return Some(if observed_scalar {
+                Value::Scalar(expr::observed_scalar(span, memory, typ)?)
+            } else {
+                Value::Unknown
+            });
+        }
+        let minima = node
+            .minima
+            .into_iter()
+            .filter_map(|(path, floor)| {
+                path.strip_prefix(&[Step::Fixed(OwnerSlot::Contents)])
+                    .map(|rest| (rest.to_vec(), floor))
+            })
+            .collect();
+        Some(Value::Owner(Node { origin: None, typ: typ.clone(), memory, minima }))
+    }
+
     pub(super) fn operation(
         &mut self,
         value: &Expr,
@@ -326,27 +357,14 @@ impl Trace<'_> {
                 let Value::Owner(node) = self.value(&source)? else {
                     return Some(Value::Unknown);
                 };
-                let memory = expr::subtree(
-                    span,
-                    node.memory,
-                    expr::path(span, [self.layouts.metadata_slot(&OwnerSlot::Contents)]),
-                );
-                if contracts::scalar(&value.typ) {
-                    return Some(if observed_scalar {
-                        Value::Scalar(expr::observed_scalar(span, memory, &value.typ)?)
-                    } else {
-                        Value::Unknown
-                    });
-                }
-                let minima = node
-                    .minima
-                    .into_iter()
-                    .filter_map(|(path, floor)| {
-                        path.strip_prefix(&[Step::Fixed(OwnerSlot::Contents)])
-                            .map(|rest| (rest.to_vec(), floor))
-                    })
-                    .collect();
-                Some(Value::Owner(Node { origin: None, typ: value.typ.clone(), memory, minima }))
+                self.extracted_payload(span, node, &value.typ, observed_scalar)
+            }
+            Operation::JoinedMatch { source, pattern, body, observed_scalar } => {
+                let Value::Owner(node) = self.place_value(&source, &source.typ)? else {
+                    return None;
+                };
+                let payload = self.extracted_payload(span, node, &pattern.typ, observed_scalar)?;
+                self.joined_arm(&pattern, payload, &body)
             }
             Operation::Predicate { receiver, present } => {
                 let location = self.checked_location(&receiver)?;

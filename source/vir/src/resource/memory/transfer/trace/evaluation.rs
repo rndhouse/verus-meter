@@ -124,10 +124,14 @@ impl Trace<'_> {
         if let Some(operation) = self.checked.operations.get(&span.id).cloned() {
             // Temporary wrappers may share a call's source span. Dispatch only
             // at the executable operation, so its operands are evaluated once.
-            if matches!(
-                &value.x,
-                ExprX::Call { .. } | ExprX::Ctor(..) | ExprX::NonSpecClosure { .. }
-            ) {
+            let at_site = match &operation {
+                checked::Operation::JoinedMatch { .. } => matches!(value.x, ExprX::Match(..)),
+                _ => matches!(
+                    value.x,
+                    ExprX::Call { .. } | ExprX::Ctor(..) | ExprX::NonSpecClosure { .. }
+                ),
+            };
+            if at_site {
                 self.used.insert((checked::Kind::Operation, span.id));
                 let result = self.operation(value, operation);
                 if result.is_none() && self.failure.is_none() {
