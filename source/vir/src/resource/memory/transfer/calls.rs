@@ -373,6 +373,7 @@ impl Analysis<'_> {
             expr::function("select_root"),
             expr::function("select_runtime"),
             expr::function("select_descendants"),
+            expr::function("select_without"),
             expr::function("contains_prefix"),
             expr::function("lookup_prefix"),
             expr::function("take_children_empty"),

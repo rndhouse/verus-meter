@@ -329,6 +329,19 @@ impl Analysis<'_> {
     }
 
     pub(super) fn metadata_partition(&mut self, span: &Span, records: Expr, path: Expr) {
+        // Selecting from a retained remainder can expose a disjoint sibling.
+        // Activate this rewrite when a source projection needs it, rather than
+        // for every metadata local in a collection-construction proof.
+        let selection = SpannedTyped::new(
+            span,
+            &crate::ast_util::unit_typ(),
+            ExprX::Fuel(expr::function("select_without"), 1, true),
+        );
+        self.growth
+            .before
+            .entry(span.id)
+            .or_default()
+            .push(crate::def::Spanned::new(span.clone(), StmtX::Expr(selection)));
         if self.growth.transferred_views {
             self.growth.before.entry(span.id).or_default().push(expr::lemma(
                 span,

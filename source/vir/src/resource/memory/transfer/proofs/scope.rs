@@ -69,7 +69,8 @@ impl BoundProofs {
 }
 
 impl ForestProofs {
-    /// Start an independent proof query with an unconditional root scope.
+    /// Start a fresh fact cache under the caller's current assumptions. This
+    /// scopes fact reuse; it does not create an independent solver query.
     pub(super) fn new() -> Self {
         Self {
             scopes: vec![Scope::default()],

@@ -12,7 +12,7 @@ use super::selection::{
     contains_add, contains_prefix, contains_runtime, contains_without, lookup_add, lookup_empty,
     lookup_prefix, lookup_push, lookup_runtime, lookup_subtree, lookup_without, partition_without,
     select_add, select_empty, select_prefix, select_push, select_replacement, select_runtime,
-    select_without, singleton_prefix, skip_prefix,
+    singleton_prefix, skip_prefix,
 };
 #[cfg(verus_keep_ghost)]
 use super::views::{
@@ -26,6 +26,8 @@ verus! {
 broadcast use crate::seq::group_seq_axioms;
 // Keep lookup_subtree explicit: flattening every composed ownership path can
 // multiply matching terms across a sequence of operations.
+// select_without is activated at selection and helper-transfer sites. Building
+// a forest alone does not need arbitrary views through its removed subtrees.
 
 pub broadcast group group_metadata_algebra {
     Seq::add_empty_left,
@@ -59,7 +61,6 @@ pub broadcast group group_metadata_algebra {
     lookup_add,
     lookup_push,
     lookup_runtime,
-    select_without,
     select_replacement,
 }
 
