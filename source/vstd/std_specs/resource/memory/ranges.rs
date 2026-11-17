@@ -314,6 +314,24 @@ pub open spec fn shift_children(memory: Seq<Record>, base: int) -> Seq<Record>
     }
 }
 
+/// Translate a composed block without inspecting the records it transports.
+pub proof fn shift_children_add(left: Seq<Record>, right: Seq<Record>, base: int)
+    ensures
+        shift_children(left + right, base) == shift_children(left, base) + shift_children(
+            right,
+            base,
+        ),
+    decreases right.len(),
+{
+    reveal_with_fuel(shift_children, 2);
+    if right.len() == 0 {
+        assert(left + right =~= left);
+    } else {
+        shift_children_add(left, right.drop_last(), base);
+        assert((left + right).drop_last() =~= left + right.drop_last());
+    }
+}
+
 /// Moving a complete child to another runtime slot preserves its full contents.
 pub proof fn shift_children_prefix(child: Seq<Record>, index: int, base: int)
     requires

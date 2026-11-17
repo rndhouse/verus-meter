@@ -49,38 +49,28 @@ pub(in super::super) fn prefix(
             }
             if let Some(args) = simplify::inspect::call(value, "take_children") {
                 emitter.lemma(span, "take_children_pop", args.as_ref().clone(), proofs);
+                // A cut transports the original forest unchanged. Its pop law
+                // does not require expanding historical construction steps.
+                return VisitorControlFlow::Return;
             }
             VisitorControlFlow::Recurse
         });
     Ok(())
 }
 
-/// A singleton block's final shift changes its runtime slot alone. Guard the
-/// predecessor so capture expressions never use a negative construction index.
+/// Shift every child in the final block while preserving opaque observations.
+/// Guard the predecessor so captures never use a negative construction index.
 fn last_block(span: &Span, args: &Exprs, proofs: &mut Vec<Stmt>) {
     let ExprX::Closure(binders, body) = &args[0].x else { return };
-    let Some(parts) = simplify::inspect::call(body, "prefix") else { return };
-    let Some(path) = simplify::inspect::path(&parts[1]).filter(|path| path.len() == 1) else {
-        return;
-    };
-    if contracts::constant(&path[0]).is_none() {
-        return;
-    }
     let previous = contracts::subtract(span, args[2].clone(), expr::integer(span, 1));
     let values = HashMap::from([(binders[0].name.clone(), previous.clone())]);
-    let lemma = expr::lemma(
-        span,
-        "shift_children_prefix",
-        vec![
-            substitute(&parts[0], &values),
-            path[0].clone(),
-            contracts::add(
-                span,
-                args[3].clone(),
-                contracts::multiply(span, args[1].clone(), previous),
-            ),
-        ],
-    );
+    let base =
+        contracts::add(span, args[3].clone(), contracts::multiply(span, args[1].clone(), previous));
+    let mut shifted = Vec::new();
+    shift_block(span, &substitute(body, &values), &base, &mut shifted);
+    if shifted.is_empty() {
+        return;
+    }
     proofs.push(crate::def::Spanned::new(
         span.clone(),
         StmtX::Expr(SpannedTyped::new(
@@ -88,9 +78,32 @@ fn last_block(span: &Span, args: &Exprs, proofs: &mut Vec<Stmt>) {
             &crate::ast_util::unit_typ(),
             ExprX::If(
                 crate::ast_util::mk_ineq(span, &expr::integer(span, 0), &args[2], InequalityOp::Lt),
-                crate::ast_util::mk_block(span, vec![lemma], None),
+                crate::ast_util::mk_block(span, shifted, None),
                 None,
             ),
         )),
     ));
+}
+
+/// Only recurse through collection composition, never a worker's descriptions.
+fn shift_block(span: &Span, block: &Expr, base: &Expr, proofs: &mut Vec<Stmt>) {
+    if let Some(parts) = simplify::inspect::call(block, "add") {
+        shift_block(span, &parts[0], base, proofs);
+        shift_block(span, &parts[1], base, proofs);
+        proofs.push(expr::lemma(
+            span,
+            "shift_children_add",
+            vec![parts[0].clone(), parts[1].clone(), base.clone()],
+        ));
+    } else if let Some(parts) = simplify::inspect::call(block, "prefix") {
+        if let Some(path) = simplify::inspect::path(&parts[1]).filter(|path| path.len() == 1)
+            && contracts::constant(&path[0]).is_some()
+        {
+            proofs.push(expr::lemma(
+                span,
+                "shift_children_prefix",
+                vec![parts[0].clone(), path[0].clone(), base.clone()],
+            ));
+        }
+    }
 }

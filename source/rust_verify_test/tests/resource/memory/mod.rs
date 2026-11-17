@@ -10,8 +10,6 @@ mod call_graph;
 mod checkpoints;
 mod children;
 mod concurrency;
-mod worker_execution;
-mod worker_populations;
 mod conditional;
 mod conditional_loops;
 mod control_flow;
@@ -57,5 +55,7 @@ mod storage_structs;
 mod synchronization;
 mod transformed_loops;
 mod vectors;
+mod worker_execution;
+mod worker_populations;
 
 mod support;

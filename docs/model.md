@@ -178,11 +178,11 @@ membership invariants describe the outstanding occurrences at each back edge;
 selecting a handle preserves its own inputs and conditional result description.
 Selections can name several compatible checked body families, while retaining
 the selected occurrence's own result description. Local proofs cover finite
-mixed-family collections and separate symbolic collections, including partial
-joins. Symbolic blocks containing several worker families and shared
-captures/results still need further population support. Other loops require the
-outstanding-worker state to match at the back edge. Dropping a transferred handle
-remains a rejected detach.
+mixed-family collections, separate symbolic collections and supported symbolic
+batches containing several worker families per iteration, including partial joins
+within a batch. Shared captures/results still need further population support.
+Other loops require the outstanding-worker state to match at the back edge.
+Dropping a transferred handle remains a rejected detach.
 
 The proof boundary separates construction, transport and byte accounting.
 Generated builders establish worker-description properties; verified one-step

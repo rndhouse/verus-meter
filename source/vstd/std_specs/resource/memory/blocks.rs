@@ -700,6 +700,8 @@ pub proof fn generate_children_at(
 }
 
 /// Exact indexed views avoid expanding a runtime number of blocks at callers.
+/// Export the selected builder's range as well, so its checked construction
+/// facts apply without reproving division bounds at every projection.
 pub proof fn generate_children_views(
     builder: spec_fn(int) -> Seq<Record>,
     width: int,
@@ -721,7 +723,8 @@ pub proof fn generate_children_views(
                 subtree(builder((index - start) / width), seq![(index - start) % width])
             } else {
                 Seq::<Record>::empty()
-            }),
+            }) && (width > 0 && start <= index < start + width * count ==> (0 <= (index - start)
+                / width < count && 0 <= (index - start) % width < width)),
 {
     assert forall|index: int|
         #![trigger view_requested(generate_children(builder, width, count, start), index), subtree(generate_children(builder, width, count, start), seq![index])]
@@ -732,7 +735,8 @@ pub proof fn generate_children_views(
             subtree(builder((index - start) / width), seq![(index - start) % width])
         } else {
             Seq::<Record>::empty()
-        }) by {
+        }) && (width > 0 && start <= index < start + width * count ==> (0 <= (index - start) / width
+            < count && 0 <= (index - start) % width < width)) by {
         if width > 0 && start <= index < start + width * count {
             let x = index - start;
             let k = x / width;

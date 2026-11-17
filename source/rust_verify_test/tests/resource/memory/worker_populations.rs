@@ -6,6 +6,62 @@ use super::support::rejects;
 const GLOBAL: &str = "checked worker effects still require global lifetime and interference proofs";
 
 #[test]
+fn mixed_worker_batches_preserve_each_result_during_partial_collection() {
+    let source = r#"
+        fn f(n: u16, keep: u16)
+            requires keep <= n,
+            resources peak(memory) <= n * 131072 + n * 256 + 1024
+        {
+            let mut handles = Vec::with_capacity(2 * n as usize);
+            let mut i = 0u16;
+            while i < n
+                invariant i <= n, handles.len() == 2 * i,
+                decreases n - i,
+            {
+                let first = std::thread::spawn(move || Vec::<u8>::with_capacity(i as usize));
+                handles.push(first);
+                let second = std::thread::spawn(move || Vec::<u8>::with_capacity(2 * i as usize + 17));
+                handles.push(second);
+                i += 1;
+            }
+            while handles.len() > keep as usize
+                invariant handles.len() <= 2 * n,
+                decreases handles.len(),
+            {
+                let handle = handles.pop().unwrap();
+                let moved = handle;
+                let result = moved.join().unwrap();
+                drop(result);
+            }
+            while handles.len() > 0
+                invariant handles.len() <= keep,
+                decreases handles.len(),
+            {
+                let result = handles.pop().unwrap().join().unwrap();
+                drop(result);
+            }
+        }
+        "#;
+    rejects("mixed_worker_batches", source, GLOBAL);
+
+    // Change an executable allocation in the second family. Its result must
+    // retain its own extent after either collection loop selects its handle.
+    let enlarged = source.replace("2 * i as usize + 17", "2 * i as usize + 200_000");
+    let error = crate::verify_one_file(
+        "mixed_worker_batches_large_result",
+        format!("use vstd::prelude::*; verus! {{ {enlarged} }}"),
+        &[],
+    )
+    .unwrap_err();
+    assert!(error.errors.iter().any(|error| error.message.contains("memory budget exceeded")));
+    assert!(error.errors.iter().any(|error| error.message.contains(GLOBAL)));
+    assert!(
+        error.errors.iter().all(|error| error.message.contains("memory budget exceeded")
+            || error.message.contains(GLOBAL))
+    );
+}
+
+#[test]
 fn symbolic_worker_collections_keep_their_own_family_and_results() {
     rejects(
         "symbolic_worker_families",

@@ -88,6 +88,7 @@ fn module(name: &str) -> Option<&'static str> {
         | "reverse_children_push"
         | "reverse_children_views"
         | "shift_children"
+        | "shift_children_add"
         | "shift_children_facts"
         | "shift_children_prefix"
         | "shift_children_select"
