@@ -110,6 +110,7 @@ impl<T: ValueSize> sealed::Value for std::thread::JoinHandle<T> {}
 impl<T: ValueSize> ValueSize for std::thread::JoinHandle<T> {
     const BYTES: u64 = WORD_BYTES;
 }
+
 impl<T: ValueSize> sealed::Value for Option<T> {}
 
 impl<T: ValueSize> ValueSize for Option<T> {
@@ -133,6 +134,7 @@ impl sealed::Value for Box<dyn std::any::Any + Send> {}
 impl ValueSize for Box<dyn std::any::Any + Send> {
     const BYTES: u64 = 2 * WORD_BYTES;
 }
+
 impl<T> sealed::Reference for &T {}
 
 impl<T> ReferenceSize for &T {

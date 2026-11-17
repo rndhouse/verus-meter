@@ -422,6 +422,7 @@ pub(super) fn instrument(
 
 #[cfg(test)]
 mod tests {
+    use super::super::contracts;
     use super::super::footprint::{Footprint, MemoryBudget, MemoryKind, MemorySelection};
     use super::*;
 
