@@ -176,9 +176,13 @@ Nested actors have separate loop contexts. Spawn/join loops retain parent and
 local occurrence coordinates. For supported retained collections, exact
 membership invariants describe the outstanding occurrences at each back edge;
 selecting a handle preserves its own inputs and conditional result description.
-These paths currently require one compatible worker family and exclude shared
-captures/results. Other loops require the outstanding-worker state to match at
-the back edge. Dropping a transferred handle remains a rejected detach.
+Selections can name several compatible checked body families, while retaining
+the selected occurrence's own result description. Local proofs cover finite
+mixed-family collections and separate symbolic collections, including partial
+joins. Symbolic blocks containing several worker families and shared
+captures/results still need further population support. Other loops require the
+outstanding-worker state to match at the back edge. Dropping a transferred handle
+remains a rejected detach.
 
 The proof boundary separates construction, transport and byte accounting.
 Generated builders establish worker-description properties; verified one-step
@@ -191,7 +195,7 @@ or charge future results as already live. Explicit and lexical destruction must
 prove that no outstanding worker remains in a discarded collection.
 
 For these checked workers, join-result matching and `unwrap` use the successful
-normal-execution outcome, conditional on Verus checking the actual body/helper
+normal-execution outcome, conditional on Verus checking every possible body/helper
 obligations and on the model's environmental assumptions. The original functional
 join call and its postconditions remain. An ordinary `Result` or an external
 functional specification cannot supply this evidence. Outgoing allocation facts

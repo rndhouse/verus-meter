@@ -330,13 +330,14 @@ pub(super) fn instrument(
             if let Some((_, statements)) = sites.get(&expr.span.id) {
                 seen.obligations.insert(expr.span.id);
                 if matches!(&expr.x, ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), .. }
-                    if matches!(attrs.resource_intrinsic, Some(ResourceIntrinsic::ResultUnwrap | ResourceIntrinsic::OptionUnwrap)))
+                    if matches!(attrs.resource_intrinsic, Some(ResourceIntrinsic::ResultUnwrap | ResourceIntrinsic::OptionUnwrap))
+                        || matches!(attrs.resource_intrinsic, Some(ResourceIntrinsic::Concurrency(op)) if op.joins()))
                 {
-                    // An inline join/pop operand establishes the returned allocation
+                    // An inline join/pop receiver establishes the returned allocation
                     // observations. Checking extraction before that operand can
                     // read a previous iteration's bytes (or initialized zero).
-                    // Unwrap changes no allocation extent; its recorded overlap
-                    // is checked after evaluating the operand and extraction.
+                    // Join and unwrap transfer existing result storage; their
+                    // recorded overlap is checked after receiver evaluation.
                     after_operands.extend(statements.iter().cloned());
                 } else {
                     checks.extend(statements.iter().cloned());

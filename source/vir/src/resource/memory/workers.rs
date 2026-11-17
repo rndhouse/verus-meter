@@ -506,16 +506,16 @@ impl Analysis<'_> {
         }
         let mut result = self.collect_worker_result(id, &expr.span)?;
         result.owner = result_owner;
-        self.pack_worker_result(expr, id, result).map(Some)
+        self.pack_worker_result(expr, [id].into(), result).map(Some)
     }
 
     pub(super) fn pack_worker_result(
         &mut self,
         expr: &Expr,
-        id: WorkerId,
+        actors: std::collections::BTreeSet<WorkerId>,
         result: Storage,
     ) -> Result<super::lifetime::Value, VirErr> {
-        self.growth.worker_joins.insert(expr.span.id, id);
+        self.growth.worker_joins.insert(expr.span.id, actors.clone());
         let bytes = self.layouts.size(&expr.typ, &expr.span)?;
         let extra = bytes
             .checked_sub(result.value.bytes)
@@ -531,7 +531,7 @@ impl Analysis<'_> {
         let mut origins = result.value.origins;
         origins.insert(packed);
         self.result_owner = Some(Owner {
-            joined: Some(id),
+            joined: Some(actors),
             children: result
                 .owner
                 .into_iter()

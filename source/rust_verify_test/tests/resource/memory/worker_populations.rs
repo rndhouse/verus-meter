@@ -6,6 +6,105 @@ use super::support::rejects;
 const GLOBAL: &str = "checked worker effects still require global lifetime and interference proofs";
 
 #[test]
+fn symbolic_worker_collections_keep_their_own_family_and_results() {
+    rejects(
+        "symbolic_worker_families",
+        r#"
+        fn f(n: u16, keep: u16)
+            requires keep <= n,
+            resources peak(memory) <= n * 131072 + n * 256 + 1024
+        {
+            let mut left = Vec::with_capacity(n as usize);
+            let mut right = Vec::with_capacity(n as usize);
+            let mut i = 0u16;
+            while i < n
+                invariant i <= n, left.len() == i, right.len() == i,
+                decreases n - i,
+            {
+                let first = std::thread::spawn(move || Vec::<u8>::with_capacity(i as usize));
+                left.push(first);
+                let second = std::thread::spawn(move || Vec::<u8>::with_capacity(2 * i as usize + 17));
+                right.push(second);
+                i += 1;
+            }
+            while left.len() > keep as usize
+                invariant left.len() <= n,
+                decreases left.len(),
+            {
+                let handle = left.pop().unwrap();
+                let moved = handle;
+                let result = moved.join().unwrap();
+                drop(result);
+            }
+            while right.len() > 0 decreases right.len(), {
+                let result = right.pop().unwrap().join().unwrap();
+                drop(result);
+            }
+            while left.len() > 0 decreases left.len(), {
+                let result = left.pop().unwrap().join().unwrap();
+                drop(result);
+            }
+        }
+        "#,
+        GLOBAL,
+    );
+}
+
+#[test]
+fn every_body_in_a_mixed_worker_population_keeps_its_allocation_checks() {
+    let source = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f() resources peak(memory) <= 1024 {
+            let mut handles = Vec::with_capacity(2);
+            let small = std::thread::spawn(move || Vec::<u8>::with_capacity(8));
+            handles.push(small);
+            let large = std::thread::spawn(move || Vec::<u8>::with_capacity(4096));
+            handles.push(large);
+            while handles.len() > 0 decreases handles.len(), {
+                let result = handles.pop().unwrap().join().unwrap();
+                drop(result);
+            }
+        }
+        }
+    "#;
+    let valid = crate::verify_one_file(
+        "mixed_worker_sufficient_bound",
+        source.replace("<= 1024", "<= 8192"),
+        &[],
+    )
+    .unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+    let error =
+        crate::verify_one_file("mixed_worker_large_result", source.into(), &[]).unwrap_err();
+    assert!(error.errors.iter().any(|error| error.message.contains("memory budget exceeded")));
+    assert!(error.errors.iter().all(|error| {
+        error.message.contains("memory budget exceeded") || error.message.contains(GLOBAL)
+    }));
+}
+
+#[test]
+fn discarding_a_selected_mixed_family_handle_is_still_detach() {
+    rejects(
+        "mixed_worker_detach",
+        r#"
+        fn f() resources peak(memory) <= 1024 {
+            let mut handles = Vec::with_capacity(2);
+            let first = std::thread::spawn(move || 7u64);
+            handles.push(first);
+            let second = std::thread::spawn(move || 9u64);
+            handles.push(second);
+            let selected = handles.pop().unwrap();
+            drop(selected);
+            let remaining = handles.pop().unwrap();
+            let value = remaining.join().unwrap();
+        }
+        "#,
+        "detached workers in a memory accounting scope",
+    );
+}
+
+#[test]
 fn retained_workers_keep_each_construction_until_collection() {
     rejects(
         "retained_worker_inputs",

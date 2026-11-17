@@ -54,9 +54,9 @@ pub(super) type OwnerPath = Vec<OwnerSlot>;
 pub(super) struct Owner {
     /// One occurrence selected from a runtime forest, with immutable snapshots.
     pub(super) worker_occurrence: Option<super::workers::Occurrence>,
-    /// Native/vstd successful join payload, conditional on this checked worker's
-    /// normal-domain proof dependencies. Ordinary Result values cannot invent it.
-    pub(super) joined: Option<super::workers::WorkerId>,
+    /// Native/vstd successful join payload, conditional on every possible body's
+    /// normal-domain proofs. Ordinary Result values cannot invent this witness.
+    pub(super) joined: Option<std::collections::BTreeSet<super::workers::WorkerId>>,
     /// A join handle names storage kept in the domain's worker registry.
     pub(super) worker: Option<super::workers::WorkerId>,
     /// Concrete closure definition; its owned fields occupy Capture child slots.

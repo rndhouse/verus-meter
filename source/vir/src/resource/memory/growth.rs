@@ -58,8 +58,10 @@ pub(super) struct Growth {
     /// Static WorkerId keys name templates; these expressions name runtime visits.
     pub(super) worker_occurrences:
         std::collections::BTreeMap<super::workers::WorkerId, Vec<(crate::messages::AstId, Expr)>>,
-    /// Result facts tied to an exact native join and its checked worker actor.
-    pub(super) worker_joins: std::collections::BTreeMap<u64, super::workers::WorkerId>,
+    /// Every possible checked body at an exact native join. Runtime selection
+    /// additionally retains its exact descriptor in worker_join_occurrences.
+    pub(super) worker_joins:
+        std::collections::BTreeMap<u64, std::collections::BTreeSet<super::workers::WorkerId>>,
     /// Checked independent actor graphs remain available after their handles
     /// are collected. These are effects, not a count of outstanding workers.
     pub(super) worker_executions: std::collections::BTreeMap<

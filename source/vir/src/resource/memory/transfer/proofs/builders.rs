@@ -165,7 +165,7 @@ pub(super) fn generated(
 
 /// Conditional publications validate only the description selected on that
 /// branch. Captured metadata is immutable data, not another collection to walk.
-fn worker_descriptions(span: &Span, value: &Expr, guard: Expr, output: &mut Vec<Expr>) {
+pub(super) fn worker_descriptions(span: &Span, value: &Expr, guard: Expr, output: &mut Vec<Expr>) {
     if let Some(args) = simplify::inspect::call(value, "worker_observation") {
         output.push(simplify::simplify(&super::super::choice(
             span,

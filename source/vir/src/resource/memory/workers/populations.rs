@@ -6,11 +6,13 @@
 use super::super::{analysis::Analysis, heap::Owner, metadata::expr, model::unsupported};
 use super::{Stage, WorkerId};
 use crate::{ast::*, messages::Span};
+use std::collections::BTreeSet;
 
 #[derive(Clone)]
 pub(in super::super) struct Occurrence {
-    /// Checked body template; the record below distinguishes its runtime visits.
-    pub(in super::super) template: WorkerId,
+    /// Possible checked bodies, not a population count. The record identifies
+    /// exactly one occurrence and preserves its own conditional result.
+    pub(in super::super) templates: BTreeSet<WorkerId>,
     /// Selected immutable descriptor, including identity and construction inputs.
     pub(in super::super) record: Expr,
 }
@@ -33,13 +35,18 @@ impl Analysis<'_> {
         if self.heap.workers.blocked(self.current_worker) {
             return Err(unsupported(&source.span, "collection while the caller is waiting"));
         }
-        let execution = self.growth.worker_executions[&occurrence.template].clone();
         let (payload, _) = self
             .layouts
             .result_payloads(&source.typ)
             .ok_or_else(|| unsupported(&source.span, "population join without a native result"))?;
         let payload = payload.clone();
-        if !crate::ast_util::types_equal(&payload, &execution.result.typ) {
+        if occurrence.templates.is_empty()
+            || occurrence.templates.iter().any(|actor| {
+                self.growth.worker_executions.get(actor).is_none_or(|execution| {
+                    !crate::ast_util::types_equal(&payload, &execution.result.typ)
+                })
+            })
+        {
             return Err(unsupported(&source.span, "population join with a foreign result type"));
         }
         let memory = expr::operation(
@@ -48,6 +55,7 @@ impl Analysis<'_> {
             vec![occurrence.record.clone()],
             expr::memory_type(),
         );
+        let first = self.growth.before.get(&source.span.id).map_or(0, Vec::len);
         let result_owner = if self.layouts.owner(&payload) {
             Some(self.owner_from_metadata(
                 &source.span,
@@ -59,6 +67,13 @@ impl Analysis<'_> {
         } else {
             None
         };
+        // An inline pop establishes the selected record while evaluating the
+        // receiver. Result-description proofs must follow that evaluation,
+        // before join consumes it; they cannot read the previous visit's record.
+        if let Some(proofs) = self.growth.before.get_mut(&source.span.id) {
+            let proofs = proofs.split_off(first);
+            self.growth.after.entry(argument.span.id).or_default().extend(proofs);
+        }
         let bytes = self.layouts.size(&payload, &source.span)?;
         let id = self.storage.reserve_value(
             &source.span,
@@ -80,13 +95,14 @@ impl Analysis<'_> {
         );
         self.pack_worker_result(
             source,
-            occurrence.template,
+            occurrence.templates,
             super::super::lifetime::Storage { typ: payload, value, owner: result_owner },
         )
     }
 
-    /// Restore the one source-selected occurrence, retaining the immutable
-    /// record rather than consulting the last analyzed publication's captures.
+    /// Restore the source-selected occurrence. Prove membership in the checked
+    /// body alternatives while retaining this record's inputs and result; no
+    /// representative body's result may stand in for a different publication.
     pub(in super::super) fn worker_from_metadata(
         &mut self,
         span: &Span,
@@ -96,27 +112,35 @@ impl Analysis<'_> {
         zero_charge: bool,
     ) -> Result<Owner, VirErr> {
         let (result, _) = self.layouts.join_handle(typ).unwrap();
-        let mut candidates = self.growth.retained_worker_families.iter().filter(|id| {
-            crate::ast_util::types_equal(&self.growth.worker_executions[id].result.typ, result)
-        });
-        let actor = *candidates
-            .next()
-            .ok_or_else(|| unsupported(span, "a worker selection without a checked body family"))?;
-        if candidates.next().is_some() {
-            return Err(unsupported(
-                span,
-                "selection from multiple worker families without a conditional body interface",
-            ));
+        let templates: BTreeSet<_> = self
+            .growth
+            .retained_worker_families
+            .iter()
+            .filter(|id| {
+                crate::ast_util::types_equal(&self.growth.worker_executions[id].result.typ, result)
+            })
+            .copied()
+            .collect();
+        if templates.is_empty() {
+            return Err(unsupported(span, "a worker selection without a checked body family"));
         }
         let memory = self.metadata_local(span, "selected_worker", memory);
         let record = expr::lookup(span, memory.clone(), expr::path(span, []));
         self.growth.before.entry(span.id).or_default().push(expr::check(
             span,
-            expr::operation(
+            crate::ast_util::disjoin(
                 span,
-                "worker_matches",
-                vec![record.clone(), expr::path(span, actor.descriptor())],
-                crate::ast_util::bool_typ(),
+                &templates
+                    .iter()
+                    .map(|actor| {
+                        expr::operation(
+                            span,
+                            "worker_matches",
+                            vec![record.clone(), expr::path(span, actor.descriptor())],
+                            crate::ast_util::bool_typ(),
+                        )
+                    })
+                    .collect(),
             ),
             "cannot establish the selected worker's family and result description",
         ));
@@ -129,7 +153,7 @@ impl Analysis<'_> {
             bytes.clone(),
         );
         Ok(Owner {
-            worker_occurrence: Some(Occurrence { template: actor, record }),
+            worker_occurrence: Some(Occurrence { templates, record }),
             view,
             dynamic: Some(allocation),
             extent: Some(bytes),
@@ -267,7 +291,7 @@ impl Analysis<'_> {
         owner.dynamic = Some(worker.completion);
         owner.extent = Some(tag);
         owner.worker_occurrence = Some(Occurrence {
-            template: actor,
+            templates: [actor].into(),
             record: expr::lookup(span, memory, expr::path(span, [])),
         });
         self.growth.retained_worker_families.insert(actor);

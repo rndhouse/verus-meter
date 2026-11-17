@@ -29,11 +29,13 @@ pub(in super::super) fn resolve_join(
     growth: &Growth,
     fresh_span: &dyn Fn(&Span) -> Span,
 ) -> Result<Expr, VirErr> {
-    let Some(actor) = growth.worker_joins.get(&source.span.id) else { return Ok(call) };
-    let execution = growth.worker_executions.get(actor).ok_or_else(|| {
-        unsupported(&source.span, "join success without checked worker dependencies")
-    })?;
-    if execution.actor != *actor
+    let Some(actors) = growth.worker_joins.get(&source.span.id) else { return Ok(call) };
+    // A conditional occurrence is safe only if every alternative retains its
+    // checked body dependencies. An empty set cannot justify join success.
+    if actors.is_empty()
+        || actors.iter().any(|actor| {
+            growth.worker_executions.get(actor).is_none_or(|execution| execution.actor != *actor)
+        })
         || !matches!(&source.x,
         ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), .. }
             if matches!(attrs.resource_intrinsic, Some(ResourceIntrinsic::Concurrency(op)) if op.joins()))
@@ -236,10 +238,13 @@ impl Analysis<'_> {
         owner: &super::super::heap::Owner,
         span: &Span,
     ) -> Result<(), VirErr> {
-        let actor = owner
+        let actors = owner
             .joined
+            .as_ref()
             .ok_or_else(|| unsupported(span, "Result success without a checked worker outcome"))?;
-        if !self.growth.worker_executions.contains_key(&actor) {
+        if actors.is_empty()
+            || actors.iter().any(|actor| !self.growth.worker_executions.contains_key(actor))
+        {
             return Err(unsupported(span, "Result success for a foreign worker actor"));
         }
         Ok(())

@@ -354,7 +354,7 @@ pub(super) fn compatible(a: &Owner, b: &Owner) -> bool {
         && match (&a.worker_occurrence, &b.worker_occurrence) {
             (None, None) => true,
             (Some(a), Some(b)) => {
-                a.template == b.template
+                a.templates == b.templates
                     && super::transfer::simplify::inspect::same_expression(&a.record, &b.record)
             }
             _ => false,

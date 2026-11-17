@@ -15,6 +15,25 @@ pub(in super::super) fn prefix(
 ) -> Result<(), VirErr> {
     let mut emitter = ForestProofs::new();
     emitter.forest(span, value, proofs)?;
+    // Finite publications can occur literally in the invariant, outside a
+    // generated builder. Reestablish their construction facts in this loop's
+    // proof context; transport still treats selected records as opaque.
+    let mut descriptions = Vec::new();
+    builders::worker_descriptions(
+        span,
+        value,
+        crate::ast_util::mk_bool(span, true),
+        &mut descriptions,
+    );
+    for result in descriptions {
+        emitter.forest(span, &result, proofs)?;
+        proofs.push(expr::check(
+            span,
+            expr::operation(span, "well_formed", vec![result], crate::ast_util::bool_typ()),
+            "cannot prove retained worker result validity",
+        ));
+    }
+
     let mut visited = HashSet::new();
     let _ =
         expr_visitor_dfs::<(), _>(value, &mut air::scope_map::ScopeMap::new(), &mut |_, value| {
