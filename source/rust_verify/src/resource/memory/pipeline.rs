@@ -67,6 +67,16 @@ pub(crate) fn check(
                 format!("memory executable effect: {:?}", operation.operation),
             )));
         }
+        for function in krate.functions.iter().filter(|f| f.x.attrs.resource_contract.is_some()) {
+            if let Some(modes) = modes.get(&function.x.name) {
+                ctxt.diagnostics.borrow_mut().extend(super::sites::diagnostics(
+                    function,
+                    modes,
+                    &krate.functions,
+                    &synchronization,
+                ));
+            }
+        }
     }
     let reports = vir::resource::memory::check_crate(
         &mut krate.functions,
@@ -148,6 +158,11 @@ fn synchronization_evidence(
             );
         }
         evidence.cleanup.insert(function.x.name.clone(), graph);
+    }
+    for function in krate.functions.iter().filter(|f| f.x.attrs.resource_contract.is_some()) {
+        if let Some(modes) = modes.get(&function.x.name) {
+            super::sites::resolve(function, modes, &krate.functions, &mut evidence);
+        }
     }
     Ok(evidence)
 }

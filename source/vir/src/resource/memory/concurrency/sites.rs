@@ -1,0 +1,282 @@
+//! Source/native operation correspondence, retaining the containing control
+//! graph. A static call site is not a dynamic worker or a population count.
+//! Primitive contracts supply publication/wait boundaries inside opaque calls;
+//! binding a spawn call never makes its child a completed synchronous helper.
+
+use super::{Evidence, Operation};
+use crate::{
+    ast::*,
+    ast_visitor::{AstVisitor, NoScoper, Walk},
+    messages::{AstId, Span},
+};
+use std::collections::{BTreeSet, HashMap};
+
+/// One executable source operation before functional identity erasure.
+#[derive(Clone)]
+pub struct Call {
+    /// Native call identity; erased calls can share an accounting anchor.
+    pub id: AstId,
+    /// Source expression retained for generated proof obligations.
+    pub anchor: AstId,
+    /// Exact original native call span, including hygiene.
+    pub span: Span,
+    /// Actual function/closure body whose graph contains the call.
+    pub scope: Fun,
+    /// Resolved primitive, independent of source spelling or specifications.
+    pub operation: Operation,
+}
+
+/// An exact compiler point, not an assumed operation count or completion fact.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Binding {
+    /// Surviving source expression where accounting obligations attach.
+    pub anchor: AstId,
+    /// Function-local graph namespace, distinct from a thread occurrence.
+    pub scope: Fun,
+    /// Terminator point in the original drop-elaborated control graph.
+    pub point: super::super::synchronization::flow::Point,
+    /// Primitive executed at that point.
+    pub operation: Operation,
+}
+
+/// Collect runtime operations using the same erasure boundaries as accounting.
+/// Body discovery may include latent closures; admission validates only code
+/// actually executed in the scope being checked.
+pub fn calls(
+    function: &Function,
+    modes: &crate::resolution_inference::ResolutionInfo,
+    functions: &[Function],
+    evidence: &Evidence,
+    include_closure_bodies: bool,
+) -> Vec<Call> {
+    collect(function, &modes.var_modes, functions, evidence, include_closure_bodies)
+}
+
+fn collect(
+    function: &Function,
+    modes: &HashMap<VarIdent, Mode>,
+    functions: &[Function],
+    evidence: &Evidence,
+    include_closure_bodies: bool,
+) -> Vec<Call> {
+    struct Collect<'a> {
+        modes: &'a HashMap<VarIdent, Mode>,
+        functions: &'a [Function],
+        evidence: &'a Evidence,
+        scope: Fun,
+        include_closures: bool,
+        seen: BTreeSet<AstId>,
+        calls: Vec<Call>,
+    }
+    impl Collect<'_> {
+        fn record(&mut self, id: AstId, anchor: AstId, span: &Span, operation: Operation) {
+            if self.seen.insert(id) {
+                self.calls.push(Call {
+                    id,
+                    anchor,
+                    span: span.clone(),
+                    scope: self.scope.clone(),
+                    operation,
+                });
+            }
+        }
+    }
+    impl AstVisitor<Walk, (), NoScoper> for Collect<'_> {
+        fn visit_expr(&mut self, expression: &Expr) -> Result<(), ()> {
+            if super::super::execution::ignored_expression(expression) {
+                return Ok(());
+            }
+            let evidence = self.evidence;
+            if let Some(operations) = evidence.erased_operations.get(&expression.span.id) {
+                for operation in operations {
+                    self.record(
+                        operation.span.id,
+                        expression.span.id,
+                        &operation.span,
+                        operation.operation,
+                    );
+                }
+            }
+            if let ExprX::NonSpecClosure { body, proof_fn_modes, .. } = &expression.x {
+                if self.include_closures
+                    && proof_fn_modes.is_none()
+                    && let TypX::AnonymousClosure(_, _, _, id) = &*expression.typ
+                    && let Some(closure) = self.evidence.closures.get(id)
+                {
+                    let previous = std::mem::replace(&mut self.scope, closure.function.clone());
+                    self.visit_expr(body)?;
+                    self.scope = previous;
+                }
+                return Ok(());
+            }
+            if let ExprX::Loop { cond, body, .. } = &expression.x {
+                if let Some(condition) = cond {
+                    self.visit_expr(condition)?;
+                }
+                return self.visit_expr(body);
+            }
+            if let ExprX::Call { target: CallTarget::Fun(_, target, _, _, attrs), args, .. } =
+                &expression.x
+            {
+                if let Some(ResourceIntrinsic::Concurrency(operation)) = attrs.resource_intrinsic {
+                    self.record(
+                        expression.span.id,
+                        expression.span.id,
+                        &expression.span,
+                        operation,
+                    );
+                }
+                if let Some(callee) = self.functions.iter().find(|callee| callee.x.name == *target)
+                {
+                    if callee.x.mode != Mode::Exec {
+                        return Ok(());
+                    }
+                    for (argument, parameter) in args.iter().zip(callee.x.params.iter()) {
+                        if parameter.x.mode == Mode::Exec {
+                            self.visit_expr(argument)?;
+                        }
+                    }
+                    return Ok(());
+                }
+            }
+            self.visit_expr_rec(expression)
+        }
+        fn visit_stmt(&mut self, statement: &Stmt) -> Result<(), ()> {
+            if super::super::execution::ignored_statement(statement, self.modes) {
+                Ok(())
+            } else {
+                self.visit_stmt_rec(statement)
+            }
+        }
+        fn visit_place(&mut self, place: &Place) -> Result<(), ()> {
+            self.visit_place_rec(place)
+        }
+        fn visit_typ(&mut self, _: &Typ) -> Result<(), ()> {
+            Ok(())
+        }
+        fn visit_pattern(&mut self, _: &Pattern) -> Result<(), ()> {
+            Ok(())
+        }
+    }
+    let mut collect = Collect {
+        modes,
+        functions,
+        evidence,
+        scope: function.x.name.clone(),
+        include_closures: include_closure_bodies,
+        seen: BTreeSet::new(),
+        calls: vec![],
+    };
+    if let Some(body) = &function.x.body {
+        let _ = collect.visit_expr(body);
+    }
+    collect.calls
+}
+
+pub(in super::super) fn validate(
+    function: &Function,
+    modes: &HashMap<VarIdent, Mode>,
+    functions: &[Function],
+    evidence: &super::super::synchronization::CompilerEvidence,
+) -> Result<(), VirErr> {
+    for call in collect(function, modes, functions, &evidence.concurrency, false) {
+        if !bound(&call, evidence) {
+            return Err(super::super::model::unsupported(
+                &call.span,
+                "an executable concurrent effect without an exact compiler call binding",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn bound(call: &Call, evidence: &super::super::synchronization::CompilerEvidence) -> bool {
+    use super::super::synchronization::flow::{Call as NativeCall, Terminator};
+    let Some(binding) = evidence.concurrency.native_site(call.id) else { return false };
+    if binding.anchor != call.anchor
+        || binding.scope != call.scope
+        || binding.operation != call.operation
+    {
+        return false;
+    }
+    let Some(graph) = evidence.graph(&binding.scope) else { return false };
+    let Some(block) = graph.blocks.get(binding.point.block) else { return false };
+    binding.point.statement == block.statements.len()
+        && matches!(block.terminator, Terminator::Call { call: NativeCall::Concurrent(operation), .. } if operation == call.operation)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::resource::memory::synchronization::{CompilerEvidence, flow};
+    use std::sync::Arc;
+
+    fn span(id: AstId) -> Span {
+        Span { raw_span: Arc::new(()), id, data: Arc::new([]), as_string: "native site".into() }
+    }
+
+    fn graph() -> flow::Graph {
+        flow::Graph {
+            blocks: (0..2)
+                .map(|id| flow::Block {
+                    statements: vec![],
+                    span: span(id),
+                    cleanup: false,
+                    terminator: flow::Terminator::Call {
+                        call: flow::Call::Concurrent(Operation::ArcClone),
+                        arguments: vec![],
+                        destination: flow::Place { local: 0, projection: vec![] },
+                        outcomes: vec![],
+                        next: None,
+                        unwind: flow::Unwind::Exit,
+                    },
+                })
+                .collect(),
+            bindings: HashMap::new(),
+            locals: 1,
+            arguments: 0,
+        }
+    }
+
+    #[test]
+    fn shared_anchors_preserve_distinct_calls_and_graph_namespaces() {
+        let first = crate::fun!(CrateId::Internal => "site_test"; "first");
+        let second = crate::fun!(CrateId::Internal => "site_test"; "second");
+        let mut evidence = CompilerEvidence::default();
+        evidence.cleanup.insert(first.clone(), graph());
+        evidence.cleanup.insert(second.clone(), graph());
+        let call = Call {
+            id: 10,
+            anchor: 42,
+            span: span(10),
+            scope: first.clone(),
+            operation: Operation::ArcClone,
+        };
+        assert!(!bound(&call, &evidence));
+        for (id, block) in [(10, 0), (11, 1)] {
+            evidence.concurrency.record_native_site(
+                id,
+                Binding {
+                    anchor: 42,
+                    scope: first.clone(),
+                    operation: Operation::ArcClone,
+                    point: flow::Point { block, statement: 0 },
+                },
+            );
+        }
+        assert!(bound(&call, &evidence));
+        let next = Call { id: 11, ..call.clone() };
+        assert!(bound(&next, &evidence));
+        // Reusing a block index in another function does not bind this source
+        // call. A named helper also cannot impersonate a reviewed native call.
+        assert!(!bound(&Call { scope: second, ..next.clone() }, &evidence));
+        let flow::Terminator::Call { call: native, .. } =
+            &mut evidence.cleanup.get_mut(&first).unwrap().blocks[1].terminator
+        else {
+            unreachable!()
+        };
+        *native = flow::Call::Function(crate::fun!(CrateId::Internal => "site_test"; "clone"));
+        assert!(!bound(&next, &evidence));
+        assert!(bound(&call, &evidence));
+    }
+}

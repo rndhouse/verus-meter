@@ -66,6 +66,21 @@ pub struct CompilerEvidence {
     pub cleanup: HashMap<crate::ast::Fun, flow::Graph>,
 }
 
+impl CompilerEvidence {
+    /// Resolve a compiler graph in its original function-local namespace.
+    /// A closure body and its FnOnce adapter are separate graphs; no missing
+    /// graph or reused local index can establish executable effects.
+    pub fn graph(&self, function: &crate::ast::Fun) -> Option<&flow::Graph> {
+        self.cleanup.get(function).or_else(|| {
+            self.concurrency
+                .closures
+                .values()
+                .find(|closure| closure.function == *function)
+                .map(|closure| &closure.body)
+        })
+    }
+}
+
 /// Possible outcomes of an acquire operation. Poisoned still owns the lock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {

@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use vir_macros::ToDebugSNode;
 
+pub mod sites;
+
 /// Capture transport selected by Rust's post-erasure capture analysis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaptureMode {
@@ -115,9 +117,26 @@ pub struct Evidence {
     /// Index boundaries so sequential expression accounting does not scan every
     /// native operation in the crate at every source expression.
     temporary_scope_ends: std::collections::BTreeSet<AstId>,
+    /// Exact native call points for source operations, including identity-erased
+    /// calls. An absent binding cannot support an executable memory effect.
+    native_sites: std::collections::BTreeMap<AstId, sites::Binding>,
 }
 
 impl Evidence {
+    /// Record a unique compiler-resolved operation point. This connects source
+    /// accounting to executable behavior; it supplies no lifetime or byte bound.
+    pub fn record_native_site(&mut self, operation: AstId, binding: sites::Binding) {
+        if let Some(previous) = self.native_sites.insert(operation, binding.clone()) {
+            assert_eq!(previous, binding, "one executable compiler call point per operation");
+        }
+    }
+
+    /// Inspect an exact native binding for accounting or compiler diagnostics.
+    /// Its presence proves neither event multiplicity nor a memory bound.
+    pub fn native_site(&self, operation: AstId) -> Option<&sites::Binding> {
+        self.native_sites.get(&operation)
+    }
+
     /// Attach one uniquely resolved executable boundary to its native call.
     pub fn record_temporary_scope(&mut self, operation: AstId, boundary: AstId) {
         if let Some(previous) = self.temporary_scopes.insert(operation, boundary) {

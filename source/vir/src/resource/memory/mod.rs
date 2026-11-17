@@ -123,6 +123,7 @@ pub fn check_crate(
             ));
         }
         synchronization::reject_unaccounted(function, modes, &synchronization.types, datatypes)?;
+        concurrency::sites::validate(function, modes, functions, synchronization)?;
     }
     let layouts = layout::Layouts::new(datatypes, global_allocator, vector, option)
         .with_synchronization_types(&synchronization.types)

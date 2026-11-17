@@ -2,6 +2,65 @@
 use super::support::{exact_peak, rejects, verifies};
 
 #[test]
+fn native_calls_keep_their_executable_function_and_worker_body_scopes() {
+    let error = crate::verify_one_file(
+        "native_worker_call_bindings",
+        r#"
+        use vstd::prelude::*;
+        verus! {
+            fn f() resources peak(memory) <= 100000 {
+                let seed = std::sync::Arc::new(1u64);
+                let worker = move || {
+                    let temporary = std::sync::Arc::new(2u64);
+                    let alias = temporary.clone();
+                    drop(seed); drop(alias); drop(temporary);
+                };
+                let handle = std::thread::spawn(worker);
+                let result = handle.join();
+            }
+        }
+        "#
+        .into(),
+        &["--trace"],
+    )
+    .unwrap_err();
+    crate::common::assert_vir_error_msg(
+        error.clone(),
+        "before concurrent lifetime accounting is available",
+    );
+    for marker in [
+        "ArcNew (function body",
+        "ArcNew (closure body",
+        "ArcClone (closure body",
+        "StdSpawn (function body",
+        "StdJoin (function body",
+    ] {
+        assert_eq!(
+            error.notes.iter().filter(|note| note.message.contains(marker)).count(),
+            1,
+            "{marker}"
+        );
+    }
+    assert!(!error.notes.iter().any(|note| note.message.contains("memory native call unbound")));
+}
+
+#[test]
+fn ghost_call_arguments_do_not_create_executable_strong_aliases() {
+    exact_peak(
+        "ghost_native_clone_argument",
+        r#"
+        fn consume(#[verifier::spec] input: std::sync::Arc<u64>) resources peak(memory) <= 0 { }
+        fn f() resources peak(memory) <= BUDGET {
+            let root = std::sync::Arc::new(7u64);
+            consume(root.clone());
+            drop(root);
+        }
+        "#,
+        32,
+    );
+}
+
+#[test]
 fn logical_clone_erasure_cannot_shorten_an_unsupported_borrowing_comparison() {
     rejects(
         "shared_comparison_temporary_lifetime",

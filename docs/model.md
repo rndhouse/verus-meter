@@ -144,6 +144,8 @@ analysis state do not create handles. Nested clone receivers retain their owned
 temporary storage through rustc's destruction scope, including later operands;
 unresolved scopes reject. Imported aliases, retained reference populations and
 outgoing shared descriptors still require the remaining concurrent interfaces.
+Executable effects require exact compiler call bindings in the correct body;
+ghost arguments and unexecuted closure bodies do not create memory events.
 
 Primitive identification uses compiler definitions, including through aliases.
 Compiler-derived synchronization graphs preserve moves, acquisition outcomes and
