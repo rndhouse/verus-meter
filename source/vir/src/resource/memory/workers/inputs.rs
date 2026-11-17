@@ -69,7 +69,8 @@ pub(super) fn signature(
 }
 
 /// One capture field's body-local name and immutable construction observation.
-pub(super) struct Input {
+#[derive(Clone)]
+pub(in super::super) struct Input {
     /// Fresh name in the private accounting body, never an executable parameter.
     pub(super) name: VarIdent,
     /// Type of this one runtime capture field.
@@ -87,6 +88,24 @@ pub(super) struct Input {
     /// Original body proof context, distinct from the frozen caller observation.
     pub(super) source_place: Place,
     pub(super) source_value: Expr,
+}
+
+impl super::super::analysis::Analysis<'_> {
+    /// Compiler capture places use lexical source names. Nested construction
+    /// must read the executing parent's views, never its caller's old slots.
+    pub(in super::super) fn worker_capture_place(&self, place: Place) -> Result<Place, VirErr> {
+        let read = SpannedTyped::new(
+            &place.span,
+            &place.typ,
+            ExprX::ReadPlace(
+                place.clone(),
+                UnfinalizedReadKind { preliminary_kind: ReadKind::Spec, id: 0 },
+            ),
+        );
+        let read = body(&read, &self.worker_inputs)?;
+        let ExprX::ReadPlace(place, _) = &read.x else { unreachable!() };
+        Ok(place.clone())
+    }
 }
 
 pub(super) fn bind(

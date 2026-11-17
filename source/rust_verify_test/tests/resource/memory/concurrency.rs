@@ -207,6 +207,7 @@ fn native_worker_sites_keep_local_loop_contexts_separate_from_parent_visits() {
         r#"
         use vstd::prelude::*;
         verus! {
+            #[verifier::exec_allows_no_decreases_clause]
             fn f(n: u16) resources peak(memory) <= 100000 {
                 let mut index = 0u16;
                 while {

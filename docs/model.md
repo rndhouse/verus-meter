@@ -136,9 +136,12 @@ including nested closures: erased tracked state cannot hide runtime copies.
 Creating a closure does not execute its body. General closure invocation,
 capture summaries across function interfaces and closure `value_size` queries
 remain unsupported.
-Scalar captures, supported inline scalar projections and owned collection geometry are observed at construction;
-moving or copying the closure preserves those observations. Repeated environments
-still require checked occurrence bindings before supplying worker inputs.
+Scalar captures, supported inline scalar projections and owned collection geometry
+are observed at construction; moving or copying the closure preserves those
+observations. Repeated constructions bind their observations to the executing
+source-loop occurrence. Workers collected within that iteration are supported;
+retaining different environments across iterations still requires population
+ownership and snapshot substitution.
 
 Worker invocation evidence describes the original body's owned or borrowed
 environment and its cleanup responsibility, without inspecting a generated FnOnce
@@ -150,7 +153,7 @@ Implicit capture destruction order is unspecified by
 capture indices cannot justify a synchronization release order. Original body
 cleanup and unwind edges remain proof obligations.
 
-Fixed standard/vstd workers now undergo the ordinary symbolic body analysis,
+Concrete standard/vstd workers undergo the ordinary symbolic body analysis,
 including supported helpers, branches, loops and capture cleanup. Their summaries
 retain ordered source effects, ownership templates, construction inputs and
 compiler synchronization identities. Each worker has independent allocation proof
@@ -158,6 +161,13 @@ state and history. Publication transfers existing captures; completion retains
 the body-derived result; join transfers it once while retaining the waiting frame.
 Shared links keep their canonical backing identity. Implicit capture cleanup is
 recorded as an unordered group at each source exit.
+
+A worker can spawn and join children or receive an existing join handle in its
+captures. Handle transfer moves responsibility for the target's completion record
+and imported shared references; it executes neither a join nor a strong destructor.
+Nested actors have separate loop contexts. Supported spawn/join loops retain
+parent and local occurrence coordinates and require the outstanding-worker state
+to match at the back edge. Dropping a transferred handle remains a rejected detach.
 
 For these checked workers, join-result matching and `unwrap` use the successful
 normal-execution outcome, conditional on Verus checking the actual body/helper
@@ -187,9 +197,10 @@ success nor a protected payload invariant. The
 Worker-local obligations are checked, but a required global diagnostic still
 rejects every concurrent memory contract and prevents exporting it. These local
 checks are necessary inequalities, not a sum of thread peaks or a simultaneous
-memory theorem. Repeated and nested worker populations, global shared-lifetime
-composition, synchronization containment and the simultaneous envelope still
-require the remaining concurrent interfaces. Detaching a worker is rejected.
+memory theorem. Retained symbolic worker populations, general handle/helper
+interfaces, global shared-lifetime composition, synchronization containment and
+the simultaneous envelope still require the remaining concurrent interfaces.
+Detaching a worker is rejected.
 
 ## Concurrent extension specification
 

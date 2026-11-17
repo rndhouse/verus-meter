@@ -10,6 +10,39 @@ use crate::resource::memory::{
 };
 
 impl Analysis<'_> {
+    /// Give the head and body the same visit coordinate, including executable
+    /// work in a complex head condition. Progress inference may subsequently
+    /// relate this counter to source scalars, but does not create the identity.
+    pub(super) fn loop_occurrence(&mut self, record: &Loop) -> Expr {
+        let zero = contracts::literal(&record.span, 0);
+        let (ordinal, declaration) = metadata::expr::local(
+            &record.span,
+            "loop_visits",
+            crate::ast_util::int_typ(),
+            zero,
+            Mode::Spec,
+        );
+        self.growth.register_loop_proof_local(&ordinal);
+        self.growth.before.entry(record.span.id).or_default().push(declaration);
+        self.growth.after.entry(record.body.span.id).or_default().push(metadata::expr::assign(
+            &record.body.span,
+            &ordinal,
+            contracts::add(
+                &record.body.span,
+                ordinal.clone(),
+                contracts::literal(&record.body.span, 1),
+            ),
+        ));
+        self.growth.loop_occurrences.insert(record.span.id, ordinal.clone());
+        self.growth.loops.entry(record.span.id).or_default().push(crate::ast_util::mk_ineq(
+            &record.span,
+            &contracts::literal(&record.span, 0),
+            &ordinal,
+            InequalityOp::Le,
+        ));
+        ordinal
+    }
+
     /// Count actual back edges independently of the source counter's stride.
     /// These erased updates cannot alter executable storage or overflow behavior.
     pub(super) fn loop_progress(
@@ -78,24 +111,7 @@ impl Analysis<'_> {
             scalars.insert(name, (current, initial));
         }
         let zero = contracts::literal(&record.span, 0);
-        let (ordinal, declaration) = metadata::expr::local(
-            &record.span,
-            "loop_visits",
-            crate::ast_util::int_typ(),
-            zero.clone(),
-            Mode::Spec,
-        );
-        self.growth.register_loop_proof_local(&ordinal);
-        self.growth.before.entry(record.span.id).or_default().push(declaration);
-        self.growth.after.entry(record.body.span.id).or_default().push(metadata::expr::assign(
-            &record.body.span,
-            &ordinal,
-            contracts::add(
-                &record.body.span,
-                ordinal.clone(),
-                contracts::literal(&record.body.span, 1),
-            ),
-        ));
+        let ordinal = self.growth.loop_occurrences[&record.span.id].clone();
         record.progress = Some(progress::Observation { ordinal: ordinal.clone(), bounds, scalars });
         Ok(Some((ordinal, zero)))
     }

@@ -43,6 +43,13 @@ pub(super) struct VectorState {
 
 #[derive(Default)]
 pub(super) struct Growth {
+    /// Actual back-edge ordinals for active source loops. Occurrence identities
+    /// use these observations rather than the number of compiler visits.
+    pub(super) loop_occurrences: std::collections::BTreeMap<crate::messages::AstId, Expr>,
+    /// Parent coordinates followed by this actor's publication-loop coordinates.
+    /// Static WorkerId keys name templates; these expressions name runtime visits.
+    pub(super) worker_occurrences:
+        std::collections::BTreeMap<super::workers::WorkerId, Vec<(crate::messages::AstId, Expr)>>,
     /// Result facts tied to an exact native join and its checked worker actor.
     pub(super) worker_joins: std::collections::BTreeMap<u64, super::workers::WorkerId>,
     /// Checked independent actor graphs remain available after their handles

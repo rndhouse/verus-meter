@@ -20,8 +20,9 @@ pub(in super::super) struct WorkerId {
 }
 
 impl WorkerId {
-    /// The final component identifies the occurrence within its family. Keep
-    /// the family in descriptors so repeated handles retain both identities.
+    /// Finite compiler key used as the prefix of a runtime descriptor. Source
+    /// loop coordinates are appended by Analysis::worker_identity; this key
+    /// alone must never identify every visit to a repeated publication.
     pub(in super::super) fn descriptor(self) -> [i128; 2] {
         [i128::from(self.family.0), i128::from(self.occurrence)]
     }

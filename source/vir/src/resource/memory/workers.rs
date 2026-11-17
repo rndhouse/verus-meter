@@ -18,6 +18,7 @@ mod results;
 mod waits;
 
 pub(super) use identity::{Families, WorkerId};
+pub(super) use inputs::Input;
 pub(super) use inputs::restore_proof_bindings;
 pub(crate) use results::generated_join_move;
 pub(super) use results::resolve_join;
@@ -64,10 +65,59 @@ struct Worker {
 /// Cloning an analysis branch is not publication of another executable worker.
 #[derive(Clone, Default)]
 pub(super) struct Workers {
+    /// Executing actor of an isolated body frame. Its own completion record
+    /// remains in the publishing frame; it is not an outstanding child here.
+    active: Option<WorkerId>,
     records: BTreeMap<WorkerId, Worker>,
 }
 
 impl Workers {
+    fn running(&self, actor: WorkerId) -> bool {
+        self.active == Some(actor)
+            || self.records.get(&actor).is_some_and(|worker| matches!(worker.stage, Stage::Running))
+    }
+
+    /// Establish an isolated frame only after executable entry has transferred
+    /// the captures. This supplies parent provenance without copying live children.
+    fn body_scope(
+        &mut self,
+        actor: WorkerId,
+        captures: Option<&Owner>,
+        span: &Span,
+    ) -> Result<(Self, Vec<u64>), VirErr> {
+        if !self.running(actor) || self.blocked(Some(actor)) {
+            return Err(unsupported(span, "worker scope without a running actor"));
+        }
+        let ids = Self::captured_workers(captures, span)?;
+        if ids.iter().any(|id| *id == actor || !self.records.contains_key(id)) {
+            return Err(unsupported(span, "worker capture outside its outstanding actor domain"));
+        }
+        let mut scope = Self { active: Some(actor), records: BTreeMap::new() };
+        let mut tags = Vec::new();
+        for id in ids {
+            let worker = self.records.remove(&id).unwrap();
+            tags.push(worker.completion);
+            scope.records.insert(id, worker);
+        }
+        Ok((scope, tags))
+    }
+
+    fn captured_workers(captures: Option<&Owner>, span: &Span) -> Result<Vec<WorkerId>, VirErr> {
+        let mut ids = Vec::new();
+        if let Some(captures) = captures {
+            captures.visit(&mut |owner| {
+                if let Some(id) = owner.worker {
+                    ids.push(id);
+                }
+            });
+        }
+        let unique: std::collections::BTreeSet<_> = ids.iter().copied().collect();
+        if ids.len() != unique.len() {
+            return Err(unsupported(span, "duplicate worker handles in a capture environment"));
+        }
+        Ok(ids)
+    }
+
     fn publish(
         &mut self,
         id: WorkerId,
@@ -83,10 +133,7 @@ impl Workers {
             ));
         }
         if let Some(parent) = parent
-            && !self
-                .records
-                .get(&parent)
-                .is_some_and(|parent| matches!(parent.stage, Stage::Running))
+            && !self.running(parent)
         {
             return Err(unsupported(span, "publication outside a live parent worker"));
         }
@@ -198,7 +245,8 @@ impl Workers {
     }
 
     pub(super) fn compatible(&self, other: &Self) -> bool {
-        self.records.len() == other.records.len()
+        self.active == other.active
+            && self.records.len() == other.records.len()
             && self.records.iter().all(|(id, a)| {
                 other.records.get(id).is_some_and(|b| {
                     a.parent == b.parent
@@ -223,6 +271,23 @@ impl Workers {
 }
 
 impl Analysis<'_> {
+    /// Source-site identity plus actual enclosing iteration coordinates. A
+    /// template's compiler key alone is never a dynamic publication count.
+    pub(super) fn worker_identity(&self, span: &Span, actor: WorkerId) -> Expr {
+        let mut identity = super::metadata::expr::path(span, actor.descriptor());
+        if let Some(occurrences) = self.growth.worker_occurrences.get(&actor) {
+            for (site, ordinal) in occurrences {
+                identity = super::metadata::expr::push(
+                    span,
+                    identity,
+                    super::metadata::expr::integer(span, i128::from(*site)),
+                );
+                identity = super::metadata::expr::push(span, identity, ordinal.clone());
+            }
+        }
+        identity
+    }
+
     /// Collect the completed payload without copying or freeing its allocations.
     /// This does not build a native Result or prove that a native join succeeds;
     /// the result adapter retains these proof dependencies at collection.
@@ -247,15 +312,6 @@ impl Analysis<'_> {
     /// Publication transfers an existing closure value, retaining its storage.
     /// The child may run before this call returns; no body peak is added here.
     pub(super) fn spawn_owner(&mut self, expr: &Expr) -> Result<Option<Owner>, VirErr> {
-        if (self.current_worker.is_some() || self.growth.loop_depth != 0)
-            && matches!(&expr.x, ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), .. }
-                if matches!(attrs.resource_intrinsic, Some(ResourceIntrinsic::Concurrency(op)) if op.spawns()))
-        {
-            return Err(unsupported(
-                &expr.span,
-                "symbolic or nested worker populations before concurrent lifetime accounting is available",
-            ));
-        }
         let Some(owner) = self.publish_owner(expr)? else { return Ok(None) };
         self.analyze_worker(owner.worker.expect("published actor"), &expr.span)?;
         Ok(Some(owner))
@@ -308,8 +364,33 @@ impl Analysis<'_> {
             self.concurrency,
             self.functions.values().filter_map(|function| function.x.body.as_ref()),
         )?;
-        let value = self.produce(closure)?;
+        let mut value = self.produce(closure)?;
         let owner = self.result_owner.take();
+        let local_occurrences = self
+            .growth
+            .loop_regions
+            .iter()
+            .map(|site| {
+                self.growth
+                    .loop_occurrences
+                    .get(site)
+                    .cloned()
+                    .map(|ordinal| (*site, ordinal))
+                    .ok_or_else(|| {
+                        unsupported(
+                            &expr.span,
+                            "worker publication without a checked loop occurrence",
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Some(environment) = value.environment {
+            value.environment = Some(self.growth.environments.bind_occurrence(
+                environment,
+                &local_occurrences,
+                &expr.span,
+            )?);
+        }
         let completion = self.storage.reserve_value(
             &expr.span,
             super::footprint::MemoryKind::host_heap(),
@@ -318,20 +399,35 @@ impl Analysis<'_> {
         self.storage.event(&expr.span, "publish worker completion tag".into());
         let id =
             self.growth.worker_families.publication(expr.span.id, *definition, self.current_worker);
-        self.heap.workers.publish(
-            id,
-            &expr.span,
-            self.current_worker,
-            completion,
-            body::Entry::checked(
-                definition_body,
-                Storage { typ: closure.typ.clone(), value, owner },
-                self.concurrency,
-                self.layouts,
-                &self.growth.environments,
-                &self.heap.shared,
-            )?,
+        let mut occurrences = self
+            .current_worker
+            .and_then(|actor| self.growth.worker_occurrences.get(&actor))
+            .cloned()
+            .unwrap_or_default();
+        occurrences.extend(local_occurrences);
+        self.growth.worker_occurrences.insert(id, occurrences);
+        let mut entry = body::Entry::checked(
+            definition_body,
+            Storage { typ: closure.typ.clone(), value, owner },
+            self.concurrency,
+            self.layouts,
+            &self.growth.environments,
+            &self.heap.shared,
         )?;
+        for captured in Workers::captured_workers(entry.storage.owner.as_ref(), &expr.span)? {
+            let worker = self.heap.workers.records.get(&captured).ok_or_else(|| {
+                unsupported(&expr.span, "capturing a worker outside its outstanding domain")
+            })?;
+            if worker.detached.is_some() || worker.waiter.is_some() {
+                return Err(unsupported(&expr.span, "capturing a consumed worker handle"));
+            }
+            entry.shared.include_captured_domain(
+                &worker.entry_shared,
+                &self.heap.shared,
+                &expr.span,
+            )?;
+        }
+        self.heap.workers.publish(id, &expr.span, self.current_worker, completion, entry)?;
         Ok(Some(Owner { worker: Some(id), ..Default::default() }))
     }
 

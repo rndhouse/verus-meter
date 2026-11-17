@@ -109,6 +109,7 @@ impl Analysis<'_> {
         // candidates cannot reuse the first iteration's finite charge extent.
         let zero = self.loop_zero_candidates(&record, &mut forest_bounds);
         self.growth.begin_element_iteration(&elements, &zero);
+        let ordinal = self.loop_occurrence(&record);
         self.discard(&record.condition)?;
         record.completed = self.loop_progress(&mut record)?;
         let head = self.branch_state();
@@ -138,19 +139,13 @@ impl Analysis<'_> {
             } else {
                 self.restore_branch(&edge.state);
             }
-            if let Some((ordinal, _)) = &record.completed {
-                self.growth.before.entry(edge.span.id).or_default().push(
-                    super::super::metadata::expr::assign(
-                        &edge.span,
-                        ordinal,
-                        contracts::add(
-                            &edge.span,
-                            ordinal.clone(),
-                            contracts::literal(&edge.span, 1),
-                        ),
-                    ),
-                );
-            }
+            self.growth.before.entry(edge.span.id).or_default().push(
+                super::super::metadata::expr::assign(
+                    &edge.span,
+                    &ordinal,
+                    contracts::add(&edge.span, ordinal.clone(), contracts::literal(&edge.span, 1)),
+                ),
+            );
         }
         record.single_visit = !self.flow.reachable;
         if record.single_visit {
@@ -174,6 +169,12 @@ impl Analysis<'_> {
         self.growth.carried_scalars.extend(
             record.scalar_steps.keys().filter(|name| self.slots.contains_key(*name)).cloned(),
         );
+        if !self.heap.workers.compatible(&head.heap.workers) {
+            return Err(super::super::model::unsupported(
+                &expr.span,
+                "retained worker populations without a checked back-edge ownership relation",
+            ));
+        }
         assert_eq!(self.storage.live(), entry);
         // Every checkpoint may be reached after a previous complete
         // iteration. With reusable storage, one iteration's maximum is
@@ -262,7 +263,7 @@ impl Analysis<'_> {
             ));
         }
         invariants.push(crate::ast_util::mk_ineq(&expr.span, &live, &self.bound, InequalityOp::Le));
-        self.growth.loops.insert(expr.span.id, invariants);
+        self.growth.loops.entry(expr.span.id).or_default().extend(invariants);
         self.growth.repeat_elements(&elements);
         record.element_sources = self.growth.element_sources(&elements);
         record.element_ids = elements.clone();

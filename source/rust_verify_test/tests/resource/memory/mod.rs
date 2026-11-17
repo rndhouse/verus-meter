@@ -11,6 +11,7 @@ mod checkpoints;
 mod children;
 mod concurrency;
 mod worker_execution;
+mod worker_populations;
 mod conditional;
 mod conditional_loops;
 mod control_flow;

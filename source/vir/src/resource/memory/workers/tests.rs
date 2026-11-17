@@ -612,6 +612,7 @@ fn with_analysis(evidence: &Evidence, run: impl FnOnce(&mut Analysis<'_>, &Dt)) 
     let budgets = HashMap::new();
     let site = span(0);
     let mut analysis = Analysis {
+        worker_inputs: vec![],
         capture_views: Default::default(),
         evaluations: Default::default(),
         concurrency: evidence,

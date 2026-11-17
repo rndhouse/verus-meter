@@ -57,6 +57,40 @@ pub(super) struct SharedRoots {
 }
 
 impl SharedRoots {
+    /// A transferred join handle also transfers responsibility for its target's
+    /// imported aliases. They remain reserved in the enclosing domain until the
+    /// receiving worker returns its checked entry-to-exit relation.
+    pub(super) fn include_captured_domain(
+        &mut self,
+        captured: &Self,
+        enclosing: &Self,
+        span: &Span,
+    ) -> Result<(), VirErr> {
+        for (id, input) in &captured.roots {
+            if !matches!(input.storage, Backing::Imported { .. }) {
+                return Err(unsupported(
+                    span,
+                    "captured worker inputs with duplicate shared backing",
+                ));
+            }
+            let count = self
+                .roots
+                .get(id)
+                .map_or(0, |root| root.strong)
+                .checked_add(input.strong)
+                .ok_or_else(|| unsupported(span, "captured strong counts exceeding u64"))?;
+            if enclosing.roots.get(id).is_none_or(|root| root.strong < count) {
+                return Err(unsupported(
+                    span,
+                    "captured worker aliases outside their shared domain",
+                ));
+            }
+            self.roots
+                .insert(*id, Root { strong: count, storage: Backing::Imported { entry: count } });
+        }
+        Ok(())
+    }
+
     /// Rebind newly owned backing without changing shared identity or counts.
     pub(super) fn map_owned(
         &mut self,
@@ -509,6 +543,7 @@ mod tests {
             let concurrency = super::super::concurrency::Evidence::default();
             let site = span();
             let mut analysis = Analysis {
+                worker_inputs: vec![],
                 capture_views: Default::default(),
                 evaluations: Default::default(),
                 concurrency: &concurrency,

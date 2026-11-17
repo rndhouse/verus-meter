@@ -44,10 +44,7 @@ impl Workers {
             return Err(unsupported(span, "a detached or already consumed join handle"));
         }
         if let Some(actor) = actor
-            && !self
-                .records
-                .get(&actor)
-                .is_some_and(|worker| matches!(worker.stage, Stage::Running))
+            && !self.running(actor)
         {
             return Err(unsupported(span, "a join outside its live caller worker"));
         }

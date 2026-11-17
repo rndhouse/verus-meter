@@ -42,6 +42,8 @@ pub(super) struct Checkpoint {
 
 /// One function's evolving ownership state and already checked callee facts.
 pub(super) struct Analysis<'a> {
+    /// Current actor's lexical capture bindings, used by nested constructions.
+    pub(super) worker_inputs: Vec<super::workers::Input>,
     /// Body-local views into a retained closure environment. Moving a view
     /// creates destination inline storage without retiring the enclosing slot.
     pub(super) capture_views: HashSet<VarIdent>,
@@ -633,6 +635,7 @@ pub(super) fn check(
     })?;
     super::control::validate(body, &modes.var_modes)?;
     let mut analysis = Analysis {
+        worker_inputs: vec![],
         capture_views: Default::default(),
         evaluations: Default::default(),
         concurrency,

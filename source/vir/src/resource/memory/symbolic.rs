@@ -315,9 +315,21 @@ pub(super) fn instrument(
                     }
                 }
             }
+            let mut after_operands = Vec::new();
             if let Some((_, statements)) = sites.get(&expr.span.id) {
                 seen.obligations.insert(expr.span.id);
-                checks.extend(statements.iter().cloned());
+                if matches!(&expr.x, ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), .. }
+                    if attrs.resource_intrinsic == Some(ResourceIntrinsic::ResultUnwrap))
+                {
+                    // An inline join operand establishes the returned allocation
+                    // observations. Checking extraction before that operand can
+                    // read a previous iteration's bytes (or initialized zero).
+                    // Unwrap changes no allocation extent; its recorded overlap
+                    // is checked after evaluating the operand and extraction.
+                    after_operands.extend(statements.iter().cloned());
+                } else {
+                    checks.extend(statements.iter().cloned());
+                }
             }
             // Moving a field out of a retained closure environment creates a
             // destination value at the read. Its place has a distinct AST ID.
@@ -345,6 +357,22 @@ pub(super) fn instrument(
                 );
             }
             rewritten = super::workers::resolve_join(expr, rewritten, growth, fresh_span)?;
+            if !after_operands.is_empty() {
+                let statements = after_operands
+                    .iter()
+                    .map(|statement| {
+                        crate::ast_visitor::map_stmt_spans(statement, &mut |span| fresh_span(span))
+                    })
+                    .collect();
+                rewritten = SpannedTyped::new(
+                    &fresh_span(&expr.span),
+                    &expr.typ,
+                    ExprX::EvalAndResolve(
+                        rewritten,
+                        mk_block(&fresh_span(&expr.span), statements, None),
+                    ),
+                );
+            }
             if !checks.is_empty() {
                 let checks = checks
                     .iter()

@@ -74,6 +74,11 @@ impl Analysis<'_> {
         if self.growth.worker_executions.is_empty() {
             return Ok(None);
         }
+        // Every worker in this domain has been collected before this check.
+        // Its imported reference relation has therefore been composed back into
+        // the coordinator. Remaining aliases must belong to the actual result
+        // or to canonically retained payloads, never to a discarded body view.
+        self.heap.shared.check_result(self.result_owner.as_ref(), span)?;
         for (actor, execution) in &self.growth.worker_executions {
             if *actor != execution.actor {
                 return Err(unsupported(
@@ -163,10 +168,37 @@ impl Analysis<'_> {
         let signature =
             inputs::signature(&definition, body.clone(), &inputs, closure, self.functions)?;
         super::super::control::validate(&body, &self.var_modes)?;
-        let storage = self.storage.take_storage(&entry.storage, &self.growth, span)?;
+        let mut storage = self.storage.take_storage(&entry.storage, &self.growth, span)?;
+        let (body_workers, tags) =
+            self.heap.workers.body_scope(actor, entry.storage.owner.as_ref(), span)?;
+        for tag in tags {
+            // Moving a join handle transfers responsibility for its completion
+            // record. It neither runs the target nor allocates another tag.
+            let completion = Storage {
+                typ: crate::ast_util::unit_typ(),
+                value: Value {
+                    bytes: verus_meter_model::completion_bytes(0).unwrap(),
+                    ids: [tag].into(),
+                    origins: [tag].into(),
+                    ..Value::unit()
+                },
+                owner: None,
+            };
+            storage.receive_storage(
+                self.storage.take_storage(&completion, &self.growth, span)?,
+                span,
+            )?;
+        }
         let initial = storage.clone();
         let declarations = self.growth.declarations.len();
+        // Enclosing loop coordinates belong to the actor's identity, not its
+        // local control flow. A child body begins a separate reusable frame.
+        let parent_loop_depth = self.growth.loop_depth;
+        let parent_loop_regions = std::mem::take(&mut self.growth.loop_regions);
+        let parent_loop_counters = std::mem::take(&mut self.growth.loop_counters);
+        self.growth.loop_depth = 0;
         let mut worker = Analysis {
+            worker_inputs: inputs.clone(),
             capture_views: inputs.iter().map(|input| input.name.clone()).collect(),
             evaluations: Default::default(),
             concurrency: self.concurrency,
@@ -193,6 +225,7 @@ impl Analysis<'_> {
             bound: self.bound.clone(),
         };
         worker.heap.shared = entry.shared.clone();
+        worker.heap.workers = body_workers;
         worker.growth.runtime_classification |=
             super::super::transfer::required(&signature, worker.layouts)?;
         let mut mutable = std::collections::HashSet::new();
@@ -364,6 +397,9 @@ impl Analysis<'_> {
             shared: worker.heap.shared,
         });
         self.growth = worker.growth;
+        self.growth.loop_depth = parent_loop_depth;
+        self.growth.loop_regions = parent_loop_regions;
+        self.growth.loop_counters = parent_loop_counters;
         self.growth.worker_executions.insert(actor, execution.clone());
         self.heap.workers.records.get_mut(&actor).expect("live checked worker").execution =
             Some(execution);

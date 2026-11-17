@@ -26,6 +26,7 @@ pub(super) struct Field {
     pub(super) environment: Option<EnvironmentId>,
 }
 
+#[derive(Clone)]
 struct Environment {
     definition: usize,
     /// Static construction and its required loop-occurrence binders. A single
@@ -37,6 +38,8 @@ struct Environment {
     /// Until lifted through checked occurrence substitutions, this describes
     /// only a representative visit and cannot supply retained worker inputs.
     repeated: bool,
+    /// Checked runtime visit coordinates, present only on an instantiated view.
+    occurrence: Option<Vec<(crate::messages::AstId, Expr)>>,
 }
 
 /// Descriptors survive moves and branch snapshots without creating storage.
@@ -86,7 +89,10 @@ impl Environments {
                 })
             });
         let id = EnvironmentId(super::super::accounting::Accounting::fresh_allocation());
-        self.records.insert(id, Environment { definition, fields, repeated, construction, loops });
+        self.records.insert(
+            id,
+            Environment { definition, fields, repeated, construction, loops, occurrence: None },
+        );
         id
     }
 
@@ -97,9 +103,47 @@ impl Environments {
     ) -> bool {
         self.records.get(&id).is_some_and(|environment| {
             environment.construction == site
-                && environment.loops.is_empty()
+                && (environment.loops.is_empty() || environment.occurrence.is_some())
                 && !environment.repeated
         })
+    }
+
+    /// Bind the current construction visit before entering its body. The
+    /// original repeated descriptor remains unusable without these coordinates.
+    /// An environment escaping its construction loops needs a retained descriptor
+    /// substitution; the caller cannot reread a later iteration's snapshots.
+    pub(in super::super) fn bind_occurrence(
+        &mut self,
+        id: EnvironmentId,
+        active: &[(crate::messages::AstId, Expr)],
+        span: &Span,
+    ) -> Result<EnvironmentId, VirErr> {
+        let mut environment = self
+            .records
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| unsupported(span, "worker occurrence without its construction"))?;
+        if !environment.repeated {
+            return Ok(id);
+        }
+        if environment.loops.is_empty()
+            || !active.iter().map(|(id, _)| *id).collect::<Vec<_>>().starts_with(&environment.loops)
+        {
+            return Err(unsupported(
+                span,
+                "stale repeated capture observations outside their construction occurrence",
+            ));
+        }
+        for field in &mut environment.fields {
+            if let Some(nested) = field.environment {
+                field.environment = Some(self.bind_occurrence(nested, active, span)?);
+            }
+        }
+        environment.repeated = false;
+        environment.occurrence = Some(active.to_vec());
+        let bound = EnvironmentId(super::super::accounting::Accounting::fresh_allocation());
+        self.records.insert(bound, environment);
+        Ok(bound)
     }
 
     /// Only direct native scalars may currently supply scalar substitutions.
