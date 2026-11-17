@@ -56,9 +56,9 @@ allocation overlap that appears only on later iterations.
 
 ## Starting points
 
-- [Iteration analysis](../../../../../source/vir/src/resource/memory/transfer/trace/loops.rs)
-- [Ordered effect composition](../../../../../source/vir/src/resource/memory/transfer/trace/loops/composition.rs)
-- [Checked operation adapters](../../../../../source/vir/src/resource/memory/transfer/trace/operations.rs)
-- [Shared loop records](../../../../../source/vir/src/resource/memory/loops.rs)
-- [Loop ownership tests](../../../../../source/rust_verify_test/tests/resource/memory/loop_ownership.rs)
-- [Helper control-flow tests](../../../../../source/rust_verify_test/tests/resource/memory/helper_control.rs)
+- [Iteration analysis](../../../../../../source/vir/src/resource/memory/transfer/trace/loops.rs)
+- [Ordered effect composition](../../../../../../source/vir/src/resource/memory/transfer/trace/loops/composition.rs)
+- [Checked operation adapters](../../../../../../source/vir/src/resource/memory/transfer/trace/operations.rs)
+- [Shared loop records](../../../../../../source/vir/src/resource/memory/loops.rs)
+- [Loop ownership tests](../../../../../../source/rust_verify_test/tests/resource/memory/loop_ownership.rs)
+- [Helper control-flow tests](../../../../../../source/rust_verify_test/tests/resource/memory/helper_control.rs)

@@ -52,10 +52,10 @@ resulting source subset, including inherited Verus loop restrictions. Supported
 
 ## Starting points
 
-- [Loop admission](../../../../../source/vir/src/resource/memory/loops.rs)
-- [Body proof driver](../../../../../source/vir/src/resource/memory/loops/analysis.rs)
-- [Expression accounting](../../../../../source/vir/src/resource/memory/analysis.rs)
-- [Lexical exit states](../../../../../source/vir/src/resource/memory/control.rs)
-- [Exit regressions](../../../../../source/rust_verify_test/tests/resource/memory/control_flow.rs)
-- [Storage and exit tests](../../../../../source/rust_verify_test/tests/resource/memory/storage.rs)
-- [Loop checkpoint tests](../../../../../source/rust_verify_test/tests/resource/memory/checkpoints.rs)
+- [Loop admission](../../../../../../source/vir/src/resource/memory/loops.rs)
+- [Body proof driver](../../../../../../source/vir/src/resource/memory/loops/analysis.rs)
+- [Expression accounting](../../../../../../source/vir/src/resource/memory/analysis.rs)
+- [Lexical exit states](../../../../../../source/vir/src/resource/memory/control.rs)
+- [Exit regressions](../../../../../../source/rust_verify_test/tests/resource/memory/control_flow.rs)
+- [Storage and exit tests](../../../../../../source/rust_verify_test/tests/resource/memory/storage.rs)
+- [Loop checkpoint tests](../../../../../../source/rust_verify_test/tests/resource/memory/checkpoints.rs)

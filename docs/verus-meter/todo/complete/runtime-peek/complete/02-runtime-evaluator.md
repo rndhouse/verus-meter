@@ -41,9 +41,9 @@ required.
 
 ## Starting points
 
-- [Workspace dependencies](../../../../../source/Cargo.toml)
-- [Existing spec-to-exec support](../../../../../source/builtin_macros/src/contrib/exec_spec.rs)
-- [Spec-to-exec limitations](../../../../../source/docs/guide/src/exec_spec.md)
+- [Workspace dependencies](../../../../../../source/Cargo.toml)
+- [Existing spec-to-exec support](../../../../../../source/builtin_macros/src/contrib/exec_spec.rs)
+- [Spec-to-exec limitations](../../../../../../source/docs/guide/src/exec_spec.md)
 
 Reuse appropriate facilities, but do not replace the agreed interpreter design
 with generated per-formula executable arithmetic. The existing macro does not

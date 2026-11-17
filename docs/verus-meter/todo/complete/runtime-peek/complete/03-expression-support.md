@@ -40,12 +40,12 @@ equivalence proofs are required.
 
 ## Starting points
 
-- [Budget representation and resolution](../../../../../source/vir/src/resource/memory/budget.rs)
-- [Contract lowering and substitution](../../../../../source/vir/src/resource/memory/contracts.rs)
-- [Spec-helper admission](../../../../../source/vir/src/resource/memory/spec_budget.rs)
-- [Frontend resource lowering](../../../../../source/rust_verify/src/resource/memory/)
-- [Simple helper example](../../../../../examples/resource/memory/contracts/spec_budgets.rs)
-- [Higher-order example, deferred for queries](../../../../../examples/resource/memory/contracts/function_budgets.rs)
+- [Budget representation and resolution](../../../../../../source/vir/src/resource/memory/budget.rs)
+- [Contract lowering and substitution](../../../../../../source/vir/src/resource/memory/contracts.rs)
+- [Spec-helper admission](../../../../../../source/vir/src/resource/memory/spec_budget.rs)
+- [Frontend resource lowering](../../../../../../source/rust_verify/src/resource/memory/)
+- [Simple helper example](../../../../../../examples/resource/memory/contracts/spec_budgets.rs)
+- [Higher-order example, deferred for queries](../../../../../../examples/resource/memory/contracts/function_budgets.rs)
 
 Accounting validates spec calls and leaves their bodies to ordinary Verus
 reasoning. Runtime extraction separately inspects supported bodies before ghost

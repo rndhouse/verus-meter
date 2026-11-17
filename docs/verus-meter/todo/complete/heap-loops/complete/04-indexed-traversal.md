@@ -58,9 +58,9 @@ remaining incoming-owner boundary until task 5 completes it.
 
 ## Starting points
 
-- [Indexed loans](../../../../../source/vir/src/resource/memory/projections.rs)
-- [Shared forest operations](../../../../../source/vir/src/resource/memory/metadata/operations.rs)
-- [Iteration path restrictions](../../../../../source/vir/src/resource/memory/transfer/trace/loops.rs)
-- [Element transfer tests](../../../../../source/rust_verify_test/tests/resource/memory/element_transfers.rs)
-- [Incoming child tests](../../../../../source/rust_verify_test/tests/resource/memory/incoming_children.rs)
-- [Indexed loop regressions](../../../../../source/rust_verify_test/tests/resource/memory/indexed_loops.rs)
+- [Indexed loans](../../../../../../source/vir/src/resource/memory/projections.rs)
+- [Shared forest operations](../../../../../../source/vir/src/resource/memory/metadata/operations.rs)
+- [Iteration path restrictions](../../../../../../source/vir/src/resource/memory/transfer/trace/loops.rs)
+- [Element transfer tests](../../../../../../source/rust_verify_test/tests/resource/memory/element_transfers.rs)
+- [Incoming child tests](../../../../../../source/rust_verify_test/tests/resource/memory/incoming_children.rs)
+- [Indexed loop regressions](../../../../../../source/rust_verify_test/tests/resource/memory/indexed_loops.rs)

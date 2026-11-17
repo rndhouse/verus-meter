@@ -57,8 +57,8 @@ transformations reject with generous budgets.
 
 ## Starting points
 
-- [Transfer dependency checks](../../../../../source/vir/src/resource/memory/transfer/trace/loops.rs)
-- [Ownership forest operations](../../../../../source/vir/src/resource/memory/metadata/operations.rs)
-- [Input-region accounting](../../../../../source/vir/src/resource/memory/provenance.rs)
-- [Loop dependency regressions](../../../../../source/rust_verify_test/tests/resource/memory/loop_ownership.rs)
-- [Transformed-child regressions](../../../../../source/rust_verify_test/tests/resource/memory/transformed_loops.rs)
+- [Transfer dependency checks](../../../../../../source/vir/src/resource/memory/transfer/trace/loops.rs)
+- [Ownership forest operations](../../../../../../source/vir/src/resource/memory/metadata/operations.rs)
+- [Input-region accounting](../../../../../../source/vir/src/resource/memory/provenance.rs)
+- [Loop dependency regressions](../../../../../../source/rust_verify_test/tests/resource/memory/loop_ownership.rs)
+- [Transformed-child regressions](../../../../../../source/rust_verify_test/tests/resource/memory/transformed_loops.rs)

@@ -34,7 +34,7 @@ complete query-and-admit workflow, then finish integration validation.
 
 ## Validation
 
-Follow the current [project instructions](../../../../../AGENTS.md), including the
+Follow the current [project instructions](../../../../../../AGENTS.md), including the
 focused memory checks from `source/`:
 
 ```sh
@@ -63,10 +63,10 @@ authorization. Mark tasks complete only after their criteria are met.
 
 ## Starting points
 
-- [Example index](../../../../../examples/resource/memory/README.md)
-- [Existing input-dependent allocation example](../../../../../examples/resource/memory/heap/loops/buffer_collection.rs)
-- [Example test harness](../../../../../source/rust_verify_test/tests/examples.rs)
-- [Build instructions](../../../../../BUILD.md)
+- [Example index](../../../../../../examples/resource/memory/README.md)
+- [Existing input-dependent allocation example](../../../../../../examples/resource/memory/heap/loops/buffer_collection.rs)
+- [Example test harness](../../../../../../source/rust_verify_test/tests/examples.rs)
+- [Build instructions](../../../../../../BUILD.md)
 
 ## Implemented boundary
 

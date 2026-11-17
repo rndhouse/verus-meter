@@ -8,7 +8,7 @@ generate typed query wrappers, not a separate arithmetic implementation per boun
 
 These documents record the implementation plan and completed task boundaries.
 Maintain the authoritative task documents in the primary checkout under
-`docs/verus-meter/todo/runtime-peek/`. Implementation commits are recorded in the
+`docs/verus-meter/todo/complete/runtime-peek/`. Implementation commits are recorded in the
 completed task documents.
 Keep instructions and references repository-relative so the plan survives relocation.
 
@@ -75,8 +75,8 @@ this work. Verus continues to verify the target function's existing resource
 contract. Describe runtime queries as tested tooling for evaluating that contract;
 do not claim the query implementation itself is formally verified.
 
-Follow [AGENTS.md](../../../../AGENTS.md), the [build instructions](../../../../BUILD.md),
-and the [memory model](../../model.md). Commit coherent, validated implementation
+Follow [AGENTS.md](../../../../../AGENTS.md), the [build instructions](../../../../../BUILD.md),
+and the [memory model](../../../model.md). Commit coherent, validated implementation
 steps locally; do not push or publish without authorization. Mark tasks complete
 only when their acceptance criteria hold. Keep raw logs disposable and preserve
 lasting investigation evidence in commit messages and explanations beside code.

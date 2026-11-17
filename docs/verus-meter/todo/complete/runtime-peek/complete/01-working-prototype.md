@@ -43,12 +43,12 @@ restriction so task 2 can extend it directly.
 
 ## Starting points
 
-- [Architecture](../../../../../source/CODE.md)
-- [Macro integration](../../../../../source/builtin_macros/src/syntax.rs)
-- [Resource macros](../../../../../source/builtin_macros/src/resource/)
-- [Compiler driver](../../../../../source/rust_verify/src/driver.rs)
-- [Workspace and existing arithmetic dependency](../../../../../source/Cargo.toml)
-- [Memory examples](../../../../../examples/resource/memory/README.md)
+- [Architecture](../../../../../../source/CODE.md)
+- [Macro integration](../../../../../../source/builtin_macros/src/syntax.rs)
+- [Resource macros](../../../../../../source/builtin_macros/src/resource/)
+- [Compiler driver](../../../../../../source/rust_verify/src/driver.rs)
+- [Workspace and existing arithmetic dependency](../../../../../../source/Cargo.toml)
+- [Memory examples](../../../../../../examples/resource/memory/README.md)
 
 ## Implemented boundary
 

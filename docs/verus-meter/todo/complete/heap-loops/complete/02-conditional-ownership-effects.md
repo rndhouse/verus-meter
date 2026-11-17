@@ -62,9 +62,9 @@ remaining predicate restrictions explicitly.
 
 ## Starting points
 
-- [Iteration analysis](../../../../../source/vir/src/resource/memory/transfer/trace/loops.rs)
-- [Ownership evaluator](../../../../../source/vir/src/resource/memory/transfer/trace.rs)
-- [Guarded interval programs](../../../../../source/vir/src/resource/memory/transfer/trace/loops/guards.rs)
-- [Conditional loop regressions](../../../../../source/rust_verify_test/tests/resource/memory/conditional_loops.rs)
-- [Helper control-flow regressions](../../../../../source/rust_verify_test/tests/resource/memory/helper_control.rs)
-- [Loop dependency regressions](../../../../../source/rust_verify_test/tests/resource/memory/loop_ownership.rs)
+- [Iteration analysis](../../../../../../source/vir/src/resource/memory/transfer/trace/loops.rs)
+- [Ownership evaluator](../../../../../../source/vir/src/resource/memory/transfer/trace.rs)
+- [Guarded interval programs](../../../../../../source/vir/src/resource/memory/transfer/trace/loops/guards.rs)
+- [Conditional loop regressions](../../../../../../source/rust_verify_test/tests/resource/memory/conditional_loops.rs)
+- [Helper control-flow regressions](../../../../../../source/rust_verify_test/tests/resource/memory/helper_control.rs)
+- [Loop dependency regressions](../../../../../../source/rust_verify_test/tests/resource/memory/loop_ownership.rs)

@@ -44,11 +44,11 @@ the generated interface. A clean rebuild does not rely on stale expression data.
 
 ## Starting points
 
-- [Resource macro modules](../../../../../source/builtin_macros/src/resource/)
-- [Syntax integration](../../../../../source/builtin_macros/src/syntax.rs)
-- [Frontend attribute handling](../../../../../source/rust_verify/src/attributes.rs)
-- [Verifier and compilation integration](../../../../../source/rust_verify/src/)
-- [Build tasks](../../../../../source/Makefile.toml)
+- [Resource macro modules](../../../../../../source/builtin_macros/src/resource/)
+- [Syntax integration](../../../../../../source/builtin_macros/src/syntax.rs)
+- [Frontend attribute handling](../../../../../../source/rust_verify/src/attributes.rs)
+- [Verifier and compilation integration](../../../../../../source/rust_verify/src/)
+- [Build tasks](../../../../../../source/Makefile.toml)
 
 ## Implemented boundary
 

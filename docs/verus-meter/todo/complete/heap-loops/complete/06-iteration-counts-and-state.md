@@ -82,13 +82,13 @@ and nested loops whose counts use supported outer state. Document the accepted
 recurrence and stopping-condition classes; do not claim arbitrary recurrence
 inference.
 
-The [batched-construction example](../../../../../examples/resource/memory/heap/loops/batched_construction.rs)
+The [batched-construction example](../../../../../../examples/resource/memory/heap/loops/batched_construction.rs)
 must verify without its handwritten `buffers.len() == 2 * batch` invariant.
 
 ## Starting points
 
-- [Shared control classification](../../../../../source/vir/src/resource/memory/loops.rs)
-- [Shared counts and scalar transitions](../../../../../source/vir/src/resource/memory/loops/progress.rs)
-- [Checked progress evaluation](../../../../../source/vir/src/resource/memory/transfer/trace/loops/progress.rs)
-- [Complete closed-forest candidates](../../../../../source/vir/src/resource/memory/transfer/iteration.rs)
-- [Progress and ownership regressions](../../../../../source/rust_verify_test/tests/resource/memory/progress_loops.rs)
+- [Shared control classification](../../../../../../source/vir/src/resource/memory/loops.rs)
+- [Shared counts and scalar transitions](../../../../../../source/vir/src/resource/memory/loops/progress.rs)
+- [Checked progress evaluation](../../../../../../source/vir/src/resource/memory/transfer/trace/loops/progress.rs)
+- [Complete closed-forest candidates](../../../../../../source/vir/src/resource/memory/transfer/iteration.rs)
+- [Progress and ownership regressions](../../../../../../source/rust_verify_test/tests/resource/memory/progress_loops.rs)

@@ -37,7 +37,7 @@ ownership summaries. Standard generated iterator invariants remain required.
 - [x] Compose precise iteration effects with task 7's break, continue, return,
   and nested or labelled exit cleanup.
 - [x] Check frontend, macro, erasure, and verification boundaries according to
-  [project instructions](../../../../../AGENTS.md).
+  [project instructions](../../../../../../AGENTS.md).
 
 ## Completion criteria
 
@@ -49,10 +49,10 @@ resulting source subset rather than claiming support for all iterators.
 
 ## Starting points
 
-- [Existing for lowering](../../../../../source/builtin_macros/src/syntax.rs)
-- [Iterator specifications and wrapper](../../../../../source/vstd/std_specs/iter.rs)
-- [Loop admission](../../../../../source/vir/src/resource/memory/loops.rs)
-- [Compiler operation identities](../../../../../source/rust_verify/src/resource/memory/intrinsics.rs)
-- [Iterator layouts and operations](../../../../../source/vir/src/resource/memory/iterators.rs)
-- [For-loop adaptation](../../../../../source/vir/src/resource/memory/for_loops.rs)
-- [Iterator regressions](../../../../../source/rust_verify_test/tests/resource/memory/for_loops.rs)
+- [Existing for lowering](../../../../../../source/builtin_macros/src/syntax.rs)
+- [Iterator specifications and wrapper](../../../../../../source/vstd/std_specs/iter.rs)
+- [Loop admission](../../../../../../source/vir/src/resource/memory/loops.rs)
+- [Compiler operation identities](../../../../../../source/rust_verify/src/resource/memory/intrinsics.rs)
+- [Iterator layouts and operations](../../../../../../source/vir/src/resource/memory/iterators.rs)
+- [For-loop adaptation](../../../../../../source/vir/src/resource/memory/for_loops.rs)
+- [Iterator regressions](../../../../../../source/rust_verify_test/tests/resource/memory/for_loops.rs)

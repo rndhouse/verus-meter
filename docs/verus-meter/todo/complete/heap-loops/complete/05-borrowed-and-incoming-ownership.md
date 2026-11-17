@@ -62,8 +62,8 @@ aggregate ownership fallback is introduced.
 
 ## Starting points
 
-- [Input regions](../../../../../source/vir/src/resource/memory/provenance.rs)
-- [Call provenance](../../../../../source/vir/src/resource/memory/transfer/origins.rs)
-- [Call geometry](../../../../../source/vir/src/resource/memory/metadata/geometry.rs)
-- [Call composition](../../../../../source/vir/src/resource/memory/transfer/calls.rs)
-- [Incoming loop regressions](../../../../../source/rust_verify_test/tests/resource/memory/incoming_loops.rs)
+- [Input regions](../../../../../../source/vir/src/resource/memory/provenance.rs)
+- [Call provenance](../../../../../../source/vir/src/resource/memory/transfer/origins.rs)
+- [Call geometry](../../../../../../source/vir/src/resource/memory/metadata/geometry.rs)
+- [Call composition](../../../../../../source/vir/src/resource/memory/transfer/calls.rs)
+- [Incoming loop regressions](../../../../../../source/rust_verify_test/tests/resource/memory/incoming_loops.rs)
