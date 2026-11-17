@@ -2,9 +2,7 @@
 //! from its dynamic captures. Entry must consume both; a closure type or a
 //! manually supplied completion value cannot stand in for checked body effects.
 
-use super::super::{
-    concurrency, heap::OwnerSlot, layout::Layouts, lifetime::Storage, model::unsupported,
-};
+use super::super::{concurrency, layout::Layouts, lifetime::Storage, model::unsupported};
 use crate::ast::*;
 
 /// The exact source definition and existing storage transferred at worker entry.
@@ -14,9 +12,30 @@ pub(in super::super) struct Entry {
     pub(in super::super) definition: Expr,
     /// Inline captures and separately owned descendants, without a second charge.
     pub(in super::super) storage: Storage,
+    /// Disjoint source/compiler views into the original environment storage.
+    pub(super) captures: super::captures::Captures,
 }
 
 impl Entry {
+    /// Move only owned descendants out of a captured field, using the original
+    /// source binding's exact path. The environment's inline charge stays live;
+    /// the body adapter must account for the destination's actual value storage.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "worker body ownership effects consume capture views")
+    )]
+    pub(in super::super) fn take_capture_owner(
+        &mut self,
+        source: &super::super::paths::LocalPath,
+    ) -> Result<super::super::heap::Owner, VirErr> {
+        let path = self.captures.source_path(source).ok_or_else(|| {
+            unsupported(&self.definition.span, "a worker access outside its executable captures")
+        })?;
+        self.storage.owner.as_mut().and_then(|owner| owner.take_child(&path)).ok_or_else(|| {
+            unsupported(&self.definition.span, "an absent or already moved worker capture owner")
+        })
+    }
+
     /// Check the transferred environment against actual executable fields. Its
     /// inline storage stays whole; fields are views into it, never copied input
     /// slots. Later body analysis must account for moves out of those views.
@@ -66,14 +85,8 @@ impl Entry {
                 "worker captures without exact compiler body projections",
             ));
         }
-        let fields: std::collections::BTreeSet<_> = evidence
-            .captures
-            .iter()
-            .enumerate()
-            .filter_map(|(index, capture)| {
-                layouts.owner(&capture.typ).then_some(OwnerSlot::Capture(index))
-            })
-            .collect();
+        let captures = super::captures::Captures::new(evidence, layouts, span)?;
+        let fields = captures.owned_slots(layouts);
         if let Some(owner) = &storage.owner {
             if owner.closure != Some(*id)
                 || owner.bytes != 0
@@ -91,7 +104,7 @@ impl Entry {
         } else if layouts.owner(&storage.typ) || !fields.is_empty() {
             return Err(unsupported(span, "worker entry missing owned capture storage"));
         }
-        Ok(Self { definition, storage })
+        Ok(Self { definition, storage, captures })
     }
 }
 

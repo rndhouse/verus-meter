@@ -14,6 +14,7 @@ use crate::{ast::*, messages::Span};
 use std::collections::BTreeMap;
 
 mod body;
+mod captures;
 mod identity;
 
 pub(super) use identity::{Families, WorkerId};
@@ -33,6 +34,8 @@ struct Worker {
     parent: Option<WorkerId>,
     /// Actual executable body retained across publication and source moves.
     definition: Expr,
+    /// Source/body paths refer to fields of the retained environment charge.
+    captures: captures::Captures,
     /// The completion tag is one distinct allocation, independent of the
     /// parent's inline handle and the result eventually stored behind it.
     completion: u64,
@@ -80,6 +83,7 @@ impl Workers {
             Worker {
                 parent,
                 definition: entry.definition.clone(),
+                captures: entry.captures,
                 completion,
                 result: result.clone(),
                 stage: Stage::Published(entry.storage),
@@ -107,7 +111,11 @@ impl Workers {
         else {
             unreachable!()
         };
-        Ok(body::Entry { definition: worker.definition.clone(), storage: captures })
+        Ok(body::Entry {
+            definition: worker.definition.clone(),
+            captures: worker.captures.clone(),
+            storage: captures,
+        })
     }
 
     #[cfg_attr(
@@ -197,6 +205,7 @@ impl Workers {
                 other.records.get(id).is_some_and(|b| {
                     a.parent == b.parent
                         && a.definition.span.id == b.definition.span.id
+                        && a.captures.compatible(&b.captures)
                         && a.completion == b.completion
                         && crate::ast_util::types_equal(&a.result, &b.result)
                         && a.detached.as_ref().map(|s| s.id) == b.detached.as_ref().map(|s| s.id)

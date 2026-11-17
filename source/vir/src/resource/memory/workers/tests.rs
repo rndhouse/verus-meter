@@ -337,6 +337,42 @@ fn worker_entry_checks_capture_coverage_and_native_cleanup() {
     });
 }
 
+#[test]
+fn capture_views_preserve_dereference_paths_and_reject_overlapping_bindings() {
+    let source = VarIdent(Arc::new("source".into()), VarIdentDisambiguate::RustcId(1));
+    let scalar = Arc::new(TypX::Int(IntRange::U(64)));
+    let typ = decorated(TypDecoration::Box, scalar.clone());
+    let (mut info, _) = closure(1, Some((source.clone(), typ)));
+    let layouts = Layouts::new(&[], None, None, None);
+    let views = captures::Captures::new(&info, &layouts, &span(1)).unwrap();
+    assert!(
+        views.source_path(&(source.clone(), vec![OwnerSlot::Contents]))
+            == Some(vec![OwnerSlot::Capture(0), OwnerSlot::Contents]),
+    );
+    let whole = info.captures[0].clone();
+    let mut inner = whole.clone();
+    inner.projection.push(flow::Projection::Deref);
+    inner.typ = scalar;
+    inner.mode = CaptureMode::Copy;
+    info.captures = vec![inner.clone()];
+    let views = captures::Captures::new(&info, &layouts, &span(2)).unwrap();
+    assert!(views.source_path(&(source.clone(), vec![])).is_none());
+    assert!(
+        views.source_path(&(source.clone(), vec![OwnerSlot::Contents]))
+            == Some(vec![OwnerSlot::Capture(0)]),
+    );
+    assert!(views.owned_slots(&layouts).is_empty());
+    inner.body_place.as_mut().unwrap().projection = vec![flow::Projection::Field(1)];
+    info.captures = vec![whole.clone(), inner];
+    assert!(captures::Captures::new(&info, &layouts, &span(3)).is_err());
+    let mut other = whole.clone();
+    other.source = VarIdent(Arc::new("other".into()), VarIdentDisambiguate::RustcId(2));
+    info.captures = vec![whole, other];
+    assert!(captures::Captures::new(&info, &layouts, &span(4)).is_err());
+    info.captures[1].body_place.as_mut().unwrap().projection = vec![flow::Projection::Field(1)];
+    assert!(captures::Captures::new(&info, &layouts, &span(5)).is_ok());
+}
+
 fn unit(site: &Span) -> Expr {
     SpannedTyped::new(site, &crate::ast_util::unit_typ(), ExprX::Block(Arc::new(vec![]), None))
 }
@@ -510,16 +546,17 @@ fn capture_and_result_ownership_survive_publication_completion_and_join() {
         let (id, handle_value) = spawn(analysis, handle, expression, 10);
         assert!(!analysis.slots.contains_key(&source));
         assert_eq!(analysis.storage.live(), 81); // backing + capture + handle + tag
-        let entry = analysis.heap.workers.enter(id, &site).unwrap();
+        let mut entry = analysis.heap.workers.enter(id, &site).unwrap();
         let ExprX::NonSpecClosure { body, .. } = &entry.definition.x else {
             panic!("worker definition")
         };
         assert!(
             matches!(&body.x, ExprX::ReadPlace(place, _) if matches!(&place.x, PlaceX::Local(name) if name == &source))
         );
+        let payload = entry.take_capture_owner(&(source.clone(), vec![])).unwrap();
+        assert!(entry.take_capture_owner(&(source, vec![])).is_err());
         let mut frame = entry.storage;
-        let mut environment = frame.owner.take().unwrap();
-        let payload = environment.children.remove(&OwnerSlot::Capture(0)).unwrap();
+        let environment = frame.owner.take().unwrap();
         analysis.release_owner(environment, &site);
         let result =
             Storage { typ: initializer.typ.clone(), value: frame.value, owner: Some(payload) };
@@ -598,7 +635,7 @@ fn shared_capture_and_completed_result_retain_one_canonical_payload() {
         assert_reference(analysis, &owner, "shared_reference", &[identity.unwrap().serial()]);
         analysis.var_modes.insert(copy.clone(), Mode::Exec);
         analysis.slots.insert(copy.clone(), value);
-        analysis.heap.owners.insert(copy, owner);
+        analysis.heap.owners.insert(copy.clone(), owner);
         let (id, handle_value) = spawn(analysis, handle, expression, 10);
         assert_eq!(analysis.storage.live(), 113); // two strong handles, one payload, worker + tag
         let owner = analysis.heap.owners.remove(&root).unwrap();
@@ -606,9 +643,10 @@ fn shared_capture_and_completed_result_retain_one_canonical_payload() {
         let value = analysis.slots.remove(&root).unwrap();
         analysis.release_value(value, &span(11));
         assert_eq!(analysis.storage.live(), 105);
-        let mut frame = analysis.heap.workers.enter(id, &span(12)).unwrap().storage;
-        let mut environment = frame.owner.take().unwrap();
-        let returned = environment.children.remove(&OwnerSlot::Capture(0)).unwrap();
+        let mut entry = analysis.heap.workers.enter(id, &span(12)).unwrap();
+        let returned = entry.take_capture_owner(&(copy, vec![])).unwrap();
+        let mut frame = entry.storage;
+        let environment = frame.owner.take().unwrap();
         assert_eq!(returned.shared, identity);
         analysis.release_owner(environment, &span(12));
         analysis

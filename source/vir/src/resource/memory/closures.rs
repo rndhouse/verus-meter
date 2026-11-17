@@ -78,10 +78,13 @@ impl Analysis<'_> {
             ExprX::ReadPlace(place.clone(), UnfinalizedReadKind { preliminary_kind, id: kind.id }),
         ))
     }
+}
+
+impl super::layout::Layouts {
     /// Translate a compiler capture path using the same typed places and fixed
     /// ownership paths as ordinary source moves. Immutable dereferences remain
     /// implicit in VIR; field selection retains the real enclosing root type.
-    fn capture_place(&self, capture: &Capture, span: &Span) -> Result<Place, VirErr> {
+    pub(super) fn capture_place(&self, capture: &Capture, span: &Span) -> Result<Place, VirErr> {
         let mut place =
             SpannedTyped::new(span, &capture.source_typ, PlaceX::Local(capture.source.clone()));
         let mut typ = capture.source_typ.clone();
@@ -95,7 +98,7 @@ impl Analysis<'_> {
                     typ = inner.clone();
                 }
                 Projection::Field(index) => {
-                    let variant = self.layouts.struct_variant(&typ, span)?;
+                    let variant = self.struct_variant(&typ, span)?;
                     let field = variant.fields.get(*index).ok_or_else(|| {
                         unsupported(
                             span,
@@ -135,7 +138,9 @@ impl Analysis<'_> {
         }
         Ok(place)
     }
+}
 
+impl Analysis<'_> {
     /// Form one source value from captured fields. Moved inline values keep
     /// their charge and separately owned descendants; copied fields create only
     /// their own inline storage. No worker or helper body runs at construction.
@@ -156,7 +161,7 @@ impl Analysis<'_> {
         let mut values = Vec::new();
         let mut checked = Vec::new();
         for (index, capture) in captures.iter().enumerate() {
-            let place = self.capture_place(capture, &expr.span)?;
+            let place = self.layouts.capture_place(capture, &expr.span)?;
             let owns = self.layouts.owner(&capture.typ);
             let mode = if self.layouts.copy_closure(&capture.typ) {
                 CaptureMode::Copy
