@@ -65,17 +65,7 @@ impl Trace<'_> {
                 Input::Complete => crate::ast_util::mk_bool(span, true),
                 Input::Forest(index) => selected(*index, &[]),
                 Input::Scalar(index) => {
-                    let record = expr::lookup(span, selected(*index, &[]), expr::path(span, []));
-                    let scalar = expr::operation(span, "scalar_value", vec![record], int_typ());
-                    match &*inputs[*index].0 {
-                        TypX::Bool => mk_eq(span, &scalar, &expr::integer(span, 1)),
-                        TypX::Int(range) => SpannedTyped::new(
-                            span,
-                            &inputs[*index].0,
-                            ExprX::Unary(UnaryOp::Clip { range: *range, truncate: false }, scalar),
-                        ),
-                        _ => return None,
-                    }
+                    expr::observed_scalar(span, selected(*index, &[]), &inputs[*index].0)?
                 }
                 Input::Property(index, path, field) => {
                     property(span, selected(*index, path), field)
@@ -84,13 +74,12 @@ impl Trace<'_> {
             };
             replacements.insert(symbol.name.clone(), replacement);
         }
-        let result = match instantiate_value(&template.result, &replacements) {
-            Value::Owner(node) => node.memory,
-            Value::Unit | Value::Scalar(_) | Value::Unknown => {
-                expr::empty(span, expr::record_type())
-            }
-            _ => return None,
-        };
+        let result = instantiate_value(&template.result, &replacements);
+        if matches!(result, Value::Iterator(_)) {
+            return None;
+        }
+        let result = worker_description(span, result)
+            .map_or_else(|| expr::empty(span, expr::record_type()), |node| node.memory);
         // Progress inference already relates each erased ordinal to the bound
         // visit index. Reuse that relation; a compiler visit is not a count.
         let indices = self

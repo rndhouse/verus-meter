@@ -30,7 +30,8 @@ impl Analysis<'_> {
         template: &Template,
         values: &HashMap<VarIdent, Expr>,
     ) -> Result<Option<Node>, VirErr> {
-        let Value::Owner(node) = instantiate_value(&template.result, values) else {
+        let Some(node) = worker_description(span, instantiate_value(&template.result, values))
+        else {
             return Ok(None);
         };
         self.enable_transfer_algebra(span);

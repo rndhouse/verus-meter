@@ -146,8 +146,13 @@ pub(in super::super) enum Operation {
         /// New length-sized allocation observed before releasing old backing.
         allocation: Expr,
     },
-    /// Consume an optional owner and transfer its Contents child.
-    Unwrap { source: Expr },
+    /// Consume an optional or joined result and transfer its payload description.
+    Unwrap {
+        source: Expr,
+        /// Every possible checked worker body supplies a scalar description.
+        /// Ordinary optional values and unknown worker results have none.
+        observed_scalar: bool,
+    },
     /// Consume the owner selected by the recorded operand move.
     Drop { source: Expr },
     /// Inspect the presence tag without consuming its owner.

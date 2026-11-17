@@ -106,7 +106,10 @@ impl Analysis<'_> {
         } else if attrs.resource_intrinsic == Some(ResourceIntrinsic::OptionUnwrap) {
             self.transitions.operation(
                 &expr.span,
-                super::transfer::checked::Operation::Unwrap { source: args[0].clone() },
+                super::transfer::checked::Operation::Unwrap {
+                    source: args[0].clone(),
+                    observed_scalar: false,
+                },
             );
         }
         Ok(Some(bytes))

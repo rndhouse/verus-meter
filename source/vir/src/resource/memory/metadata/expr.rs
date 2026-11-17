@@ -41,6 +41,23 @@ pub(in super::super) fn scalar_observation(span: &Span, path: Expr, value: Expr)
     operation(span, "scalar_observation", vec![path, value], record_type())
 }
 
+/// Decode an observation using its executable scalar type. This is a candidate
+/// value for descriptor inference; it does not assert equality with a source
+/// value or establish the presence of an observation in an arbitrary forest.
+pub(in super::super) fn observed_scalar(span: &Span, memory: Expr, typ: &Typ) -> Option<Expr> {
+    let record = lookup(span, memory, path(span, []));
+    let scalar = operation(span, "scalar_value", vec![record], int_typ());
+    match &**typ {
+        TypX::Bool => Some(crate::ast_util::mk_eq(span, &scalar, &integer(span, 1))),
+        TypX::Int(range) => Some(SpannedTyped::new(
+            span,
+            typ,
+            ExprX::Unary(UnaryOp::Clip { range: *range, truncate: false }, scalar),
+        )),
+        _ => None,
+    }
+}
+
 /// Canonical identity shared by generated calls and scoped definition reveals.
 pub(in super::super) fn function(name: &str) -> Fun {
     super::algebra::function(name)

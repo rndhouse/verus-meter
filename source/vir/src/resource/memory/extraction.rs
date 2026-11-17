@@ -65,7 +65,10 @@ impl Analysis<'_> {
                 self.release_owner(option, &source.span);
                 self.transitions.operation(
                     &source.span,
-                    super::transfer::checked::Operation::Unwrap { source: arg.clone() },
+                    super::transfer::checked::Operation::Unwrap {
+                        source: arg.clone(),
+                        observed_scalar: false,
+                    },
                 );
                 Ok(Some(child))
             }

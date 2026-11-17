@@ -66,6 +66,55 @@ fn shared_forests_do_not_repeat_allocation_proofs() {
 }
 
 #[test]
+fn selecting_worker_scalars_preserves_their_values_and_types() {
+    let span = span();
+    let signed = Arc::new(TypX::Int(IntRange::I(16)));
+    let values = [
+        SpannedTyped::new(&span, &signed, expr::integer(&span, -7).x.clone()),
+        crate::ast_util::mk_bool(&span, false),
+        crate::ast_util::mk_bool(&span, true),
+    ];
+    let mut records = expr::empty(&span, expr::record_type());
+    for (index, value) in values.iter().enumerate() {
+        let result = worker_description(&span, Value::Scalar(value.clone())).unwrap();
+        records = expr::push(
+            &span,
+            records,
+            expr::operation(
+                &span,
+                "worker_observation",
+                vec![
+                    expr::path(&span, [index as i128]),
+                    expr::path(&span, [11, index as i128]),
+                    expr::empty(&span, expr::record_type()),
+                    result.memory,
+                ],
+                expr::record_type(),
+            ),
+        );
+    }
+    for (index, expected) in values.iter().enumerate() {
+        let selected = expr::subtree(&span, records.clone(), expr::path(&span, [index as i128]));
+        let record = expr::lookup(&span, selected, expr::path(&span, []));
+        let memory = expr::operation(&span, "worker_result", vec![record], expr::memory_type());
+        let actual =
+            simplify::simplify(&expr::observed_scalar(&span, memory, &expected.typ).unwrap());
+        assert!(crate::ast_util::types_equal(&actual.typ, &expected.typ));
+        match (&actual.x, &expected.x) {
+            (
+                ExprX::Unary(UnaryOp::Clip { truncate: false, .. }, inner),
+                ExprX::Const(Constant::Int(expected)),
+            ) => {
+                assert!(
+                    matches!(&inner.x, ExprX::Const(Constant::Int(actual)) if actual == expected)
+                );
+            }
+            _ => assert!(simplify::inspect::same_expression(&actual, expected)),
+        }
+    }
+}
+
+#[test]
 fn worker_selection_preserves_observations_without_charging_future_storage() {
     let span = span();
     let inputs = expr::push(

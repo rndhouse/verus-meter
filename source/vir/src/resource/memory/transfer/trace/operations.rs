@@ -322,10 +322,22 @@ impl Trace<'_> {
                 };
                 Some(Value::Owner(Node { origin: None, typ: value.typ.clone(), memory, minima }))
             }
-            Operation::Unwrap { source } => {
+            Operation::Unwrap { source, observed_scalar } => {
                 let Value::Owner(node) = self.value(&source)? else {
                     return Some(Value::Unknown);
                 };
+                let memory = expr::subtree(
+                    span,
+                    node.memory,
+                    expr::path(span, [self.layouts.metadata_slot(&OwnerSlot::Contents)]),
+                );
+                if contracts::scalar(&value.typ) {
+                    return Some(if observed_scalar {
+                        Value::Scalar(expr::observed_scalar(span, memory, &value.typ)?)
+                    } else {
+                        Value::Unknown
+                    });
+                }
                 let minima = node
                     .minima
                     .into_iter()
@@ -334,16 +346,7 @@ impl Trace<'_> {
                             .map(|rest| (rest.to_vec(), floor))
                     })
                     .collect();
-                Some(Value::Owner(Node {
-                    origin: None,
-                    typ: value.typ.clone(),
-                    memory: expr::subtree(
-                        span,
-                        node.memory,
-                        expr::path(span, [self.layouts.metadata_slot(&OwnerSlot::Contents)]),
-                    ),
-                    minima,
-                }))
+                Some(Value::Owner(Node { origin: None, typ: value.typ.clone(), memory, minima }))
             }
             Operation::Predicate { receiver, present } => {
                 let location = self.checked_location(&receiver)?;

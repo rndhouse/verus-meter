@@ -6,6 +6,211 @@ use super::support::rejects;
 const GLOBAL: &str = "checked worker effects still require global lifetime and interference proofs";
 
 #[test]
+fn scalar_worker_results_size_buffers_through_a_checked_helper() {
+    rejects(
+        "scalar_worker_helper_buffers",
+        r#"
+        fn buffer(size: u16) -> Vec<u8>
+            resources peak(memory) <= size + 64
+        {
+            Vec::with_capacity(size as usize)
+        }
+        fn f(n: u16, keep: u16)
+            requires keep <= n,
+            resources peak(memory) <= n * 128 + 131072
+        {
+            let mut handles = Vec::with_capacity(n as usize);
+            let mut i = 0u16;
+            while i < n invariant i <= n, handles.len() == i, decreases n - i, {
+                let worker = std::thread::spawn(move || i);
+                handles.push(worker);
+                i += 1;
+            }
+            while handles.len() > keep as usize
+                invariant handles.len() <= n,
+                decreases handles.len(),
+            {
+                let handle = handles.pop().unwrap();
+                let moved = handle;
+                let size = moved.join().unwrap();
+                let storage = buffer(size);
+                drop(storage);
+            }
+            while handles.len() > 0 decreases handles.len(), {
+                let size = handles.pop().unwrap().join().unwrap();
+                let storage = buffer(size);
+                drop(storage);
+            }
+        }
+        "#,
+        GLOBAL,
+    );
+}
+
+#[test]
+fn scalar_worker_results_do_not_hide_an_oversized_allocation() {
+    let source = r#"
+        fn f(n: u16) resources peak(memory) <= n * 128 + 131072 {
+            let mut handles = Vec::with_capacity(n as usize);
+            let mut i = 0u16;
+            while i < n invariant i <= n, handles.len() == i, decreases n - i, {
+                let worker = std::thread::spawn(move || i);
+                handles.push(worker);
+                i += 1;
+            }
+            while handles.len() > 0 decreases handles.len(), {
+                let size = handles.pop().unwrap().join().unwrap();
+                let storage = Vec::<u8>::with_capacity(size as usize + EXTRA);
+                drop(storage);
+            }
+        }
+        "#;
+    rejects("scalar_worker_buffers", &source.replace("EXTRA", "0"), GLOBAL);
+    let enlarged = source.replace("EXTRA", "200_000");
+    let error = crate::verify_one_file(
+        "scalar_worker_buffers_too_large",
+        format!("use vstd::prelude::*; verus! {{ {enlarged} }}"),
+        &[],
+    )
+    .unwrap_err();
+    assert!(error.errors.iter().any(|error| error.message.contains("memory budget exceeded")));
+    assert!(error.errors.iter().any(|error| error.message.contains(GLOBAL)));
+    assert!(error.errors.iter().all(|error| {
+        error.message.contains("memory budget exceeded") || error.message.contains(GLOBAL)
+    }));
+}
+
+#[test]
+fn scalar_worker_observations_preserve_boolean_and_signed_results() {
+    let source = r#"
+        fn size(value: TYPE) -> u16 resources peak(memory) <= 64 {
+            if CONDITION { 64 } else { 32 }
+        }
+        fn f(n: u16) resources peak(memory) <= n * 128 + 131072 {
+            let mut handles = Vec::with_capacity(n as usize);
+            let mut i = 0u16;
+            while i < n invariant i <= n, handles.len() == i, decreases n - i, {
+                let worker = std::thread::spawn(move || RESULT);
+                handles.push(worker);
+                i += 1;
+            }
+            while handles.len() > 0 decreases handles.len(), {
+                let value = handles.pop().unwrap().join().unwrap();
+                let amount = size(value);
+                let storage = Vec::<u8>::with_capacity(amount as usize);
+                drop(storage);
+            }
+        }
+        "#;
+    for (name, typ, condition, result) in [
+        ("boolean_worker_results", "bool", "value", "i < 4"),
+        ("signed_worker_results", "i16", "value < 0", "if i < 4 { -7i16 } else { 9i16 }"),
+    ] {
+        rejects(
+            name,
+            &source.replace("TYPE", typ).replace("CONDITION", condition).replace("RESULT", result),
+            GLOBAL,
+        );
+    }
+}
+
+#[test]
+fn unrepresented_scalar_results_cannot_supply_a_population_description() {
+    // Array contents currently have no scalar transfer description. A mixed
+    // family selection cannot borrow the known family's scalar observation.
+    rejects(
+        "unknown_scalar_worker_result",
+        r#"
+        fn f(n: u16) resources peak(memory) <= n * 256 + 131072 {
+            let mut handles = Vec::with_capacity(2 * n as usize);
+            let mut i = 0u16;
+            while i < n invariant i <= n, handles.len() == 2 * i, decreases n - i, {
+                let unknown = std::thread::spawn(move || {
+                    let values = [7u16; 1];
+                    values[0]
+                });
+                handles.push(unknown);
+                let known = std::thread::spawn(move || i);
+                handles.push(known);
+                i += 1;
+            }
+            while handles.len() > 0 decreases handles.len(), {
+                let size = handles.pop().unwrap().join().unwrap();
+                let storage = Vec::<u8>::with_capacity(size as usize);
+                drop(storage);
+            }
+        }
+        "#,
+        "no precise helper summary can be inferred",
+    );
+}
+
+#[test]
+fn scalar_worker_functional_proofs_support_input_dependent_allocations() {
+    let source = r#"
+        use vstd::std_specs::thread::JoinHandleSpec;
+        fn f(n: u16) resources peak(memory) <= n * 128 + 512 {
+            let mut handles: Vec<std::thread::JoinHandle<u16>> = Vec::with_capacity(n as usize);
+            let mut i = 0u16;
+            while i < n
+                invariant
+                    i <= n,
+                    handles.len() == i,
+                    forall|j:int, value:u16| 0 <= j < handles.len()
+                        && #[trigger] handles@[j].result_predicate(value) ==> value == j,
+                decreases n - i,
+            {
+                let worker = std::thread::spawn(move || -> (result: u16)
+                    ensures result == i { i });
+                handles.push(worker);
+                i += 1;
+            }
+            while handles.len() > 0
+                invariant
+                    handles.len() <= n,
+                    forall|j:int, value:u16| 0 <= j < handles.len()
+                        && #[trigger] handles@[j].result_predicate(value) ==> value == j,
+                decreases handles.len(),
+            {
+                let size = handles.pop().unwrap().join().unwrap();
+                let storage = Vec::<u8>::with_capacity(size as usize);
+                drop(storage);
+            }
+        }
+        "#;
+    rejects("worker_scalar_functional_bounds", source, GLOBAL);
+
+    let false_contract = source.replace("result == i { i }", "result == i { 2000u16 }");
+    let error = crate::verify_one_file(
+        "worker_scalar_false_contract",
+        format!("use vstd::prelude::*; verus! {{ {false_contract} }}"),
+        &[],
+    )
+    .unwrap_err();
+    crate::common::assert_vir_error_msgs(
+        error,
+        &["unable to prove post-condition of closure", GLOBAL],
+    );
+
+    // Change the executable result and its functional proof together. The
+    // unchanged allocation now exceeds the budget for small positive n.
+    let enlarged = source
+        .replace("value == j", "value == 2000")
+        .replace("result == i { i }", "result == 2000 { 2000u16 }");
+    let error = crate::verify_one_file(
+        "worker_scalar_functional_bounds_too_large",
+        format!("use vstd::prelude::*; verus! {{ {enlarged} }}"),
+        &[],
+    )
+    .unwrap_err();
+    assert!(error.errors.iter().any(|error| error.message.contains("memory budget exceeded")));
+    assert!(error.errors.iter().any(|error| error.message.contains(GLOBAL)));
+    assert!(error.errors.iter().all(|error| {
+        error.message.contains("memory budget exceeded") || error.message.contains(GLOBAL)
+    }));
+}
+
+#[test]
 fn mixed_worker_batches_preserve_each_result_during_partial_collection() {
     let source = r#"
         fn f(n: u16, keep: u16)

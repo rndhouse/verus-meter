@@ -89,6 +89,26 @@ pub(super) enum Value {
     Unknown,
 }
 
+/// Preserve scalar results beside ownership results in worker observations.
+/// Unknown values deliberately have no observation; inference must not replace
+/// an unrepresented source result with a chosen constant.
+fn worker_description(span: &Span, value: Value) -> Option<Node> {
+    match value {
+        Value::Owner(node) => Some(node),
+        Value::Scalar(value) => Some(Node {
+            origin: None,
+            typ: value.typ.clone(),
+            memory: expr::push(
+                span,
+                expr::empty(span, expr::record_type()),
+                expr::scalar_observation(span, expr::path(span, []), value),
+            ),
+            minima: Default::default(),
+        }),
+        _ => None,
+    }
+}
+
 /// A transformation of supplied forests, not an aggregate allocation allowance.
 #[derive(Clone)]
 pub(super) struct Template {

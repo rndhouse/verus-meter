@@ -221,9 +221,17 @@ impl Analysis<'_> {
             unsupported(&expr.span, "Result extraction without checked outcome ownership")
         })?;
         self.checked_result(&owner, &expr.span)?;
+        let observed_scalar = owner.joined.as_ref().unwrap().iter().all(|actor| {
+            self.growth.worker_executions[actor].transfer.as_ref().is_some_and(|template| {
+                matches!(template.result, super::super::transfer::Value::Scalar(_))
+            })
+        });
         self.transitions.operation(
             &expr.span,
-            super::super::transfer::checked::Operation::Unwrap { source: source.clone() },
+            super::super::transfer::checked::Operation::Unwrap {
+                source: source.clone(),
+                observed_scalar,
+            },
         );
         let result = self.fresh_value(&expr.span, &expr.typ)?;
         self.result_owner = owner.children.remove(&OwnerSlot::Contents);
