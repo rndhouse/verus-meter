@@ -8,6 +8,7 @@ use crate::resource::memory::{
     concurrency::{Capture, CaptureMode, Closure, Evidence, Operation},
     heap::OwnerSlot,
     layout::Layouts,
+    lifetime::Value,
     synchronization::{LibraryType, LibraryTypes, flow},
 };
 use std::{collections::HashMap, sync::Arc};
@@ -214,6 +215,7 @@ fn child_families_preserve_the_enclosing_worker_occurrence() {
             analysis.heap.workers.complete(child, &span(14), empty_result()).unwrap();
             finish_join(analysis, child, handle);
         }
+        analysis.current_worker = None;
         for (parent, handle) in [(first, first_handle), (second, second_handle)] {
             analysis.heap.workers.complete(parent, &span(15), empty_result()).unwrap();
             finish_join(analysis, parent, handle);
@@ -525,7 +527,7 @@ fn spawn(
 
 fn finish_join(analysis: &mut Analysis<'_>, id: WorkerId, value: Value) -> Storage {
     let site = span(40);
-    analysis.heap.workers.wait(id, &site, value).unwrap();
+    analysis.heap.workers.wait(id, analysis.current_worker, &site, value).unwrap();
     analysis.collect_worker_result(id, &site).unwrap()
 }
 
@@ -681,8 +683,8 @@ fn detaching_and_waiting_do_not_release_running_storage() {
         analysis.var_modes.insert(source.clone(), Mode::Exec);
         analysis.heap.owners.insert(source.clone(), analysis.result_owner.take().unwrap());
         let (id, handle_value) = spawn(analysis, handle, expression, 10);
-        analysis.heap.workers.wait(id, &site, handle_value).unwrap();
-        assert!(analysis.heap.workers.take_result(id, &site).is_err());
+        analysis.heap.workers.wait(id, None, &site, handle_value).unwrap();
+        assert!(analysis.heap.workers.take_result(id, None, &site).is_err());
         assert_eq!(analysis.storage.live(), 81);
         let snapshot = analysis.heap.workers.clone();
         analysis.release_owner(Owner { worker: Some(id), ..Default::default() }, &span(12));
@@ -721,8 +723,63 @@ fn parent_completion_requires_its_actual_child_to_be_joined() {
         assert!(analysis.heap.workers.complete(parent, &span(14), output()).is_err());
         finish_join(analysis, child, child_handle);
         analysis.heap.workers.complete(parent, &span(15), output()).unwrap();
+        analysis.current_worker = None;
         finish_join(analysis, parent, parent_handle);
         analysis.heap.workers.check_closed(&span(16)).unwrap();
         assert_eq!(analysis.storage.live(), 0);
+    });
+}
+
+#[test]
+fn join_waits_reject_cycles_and_resume_only_the_actual_waiting_actor() {
+    let (info, expression) = closure(1, None);
+    let mut evidence = Evidence::default();
+    evidence.closures.insert(info.id, info);
+    with_analysis(&evidence, |analysis, handle| {
+        let (first, first_handle) = spawn(analysis, handle, expression.clone(), 10);
+        let (second, second_handle) = spawn(analysis, handle, expression.clone(), 11);
+        let (third, third_handle) = spawn(analysis, handle, expression, 12);
+        for id in [first, second, third] {
+            let frame = analysis.heap.workers.enter(id, &span(13)).unwrap().storage;
+            if let Some(owner) = frame.owner {
+                analysis.release_owner(owner, &span(13));
+            }
+            analysis.release_value(frame.value, &span(13));
+        }
+        let workers = &mut analysis.heap.workers;
+        // Cloned metadata describes rejected candidate edges, not executable
+        // copies of a Rust join handle. Failed validation changes no ownership.
+        assert!(workers.wait(first, Some(first), &span(14), first_handle.clone()).is_err());
+        workers.wait(second, Some(first), &span(15), second_handle).unwrap();
+        assert!(workers.wait(first, Some(second), &span(16), first_handle.clone()).is_err());
+        workers.wait(third, Some(second), &span(17), third_handle).unwrap();
+        assert!(workers.wait(first, Some(third), &span(18), first_handle.clone()).is_err());
+        workers.wait(first, None, &span(19), first_handle).unwrap();
+        assert!(workers.blocked(None));
+        assert!(workers.blocked(Some(first)));
+        assert!(workers.blocked(Some(second)));
+        assert!(!workers.blocked(Some(third)));
+        assert!(workers.complete(first, &span(20), empty_result()).is_err());
+        assert!(workers.complete(second, &span(20), empty_result()).is_err());
+        workers.complete(third, &span(21), empty_result()).unwrap();
+        assert!(workers.take_result(third, Some(first), &span(22)).is_err());
+        assert_eq!(analysis.storage.live(), 27);
+        analysis.current_worker = Some(second);
+        analysis.collect_worker_result(third, &span(23)).unwrap();
+        assert_eq!(analysis.storage.live(), 18);
+        assert!(!analysis.heap.workers.blocked(Some(second)));
+        assert!(analysis.heap.workers.blocked(Some(first)));
+        analysis.heap.workers.complete(second, &span(24), empty_result()).unwrap();
+        analysis.current_worker = Some(first);
+        analysis.collect_worker_result(second, &span(25)).unwrap();
+        assert_eq!(analysis.storage.live(), 9);
+        assert!(!analysis.heap.workers.blocked(Some(first)));
+        assert!(analysis.heap.workers.blocked(None));
+        analysis.heap.workers.complete(first, &span(26), empty_result()).unwrap();
+        analysis.current_worker = None;
+        analysis.collect_worker_result(first, &span(27)).unwrap();
+        assert_eq!(analysis.storage.live(), 0);
+        assert!(!analysis.heap.workers.blocked(None));
+        analysis.heap.workers.check_closed(&span(28)).unwrap();
     });
 }

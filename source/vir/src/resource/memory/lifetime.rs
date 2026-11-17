@@ -6,7 +6,7 @@ use super::model::{unit, unsupported};
 use crate::ast::*;
 use crate::messages::Span;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct Value {
     pub(super) bytes: u64,
     pub(super) origins: std::collections::HashSet<u64>,
@@ -31,10 +31,7 @@ pub(super) struct Storage {
 impl Storage {
     pub(super) fn compatible(&self, other: &Self) -> bool {
         crate::ast_util::types_equal(&self.typ, &other.typ)
-            && self.value.bytes == other.value.bytes
-            && self.value.ids == other.value.ids
-            && self.value.origins == other.value.origins
-            && self.value.parameter == other.value.parameter
+            && self.value == other.value
             && match (&self.owner, &other.owner) {
                 (None, None) => true,
                 (Some(a), Some(b)) => super::control::compatible(a, b),

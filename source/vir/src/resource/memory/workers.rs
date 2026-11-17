@@ -4,18 +4,14 @@
 //! body execution/cleanup, completion and join remain separate effects; later
 //! composition must consider every permitted interleaving of their phase graphs.
 
-use super::{
-    analysis::Analysis,
-    heap::Owner,
-    lifetime::{Storage, Value},
-    model::unsupported,
-};
+use super::{analysis::Analysis, heap::Owner, lifetime::Storage, model::unsupported};
 use crate::{ast::*, messages::Span};
 use std::collections::BTreeMap;
 
 mod body;
 mod captures;
 mod identity;
+mod waits;
 
 pub(super) use identity::{Families, WorkerId};
 
@@ -42,7 +38,7 @@ struct Worker {
     result: Typ,
     stage: Stage,
     /// A wait consumes the source handle but retains its inline call argument.
-    waiter: Option<Value>,
+    waiter: Option<waits::Waiter>,
     /// Dropping a handle detaches execution; it does not destroy the worker.
     detached: Option<Span>,
     publication: Span,
@@ -64,6 +60,12 @@ impl Workers {
         completion: u64,
         entry: body::Entry,
     ) -> Result<(), VirErr> {
+        if self.blocked(parent) {
+            return Err(unsupported(
+                span,
+                "worker publication while the spawning thread is waiting",
+            ));
+        }
         if let Some(parent) = parent
             && !self
                 .records
@@ -128,6 +130,12 @@ impl Workers {
         span: &Span,
         result: Storage,
     ) -> Result<(), VirErr> {
+        if self.blocked(Some(id)) {
+            return Err(unsupported(
+                span,
+                "worker completion before its pending join has returned",
+            ));
+        }
         if self.records.values().any(|worker| worker.parent == Some(id)) {
             return Err(unsupported(span, "worker completion with an unjoined descendant"));
         }
@@ -141,41 +149,6 @@ impl Workers {
         }
         worker.stage = Stage::Completed(result);
         Ok(())
-    }
-
-    fn wait(&mut self, id: WorkerId, span: &Span, handle: Value) -> Result<(), VirErr> {
-        let worker = self
-            .records
-            .get_mut(&id)
-            .ok_or_else(|| unsupported(span, "joining an unknown worker"))?;
-        if worker.detached.is_some() || worker.waiter.is_some() {
-            return Err(unsupported(span, "a detached or already consumed join handle"));
-        }
-        worker.waiter = Some(handle);
-        Ok(())
-    }
-
-    /// Remove only a completed record. The adapter transfers its result and
-    /// releases the separate tag/handle charges after waiting has finished.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "completed-result transfer is consumed by the TODO 05 join adapter"
-        )
-    )]
-    fn take_result(&mut self, id: WorkerId, span: &Span) -> Result<(Storage, Value, u64), VirErr> {
-        let worker =
-            self.records.get(&id).ok_or_else(|| unsupported(span, "joining an unknown worker"))?;
-        if worker.detached.is_some()
-            || worker.waiter.is_none()
-            || !matches!(worker.stage, Stage::Completed(_))
-        {
-            return Err(unsupported(span, "join requires checked worker completion effects"));
-        }
-        let worker = self.records.remove(&id).unwrap();
-        let Stage::Completed(result) = worker.stage else { unreachable!() };
-        Ok((result, worker.waiter.unwrap(), worker.completion))
     }
 
     pub(super) fn detach(&mut self, id: WorkerId, span: &Span) {
@@ -209,11 +182,7 @@ impl Workers {
                         && a.completion == b.completion
                         && crate::ast_util::types_equal(&a.result, &b.result)
                         && a.detached.as_ref().map(|s| s.id) == b.detached.as_ref().map(|s| s.id)
-                        && match (&a.waiter, &b.waiter) {
-                            (None, None) => true,
-                            (Some(a), Some(b)) => a.bytes == b.bytes && a.ids == b.ids,
-                            _ => false,
-                        }
+                        && a.waiter == b.waiter
                         && match (&a.stage, &b.stage) {
                             (Stage::Published(a), Stage::Published(b))
                             | (Stage::Completed(a), Stage::Completed(b)) => a.compatible(b),
@@ -238,7 +207,8 @@ impl Analysis<'_> {
         id: WorkerId,
         span: &Span,
     ) -> Result<Storage, VirErr> {
-        let (result, handle, completion) = self.heap.workers.take_result(id, span)?;
+        let (result, handle, completion) =
+            self.heap.workers.take_result(id, self.current_worker, span)?;
         if self.layouts.size(&result.typ, span)? != result.value.bytes
             || self.layouts.owner(&result.typ) != result.owner.is_some()
         {
@@ -345,7 +315,7 @@ impl Analysis<'_> {
         let id = owner
             .worker
             .ok_or_else(|| unsupported(&argument.span, "joining without worker provenance"))?;
-        self.heap.workers.wait(id, &expr.span, value)?;
+        self.heap.workers.wait(id, self.current_worker, &expr.span, value)?;
         Err(unsupported(
             &expr.span,
             "join result ownership requires checked worker-body and completion effects",
