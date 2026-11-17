@@ -31,6 +31,10 @@ connects actual worker bodies, completion/join and symbolic ownership population
 - [ ] Establish contained lifetimes for allocations created after acquisition and
   released before unlock. Include supported branches, loops, explicit drops,
   implicit scope exits, replacements and early exits.
+- [ ] Cover every permitted order of implicit closure-capture destruction; Rust
+  leaves this order unspecified. Neither capture indices nor one compiler-selected
+  cleanup sequence can establish exclusion. Retain ordering where source rules
+  define it, including explicit drops and struct-field destruction.
 - [ ] Track allocations created before locking or surviving release as independent
   live storage. Moving a buffer to a result, collection or shared owner preserves
   its charge and invalidates any unjustified containment claim.

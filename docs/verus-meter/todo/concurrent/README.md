@@ -32,7 +32,7 @@ Preserve the semantics and synchronization precision established in 01 throughou
 | [x] | [01 — Semantics and supported scope](complete/01-semantics-and-supported-scope.md) | Accounting, proof interface, trust boundary and concrete operation matrix. |
 | [x] | [02 — Synchronization contracts and identities](complete/02-synchronization-contracts-and-identities.md) | Common representation and trusted standard mutex integration. |
 | [ ] | [03 — Worker lifetimes and shared storage](03-worker-lifetimes-and-shared-storage.md) | Spawn/join, captures, shared allocations, symbolic populations and retained results. |
-| [ ] | [03.1 — Closure invocation and cleanup](03.1-closure-invocation-and-cleanup.md) | Semantic invocation and cleanup without exact generated-wrapper requirements. |
+| [x] | [03.1 — Closure invocation and cleanup](complete/03.1-closure-invocation-and-cleanup.md) | Semantic invocation and cleanup without exact generated-wrapper requirements. |
 | [ ] | [03.2 — Executable worker analysis](03.2-executable-worker-analysis.md) | Checked body effects and worker-summary integration through completion/join. |
 | [ ] | [03.3 — Symbolic populations and shared ownership](03.3-symbolic-populations-and-shared-ownership.md) | Source-connected population transitions, nested workers and shared final release. |
 | [ ] | [03.4 — Worker integration and completion](03.4-worker-integration-and-completion.md) | Evidence for all worker requirements and explicit remaining proof boundaries. |
