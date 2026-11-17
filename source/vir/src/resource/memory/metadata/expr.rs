@@ -100,6 +100,25 @@ pub(in super::super) fn check(span: &Span, condition: Expr, message: &str) -> St
     )
 }
 
+/// Explain a generated invariant without changing its proposition. Preserve a
+/// more specific origin when a fact is inherited by another loop or proof site.
+pub(in super::super) fn purpose(value: Expr, message: &str) -> Expr {
+    if matches!(value.x, ExprX::UnaryOpr(UnaryOpr::ProofNote(_), _)) {
+        return value;
+    }
+    SpannedTyped::new(
+        &value.span,
+        &value.typ,
+        ExprX::UnaryOpr(
+            UnaryOpr::ProofNote(ProofNoteLabel {
+                text: Arc::new(message.into()),
+                is_custom_err: false,
+            }),
+            value.clone(),
+        ),
+    )
+}
+
 pub(in super::super) fn empty(span: &Span, element: Typ) -> Expr {
     call(
         span,

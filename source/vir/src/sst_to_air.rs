@@ -2605,11 +2605,14 @@ fn loop_to_stmts(
             assert!(inv.at_exit);
         }
         let both = inv.at_entry && inv.at_exit;
+        // Keep the invariant's explanation at every check site: entry, back
+        // edge, continue and break. The note has no effect on the AIR formula.
+        let note = sst_exp_get_proof_note(&inv.inv).map(|label| label.text);
         if inv.at_entry {
-            invs_entry.push((inv.inv.span.clone(), expr.clone(), None, both));
+            invs_entry.push((inv.inv.span.clone(), expr.clone(), note.clone(), both));
         }
         if inv.at_exit {
-            invs_exit.push((inv.inv.span.clone(), expr.clone(), None, both));
+            invs_exit.push((inv.inv.span.clone(), expr.clone(), note, both));
         }
     }
     let invs_entry = Arc::new(invs_entry);

@@ -281,8 +281,13 @@ pub(super) fn instrument(
                             LoopInvariantKind::InvariantAndEnsures
                         },
                         inv: {
-                            let statement =
-                                Spanned::new(inv.span.clone(), StmtX::Expr(inv.clone()));
+                            let statement = Spanned::new(
+                                inv.span.clone(),
+                                StmtX::Expr(super::metadata::expr::purpose(
+                                    inv.clone(),
+                                    "memory loop ownership and allocation state",
+                                )),
+                            );
                             let statement =
                                 crate::ast_visitor::map_stmt_spans(&statement, &mut |span| {
                                     fresh_span(span)
@@ -294,7 +299,13 @@ pub(super) fn instrument(
                 }
                 if let Some(additional) = growth.loop_ensures.get(&expr.span.id) {
                     for inv in additional {
-                        let statement = Spanned::new(inv.span.clone(), StmtX::Expr(inv.clone()));
+                        let statement = Spanned::new(
+                            inv.span.clone(),
+                            StmtX::Expr(super::metadata::expr::purpose(
+                                inv.clone(),
+                                "memory allocation state at loop exit",
+                            )),
+                        );
                         let statement =
                             crate::ast_visitor::map_stmt_spans(&statement, &mut |span| {
                                 fresh_span(span)

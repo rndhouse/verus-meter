@@ -19,6 +19,16 @@ fn bound_pair(name: &str, code: &str, peak: u64) {
             "{diagnostic:?}",
             diagnostic = diagnostic
         );
+        if diagnostic.message.contains("loop invariant not satisfied") {
+            assert!(
+                diagnostic.spans.iter().any(|span| span
+                    .label
+                    .as_deref()
+                    .is_some_and(|label| label.starts_with("memory "))),
+                "{}",
+                diagnostic.rendered
+            );
+        }
     }
 }
 

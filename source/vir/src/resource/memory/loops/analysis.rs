@@ -11,7 +11,7 @@ mod visits;
 
 use super::Loop;
 use crate::ast::*;
-use crate::resource::memory::{analysis::Analysis, contracts};
+use crate::resource::memory::{analysis::Analysis, contracts, metadata};
 
 impl Analysis<'_> {
     /// Analyze one reusable visit, then attach its memory invariants and exit states.
@@ -244,7 +244,11 @@ impl Analysis<'_> {
             }
         }
         let mut invariants = self.growth.invariants(&expr.span, &ids, &loop_scalars, &self.bound);
-        invariants.extend(self.element_metadata_invariants(&expr.span));
+        invariants.extend(
+            self.element_metadata_invariants(&expr.span)
+                .into_iter()
+                .map(|fact| metadata::expr::purpose(fact, "memory allocation descriptor validity")),
+        );
         invariants.extend(self.element_reservation_invariants(&expr.span, &loop_scalars)?);
         if self.growth.exiting_loops.contains(&expr.span.id) {
             // These describe current allocations, not completed visits. Prove
@@ -274,7 +278,10 @@ impl Analysis<'_> {
                 &self.bound,
             ));
         }
-        invariants.push(crate::ast_util::mk_ineq(&expr.span, &live, &self.bound, InequalityOp::Le));
+        invariants.push(metadata::expr::purpose(
+            crate::ast_util::mk_ineq(&expr.span, &live, &self.bound, InequalityOp::Le),
+            "memory byte bound at loop head",
+        ));
         self.growth.loops.entry(expr.span.id).or_default().extend(invariants);
         self.growth.repeat_elements(&elements);
         record.element_sources = self.growth.element_sources(&elements);

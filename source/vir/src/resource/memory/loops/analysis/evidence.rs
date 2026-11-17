@@ -19,7 +19,11 @@ impl Analysis<'_> {
     ) -> Result<(), VirErr> {
         for (id, transfers) in loops {
             let record = self.transitions.loops[id].clone();
-            self.growth.loops.entry(*id).or_default().extend(record.conservation(transfers));
+            self.growth.loops.entry(*id).or_default().extend(
+                record.conservation(transfers).into_iter().map(|fact| {
+                    metadata::expr::purpose(fact, "memory ownership transfer conservation")
+                }),
+            );
             if transfers.iter().any(|transfer| transfer.additional.is_some()) {
                 let mut additions = std::collections::BTreeMap::new();
                 for transfer in transfers {

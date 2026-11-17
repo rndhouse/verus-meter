@@ -3,6 +3,58 @@
 mod common;
 use common::*;
 
+#[test]
+fn loop_proof_notes_identify_entry_back_edge_continue_and_exit_failures() {
+    for (name, initial, clause, body, expected) in [
+        ("entry_note", 1, "invariant", "break;", "invariant not satisfied before loop"),
+        (
+            "back_edge_note",
+            0,
+            "invariant",
+            "i += 1;",
+            "invariant not satisfied at end of loop body",
+        ),
+        ("continue_note", 0, "invariant", "i += 1; continue;", "at this continue"),
+        ("exit_note", 0, "ensures", "i += 1; break;", "at this loop exit"),
+    ] {
+        let clause = if clause == "invariant" { "" } else { clause };
+        let source = format!(
+            r#"
+            use vstd::prelude::*;
+            verus! {{
+            #[verifier::exec_allows_no_decreases_clause]
+            fn f() {{
+                let mut i = {initial}u8;
+                while i < 1
+                    invariant i <= 1,
+                    {clause} #![verifier::proof_note("counter protocol")] i == 0,
+                {{ {body} }}
+            }}
+            }}
+        "#
+        );
+        let error = verify_one_file(name, source, &[]).unwrap_err();
+        // Ensures is checked at both the condition exit and the explicit break.
+        assert_eq!(
+            error.errors.len(),
+            if clause == "ensures" { 2 } else { 1 },
+            "{:?}",
+            error.errors
+        );
+        for diagnostic in &error.errors {
+            assert!(diagnostic.rendered.contains(expected), "{}", diagnostic.rendered);
+            assert!(
+                diagnostic
+                    .spans
+                    .iter()
+                    .any(|span| span.label.as_deref() == Some("counter protocol")),
+                "{}",
+                diagnostic.rendered
+            );
+        }
+    }
+}
+
 test_verify_one_file! {
     #[test] basic_while verus_code! {
         fn test1() {

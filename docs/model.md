@@ -86,6 +86,9 @@ When a required ownership summary cannot be inferred, diagnostics identify the
 failed inference boundary and, where available, the executable operation or loop.
 This is an unsupported transformation, distinct from a byte-bound proof failure
 or a solver resource limit. Optional summaries may remain absent.
+Generated loop failures also label the memory property being checked, such as
+worker membership, backing storage or ownership conservation. Verus retains the
+check location: entry, back edge, continue or loop exit.
 
 ## Supported boundary
 
