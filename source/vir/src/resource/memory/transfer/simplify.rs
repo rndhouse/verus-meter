@@ -23,7 +23,7 @@ pub(in super::super) fn simplify(value: &Expr) -> Expr {
 }
 
 /// Substitute caller observations while normalizing the shared template graph.
-pub(super) fn specialize(value: &Expr, values: &HashMap<VarIdent, Expr>) -> Expr {
+pub(in super::super) fn specialize(value: &Expr, values: &HashMap<VarIdent, Expr>) -> Expr {
     rewrite(value, Some(values))
 }
 

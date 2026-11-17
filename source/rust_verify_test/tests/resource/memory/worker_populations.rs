@@ -398,6 +398,109 @@ fn a_collecting_worker_can_receive_a_selected_population_handle() {
 }
 
 #[test]
+fn a_worker_receives_and_drains_an_entire_symbolic_collection() {
+    let code = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f(n: u16) resources peak(memory) <= n * 128 + 131072 {
+            let mut handles = Vec::with_capacity(n as usize);
+            let mut i = 0u16;
+            while i < n invariant i <= n, handles.len() == i, decreases n - i, {
+                let child = std::thread::spawn(move || i);
+                handles.push(child);
+                i += 1;
+            }
+            let collector = std::thread::spawn(move || {
+                let mut pending = handles;
+                while pending.len() > 0 decreases pending.len(), {
+                    let size = pending.pop().unwrap().join().unwrap();
+                    let storage = Vec::<u8>::with_capacity(size as usize);
+                    drop(storage);
+                }
+            });
+            collector.join().unwrap();
+        }
+        }
+    "#;
+    let check = |name: &str, source: String, errors: &[&str]| {
+        let error = crate::verify_one_file(name, source, &[]).unwrap_err();
+        crate::common::assert_vir_error_msgs(error, errors);
+    };
+    check("worker_receives_population", code.into(), &[GLOBAL]);
+    let early_stop = code.replace("pending.len() > 0", "pending.len() > 1");
+    check(
+        "worker_leaves_handle",
+        early_stop,
+        &["cannot discard outstanding worker handles", GLOBAL],
+    );
+    let oversized = code.replace("capacity(size as usize)", "capacity(size as usize + 200_000)");
+    check(
+        "worker_received_population_over_budget",
+        oversized,
+        &["conditional memory budget exceeded", GLOBAL],
+    );
+}
+
+#[test]
+fn a_worker_returns_the_selected_buffer_from_a_captured_collection() {
+    let code = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f() resources peak(memory) <= 4096 {
+            let mut handles = Vec::with_capacity(2);
+            let a = std::thread::spawn(move || Vec::<u8>::with_capacity(64));
+            handles.push(a);
+            let b = std::thread::spawn(move || Vec::<u8>::with_capacity(1024));
+            handles.push(b);
+            let collector = std::thread::spawn(move || {
+                let mut pending = handles;
+                let large = pending.pop().unwrap().join().unwrap();
+                let small = pending.pop().unwrap().join().unwrap();
+                drop(large);
+                small
+            });
+            let result = collector.join().unwrap();
+            assert(current(memory) <= 88);
+            drop(result);
+            assert(current(memory) <= 0);
+        }
+        }
+    "#;
+    let valid =
+        crate::verify_one_file("worker_returns_small_buffer", code.into(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+    // Keep both allocations and both joins. Only change which result survives.
+    let large = code
+        .replace("drop(large);", "drop(small);")
+        .replace("                small\n", "                large\n");
+    let error = crate::verify_one_file("worker_returns_large_buffer", large, &[]).unwrap_err();
+    crate::common::assert_vir_error_msgs(error, &["conditional memory budget exceeded", GLOBAL]);
+}
+
+#[test]
+fn retaining_a_worker_with_a_strong_capture_requires_shared_conservation() {
+    rejects(
+        "worker_population_strong_capture",
+        r#"
+        fn f() resources peak(memory) <= 2048 {
+            let backing = std::sync::Arc::new(17u64);
+            let alias = backing.clone();
+            let mut handles = Vec::with_capacity(1);
+            let child = std::thread::spawn(move || { drop(alias); 17u64 });
+            handles.push(child);
+            let collector = std::thread::spawn(move || {
+                let mut pending = handles;
+                let _value = pending.pop().unwrap().join().unwrap();
+            });
+            collector.join().unwrap();
+            drop(backing);
+        }
+        "#,
+        "retained worker shared-reference populations without their conservation relation",
+    );
+}
+
+#[test]
 fn a_buffer_keeps_its_allocation_across_two_worker_joins() {
     let code = r#"
         use vstd::prelude::*;

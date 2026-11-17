@@ -117,6 +117,7 @@ pub(in super::super) enum Operation {
         source: Expr,
         identity: Expr,
         inputs: Vec<(Typ, OwnerSlot)>,
+        populations: HashMap<usize, Expr>,
         result: super::Template,
     },
     /// Collect exactly the runtime handle consumed by the source operation.
@@ -215,6 +216,9 @@ pub(in super::super) struct Checked {
     pub(in super::super) loops: HashMap<u64, crate::resource::memory::loops::Loop>,
     /// Conditional lifetime joins accepted by branch accounting.
     pub(in super::super) branches: HashMap<u64, Vec<InputChoice>>,
+    /// Immutable worker-entry observations for captured populations. Body
+    /// proofs use these snapshots; exported templates still bind caller inputs.
+    pub(in super::super) captured_populations: HashMap<usize, Expr>,
     /// Original owned parameter nodes, before any runtime partitioning.
     pub(super) inputs: Vec<crate::resource::memory::paths::InputPath>,
     /// Borrowed originals have identities but remain charged outside this frame.

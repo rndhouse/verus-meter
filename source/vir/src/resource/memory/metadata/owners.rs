@@ -319,7 +319,9 @@ impl Analysis<'_> {
                 children,
             ));
             elements.precise = true;
-            elements.has_references = self.layouts.contains_references(typ);
+            if self.layouts.contains_references(typ) {
+                elements.references = super::super::elements::References::Unclassified;
+            }
             elements.view = view;
             owner.elements = Some(elements);
             rest = expr::operation(span, "nonruntime", vec![rest], expr::memory_type());

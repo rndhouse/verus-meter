@@ -16,6 +16,17 @@ use crate::messages::Span;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
+/// Conservative classification of identity records reachable in a collection.
+/// Only publications with checked, empty shared entry and exit views can be
+/// serialized as worker occurrences. Other identities still need a separate
+/// strong-root import relation. Combining collections keeps the weaker evidence.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum References {
+    None,
+    WorkerOccurrences,
+    Unclassified,
+}
+
 #[derive(Clone)]
 pub(super) struct Elements {
     /// Whether records cover all allocations or only charges introduced in this frame.
@@ -33,7 +44,7 @@ pub(super) struct Elements {
     pub(super) precise: bool,
     /// Identity descriptors may be live even when every local byte sum is zero.
     /// Such a forest cannot be replaced by source geometry or an opaque sum.
-    pub(super) has_references: bool,
+    pub(super) references: References,
     /// Stable counter identities; the containing owner controls their lifetime.
     pub(super) states: BTreeMap<MemoryKind, usize>,
     /// Disjoint input nodes captured by element insertion.
@@ -163,7 +174,7 @@ impl Analysis<'_> {
             state.extent = None;
         }
         old.precise = true;
-        old.has_references |= new.has_references;
+        old.references = old.references.max(new.references);
         old.view = new.view;
         old.minima = new.minima.clone();
     }
@@ -223,7 +234,7 @@ impl Analysis<'_> {
             return Ok(());
         }
         let uncharged = self.growth.owner_zero_charge(&child);
-        elements.has_references |= child.has_references();
+        elements.references = elements.references.max(child.references());
         self.merge_element_minima(span, elements, &child);
         let mut proofs = Vec::new();
         let child_records = self.owner_metadata(span, &child, &mut proofs);
@@ -309,7 +320,7 @@ impl Analysis<'_> {
                 elements.precise = false;
             }
         });
-        if elements.has_references && !elements.precise {
+        if elements.references != References::None && !elements.precise {
             return Err(unsupported(
                 span,
                 "identity-bearing collections without complete descriptors",
@@ -382,7 +393,7 @@ impl Analysis<'_> {
         ));
         new.view = old.view;
         new.precise = old.precise;
-        new.has_references = old.has_references;
+        new.references = old.references;
         new.minima = old.minima;
         new.inputs = old.inputs;
         new
@@ -398,7 +409,7 @@ impl Analysis<'_> {
         retained: &mut super::accounting::Accounting,
         span: &Span,
     ) -> Result<Elements, VirErr> {
-        if old.has_references {
+        if old.references != References::None {
             return Err(unsupported(
                 span,
                 "worker reference populations without an outgoing occurrence descriptor",
@@ -511,7 +522,7 @@ impl Analysis<'_> {
             records,
             next_records,
             precise,
-            has_references: false,
+            references: References::None,
             states,
             inputs: HashSet::new(),
         }
@@ -640,8 +651,8 @@ impl Analysis<'_> {
             complete &= node.geometry_known || node.source.is_some();
         });
         elements.precise &= complete;
-        elements.has_references |= child.has_references();
-        if elements.has_references && !elements.precise {
+        elements.references = elements.references.max(child.references());
+        if elements.references != References::None && !elements.precise {
             return Err(unsupported(
                 span,
                 "identity-bearing collections without complete descriptors",

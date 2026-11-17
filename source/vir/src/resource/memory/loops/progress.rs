@@ -23,11 +23,8 @@ pub(in super::super) struct Observation {
 /// Evidence published only after the complete ownership transformation succeeds.
 #[derive(Clone)]
 pub(in super::super) struct Evidence {
-    /// Exact ownership forests after the observed prefix of this source loop.
-    pub(in super::super) forests: Vec<(Expr, Expr)>,
-    /// Backing-byte ceilings from the same checked prefix, separate from exact
-    /// child membership. Reservation summaries may conservatively overestimate.
-    pub(in super::super) backing_bounds: BTreeMap<LocalPath, Expr>,
+    /// Per-collection membership, logical length and backing at a source loop head.
+    pub(in super::super) populations: Vec<super::populations::PopulationPrefix>,
     /// Positive decrease of the source comparison's gap on each visit.
     pub(in super::super) stride: i128,
     /// Monotone logical length changes from checked iteration operations.

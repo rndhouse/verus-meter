@@ -358,7 +358,7 @@ impl Analysis<'_> {
                     {
                         elements.precise &= node.elements.as_ref().is_some_and(|old| old.precise);
                         if let Some(old) = &node.elements {
-                            elements.has_references |= old.has_references;
+                            elements.references = elements.references.max(old.references);
                             super::metadata::reservations::join_minima(
                                 &old.records.span,
                                 &mut elements.minima,
@@ -370,10 +370,10 @@ impl Analysis<'_> {
                 });
                 let mut incomplete_references = false;
                 current.visit(&mut |owner| {
-                    incomplete_references |= owner
-                        .elements
-                        .as_ref()
-                        .is_some_and(|elements| elements.has_references && !elements.precise);
+                    incomplete_references |= owner.elements.as_ref().is_some_and(|elements| {
+                        elements.references != super::elements::References::None
+                            && !elements.precise
+                    });
                 });
                 if incomplete_references {
                     return Err(unsupported(

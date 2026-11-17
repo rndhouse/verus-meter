@@ -134,6 +134,8 @@ pub(super) struct Template {
 /// A complete ownership template and structural evidence for local loop proofs.
 /// Nothing is published if any part of template inference fails.
 pub(super) struct Inferred {
+    /// Source-built capture descriptions for local proof specialization.
+    pub(super) publications: HashMap<VarIdent, Expr>,
     /// Checked progress and logical length relationships for body induction.
     pub(super) progress: HashMap<u64, super::loops::progress::Evidence>,
     /// Physical ownership transformation substituted by callers.

@@ -18,6 +18,13 @@ impl Trace<'_> {
         forest: &Expr,
         path: &mut Vec<OwnerSlot>,
     ) -> Option<Expr> {
+        if path.is_empty()
+            && let Some(actual) = self.checked.captured_populations.get(&parameter)
+        {
+            let ExprX::Var(name) = &forest.x else { return None };
+            self.proof_values.insert(name.clone(), actual.clone());
+            return Some(forest.clone());
+        }
         // A captured handle carries the selected worker observation. Rebuilding
         // it from allocation fields would erase its identity and result.
         if self.layouts.join_handle(typ).is_some() {

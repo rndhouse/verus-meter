@@ -242,25 +242,6 @@ impl Analysis<'_> {
                     facts.push(crate::ast_util::mk_eq(span, &charge.length.0, expected));
                 }
             }
-            for (actual, expected) in &evidence.forests {
-                facts.push(metadata::expr::purpose(
-                    crate::ast_util::mk_eq(span, actual, expected),
-                    "memory worker collection membership",
-                ));
-            }
-            for (location, upper) in &evidence.backing_bounds {
-                if let Some((actual, _)) = record
-                    .charges
-                    .iter()
-                    .find(|charge| &charge.location == location)
-                    .and_then(|charge| charge.backing.as_ref())
-                {
-                    facts.push(metadata::expr::purpose(
-                        crate::ast_util::mk_ineq(span, actual, upper, InequalityOp::Le),
-                        "memory collection backing-storage bound",
-                    ));
-                }
-            }
             self.growth.loops.entry(*id).or_default().extend(
                 facts
                     .into_iter()

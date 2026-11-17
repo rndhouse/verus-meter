@@ -7,6 +7,7 @@
 
 mod analysis;
 mod exits;
+pub(super) mod populations;
 pub(super) mod progress;
 
 use super::{layout::Layouts, model, paths::LocalPath, summary::FunctionSummary};

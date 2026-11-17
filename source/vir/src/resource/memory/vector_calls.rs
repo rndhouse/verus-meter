@@ -101,7 +101,7 @@ impl Analysis<'_> {
             if let Some(elements) =
                 self.heap.root_mut(&name).unwrap().at_mut(&path).unwrap().elements.as_mut()
             {
-                if elements.has_references {
+                if elements.references != super::elements::References::None {
                     return Err(unsupported(
                         &expr.span,
                         "shared or worker references without a checked collection effect",

@@ -45,6 +45,7 @@ impl Trace<'_> {
         source: Expr,
         identity: Expr,
         inputs: Vec<(Typ, OwnerSlot)>,
+        populations: HashMap<usize, Expr>,
         template: Template,
     ) -> Option<Value> {
         let span = &value.span;
@@ -59,6 +60,43 @@ impl Trace<'_> {
                 expr::path(span, slots),
             ))
         };
+        // A publishing trace knows the collection built by the source, including
+        // each indexed result. The receiving actor checks this candidate against
+        // its actual collection at loop entry and at every back edge.
+        if !populations.is_empty() && self.loop_tokens.is_none() {
+            // Only source scalar parameters and expression-local binders are
+            // in scope at every construction. An open candidate keeps the
+            // worker's checked entry snapshot as its proof input.
+            let parameters: HashSet<_> = self
+                .symbols
+                .iter()
+                .filter_map(|s| {
+                    if matches!(s.input, Input::Scalar(_))
+                        && let ExprX::Var(name) = &self.proof_values.get(&s.name)?.x
+                    {
+                        Some(name)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for (index, snapshot) in populations {
+                let ExprX::Var(name) = &snapshot.x else { return None };
+                let memory = substitute(&selected(index, &[]), &self.proof_values);
+                let closed = crate::ast_visitor::expr_visitor_check(&memory, &mut |scope, e| {
+                    if let ExprX::Var(var) = &e.x
+                        && !scope.contains_key(var)
+                        && !parameters.contains(var)
+                    {
+                        return Err(());
+                    }
+                    Ok(())
+                });
+                if closed.is_ok() {
+                    self.publications.insert(name.clone(), memory);
+                }
+            }
+        }
         let mut replacements = HashMap::new();
         for symbol in &template.symbols {
             let replacement = match &symbol.input {

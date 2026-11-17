@@ -185,6 +185,7 @@ impl Analysis<'_> {
                     .iter()
                     .map(|input| (input.typ.clone(), input.slot.clone()))
                     .collect(),
+                populations: execution.effects.ownership.captured_populations.clone(),
                 result: execution.transfer.clone().unwrap(),
             },
         );

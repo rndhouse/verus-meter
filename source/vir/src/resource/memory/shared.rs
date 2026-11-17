@@ -60,6 +60,7 @@ pub(super) struct SharedRoots {
 fn visit_strong_handles(
     owner: &Owner,
     span: &Span,
+    supported: super::elements::References,
     mut visit: impl FnMut(RootId) -> Result<(), VirErr>,
 ) -> Result<(), VirErr> {
     let mut result = Ok(());
@@ -67,7 +68,7 @@ fn visit_strong_handles(
         if result.is_err() {
             return;
         }
-        if node.elements.as_ref().is_some_and(|elements| elements.has_references) {
+        if node.elements.as_ref().is_some_and(|elements| elements.references > supported) {
             result = Err(unsupported(
                 span,
                 "imported reference populations without checked occurrence descriptors",
@@ -170,7 +171,7 @@ impl SharedRoots {
             self.roots.iter().map(|(id, root)| (*id, root.strong)).collect();
         let mut pending: Vec<_> = result.into_iter().collect();
         while let Some(owner) = pending.pop() {
-            visit_strong_handles(owner, span, |id| {
+            visit_strong_handles(owner, span, super::elements::References::None, |id| {
                 let count = remaining
                     .get_mut(&id)
                     .and_then(|count| {
@@ -294,13 +295,18 @@ impl SharedRoots {
     pub(super) fn captured_view(&self, owner: Option<&Owner>, span: &Span) -> Result<Self, VirErr> {
         let mut references = BTreeMap::<RootId, u64>::new();
         if let Some(owner) = owner {
-            visit_strong_handles(owner, span, |id| {
-                let count = references.entry(id).or_default();
-                *count = count
-                    .checked_add(1)
-                    .ok_or_else(|| unsupported(span, "captured strong counts exceeding u64"))?;
-                Ok(())
-            })?;
+            visit_strong_handles(
+                owner,
+                span,
+                super::elements::References::WorkerOccurrences,
+                |id| {
+                    let count = references.entry(id).or_default();
+                    *count = count
+                        .checked_add(1)
+                        .ok_or_else(|| unsupported(span, "captured strong counts exceeding u64"))?;
+                    Ok(())
+                },
+            )?;
         }
         let mut roots = BTreeMap::new();
         for (id, count) in references {

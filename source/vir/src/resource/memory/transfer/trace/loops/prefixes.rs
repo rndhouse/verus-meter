@@ -55,9 +55,21 @@ impl Trace<'_> {
             phases.push(planned);
         }
         prefix.apply_phases(record, phases, &mut original)?;
-        let mut forests = Vec::new();
-        let mut backing_bounds = BTreeMap::new();
-        for ((name, path), (typ, actual)) in &record.reference_forests {
+        let closed = |value: &Expr| {
+            crate::ast_visitor::expr_visitor_check(value, &mut |scope, value| {
+                if let ExprX::Var(name) = &value.x
+                    && !scope.contains_key(name)
+                    && self.symbols.iter().any(|symbol| &symbol.name == name)
+                {
+                    return Err(());
+                }
+                Ok(())
+            })
+            .is_ok()
+        };
+        let mut populations = Vec::new();
+        for (role, (typ, actual)) in &record.reference_forests {
+            let (name, path) = role;
             let location = (
                 name.clone(),
                 path.clone(),
@@ -66,26 +78,27 @@ impl Trace<'_> {
                     .collect(),
             );
             let node = prefix.get(span, &location, typ)?;
-            let backing =
-                substitute(&property(span, node.memory.clone(), "bytes"), &self.proof_values);
-            let memory = expr::operation(span, "runtime", vec![node.memory], expr::memory_type());
-            let memory = substitute(&memory, &self.proof_values);
-            let closed = crate::ast_visitor::expr_visitor_check(&memory, &mut |scope, value| {
-                if matches!(&value.x, ExprX::Var(name) if !scope.contains_key(name) && self.symbols.iter().any(|symbol| &symbol.name == name)) { Err(()) } else { Ok(()) }
-            }).is_ok();
-            if !closed {
+            let field =
+                |field| substitute(&property(span, node.memory.clone(), field), &self.proof_values);
+            let length = (!self.checked.captured_populations.is_empty())
+                .then(|| field("length"))
+                .filter(&closed);
+            let backing = field("bytes");
+            let backing = closed(&backing).then_some(backing);
+            let expected = expr::operation(span, "runtime", vec![node.memory], expr::memory_type());
+            let expected = substitute(&expected, &self.proof_values);
+            if !closed(&expected) {
                 return None;
             }
-            let backing_closed = crate::ast_visitor::expr_visitor_check(&backing, &mut |scope, value| {
-                if matches!(&value.x, ExprX::Var(name) if !scope.contains_key(name) && self.symbols.iter().any(|symbol| &symbol.name == name)) { Err(()) } else { Ok(()) }
-            }).is_ok();
-            if backing_closed {
-                backing_bounds.insert((name.clone(), path.clone()), backing);
-            }
-            forests.push((actual.clone(), memory));
+            populations.push(crate::resource::memory::loops::populations::PopulationPrefix::new(
+                record,
+                role,
+                (actual.clone(), expected),
+                length,
+                backing,
+            ));
         }
-        self.loop_progress.get_mut(&span.id)?.forests = forests;
-        self.loop_progress.get_mut(&span.id)?.backing_bounds = backing_bounds;
+        self.loop_progress.get_mut(&span.id)?.populations = populations;
         Some(())
     }
 }

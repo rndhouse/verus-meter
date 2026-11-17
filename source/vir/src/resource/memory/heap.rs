@@ -120,13 +120,21 @@ impl Default for Owner {
 
 impl Owner {
     /// Byte-free owner nodes and forests still carry strong/worker lifetimes.
-    pub(super) fn has_references(&self) -> bool {
-        self.worker_occurrence.is_some()
-            || self.joined.is_some()
-            || self.shared.is_some()
-            || self.worker.is_some()
-            || self.elements.as_ref().is_some_and(|elements| elements.has_references)
-            || self.children.values().any(Self::has_references)
+    pub(super) fn references(&self) -> super::elements::References {
+        use super::elements::References;
+        if self.shared.is_some() || self.worker.is_some() || self.joined.is_some() {
+            return References::Unclassified;
+        }
+        let own = if self.worker_occurrence.is_some() {
+            References::WorkerOccurrences
+        } else {
+            References::None
+        };
+        self.children
+            .values()
+            .map(Self::references)
+            .chain(self.elements.iter().map(|elements| elements.references))
+            .fold(own, References::max)
     }
 
     /// A fresh fixed wrapper does not make its incoming children fully charged.
@@ -587,7 +595,7 @@ impl Analysis<'_> {
         fn transported(owner: &mut Owner) {
             owner.worker_occurrence = None;
             if let Some(elements) = &mut owner.elements {
-                elements.has_references = false;
+                elements.references = super::elements::References::None;
             }
             for child in owner.children.values_mut() {
                 transported(child);
@@ -644,7 +652,7 @@ impl Analysis<'_> {
             self.destroy_owner(child, span, false, proofs);
         }
         if let Some(elements) = owner.elements {
-            if elements.has_references {
+            if elements.references != super::elements::References::None {
                 proofs.push(super::metadata::expr::check(
                     span,
                     super::metadata::expr::operation(

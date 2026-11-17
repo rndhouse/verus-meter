@@ -190,7 +190,11 @@ still apply; these descriptions add no assumptions about source scalar values.
 Other loops require the outstanding-worker state to match at the back edge.
 A worker can also capture a handle popped from a supported population and join
 it. The outer join can recover the resulting scalar or buffer size through the
-collecting worker's summary. Dropping the transferred handle is a detach.
+collecting worker's summary. A worker can also take ownership of the whole
+vector and drain it. In supported loops the publishing worker supplies the
+description of the captured collection, and the receiving worker proves its
+remaining length and membership after each pop. Dropping a collection with an
+outstanding handle fails the local proof.
 
 The proof boundary separates construction, transport and byte accounting.
 Generated builders establish worker-description properties; verified one-step

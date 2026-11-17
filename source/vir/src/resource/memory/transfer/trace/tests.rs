@@ -43,6 +43,7 @@ fn with_trace(checked: &Checked, test: impl FnOnce(&mut Trace<'_>)) {
         loop_transfers: HashMap::new(),
         loop_progress: HashMap::new(),
         loop_growth: HashMap::new(),
+        publications: HashMap::new(),
         proof_values: HashMap::new(),
     });
 }

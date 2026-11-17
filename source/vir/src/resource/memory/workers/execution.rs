@@ -243,7 +243,7 @@ impl Analysis<'_> {
             }
             Ok::<(), VirErr>(())
         })?;
-        for input in &inputs {
+        for (index, input) in inputs.iter().enumerate() {
             if entry.captures.source_path(&input.source) != Some(vec![input.slot.clone()]) {
                 return Err(unsupported(
                     span,
@@ -271,6 +271,12 @@ impl Analysis<'_> {
                     .and_then(|owner| owner.children.remove(&input.slot))
                     .ok_or_else(|| unsupported(span, "worker entry missing a captured owner"))?;
                 worker.enter_worker_owner(&mut owner, &body.span)?;
+                if owner.references() == super::super::elements::References::WorkerOccurrences
+                    && owner.elements.is_some()
+                {
+                    let memory = worker.snapshot_owner_metadata(&body.span, &owner);
+                    worker.transitions.captured_populations.insert(index, memory);
+                }
                 worker.heap.owners.insert(input.name.clone(), owner);
             }
         }

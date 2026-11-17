@@ -376,7 +376,7 @@ pub(super) fn compatible(a: &Owner, b: &Owner) -> bool {
             (None, None) => true,
             (Some(a), Some(b)) => {
                 a.view == b.view
-                    && a.has_references == b.has_references
+                    && a.references == b.references
                     && a.states == b.states
                     && a.inputs == b.inputs
                     && super::transfer::simplify::inspect::same_expression(&a.records, &b.records)

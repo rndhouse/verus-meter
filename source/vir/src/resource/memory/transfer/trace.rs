@@ -133,6 +133,8 @@ struct Trace<'a> {
     loop_progress: HashMap<u64, super::super::loops::progress::Evidence>,
     /// Per-role append envelopes, expressed in ordinary immutable inputs.
     loop_growth: HashMap<u64, Vec<(super::super::paths::LocalPath, Expr)>>,
+    /// Closed construction descriptions for checked worker loop invariants.
+    publications: HashMap<VarIdent, Expr>,
     /// Convert immutable symbolic inputs back into body-proof observations.
     proof_values: HashMap<VarIdent, Expr>,
 }
@@ -177,6 +179,7 @@ pub(super) fn summarize(
         loop_transfers: HashMap::new(),
         loop_progress: HashMap::new(),
         loop_growth: HashMap::new(),
+        publications: HashMap::new(),
         proof_values: HashMap::new(),
     };
     for (index, parameter) in function.x.params.iter().enumerate() {
@@ -314,6 +317,7 @@ pub(super) fn summarize(
     trace.symbols.retain(|symbol| names.contains(&symbol.name));
     let ordered = !trace.loop_repetitions.is_empty() || checked.operations.values().any(|operation| matches!(operation, checked::Operation::Call { target, .. } if summaries.get(target).and_then(|summary| summary.transfer.as_ref()).is_some_and(|template| template.ordered)));
     Ok(Inferred {
+        publications: trace.publications,
         loops: trace.loop_transfers,
         progress: trace.loop_progress,
         growth: trace.loop_growth,

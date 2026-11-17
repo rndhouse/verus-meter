@@ -87,8 +87,8 @@ impl Trace<'_> {
                 }))
             }
             Operation::Closure { captures } => self.closure(value, captures),
-            Operation::WorkerPublish { source, identity, inputs, result } => {
-                self.publish_worker(value, source, identity, inputs, result)
+            Operation::WorkerPublish { source, identity, inputs, populations, result } => {
+                self.publish_worker(value, source, identity, inputs, populations, result)
             }
             Operation::WorkerJoin { source } => self.join_worker(value, source),
             Operation::Box { payload, bytes } => {

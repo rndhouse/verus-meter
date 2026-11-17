@@ -68,6 +68,11 @@ pub(super) struct Growth {
         super::workers::WorkerId,
         std::sync::Arc<super::workers::execution::Execution>,
     >,
+    /// A receiving loop is analyzed before its publisher finishes inference.
+    /// Keep its obligations until the publishing trace supplies capture expressions.
+    pub(super) captured_prefixes: Vec<super::loops::populations::PopulationPrefix>,
+    /// Construction-site substitutions available to pending population proofs.
+    pub(super) publications: HashMap<VarIdent, Expr>,
     /// Erased loop observations and ordinals do not mutate allocation state.
     /// Argument effect guards must still observe every allocation-state write.
     loop_proof_locals: std::collections::HashSet<VarIdent>,

@@ -103,21 +103,14 @@ impl Analysis<'_> {
         inferred: &super::transfer::Inferred,
     ) -> Result<(), VirErr> {
         self.apply_progress_evidence(&inferred.progress);
-        for (id, progress) in &inferred.progress {
-            let record = self.transitions.loops[id].clone();
-            for (_, expected) in &progress.forests {
-                let mut proofs = Vec::new();
-                super::transfer::prove_loop_prefix(&record.span, expected, &mut proofs)?;
-                let proof = crate::def::Spanned::new(
-                    record.span.clone(),
-                    StmtX::Expr(crate::ast_util::mk_block(&record.span, proofs, None)),
-                );
-                self.growth.before_loop_proof(&record.span, proof.clone());
-                self.growth.before.entry(record.body.span.id).or_default().push(proof.clone());
-                self.growth.after.entry(record.body.span.id).or_default().push(proof.clone());
-                // Isolated body facts do not escape the loop. Instantiate the
-                // laws at its exit count before later selections or destruction.
-                self.growth.after.entry(record.span.id).or_default().push(proof);
+        self.growth.publications.extend(inferred.publications.clone());
+        for progress in inferred.progress.values() {
+            for prefix in &progress.populations {
+                if self.transitions.captured_populations.is_empty() {
+                    prefix.emit(&mut self.growth, &HashMap::new())?;
+                } else {
+                    self.growth.captured_prefixes.push(prefix.clone());
+                }
             }
         }
         self.apply_loop_evidence(
@@ -771,6 +764,10 @@ pub(super) fn check(
             }
         }
         analysis.check_checkpoints()?;
+        let publications = std::mem::take(&mut analysis.growth.publications);
+        for prefix in std::mem::take(&mut analysis.growth.captured_prefixes) {
+            prefix.emit(&mut analysis.growth, &publications)?;
+        }
         analysis.worker_obligations()?;
         let report = analysis.storage.finish_conditional();
         analysis.obligations.extend(report.cost_points.iter().map(|(span, cost)| Obligation {
