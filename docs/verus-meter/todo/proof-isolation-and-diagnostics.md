@@ -52,7 +52,7 @@ change or that a new metadata representation is necessary.
 
 ## 1. Explain inference and proof failures
 
-- [ ] Preserve actionable failure reasons at summary, loop-composition and
+- [x] Preserve actionable failure reasons at summary, loop-composition and
   coverage boundaries, including the relevant source operation or loop. Start
   with those boundaries rather than mechanically replacing every `Option`.
   Preserve legitimate speculative fallback: an inapplicable candidate is not
@@ -71,6 +71,14 @@ change or that a new metadata representation is necessary.
 - [ ] Add focused regressions for distinct inference failures and generated
   obligation labels. Confirm source locations and failure purposes, while
   retaining rejection of unsupported behavior and invalid bounds.
+
+Implementation evidence: `efba6233a` preserves summary-boundary explanations and
+terminal loop/checked-operation source locations. Speculative loop plans retain
+transactional diagnostics; optional summaries may still be absent. Its source
+regression checks the loop location and required-function context, and accepts
+the same body when no summary is required. The commit records 110 focused
+regressions and supporting checks. Generated-obligation labels and their distinct
+failure regressions remain to be completed below this same section.
 
 Completion: a developer can identify the failed analysis stage or generated
 obligation and its source origin without reverse-engineering an entire generated
