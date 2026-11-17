@@ -58,6 +58,27 @@ pub(crate) fn check(
                     closure.captures.len()
                 ),
             )));
+            if let Some(adapter) = &closure.once_adapter {
+                use vir::resource::memory::concurrency::invocation::Invocation;
+                use vir::resource::memory::synchronization::flow::{Call, Terminator};
+                let body_calls = adapter
+                    .blocks
+                    .iter()
+                    .filter(|block| {
+                        matches!(&block.terminator,
+                        Terminator::Call { call: Call::Closure(body), .. }
+                            if *body == closure.function)
+                    })
+                    .count();
+                let checked = Invocation::checked(closure, !closure.copy, &closure.span).is_ok();
+                ctxt.diagnostics.borrow_mut().push(vir::ast::VirErrAs::Note(vir::messages::note(
+                    &closure.span,
+                    format!(
+                        "memory FnOnce adapter: {body_calls} resolved body call(s), {} arguments; checked invocation: {checked}",
+                        adapter.arguments,
+                    ),
+                )));
+            }
         }
         let mut operations: Vec<_> = synchronization.concurrency.erased_operations.iter().collect();
         operations.sort_by_key(|(id, _)| *id);

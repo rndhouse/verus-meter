@@ -16,6 +16,8 @@ pub(in super::super) struct Entry {
     pub(in super::super) storage: Storage,
     /// Disjoint source/compiler views into the original environment storage.
     pub(super) captures: super::captures::Captures,
+    /// A borrowed body return is followed by the actual FnOnce adapter cleanup.
+    pub(super) invocation: concurrency::invocation::Invocation,
 }
 
 impl Entry {
@@ -79,12 +81,17 @@ impl Entry {
         {
             return Err(unsupported(span, "borrowed or non-move worker environments"));
         }
-        if *kind != ClosureKind::FnOnce && evidence.once_adapter.is_none() {
+        if *kind != evidence.kind {
             return Err(unsupported(
                 span,
-                "worker entry without its executable FnOnce cleanup adapter",
+                "inconsistent source and compiler closure invocation kinds",
             ));
         }
+        let invocation = concurrency::invocation::Invocation::checked(
+            evidence,
+            layouts.owner(&storage.typ),
+            span,
+        )?;
         if evidence.body.arguments != 1
             || evidence.captures.iter().any(|capture| {
                 capture
@@ -117,7 +124,7 @@ impl Entry {
         } else if layouts.owner(&storage.typ) || !fields.is_empty() {
             return Err(unsupported(span, "worker entry missing owned capture storage"));
         }
-        Ok(Self { definition, storage, captures })
+        Ok(Self { definition, storage, captures, invocation })
     }
 }
 

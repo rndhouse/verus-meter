@@ -137,6 +137,45 @@ fn native_calls_keep_their_executable_function_and_worker_body_scopes() {
 }
 
 #[test]
+fn generated_fnonce_adapters_resolve_the_original_worker_bodies() {
+    let error = crate::verify_one_file(
+        "instantiated_worker_invocation_adapters",
+        r#"
+        use vstd::prelude::*;
+        verus! {
+            fn f(n: u16) resources peak(memory) <= 100000 {
+                let root = std::sync::Arc::new(7u64);
+                let reader = move || *root;
+                let scalar = move || n;
+                let read = std::thread::spawn(reader);
+                let copy = std::thread::spawn(scalar);
+                let result = read.join();
+                let result = copy.join();
+            }
+        }
+        "#
+        .into(),
+        &["--trace"],
+    )
+    .unwrap_err();
+    crate::common::assert_vir_error_msg(
+        error.clone(),
+        "before concurrent lifetime accounting is available",
+    );
+    assert_eq!(
+        error
+            .notes
+            .iter()
+            .filter(|note| note
+                .message
+                .contains("memory FnOnce adapter: 1 resolved body call(s), 2 arguments; checked invocation: true"))
+            .count(),
+        2,
+    );
+    assert!(!error.notes.iter().any(|note| note.message.contains("0 resolved body call(s)")));
+}
+
+#[test]
 fn ghost_call_arguments_do_not_create_executable_strong_aliases() {
     exact_peak(
         "ghost_native_clone_argument",

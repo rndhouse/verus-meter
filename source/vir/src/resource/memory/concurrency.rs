@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use vir_macros::ToDebugSNode;
 
+pub mod invocation;
 pub mod sites;
 
 /// Capture transport selected by Rust's post-erasure capture analysis.
@@ -50,6 +51,9 @@ pub struct Closure {
     pub id: usize,
     /// Resolved body identity, distinct from the function creating the closure.
     pub function: Fun,
+    /// Original compiler call kind. Proof erasure may change runtime Copy, but
+    /// cannot substitute a different invocation/cleanup graph in this evidence.
+    pub kind: crate::ast::ClosureKind,
     /// Source creation site.
     pub span: Span,
     /// Actual post-proof-erasure fields in compiler capture order.

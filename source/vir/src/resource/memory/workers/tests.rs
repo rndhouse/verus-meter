@@ -555,6 +555,7 @@ fn closure(id: usize, capture: Option<(VarIdent, Typ)>) -> (Closure, Expr) {
     let info = Closure {
         id,
         function: crate::fun!(CrateId::Internal => "worker_test"; "body"),
+        kind: ClosureKind::FnOnce,
         span: site.clone(),
         captures,
         by_move: true,

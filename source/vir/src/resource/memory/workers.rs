@@ -32,6 +32,8 @@ struct Worker {
     definition: Expr,
     /// Construction-epoch inputs survive capture consumption during execution.
     environment: super::closures::observations::EnvironmentId,
+    /// Exact body invocation and remaining-environment cleanup boundaries.
+    invocation: super::concurrency::invocation::Invocation,
     /// Source/body paths refer to fields of the retained environment charge.
     captures: captures::Captures,
     /// The completion tag is one distinct allocation, independent of the
@@ -88,6 +90,7 @@ impl Workers {
                 parent,
                 definition: entry.definition.clone(),
                 environment: entry.storage.value.environment.expect("checked worker inputs"),
+                invocation: entry.invocation,
                 captures: entry.captures,
                 completion,
                 result: result.clone(),
@@ -120,6 +123,7 @@ impl Workers {
             definition: worker.definition.clone(),
             captures: worker.captures.clone(),
             storage: captures,
+            invocation: worker.invocation.clone(),
         })
     }
 
@@ -182,6 +186,7 @@ impl Workers {
                     a.parent == b.parent
                         && a.definition.span.id == b.definition.span.id
                         && a.environment == b.environment
+                        && a.invocation == b.invocation
                         && a.captures.compatible(&b.captures)
                         && a.completion == b.completion
                         && crate::ast_util::types_equal(&a.result, &b.result)
