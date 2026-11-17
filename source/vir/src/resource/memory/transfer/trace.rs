@@ -37,6 +37,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::effects::{Effect, Location};
+use super::failure::Failure;
 
 /// Persistent symbolic bindings and scalar definitions on one continuing path.
 #[derive(Clone, Default)]
@@ -65,6 +66,9 @@ struct Selection {
 /// One checked body visit and the evidence needed to export its ownership effects.
 #[derive(Clone)]
 struct Trace<'a> {
+    /// A terminal executable-operation failure in this planning attempt.
+    /// Cloning/restoring a speculative loop plan also restores its diagnostics.
+    failure: Option<Failure>,
     /// Only a checked successful visit can specialize next to Some(item).
     active_iterator: Option<VarIdent>,
     /// Continuing path and deferred exits use the same symbolic forest states.
@@ -141,8 +145,9 @@ pub(super) fn summarize(
     summaries: &HashMap<Fun, super::super::summary::FunctionSummary>,
     modes: &HashMap<VarIdent, Mode>,
     checked: &Checked,
-) -> Option<Inferred> {
+) -> Result<Inferred, Failure> {
     let mut trace = Trace {
+        failure: None,
         active_iterator: None,
         reachable: true,
         path: crate::ast_util::mk_bool(&function.span, true),
@@ -181,9 +186,13 @@ pub(super) fn summarize(
         let typ = layouts.borrowed_owner(&parameter.x.typ).unwrap_or(&parameter.x.typ);
         let value = if layouts.owner(typ) {
             let memory = trace.symbol(&parameter.span, Input::Forest(index), expr::memory_type());
-            let memory = trace.input_memory(&parameter.span, index, typ, &memory, &mut vec![])?;
+            let memory = trace
+                .input_memory(&parameter.span, index, typ, &memory, &mut vec![])
+                .ok_or_else(|| Failure::new(&parameter.span, "input ownership description"))?;
             let mut minima = Minima::new();
-            trace.input_minima(&parameter.span, index, typ, &mut vec![], &mut minima)?;
+            trace
+                .input_minima(&parameter.span, index, typ, &mut vec![], &mut minima)
+                .ok_or_else(|| Failure::new(&parameter.span, "input reservation description"))?;
             Value::Owner(Node { origin: Some(index), typ: typ.clone(), memory, minima })
         } else if contracts::scalar(typ) {
             let symbol = trace.symbol(&parameter.span, Input::Scalar(index), typ.clone());
@@ -198,25 +207,40 @@ pub(super) fn summarize(
         };
         trace.state.values.insert(parameter.x.name.clone(), value);
     }
-    trace.initialize_regions(function)?;
-    let result = trace.value(function.x.body.as_ref()?)?;
-    let result = trace.finish_exits(
-        &function.span,
-        result,
-        &crate::resource::memory::control::Target::Return,
-    )?;
+    trace
+        .initialize_regions(function)
+        .ok_or_else(|| Failure::new(&function.span, "input lifetime mapping"))?;
+    let body = function
+        .x
+        .body
+        .as_ref()
+        .ok_or_else(|| Failure::new(&function.span, "missing executable body"))?;
+    let result = trace.value(body).ok_or_else(|| {
+        trace
+            .failure
+            .take()
+            .unwrap_or_else(|| Failure::new(&body.span, "executable body composition"))
+    })?;
+    let result = trace
+        .finish_exits(&function.span, result, &crate::resource::memory::control::Target::Return)
+        .ok_or_else(|| Failure::new(&function.span, "return and exit composition"))?;
     if !checked.covered(&trace.used) {
-        return None;
+        return Err(Failure::new(&function.span, "incomplete checked transition coverage"));
     }
     if layouts.owner(&function.x.outer_ret.x.typ) && !matches!(result, Value::Owner(_)) {
-        return None;
+        return Err(Failure::new(&function.span, "returned ownership description"));
     }
     let mut borrowed = BTreeMap::new();
     for (index, parameter) in function.x.params.iter().enumerate() {
         if matches!(&*parameter.x.typ, TypX::MutRef(_))
             && trace.state.written.contains(&parameter.x.name)
         {
-            let Value::Owner(node) = trace.state.values.get(&parameter.x.name)? else {
+            let Value::Owner(node) = trace
+                .state
+                .values
+                .get(&parameter.x.name)
+                .ok_or_else(|| Failure::new(&parameter.span, "borrowed output description"))?
+            else {
                 continue;
             };
             borrowed.insert(index, node.clone());
@@ -235,7 +259,8 @@ pub(super) fn summarize(
                     .collect::<Option<_>>()?,
             ))
         })
-        .collect::<Option<_>>()?;
+        .collect::<Option<_>>()
+        .ok_or_else(|| Failure::new(&function.span, "output lifetime mapping"))?;
     // Unused scalar arguments need no snapshot or additional representability restriction.
     let mut names = HashSet::new();
     let mut collect = |value: &Expr| {
@@ -281,11 +306,14 @@ pub(super) fn summarize(
     // representative iteration's counter and extracted-child tokens cannot
     // escape through intermediate lifetime regions or returned descriptors.
     if names.iter().any(|name| !trace.symbols.iter().any(|symbol| &symbol.name == name)) {
-        return None;
+        return Err(Failure::new(
+            &function.span,
+            "summary contains observations not expressible through caller inputs",
+        ));
     }
     trace.symbols.retain(|symbol| names.contains(&symbol.name));
     let ordered = !trace.loop_repetitions.is_empty() || checked.operations.values().any(|operation| matches!(operation, checked::Operation::Call { target, .. } if summaries.get(target).and_then(|summary| summary.transfer.as_ref()).is_some_and(|template| template.ordered)));
-    Some(Inferred {
+    Ok(Inferred {
         loops: trace.loop_transfers,
         progress: trace.loop_progress,
         growth: trace.loop_growth,

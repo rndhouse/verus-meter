@@ -10,6 +10,7 @@ mod calls;
 pub(super) mod checked;
 mod consistency;
 pub(super) mod effects;
+mod failure;
 mod iteration;
 mod origins;
 mod proofs;
@@ -137,14 +138,13 @@ pub(super) fn summarize(
     modes: &HashMap<VarIdent, Mode>,
     checked: &Checked,
 ) -> Result<Option<Inferred>, VirErr> {
-    let template = trace::summarize(function, layouts, functions, summaries, modes, checked);
-    if template.is_none() && requires_summary(function, layouts, checked, summaries)? {
-        return Err(super::model::unsupported(
-            &function.span,
-            "this runtime ownership transformation; no precise helper summary can be inferred",
-        ));
+    match trace::summarize(function, layouts, functions, summaries, modes, checked) {
+        Ok(template) => Ok(Some(template)),
+        Err(failure) if requires_summary(function, layouts, checked, summaries)? => {
+            Err(failure.diagnostic(&function.span))
+        }
+        Err(_) => Ok(None),
     }
-    Ok(template)
 }
 
 /// Fixed trees have an explicit structural summary. Runtime owning children

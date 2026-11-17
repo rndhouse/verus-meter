@@ -82,6 +82,11 @@ preserves child identity, order, capacity facts, and input lifetimes across
 supported operations. Missing ownership support is an error, even with a generous
 budget; ordinary proved byte upper bounds remain valid.
 
+When a required ownership summary cannot be inferred, diagnostics identify the
+failed inference boundary and, where available, the executable operation or loop.
+This is an unsupported transformation, distinct from a byte-bound proof failure
+or a solver resource limit. Optional summaries may remain absent.
+
 ## Supported boundary
 
 Supported building blocks include native integers, fixed integer arrays,

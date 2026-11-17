@@ -129,7 +129,12 @@ impl Trace<'_> {
                 ExprX::Call { .. } | ExprX::Ctor(..) | ExprX::NonSpecClosure { .. }
             ) {
                 self.used.insert((checked::Kind::Operation, span.id));
-                return self.operation(value, operation);
+                let result = self.operation(value, operation);
+                if result.is_none() && self.failure.is_none() {
+                    self.failure =
+                        Some(Failure::new(span, "checked executable ownership operation"));
+                }
+                return result;
             }
         }
         match &value.x {

@@ -1,6 +1,52 @@
 use crate::common::*;
 use crate::verify_one_file;
 
+#[test]
+fn required_summary_identifies_the_loop_and_optional_summary_can_be_absent() {
+    let source = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn build() RETURN_TYPE resources peak(memory) <= 100000 {
+            let mut buffers = Vec::<Box<u32>>::with_capacity(2);
+            let mut i = 0usize;
+            while i < 2
+                invariant i <= 2, buffers.len() <= i,
+                decreases 2-i,
+            {
+                if i * i < 2 {
+                    let buffer = Box::new(7u32);
+                    buffers.push(buffer);
+                }
+                i += 1;
+            }
+            RESULT
+        }
+        }
+    "#;
+    let error = verify_one_file(
+        "required_summary_loop_origin",
+        source.replace("RETURN_TYPE", "-> Vec<Box<u32>>").replace("RESULT", "buffers"),
+        &[],
+    )
+    .unwrap_err();
+    assert_eq!(error.errors.len(), 1);
+    let diagnostic = &error.errors[0];
+    assert!(diagnostic.message.contains("no precise helper summary can be inferred"));
+    assert!(diagnostic.message.contains("loop ownership composition"));
+    assert!(diagnostic.spans.iter().any(|span| span.is_primary
+        && span.text.first().is_some_and(|line| line.text.contains("while i < 2"))));
+    assert!(diagnostic.spans.iter().any(|span| !span.is_primary
+        && span.label.as_deref() == Some("ownership summary required for this function")));
+
+    // The same unsupported export must not reject a body that needs no summary.
+    verify_one_file(
+        "optional_summary_absent",
+        source.replace("RETURN_TYPE", "").replace("RESULT", "drop(buffers);"),
+        &[],
+    )
+    .unwrap();
+}
+
 test_verify_one_file! {
     #[test] owned_vector_capacity_is_inferred verus_code! {
         use vstd::prelude::*;

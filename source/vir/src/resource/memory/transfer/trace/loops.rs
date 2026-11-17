@@ -70,6 +70,10 @@ impl Trace<'_> {
         *self = before;
         // Read-only eligibility was classified with the body proof's record.
         if !record.read_only() {
+            self.failure = Some(Failure::new(
+                span,
+                "loop ownership composition: neither collection nor indexed effects are representable",
+            ));
             return None;
         }
         for value in self.state.values.values_mut() {
