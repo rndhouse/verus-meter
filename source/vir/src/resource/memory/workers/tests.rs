@@ -58,7 +58,12 @@ fn call(site: &Span, typ: &Typ, intrinsic: ResourceIntrinsic, args: Vec<Expr>) -
 /// Inspect the descriptor emitted for an actual constructor's owner. The
 /// verified forest algebra checks transport; this checks the compiler bridge
 /// supplies the canonical identity rather than dropping it into byte-only data.
-fn assert_reference(analysis: &mut Analysis<'_>, owner: &Owner, operation: &str, serial: i128) {
+fn assert_reference(
+    analysis: &mut Analysis<'_>,
+    owner: &Owner,
+    operation: &str,
+    identity: &[i128],
+) {
     use crate::resource::memory::{metadata::expr, transfer::simplify::inspect::same_expression};
     let site = span(900);
     let before = analysis.storage.live();
@@ -69,7 +74,7 @@ fn assert_reference(analysis: &mut Analysis<'_>, owner: &Owner, operation: &str,
             && expr::is_operation(function, operation)
         {
             found += 1;
-            assert!(same_expression(&args[1], &expr::path(&site, [serial])));
+            assert!(same_expression(&args[1], &expr::path(&site, identity.iter().copied())));
         }
         Ok::<_, ()>(())
     })
@@ -104,7 +109,7 @@ fn executable_handle_drop_retains_the_worker_and_its_capture_allocation() {
         );
         let value = analysis.produce(&spawn).unwrap();
         let owner = analysis.result_owner.take().unwrap();
-        assert_reference(analysis, &owner, "worker_reference", owner.worker.unwrap().serial());
+        assert_reference(analysis, &owner, "worker_reference", &owner.worker.unwrap().descriptor());
         let name = VarIdent(Arc::new("handle".into()), VarIdentDisambiguate::RustcId(2));
         analysis.var_modes.insert(name.clone(), Mode::Exec);
         analysis.slots.insert(name.clone(), value);
@@ -143,6 +148,12 @@ fn repeated_publications_at_one_site_have_distinct_worker_identities() {
         let (first, first_handle) = spawn(analysis, handle, expression.clone(), 10);
         let (second, second_handle) = spawn(analysis, handle, expression, 10);
         assert_ne!(first, second);
+        assert_eq!(first.descriptor()[0], second.descriptor()[0]);
+        assert_ne!(first.descriptor()[1], second.descriptor()[1]);
+        assert_ne!(
+            analysis.heap.workers.records[&first].completion,
+            analysis.heap.workers.records[&second].completion,
+        );
         assert_eq!(analysis.heap.workers.records.len(), 2);
         assert_eq!(analysis.storage.live(), 18);
         for (id, handle) in [(first, first_handle), (second, second_handle)] {
@@ -162,10 +173,59 @@ fn repeated_publications_at_one_site_have_distinct_worker_identities() {
                 .unwrap();
             finish_join(analysis, id, handle);
             assert!(analysis.collect_worker_result(id, &span(13)).is_err());
+            assert_eq!(analysis.storage.live(), if id == first { 9 } else { 0 });
         }
         assert_eq!(analysis.storage.live(), 0);
         analysis.heap.workers.check_closed(&span(14)).unwrap();
     });
+}
+
+#[test]
+fn child_families_preserve_the_enclosing_worker_occurrence() {
+    let (parent, parent_expression) = closure(1, None);
+    let (child, child_expression) = closure(2, None);
+    let mut evidence = Evidence::default();
+    evidence.closures.insert(parent.id, parent);
+    evidence.closures.insert(child.id, child);
+    with_analysis(&evidence, |analysis, handle| {
+        let (first, first_handle) = spawn(analysis, handle, parent_expression.clone(), 10);
+        let (second, second_handle) = spawn(analysis, handle, parent_expression, 10);
+        for parent in [first, second] {
+            let frame = analysis.heap.workers.enter(parent, &span(11)).unwrap();
+            if let Some(owner) = frame.owner {
+                analysis.release_owner(owner, &span(11));
+            }
+            analysis.release_value(frame.value, &span(11));
+        }
+        analysis.current_worker = Some(first);
+        let (first_child, first_child_handle) =
+            spawn(analysis, handle, child_expression.clone(), 12);
+        analysis.current_worker = Some(second);
+        let (second_child, second_child_handle) = spawn(analysis, handle, child_expression, 12);
+        assert_ne!(first_child.descriptor()[0], second_child.descriptor()[0]);
+        for (child, handle) in
+            [(first_child, first_child_handle), (second_child, second_child_handle)]
+        {
+            let frame = analysis.heap.workers.enter(child, &span(13)).unwrap();
+            if let Some(owner) = frame.owner {
+                analysis.release_owner(owner, &span(13));
+            }
+            analysis.release_value(frame.value, &span(13));
+            analysis.heap.workers.complete(child, &span(14), empty_result()).unwrap();
+            finish_join(analysis, child, handle);
+        }
+        for (parent, handle) in [(first, first_handle), (second, second_handle)] {
+            analysis.heap.workers.complete(parent, &span(15), empty_result()).unwrap();
+            finish_join(analysis, parent, handle);
+        }
+        analysis.current_worker = None;
+        analysis.heap.workers.check_closed(&span(16)).unwrap();
+        assert_eq!(analysis.storage.live(), 0);
+    });
+}
+
+fn empty_result() -> Storage {
+    Storage { typ: crate::ast_util::unit_typ(), value: Value::unit(), owner: None }
 }
 
 fn unit(site: &Span) -> Expr {
@@ -382,14 +442,14 @@ fn shared_capture_and_completed_result_retain_one_canonical_payload() {
         let owner = analysis.result_owner.take().unwrap();
         let identity = owner.shared;
         assert!(identity.is_some());
-        assert_reference(analysis, &owner, "shared_reference", identity.unwrap().serial());
+        assert_reference(analysis, &owner, "shared_reference", &[identity.unwrap().serial()]);
         // This local view has zero charged bytes but still carries a strong
         // reference. Completing its source geometry must preserve that link.
         let mut local_view = owner.clone();
         local_view.view = crate::resource::memory::metadata::View::Local;
         local_view.source =
             Some((typ.clone(), SpannedTyped::new(&site, &typ, ExprX::Var(root.clone()))));
-        assert_reference(analysis, &local_view, "shared_reference", identity.unwrap().serial());
+        assert_reference(analysis, &local_view, "shared_reference", &[identity.unwrap().serial()]);
         let records = analysis.owner_metadata(&site, &owner, &mut vec![]);
         // A forest consumer without the population interface must reject, even
         // though the linked owner itself has no charged bytes.
@@ -419,7 +479,7 @@ fn shared_capture_and_completed_result_retain_one_canonical_payload() {
             .unwrap();
         let owner = analysis.result_owner.take().unwrap();
         assert_eq!(owner.shared, identity);
-        assert_reference(analysis, &owner, "shared_reference", identity.unwrap().serial());
+        assert_reference(analysis, &owner, "shared_reference", &[identity.unwrap().serial()]);
         analysis.var_modes.insert(copy.clone(), Mode::Exec);
         analysis.slots.insert(copy.clone(), value);
         analysis.heap.owners.insert(copy, owner);

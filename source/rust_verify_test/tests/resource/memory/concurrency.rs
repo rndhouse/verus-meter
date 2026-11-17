@@ -316,6 +316,68 @@ fn ownership_forests_preserve_reference_identity_and_alias_multiplicity() {
 }
 
 #[test]
+fn worker_forests_preserve_symbolic_family_membership_and_distinct_occurrences() {
+    verifies(
+        "worker_family_transport",
+        r#"
+        use vstd::std_specs::resource::memory::{forest::*, references::*};
+        proof fn families(family: Seq<int>, index: int, next: int, owner: Seq<int>)
+            requires index != next,
+        {
+            let a = family.push(index);
+            let b = family.push(next);
+            let first = Seq::<Record>::empty().push(worker_reference(Seq::empty(), a));
+            let second = Seq::<Record>::empty().push(worker_reference(Seq::empty(), b));
+            let target = Reference::WorkerFamily(family);
+            reveal_with_fuel(reference_count, 2);
+            assert(family.is_prefix_of(a));
+            assert(family.is_prefix_of(b));
+            assert(a != b) by { assert(a.last() != b.last()); }
+            assert(reference_count(first, Reference::Worker(b)) == 0);
+            assert(reference_count(first, target) == 1);
+            assert(reference_count(second, target) == 1);
+            reference_count_add(first, second, target);
+            assert(reference_count(first + second, target) == 2);
+            reference_count_prefix(first + second, owner, target);
+            reference_count_partition(prefix(first + second, owner), owner, target);
+            assert(reference_count(prefix(first + second, owner), target) == 2);
+        }
+    "#,
+    );
+}
+
+#[test]
+fn symbolic_reference_populations_compose_without_repeating_worker_identities() {
+    verifies(
+        "symbolic_reference_population",
+        r#"
+        use vstd::std_specs::resource::memory::{blocks::*, forest::*, ranges::*, references::*};
+        proof fn populations(count: nat, family: Seq<int>, root: Seq<int>) {
+            let target = Reference::WorkerFamily(family);
+            let builder = |index: int| Seq::<Record>::empty().push(
+                worker_reference(seq![0], family.push(index)));
+            assert forall|index: int| 0 <= index < count implies
+                reference_count(#[trigger] builder(index), target) == 1 by
+            {
+                reveal_with_fuel(reference_count, 2);
+                assert(family.is_prefix_of(family.push(index)));
+            }
+            reference_count_generate(builder, 1, count as int, 0, target);
+            generated_reference_count_uniform(builder, count as int, target, 1);
+            assert(reference_count(generate_children(builder, 1, count as int, 0), target) == count);
+
+            let alias = Seq::<Record>::empty().push(shared_reference(Seq::empty(), root));
+            reveal_with_fuel(reference_count, 2);
+            assert(reference_count(alias, Reference::Shared(root)) == 1);
+            reference_count_repeat(alias, 0, count as int, Reference::Shared(root));
+            assert(reference_count(repeat(alias, 0, count as int), Reference::Shared(root)) == count);
+            reference_count_partition(repeat(alias, 0, count as int), seq![0], Reference::Shared(root));
+        }
+    "#,
+    );
+}
+
+#[test]
 fn move_closure_retains_actual_allocations_until_its_drop() {
     let code = r#"
         fn f() resources peak(memory) <= BUDGET {

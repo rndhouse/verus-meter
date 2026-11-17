@@ -44,7 +44,7 @@ impl Analysis<'_> {
             expr::operation(
                 span,
                 "worker_reference",
-                vec![expr::path(span, []), expr::path(span, [worker.serial()])],
+                vec![expr::path(span, []), expr::path(span, worker.descriptor())],
                 expr::record_type(),
             )
         } else {

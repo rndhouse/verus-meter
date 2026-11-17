@@ -10,30 +10,12 @@ use super::{
     lifetime::{Storage, Value},
     model::unsupported,
 };
-use crate::{
-    ast::*,
-    messages::{AstId, Span},
-};
+use crate::{ast::*, messages::Span};
 use std::collections::BTreeMap;
 
-/// One dynamic worker in the current ownership state, never a closure type ID.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(super) struct WorkerId(u64);
+mod identity;
 
-impl WorkerId {
-    /// Stable identity encoded in an ownership descriptor, not a worker count.
-    pub(super) fn serial(self) -> i128 {
-        i128::from(self.0)
-    }
-}
-
-/// Static publication family. Each executable publication receives a distinct
-/// WorkerId, including repeated visits to the same site and closure definition.
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Family {
-    site: AstId,
-    closure: usize,
-}
+pub(super) use identity::{Families, WorkerId};
 
 #[derive(Clone)]
 enum Stage {
@@ -47,8 +29,10 @@ enum Stage {
 
 #[derive(Clone)]
 struct Worker {
-    family: Family,
     parent: Option<WorkerId>,
+    /// The completion tag is one distinct allocation, independent of the
+    /// parent's inline handle and the result eventually stored behind it.
+    completion: u64,
     result: Typ,
     stage: Stage,
     /// A wait consumes the source handle but retains its inline call argument.
@@ -68,12 +52,13 @@ pub(super) struct Workers {
 impl Workers {
     fn publish(
         &mut self,
+        id: WorkerId,
         span: &Span,
-        closure: usize,
         parent: Option<WorkerId>,
+        completion: u64,
         result: Typ,
         captures: Storage,
-    ) -> Result<WorkerId, VirErr> {
+    ) -> Result<(), VirErr> {
         if let Some(parent) = parent
             && !self
                 .records
@@ -82,12 +67,14 @@ impl Workers {
         {
             return Err(unsupported(span, "publication outside a live parent worker"));
         }
-        let id = WorkerId(super::accounting::Accounting::fresh_allocation());
+        if self.records.contains_key(&id) {
+            return Err(unsupported(span, "republishing an existing worker occurrence"));
+        }
         self.records.insert(
             id,
             Worker {
-                family: Family { site: span.id, closure },
                 parent,
+                completion,
                 result,
                 stage: Stage::Published(captures),
                 waiter: None,
@@ -95,7 +82,7 @@ impl Workers {
                 publication: span.clone(),
             },
         );
-        Ok(id)
+        Ok(())
     }
 
     // The checked body-summary adapter in TODO 05 consumes entry and completion.
@@ -163,7 +150,7 @@ impl Workers {
             reason = "completed-result transfer is consumed by the TODO 05 join adapter"
         )
     )]
-    fn take_result(&mut self, id: WorkerId, span: &Span) -> Result<(Storage, Value), VirErr> {
+    fn take_result(&mut self, id: WorkerId, span: &Span) -> Result<(Storage, Value, u64), VirErr> {
         let worker =
             self.records.get(&id).ok_or_else(|| unsupported(span, "joining an unknown worker"))?;
         if worker.detached.is_some()
@@ -174,7 +161,7 @@ impl Workers {
         }
         let worker = self.records.remove(&id).unwrap();
         let Stage::Completed(result) = worker.stage else { unreachable!() };
-        Ok((result, worker.waiter.unwrap()))
+        Ok((result, worker.waiter.unwrap(), worker.completion))
     }
 
     pub(super) fn detach(&mut self, id: WorkerId, span: &Span) {
@@ -202,8 +189,8 @@ impl Workers {
         self.records.len() == other.records.len()
             && self.records.iter().all(|(id, a)| {
                 other.records.get(id).is_some_and(|b| {
-                    a.family == b.family
-                        && a.parent == b.parent
+                    a.parent == b.parent
+                        && a.completion == b.completion
                         && crate::ast_util::types_equal(&a.result, &b.result)
                         && a.detached.as_ref().map(|s| s.id) == b.detached.as_ref().map(|s| s.id)
                         && match (&a.waiter, &b.waiter) {
@@ -235,19 +222,15 @@ impl Analysis<'_> {
         id: WorkerId,
         span: &Span,
     ) -> Result<Storage, VirErr> {
-        let (result, handle) = self.heap.workers.take_result(id, span)?;
+        let (result, handle, completion) = self.heap.workers.take_result(id, span)?;
         if self.layouts.size(&result.typ, span)? != result.value.bytes
             || self.layouts.owner(&result.typ) != result.owner.is_some()
         {
             return Err(unsupported(span, "incomplete worker result storage or ownership"));
         }
         self.release_value(handle, span);
-        self.storage.release(
-            span,
-            super::footprint::MemoryKind::host_heap(),
-            verus_meter_model::completion_bytes(0).unwrap(),
-            "joined completion tag",
-        );
+        self.storage.release_values(&[completion].into());
+        self.storage.event(span, "joined completion tag".into());
         Ok(result)
     }
 
@@ -294,16 +277,19 @@ impl Analysis<'_> {
         }
         let value = self.produce(closure)?;
         let owner = self.result_owner.take();
-        self.storage.reserve(
+        let completion = self.storage.reserve_value(
             &expr.span,
             super::footprint::MemoryKind::host_heap(),
             verus_meter_model::completion_bytes(0).unwrap(),
-            "publish worker completion tag",
         )?;
-        let id = self.heap.workers.publish(
+        self.storage.event(&expr.span, "publish worker completion tag".into());
+        let id =
+            self.growth.worker_families.publication(expr.span.id, *definition, self.current_worker);
+        self.heap.workers.publish(
+            id,
             &expr.span,
-            *definition,
             self.current_worker,
+            completion,
             result.clone(),
             Storage { typ: closure.typ.clone(), value, owner },
         )?;

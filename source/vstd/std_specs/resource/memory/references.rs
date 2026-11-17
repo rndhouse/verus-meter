@@ -4,19 +4,27 @@
 use crate::prelude::*;
 
 #[cfg(verus_keep_ghost)]
+use super::blocks::generate_children;
+#[cfg(verus_keep_ghost)]
 use super::forest::{Record, prefix, subtree, without};
+#[cfg(verus_keep_ghost)]
+use super::ranges::{repeat, shift_children};
 
 verus! {
 
 broadcast use crate::seq::group_seq_axioms;
 
-/// Separate identity domains for aliases of shared storage and join handles.
-/// An identity can include invocation, worker-family and loop-index binders.
+/// Typed identity queries for aliases and join handles. An identity can include
+/// invocation, worker-family and loop-index binders; a family query groups
+/// indices without changing their individual identities or multiplicity.
 pub enum Reference {
     /// One strong alias. Several records may refer to the same canonical root.
     Shared(Seq<int>),
     /// A handle for one publication; transferring it does not complete the worker.
     Worker(Seq<int>),
+    /// All handles whose identity consists of this family followed by one index.
+    /// This query cannot construct a handle or establish worker completion.
+    WorkerFamily(Seq<int>),
 }
 
 /// A strong handle's owner node has no separate byte charge. Its inline slot
@@ -37,6 +45,10 @@ pub open spec fn refers_to(record: Record, reference: Reference) -> bool {
             == identity,
         Reference::Worker(identity) => record.reference_kind == 2 && record.reference_identity
             == identity,
+        Reference::WorkerFamily(family) => record.reference_kind == 2
+            && record.reference_identity.len() == family.len() + 1 && family.is_prefix_of(
+            record.reference_identity,
+        ),
     }
 }
 
@@ -108,6 +120,139 @@ pub proof fn reference_count_partition(memory: Seq<Record>, path: Seq<int>, refe
         } else {
             assert(without(memory, path).drop_last() =~= without(memory.drop_last(), path));
         }
+    }
+}
+
+/// Reindexing a collection changes neither its links nor their multiplicity.
+pub proof fn reference_count_shift(memory: Seq<Record>, base: int, reference: Reference)
+    ensures
+        reference_count(shift_children(memory, base), reference) == reference_count(
+            memory,
+            reference,
+        ),
+    decreases memory.len(),
+{
+    reveal_with_fuel(reference_count, 2);
+    reveal_with_fuel(shift_children, 2);
+    if memory.len() > 0 {
+        reference_count_shift(memory.drop_last(), base, reference);
+        assert(shift_children(memory, base).drop_last() =~= shift_children(
+            memory.drop_last(),
+            base,
+        ));
+    }
+}
+
+/// A repeated alias descriptor retains every strong handle, even though each
+/// link's local byte charge is zero. Repetition alone does not mint aliases.
+pub proof fn reference_count_repeat(
+    child: Seq<Record>,
+    start: int,
+    count: int,
+    reference: Reference,
+)
+    requires
+        count >= 0,
+    ensures
+        reference_count(repeat(child, start, count), reference) == count * reference_count(
+            child,
+            reference,
+        ),
+    decreases count,
+{
+    reveal_with_fuel(repeat, 2);
+    reveal(reference_count);
+    if count > 0 {
+        reference_count_repeat(child, start, count - 1, reference);
+        let before = repeat(child, start, count - 1);
+        let path = seq![start + count - 1];
+        reference_count_prefix(child, path, reference);
+        reference_count_add(before, prefix(child, path), reference);
+        assert((count - 1) * reference_count(child, reference) + reference_count(child, reference)
+            == count * reference_count(child, reference)) by (nonlinear_arith);
+    } else {
+        assert(count * reference_count(child, reference) == 0) by (nonlinear_arith)
+            requires
+                count == 0,
+        ;
+    }
+}
+
+/// Reference multiplicity of a generated collection. Builders may use their
+/// iteration index in the target identity; they need not repeat one worker.
+#[verifier::opaque]
+pub open spec fn generated_reference_count(
+    builder: spec_fn(int) -> Seq<Record>,
+    count: int,
+    reference: Reference,
+) -> int
+    decreases count,
+{
+    if count <= 0 {
+        0
+    } else {
+        generated_reference_count(builder, count - 1, reference) + reference_count(
+            builder(count - 1),
+            reference,
+        )
+    }
+}
+
+/// Compose actual per-visit descriptors, preserving distinct worker indices and
+/// repeated strong aliases. This theorem supplies no publication/completion fact.
+pub proof fn reference_count_generate(
+    builder: spec_fn(int) -> Seq<Record>,
+    width: int,
+    count: int,
+    start: int,
+    reference: Reference,
+)
+    requires
+        count >= 0,
+    ensures
+        reference_count(generate_children(builder, width, count, start), reference)
+            == generated_reference_count(builder, count, reference),
+    decreases count,
+{
+    reveal_with_fuel(generate_children, 2);
+    reveal_with_fuel(generated_reference_count, 2);
+    reveal(reference_count);
+    if count > 0 {
+        reference_count_generate(builder, width, count - 1, start, reference);
+        let before = generate_children(builder, width, count - 1, start);
+        let block = builder(count - 1);
+        let base = start + width * (count - 1);
+        reference_count_shift(block, base, reference);
+        reference_count_add(before, shift_children(block, base), reference);
+    }
+}
+
+/// A checked uniform family contribution closes to a symbolic product. A
+/// conditional/nonuniform publication keeps its generated sum instead.
+pub proof fn generated_reference_count_uniform(
+    builder: spec_fn(int) -> Seq<Record>,
+    count: int,
+    reference: Reference,
+    per_visit: int,
+)
+    requires
+        count >= 0,
+        forall|index: int|
+            0 <= index < count ==> reference_count(#[trigger] builder(index), reference)
+                == per_visit,
+    ensures
+        generated_reference_count(builder, count, reference) == count * per_visit,
+    decreases count,
+{
+    reveal_with_fuel(generated_reference_count, 2);
+    if count > 0 {
+        generated_reference_count_uniform(builder, count - 1, reference, per_visit);
+        assert((count - 1) * per_visit + per_visit == count * per_visit) by (nonlinear_arith);
+    } else {
+        assert(count * per_visit == 0) by (nonlinear_arith)
+            requires
+                count == 0,
+        ;
     }
 }
 

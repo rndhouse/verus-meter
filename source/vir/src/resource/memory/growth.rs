@@ -49,6 +49,9 @@ pub(super) struct Growth {
     /// Read-only loop proof actions, retaining their Arc owners so identity
     /// keys cannot be reused while argument effect guards inspect schedules.
     loop_proof_statements: HashMap<usize, Stmt>,
+    /// Static publication binders survive branch snapshots; executable events
+    /// create occurrences. Historical family entries never count live workers.
+    pub(super) worker_families: super::workers::Families,
     /// Structurally checked loops with no local back edge use Verus's existing
     /// nonisolated, no-back-edge proof form and retain their actual entry facts.
     pub(super) single_visit_loops: std::collections::HashSet<u64>,
