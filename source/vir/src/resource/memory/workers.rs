@@ -13,6 +13,7 @@ use super::{
 use crate::{ast::*, messages::Span};
 use std::collections::BTreeMap;
 
+mod body;
 mod identity;
 
 pub(super) use identity::{Families, WorkerId};
@@ -30,6 +31,8 @@ enum Stage {
 #[derive(Clone)]
 struct Worker {
     parent: Option<WorkerId>,
+    /// Actual executable body retained across publication and source moves.
+    definition: Expr,
     /// The completion tag is one distinct allocation, independent of the
     /// parent's inline handle and the result eventually stored behind it.
     completion: u64,
@@ -56,8 +59,7 @@ impl Workers {
         span: &Span,
         parent: Option<WorkerId>,
         completion: u64,
-        result: Typ,
-        captures: Storage,
+        entry: body::Entry,
     ) -> Result<(), VirErr> {
         if let Some(parent) = parent
             && !self
@@ -70,13 +72,17 @@ impl Workers {
         if self.records.contains_key(&id) {
             return Err(unsupported(span, "republishing an existing worker occurrence"));
         }
+        let TypX::AnonymousClosure(_, result, _, _) = &*entry.definition.typ else {
+            return Err(unsupported(span, "publication without an executable worker definition"));
+        };
         self.records.insert(
             id,
             Worker {
                 parent,
+                definition: entry.definition.clone(),
                 completion,
-                result,
-                stage: Stage::Published(captures),
+                result: result.clone(),
+                stage: Stage::Published(entry.storage),
                 waiter: None,
                 detached: None,
                 publication: span.clone(),
@@ -91,7 +97,7 @@ impl Workers {
         not(test),
         expect(dead_code, reason = "worker body-summary entry is connected in TODO 05")
     )]
-    pub(super) fn enter(&mut self, id: WorkerId, span: &Span) -> Result<Storage, VirErr> {
+    pub(super) fn enter(&mut self, id: WorkerId, span: &Span) -> Result<body::Entry, VirErr> {
         let worker =
             self.records.get_mut(&id).ok_or_else(|| unsupported(span, "an unknown worker"))?;
         if !matches!(worker.stage, Stage::Published(_)) {
@@ -101,7 +107,7 @@ impl Workers {
         else {
             unreachable!()
         };
-        Ok(captures)
+        Ok(body::Entry { definition: worker.definition.clone(), storage: captures })
     }
 
     #[cfg_attr(
@@ -190,6 +196,7 @@ impl Workers {
             && self.records.iter().all(|(id, a)| {
                 other.records.get(id).is_some_and(|b| {
                     a.parent == b.parent
+                        && a.definition.span.id == b.definition.span.id
                         && a.completion == b.completion
                         && crate::ast_util::types_equal(&a.result, &b.result)
                         && a.detached.as_ref().map(|s| s.id) == b.detached.as_ref().map(|s| s.id)
@@ -275,6 +282,11 @@ impl Analysis<'_> {
                 "publication with inconsistent worker/result identities",
             ));
         }
+        let definition_body = body::definition(
+            closure,
+            self.concurrency,
+            self.functions.values().filter_map(|function| function.x.body.as_ref()),
+        )?;
         let value = self.produce(closure)?;
         let owner = self.result_owner.take();
         let completion = self.storage.reserve_value(
@@ -290,8 +302,12 @@ impl Analysis<'_> {
             &expr.span,
             self.current_worker,
             completion,
-            result.clone(),
-            Storage { typ: closure.typ.clone(), value, owner },
+            body::Entry::checked(
+                definition_body,
+                Storage { typ: closure.typ.clone(), value, owner },
+                self.concurrency,
+                self.layouts,
+            )?,
         )?;
         Ok(Some(Owner { worker: Some(id), ..Default::default() }))
     }

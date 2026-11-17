@@ -157,7 +157,7 @@ fn repeated_publications_at_one_site_have_distinct_worker_identities() {
         assert_eq!(analysis.heap.workers.records.len(), 2);
         assert_eq!(analysis.storage.live(), 18);
         for (id, handle) in [(first, first_handle), (second, second_handle)] {
-            let frame = analysis.heap.workers.enter(id, &span(11)).unwrap();
+            let frame = analysis.heap.workers.enter(id, &span(11)).unwrap().storage;
             if let Some(owner) = frame.owner {
                 analysis.release_owner(owner, &span(11));
             }
@@ -191,7 +191,7 @@ fn child_families_preserve_the_enclosing_worker_occurrence() {
         let (first, first_handle) = spawn(analysis, handle, parent_expression.clone(), 10);
         let (second, second_handle) = spawn(analysis, handle, parent_expression, 10);
         for parent in [first, second] {
-            let frame = analysis.heap.workers.enter(parent, &span(11)).unwrap();
+            let frame = analysis.heap.workers.enter(parent, &span(11)).unwrap().storage;
             if let Some(owner) = frame.owner {
                 analysis.release_owner(owner, &span(11));
             }
@@ -206,7 +206,7 @@ fn child_families_preserve_the_enclosing_worker_occurrence() {
         for (child, handle) in
             [(first_child, first_child_handle), (second_child, second_child_handle)]
         {
-            let frame = analysis.heap.workers.enter(child, &span(13)).unwrap();
+            let frame = analysis.heap.workers.enter(child, &span(13)).unwrap().storage;
             if let Some(owner) = frame.owner {
                 analysis.release_owner(owner, &span(13));
             }
@@ -226,6 +226,115 @@ fn child_families_preserve_the_enclosing_worker_occurrence() {
 
 fn empty_result() -> Storage {
     Storage { typ: crate::ast_util::unit_typ(), value: Value::unit(), owner: None }
+}
+
+#[test]
+fn moved_worker_definitions_restore_native_body_effects_exactly_once() {
+    let source = VarIdent(Arc::new("shared".into()), VarIdentDisambiguate::RustcId(1));
+    let typ = decorated(TypDecoration::Arc, Arc::new(TypX::Int(IntRange::U(64))));
+    let (info, mut expression) = closure(1, Some((source, typ.clone())));
+    let ExprX::NonSpecClosure { body, .. } = &mut Arc::make_mut(&mut expression).x else {
+        unreachable!()
+    };
+    *body = SpannedTyped::new(&span(200), &body.typ, body.x.clone());
+    let mut evidence = Evidence::default();
+    evidence.closures.insert(info.id, info);
+    evidence.erased_operations.insert(
+        200,
+        vec![crate::resource::memory::concurrency::ErasedOperation {
+            function: crate::fun!(CrateId::Internal => "worker_test"; "clone"),
+            operation: Operation::ArcClone,
+            result: typ,
+            span: span(201),
+            receiver_scope: None,
+        }],
+    );
+    let moved = SpannedTyped::new(
+        &span(202),
+        &expression.typ,
+        ExprX::ReadPlace(
+            SpannedTyped::new(
+                &span(202),
+                &expression.typ,
+                PlaceX::Local(VarIdent(Arc::new("moved".into()), VarIdentDisambiguate::RustcId(2))),
+            ),
+            UnfinalizedReadKind {
+                preliminary_kind: ReadKind::Move(MoveExecToProofOkay::No),
+                id: 0,
+            },
+        ),
+    );
+    let restored = body::definition(&moved, &evidence, std::iter::once(&expression)).unwrap();
+    let direct = body::definition(&restored, &evidence, std::iter::empty()).unwrap();
+    let clones = |expression: &Expr| {
+        let mut count = 0;
+        crate::ast_visitor::expr_visitor_check(expression, &mut |_, value| {
+            if matches!(&value.x, ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), .. }
+                if attrs.resource_intrinsic == Some(ResourceIntrinsic::Concurrency(Operation::ArcClone)))
+            {
+                count += 1;
+            }
+            Ok::<(), ()>(())
+        }).unwrap();
+        count
+    };
+    assert_eq!(clones(&expression), 0);
+    assert_eq!(clones(&restored), 1);
+    assert_eq!(clones(&direct), 1);
+    assert!(body::definition(&moved, &evidence, std::iter::empty()).is_err());
+    assert!(body::definition(&moved, &evidence, [&expression, &expression].into_iter()).is_err());
+}
+
+#[test]
+fn worker_entry_checks_capture_coverage_and_native_cleanup() {
+    let site = span(1);
+    let source = VarIdent(Arc::new("source".into()), VarIdentDisambiguate::RustcId(1));
+    let initializer = source_box(&site);
+    let (info, expression) = closure(1, Some((source.clone(), initializer.typ.clone())));
+    let mut evidence = Evidence::default();
+    evidence.closures.insert(info.id, info);
+    with_analysis(&evidence, |analysis, _| {
+        let value = analysis.produce(&initializer).unwrap();
+        analysis.var_modes.insert(source.clone(), Mode::Exec);
+        analysis.slots.insert(source.clone(), value);
+        analysis.heap.owners.insert(source, analysis.result_owner.take().unwrap());
+        let value = analysis.produce(&expression).unwrap();
+        let owner = analysis.result_owner.take();
+        let storage = Storage { typ: expression.typ.clone(), value, owner };
+        assert!(
+            body::Entry::checked(expression.clone(), storage.clone(), &evidence, analysis.layouts)
+                .is_ok()
+        );
+        let mut missing = storage.clone();
+        missing.owner.as_mut().unwrap().children.remove(&OwnerSlot::Capture(0));
+        assert!(
+            body::Entry::checked(expression.clone(), missing, &evidence, analysis.layouts).is_err()
+        );
+        let mut missing_projection = evidence.clone();
+        missing_projection.closures.get_mut(&1).unwrap().captures[0].body_place = None;
+        assert!(
+            body::Entry::checked(
+                expression.clone(),
+                storage.clone(),
+                &missing_projection,
+                analysis.layouts
+            )
+            .is_err()
+        );
+        let mut callable = expression.clone();
+        let TypX::AnonymousClosure(arguments, result, _, id) = &*expression.typ else {
+            unreachable!()
+        };
+        Arc::make_mut(&mut callable).typ = Arc::new(TypX::AnonymousClosure(
+            arguments.clone(),
+            result.clone(),
+            ClosureKind::Fn,
+            *id,
+        ));
+        let mut environment = storage;
+        environment.typ = callable.typ.clone();
+        assert!(body::Entry::checked(callable, environment, &evidence, analysis.layouts).is_err());
+    });
 }
 
 fn unit(site: &Span) -> Expr {
@@ -401,7 +510,14 @@ fn capture_and_result_ownership_survive_publication_completion_and_join() {
         let (id, handle_value) = spawn(analysis, handle, expression, 10);
         assert!(!analysis.slots.contains_key(&source));
         assert_eq!(analysis.storage.live(), 81); // backing + capture + handle + tag
-        let mut frame = analysis.heap.workers.enter(id, &site).unwrap();
+        let entry = analysis.heap.workers.enter(id, &site).unwrap();
+        let ExprX::NonSpecClosure { body, .. } = &entry.definition.x else {
+            panic!("worker definition")
+        };
+        assert!(
+            matches!(&body.x, ExprX::ReadPlace(place, _) if matches!(&place.x, PlaceX::Local(name) if name == &source))
+        );
+        let mut frame = entry.storage;
         let mut environment = frame.owner.take().unwrap();
         let payload = environment.children.remove(&OwnerSlot::Capture(0)).unwrap();
         analysis.release_owner(environment, &site);
@@ -490,7 +606,7 @@ fn shared_capture_and_completed_result_retain_one_canonical_payload() {
         let value = analysis.slots.remove(&root).unwrap();
         analysis.release_value(value, &span(11));
         assert_eq!(analysis.storage.live(), 105);
-        let mut frame = analysis.heap.workers.enter(id, &span(12)).unwrap();
+        let mut frame = analysis.heap.workers.enter(id, &span(12)).unwrap().storage;
         let mut environment = frame.owner.take().unwrap();
         let returned = environment.children.remove(&OwnerSlot::Capture(0)).unwrap();
         assert_eq!(returned.shared, identity);
@@ -548,14 +664,14 @@ fn parent_completion_requires_its_actual_child_to_be_joined() {
     with_analysis(&evidence, |analysis, handle| {
         analysis.heap.workers.check_closed(&span(0)).unwrap();
         let (parent, parent_handle) = spawn(analysis, handle, parent_expression, 10);
-        let frame = analysis.heap.workers.enter(parent, &span(11)).unwrap();
+        let frame = analysis.heap.workers.enter(parent, &span(11)).unwrap().storage;
         if let Some(owner) = frame.owner {
             analysis.release_owner(owner, &span(11));
         }
         analysis.release_value(frame.value, &span(11));
         analysis.current_worker = Some(parent);
         let (child, child_handle) = spawn(analysis, handle, child_expression, 12);
-        let frame = analysis.heap.workers.enter(child, &span(13)).unwrap();
+        let frame = analysis.heap.workers.enter(child, &span(13)).unwrap().storage;
         if let Some(owner) = frame.owner {
             analysis.release_owner(owner, &span(13));
         }

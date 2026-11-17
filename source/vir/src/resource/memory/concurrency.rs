@@ -208,7 +208,9 @@ pub(super) fn accounting_body(
     Ok(function)
 }
 
-fn accounting_expression(
+/// Restore executable native effects in one original functional expression.
+/// Accounting expressions already passed through this bridge must not be restored again.
+pub(super) fn accounting_expression(
     expression: &crate::ast::Expr,
     evidence: &Evidence,
 ) -> Result<crate::ast::Expr, crate::ast::VirErr> {
