@@ -16,6 +16,8 @@ use crate::ast::*;
 use crate::messages::Span;
 use std::collections::HashMap;
 
+pub(super) mod observations;
+
 /// Only executed closure creation requires capture evidence. Merely mentioning
 /// closure types in specifications does not query lifetime MIR.
 pub(super) fn needs_evidence(function: &Function, modes: &HashMap<VarIdent, Mode>) -> bool {
@@ -151,6 +153,7 @@ impl Analysis<'_> {
         let closure = self.concurrency.closures.get(id).ok_or_else(|| {
             unsupported(&expr.span, "a closure without post-erasure capture information")
         })?;
+        let definition = *id;
         if !closure.by_move || closure.captures.iter().any(|c| c.mode == CaptureMode::Borrow) {
             return Err(unsupported(&expr.span, "borrowed or non-move executable closures"));
         }
@@ -160,8 +163,10 @@ impl Analysis<'_> {
         let mut owner = Owner { closure: Some(*id), ..Default::default() };
         let mut values = Vec::new();
         let mut checked = Vec::new();
+        let mut observations = Vec::new();
         for (index, capture) in captures.iter().enumerate() {
             let place = self.layouts.capture_place(capture, &expr.span)?;
+            let scalar = self.observe_capture_scalar(&place, &capture.typ, &expr.span)?;
             let owns = self.layouts.owner(&capture.typ);
             let mode = if self.layouts.copy_closure(&capture.typ) {
                 CaptureMode::Copy
@@ -171,7 +176,18 @@ impl Analysis<'_> {
             let value = match mode {
                 CaptureMode::Move if owns => {
                     let value = self.owner_value(&place, &capture.typ, &expr.span)?;
-                    let child = self.capture_owner(&place, &capture.typ)?;
+                    let mut child = self.capture_owner(&place, &capture.typ)?;
+                    // Once moved into the environment, this source binding is
+                    // no longer a valid observation of its collection shape.
+                    let source = SpannedTyped::new(
+                        &expr.span,
+                        &capture.typ,
+                        ExprX::ReadPlace(
+                            place.clone(),
+                            UnfinalizedReadKind { preliminary_kind: ReadKind::Spec, id: 0 },
+                        ),
+                    );
+                    self.freeze_owner_geometry(&source, &mut child);
                     owner.children.insert(OwnerSlot::Capture(index), child);
                     value
                 }
@@ -200,6 +216,7 @@ impl Analysis<'_> {
                     location,
                 },
             ));
+            observations.push(observations::Field { scalar, environment: value.environment });
             values.push(value);
         }
         let fields: Vec<_> = values.iter().map(|value| (&value.ids, value.bytes)).collect();
@@ -221,6 +238,14 @@ impl Analysis<'_> {
         );
         self.storage
             .event(&expr.span, "construct executable closure; transfer capture ownership".into());
-        Ok(Value { bytes, ids: [id].into_iter().collect(), origins, parameter: None })
+        let environment =
+            self.growth.environments.insert(definition, observations, self.growth.loop_depth != 0);
+        Ok(Value {
+            bytes,
+            ids: [id].into_iter().collect(),
+            origins,
+            parameter: None,
+            environment: Some(environment),
+        })
     }
 }

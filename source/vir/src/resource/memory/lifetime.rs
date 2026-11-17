@@ -13,6 +13,9 @@ pub(super) struct Value {
     pub(super) ids: std::collections::HashSet<u64>,
     // Origins identify earlier points where this same value already existed.
     pub(super) parameter: Option<usize>,
+    /// Capture inputs from the actual closure construction, preserved by copies
+    /// and moves. Absence never authorizes rereading the parent's variables.
+    pub(super) environment: Option<super::closures::observations::EnvironmentId>,
 }
 
 /// Inline value and separately owned descendants travel together across a
@@ -43,7 +46,13 @@ impl Storage {
 impl Value {
     /// Unreachable expressions do not manufacture a value or allocation charge.
     pub(super) fn unit() -> Self {
-        Self { bytes: 0, origins: Default::default(), ids: Default::default(), parameter: None }
+        Self {
+            bytes: 0,
+            origins: Default::default(),
+            ids: Default::default(),
+            parameter: None,
+            environment: None,
+        }
     }
 }
 
@@ -63,6 +72,7 @@ impl Analysis<'_> {
             origins: [id].into_iter().collect(),
             ids: [id].into_iter().collect(),
             parameter: None,
+            environment: None,
         })
     }
 
@@ -114,7 +124,9 @@ impl Analysis<'_> {
                 if self.layouts.owner(typ) { Some(self.move_owner(place)?) } else { None };
             return Ok(value);
         }
-        let value = self.fresh_value(span, typ)?;
+        let environment = self.copied_environment(place, typ)?;
+        let mut value = self.fresh_value(span, typ)?;
+        value.environment = environment;
         self.initialize(place, typ)?;
         Ok(value)
     }
@@ -170,11 +182,18 @@ impl Analysis<'_> {
                 origins: Default::default(),
                 ids: Default::default(),
                 parameter: None,
+                environment: None,
             });
         }
         match &expr.x {
             ExprX::NonSpecClosure { proof_fn_modes: None, .. } => {
                 return self.capture_closure(expr);
+            }
+            ExprX::ReadPlace(place, kind)
+                if matches!(&*expr.typ, TypX::AnonymousClosure(..))
+                    && matches!(kind.preliminary_kind, ReadKind::Copy | ReadKind::UnusedCopy) =>
+            {
+                return self.produce_place(place, &expr.typ, true, &expr.span);
             }
             ExprX::Loop { .. } => {
                 self.analyze_loop(expr)?;
@@ -280,6 +299,11 @@ impl Value {
         self.origins.extend(self.ids.iter().copied());
         if self.parameter != other.parameter {
             self.parameter = None;
+        }
+        if self.environment != other.environment {
+            // Numeric branch joins can remain valid while the precise capture
+            // substitution is unavailable. Worker entry must reject that case.
+            self.environment = None;
         }
     }
 }

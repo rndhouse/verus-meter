@@ -46,6 +46,7 @@ impl Entry {
         storage: Storage,
         evidence: &concurrency::Evidence,
         layouts: &Layouts,
+        environments: &super::super::closures::observations::Environments,
     ) -> Result<Self, VirErr> {
         let span = &definition.span;
         let TypX::AnonymousClosure(_, _, kind, id) = &*definition.typ else {
@@ -55,6 +56,16 @@ impl Entry {
             .closures
             .get(id)
             .ok_or_else(|| unsupported(span, "worker entry without executable capture evidence"))?;
+        if storage
+            .value
+            .environment
+            .is_none_or(|environment| !environments.matches(environment, *id, &evidence.captures))
+        {
+            return Err(unsupported(
+                span,
+                "worker entry without its construction-epoch capture observations",
+            ));
+        }
         if !crate::ast_util::types_equal(&definition.typ, &storage.typ)
             || layouts.size(&storage.typ, span)? != storage.value.bytes
         {

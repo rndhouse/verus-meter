@@ -49,6 +49,8 @@ pub(super) struct Growth {
     /// Read-only loop proof actions, retaining their Arc owners so identity
     /// keys cannot be reused while argument effect guards inspect schedules.
     loop_proof_statements: HashMap<usize, Stmt>,
+    /// Construction-epoch capture inputs, independent of ownership snapshots.
+    pub(super) environments: super::closures::observations::Environments,
     /// Static publication binders survive branch snapshots; executable events
     /// create occurrences. Historical family entries never count live workers.
     pub(super) worker_families: super::workers::Families,

@@ -675,6 +675,70 @@ fn copy_closures_keep_the_source_and_charge_the_drop_argument() {
 }
 
 #[test]
+fn scalar_capture_snapshots_preserve_native_types_and_add_no_runtime_storage() {
+    exact_peak(
+        "mutable_scalar_capture_epoch",
+        r#"
+        fn f(n: u16) resources peak(memory) <= BUDGET {
+            let mut size = n;
+            let worker = move || size;
+            size = 0;
+            let copy = worker;
+            drop(worker);
+            drop(copy);
+        }
+        "#,
+        10,
+    );
+    verifies(
+        "mutable_bool_and_nested_capture_epochs",
+        r#"
+        fn f(flag: bool) resources peak(memory) <= 128 {
+            let mut enabled = flag;
+            let first = move || enabled;
+            enabled = false;
+            let copy = first;
+            let second = move || copy();
+            drop(first);
+            drop(copy);
+            drop(second);
+        }
+        "#,
+    );
+}
+
+#[test]
+fn captured_collection_shapes_survive_source_binding_reuse() {
+    let body = r#"
+        fn f() resources peak(memory) <= BUDGET {
+            let values: Vec<u64> = Vec::with_capacity(4);
+            let worker = move || values;
+            let values: Vec<u64> = Vec::with_capacity(4);
+            drop(values);
+            drop(worker);
+        }
+        "#;
+    verifies("captured_collection_construction_epoch", &body.replace("BUDGET", "112u64"));
+    rejects(
+        "captured_collection_construction_epoch_short",
+        &body.replace("BUDGET", "111u64"),
+        "conditional memory budget exceeded",
+    );
+    verifies(
+        "symbolic_captured_collection_construction_epoch",
+        r#"
+        fn f(n: u16) resources peak(memory) <= 128 + 16 * n {
+            let values: Vec<u64> = Vec::with_capacity(n as usize);
+            let worker = move || values;
+            let values: Vec<u64> = Vec::with_capacity(n as usize);
+            drop(values);
+            drop(worker);
+        }
+        "#,
+    );
+}
+
+#[test]
 fn erased_noncopy_proof_capture_cannot_hide_executable_closure_copies() {
     exact_peak(
         "erased_capture_copy",

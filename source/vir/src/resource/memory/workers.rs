@@ -30,6 +30,8 @@ struct Worker {
     parent: Option<WorkerId>,
     /// Actual executable body retained across publication and source moves.
     definition: Expr,
+    /// Construction-epoch inputs survive capture consumption during execution.
+    environment: super::closures::observations::EnvironmentId,
     /// Source/body paths refer to fields of the retained environment charge.
     captures: captures::Captures,
     /// The completion tag is one distinct allocation, independent of the
@@ -85,6 +87,7 @@ impl Workers {
             Worker {
                 parent,
                 definition: entry.definition.clone(),
+                environment: entry.storage.value.environment.expect("checked worker inputs"),
                 captures: entry.captures,
                 completion,
                 result: result.clone(),
@@ -178,6 +181,7 @@ impl Workers {
                 other.records.get(id).is_some_and(|b| {
                     a.parent == b.parent
                         && a.definition.span.id == b.definition.span.id
+                        && a.environment == b.environment
                         && a.captures.compatible(&b.captures)
                         && a.completion == b.completion
                         && crate::ast_util::types_equal(&a.result, &b.result)
@@ -286,6 +290,7 @@ impl Analysis<'_> {
                 Storage { typ: closure.typ.clone(), value, owner },
                 self.concurrency,
                 self.layouts,
+                &self.growth.environments,
             )?,
         )?;
         Ok(Some(Owner { worker: Some(id), ..Default::default() }))

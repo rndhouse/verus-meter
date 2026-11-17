@@ -304,13 +304,26 @@ fn worker_entry_checks_capture_coverage_and_native_cleanup() {
         let owner = analysis.result_owner.take();
         let storage = Storage { typ: expression.typ.clone(), value, owner };
         assert!(
-            body::Entry::checked(expression.clone(), storage.clone(), &evidence, analysis.layouts)
-                .is_ok()
+            body::Entry::checked(
+                expression.clone(),
+                storage.clone(),
+                &evidence,
+                analysis.layouts,
+                &analysis.growth.environments,
+            )
+            .is_ok()
         );
         let mut missing = storage.clone();
         missing.owner.as_mut().unwrap().children.remove(&OwnerSlot::Capture(0));
         assert!(
-            body::Entry::checked(expression.clone(), missing, &evidence, analysis.layouts).is_err()
+            body::Entry::checked(
+                expression.clone(),
+                missing,
+                &evidence,
+                analysis.layouts,
+                &analysis.growth.environments,
+            )
+            .is_err()
         );
         let mut missing_projection = evidence.clone();
         missing_projection.closures.get_mut(&1).unwrap().captures[0].body_place = None;
@@ -319,7 +332,8 @@ fn worker_entry_checks_capture_coverage_and_native_cleanup() {
                 expression.clone(),
                 storage.clone(),
                 &missing_projection,
-                analysis.layouts
+                analysis.layouts,
+                &analysis.growth.environments,
             )
             .is_err()
         );
@@ -335,7 +349,122 @@ fn worker_entry_checks_capture_coverage_and_native_cleanup() {
         ));
         let mut environment = storage;
         environment.typ = callable.typ.clone();
-        assert!(body::Entry::checked(callable, environment, &evidence, analysis.layouts).is_err());
+        assert!(
+            body::Entry::checked(
+                callable,
+                environment,
+                &evidence,
+                analysis.layouts,
+                &analysis.growth.environments,
+            )
+            .is_err()
+        );
+    });
+}
+
+#[test]
+fn scalar_capture_observations_survive_parent_mutation_and_closure_copies() {
+    use crate::resource::memory::transfer::simplify::inspect::same_expression;
+
+    let source = VarIdent(Arc::new("size".into()), VarIdentDisambiguate::RustcId(1));
+    let binding = VarIdent(Arc::new("worker".into()), VarIdentDisambiguate::RustcId(2));
+    let scalar = Arc::new(TypX::Int(IntRange::U(16)));
+    let (mut info, expression) = closure(1, Some((source.clone(), scalar.clone())));
+    info.captures[0].mode = CaptureMode::Copy;
+    let captures = info.captures.clone();
+    let (mut outer, outer_expression) = closure(2, Some((binding.clone(), expression.typ.clone())));
+    outer.captures[0].mode = CaptureMode::Copy;
+    let outer_captures = outer.captures.clone();
+    let mut evidence = Evidence::default();
+    evidence.closures.insert(info.id, info);
+    evidence.closures.insert(outer.id, outer);
+    with_analysis(&evidence, |analysis, _| {
+        let original = analysis.fresh_value(&span(1), &scalar).unwrap();
+        analysis.var_modes.insert(source.clone(), Mode::Exec);
+        analysis.slots.insert(source.clone(), original);
+        let value = analysis.produce(&expression).unwrap();
+        let environment = value.environment.unwrap();
+        assert!(analysis.growth.environments.matches(environment, 1, &captures));
+        let captured = analysis.growth.environments.scalar(environment, 0).unwrap().clone();
+        assert!(crate::ast_util::types_equal(&captured.typ, &scalar));
+        let [snapshot] = analysis.growth.before[&expression.span.id].as_slice() else {
+            panic!("one scalar snapshot at construction");
+        };
+        let StmtX::Expr(snapshot) = &snapshot.x else { unreachable!() };
+        let ExprX::Assign { rhs, typ, .. } = &snapshot.x else { unreachable!() };
+        let ExprX::ReadPlace(place, kind) = &rhs.x else { unreachable!() };
+        assert!(matches!(&place.x, PlaceX::Local(name) if *name == source));
+        assert!(matches!(kind.preliminary_kind, ReadKind::Spec));
+        assert!(crate::ast_util::types_equal(typ, &scalar));
+
+        // Executable parent mutation occurs after construction. Neither a copy
+        // nor worker entry may replace the retained input with this new value.
+        let mutation = super::super::symbolic::assign(
+            &span(3),
+            &SpannedTyped::new(&span(3), &scalar, ExprX::Var(source.clone())),
+            SpannedTyped::new(&span(3), &scalar, ExprX::Const(Constant::Int(0.into()))),
+        );
+        let StmtX::Expr(mutation) = &mutation.x else { unreachable!() };
+        analysis.discard(mutation).unwrap();
+        analysis.var_modes.insert(binding.clone(), Mode::Exec);
+        analysis.slots.insert(binding.clone(), value.clone());
+        let copied = analysis
+            .produce_place(
+                &SpannedTyped::new(&span(4), &expression.typ, PlaceX::Local(binding.clone())),
+                &expression.typ,
+                true,
+                &span(4),
+            )
+            .unwrap();
+        assert!(copied.environment == value.environment);
+        assert_ne!(copied.ids, value.ids);
+        assert!(same_expression(
+            analysis.growth.environments.scalar(copied.environment.unwrap(), 0).unwrap(),
+            &captured,
+        ));
+        let outer = analysis.produce(&outer_expression).unwrap();
+        assert!(analysis.growth.environments.matches(
+            outer.environment.unwrap(),
+            2,
+            &outer_captures,
+        ));
+        let mut storage = Storage { typ: expression.typ.clone(), value: copied, owner: None };
+        assert!(
+            body::Entry::checked(
+                expression.clone(),
+                storage.clone(),
+                &evidence,
+                analysis.layouts,
+                &analysis.growth.environments,
+            )
+            .is_ok()
+        );
+        storage.value.environment = None;
+        assert!(
+            body::Entry::checked(
+                expression.clone(),
+                storage,
+                &evidence,
+                analysis.layouts,
+                &analysis.growth.environments,
+            )
+            .is_err()
+        );
+        // A representative loop visit is not an immutable captured input for
+        // every outstanding worker. Admission waits for occurrence lifting.
+        analysis.growth.loop_depth = 1;
+        let repeated = analysis.produce(&expression).unwrap();
+        analysis.growth.loop_depth = 0;
+        let repeated_id = repeated.environment.unwrap();
+        assert!(!analysis.growth.environments.matches(repeated_id, 1, &captures));
+        assert!(analysis.growth.environments.scalar(repeated_id, 0).is_none());
+        analysis.slots.insert(binding, repeated);
+        let wrapped = analysis.produce(&outer_expression).unwrap();
+        assert!(!analysis.growth.environments.matches(
+            wrapped.environment.unwrap(),
+            2,
+            &outer_captures,
+        ));
     });
 }
 

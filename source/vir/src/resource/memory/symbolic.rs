@@ -4,7 +4,6 @@
 //! inputs give the budget a stable entry-state meaning without a ghost counter.
 
 use super::accounting::{CheckKind, Obligation};
-use super::contracts;
 use super::layout::Layouts;
 use crate::ast::*;
 use crate::ast_util::*;
@@ -15,17 +14,27 @@ use std::sync::Arc;
 
 /// Declare one erased integer used by allocation snapshots and mutable proof state.
 pub(super) fn integer_local(span: &Span, name: VarIdent) -> (Expr, Stmt) {
-    let value = SpannedTyped::new(span, &int_typ(), ExprX::Var(name.clone()));
+    scalar_local(span, name, &int_typ())
+}
+
+/// Declare an erased scalar snapshot with the source scalar's logical type.
+/// Its initial value is only a placeholder; capture use requires construction's
+/// actual assignment, maintained by the environment descriptor.
+pub(super) fn scalar_local(span: &Span, name: VarIdent, typ: &Typ) -> (Expr, Stmt) {
+    assert!(matches!(&**typ, TypX::Int(_) | TypX::Bool));
+    let initial =
+        if matches!(&**typ, TypX::Bool) { Constant::Bool(false) } else { const_int_from_u128(0) };
+    let value = SpannedTyped::new(span, typ, ExprX::Var(name.clone()));
     let declaration = Spanned::new(
         span.clone(),
         StmtX::Decl {
             pattern: SpannedTyped::new(
                 span,
-                &int_typ(),
+                typ,
                 PatternX::Var(PatternBinding {
                     name,
                     by_ref: ByRef::No,
-                    typ: int_typ(),
+                    typ: typ.clone(),
                     user_mut: Some(true),
                     copy: true,
                     move_exec_to_proof_okay: MoveExecToProofOkay::No,
@@ -34,8 +43,8 @@ pub(super) fn integer_local(span: &Span, name: VarIdent) -> (Expr, Stmt) {
             mode: Some((Mode::Spec, DeclProph::Default)),
             init: Some(SpannedTyped::new(
                 span,
-                &int_typ(),
-                PlaceX::Temporary(contracts::literal(span, 0)),
+                typ,
+                PlaceX::Temporary(SpannedTyped::new(span, typ, ExprX::Const(initial))),
             )),
             els: None,
             assert_irrefutable: false,
@@ -44,7 +53,7 @@ pub(super) fn integer_local(span: &Span, name: VarIdent) -> (Expr, Stmt) {
     (value, declaration)
 }
 
-/// Write an erased model integer; instrumentation gives each use fresh AST IDs.
+/// Write an erased scalar; instrumentation gives each use fresh AST IDs.
 pub(super) fn assign(span: &Span, variable: &Expr, value: Expr) -> Stmt {
     let ExprX::Var(name) = &variable.x else { unreachable!() };
     Spanned::new(
@@ -53,10 +62,10 @@ pub(super) fn assign(span: &Span, variable: &Expr, value: Expr) -> Stmt {
             span,
             &unit_typ(),
             ExprX::Assign {
-                place: SpannedTyped::new(span, &int_typ(), PlaceX::Local(name.clone())),
+                place: SpannedTyped::new(span, &variable.typ, PlaceX::Local(name.clone())),
                 rhs: value,
                 op: None,
-                typ: int_typ(),
+                typ: variable.typ.clone(),
                 resolve: false,
             },
         )),

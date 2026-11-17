@@ -136,6 +136,9 @@ including nested closures: erased tracked state cannot hide runtime copies.
 Creating a closure does not execute its body. General closure invocation,
 capture summaries across function interfaces and closure `value_size` queries
 remain unsupported.
+Direct scalar captures and owned collection geometry are observed at construction;
+moving or copying the closure preserves those observations. Repeated environments
+still require checked occurrence bindings before supplying worker inputs.
 
 Supported sequential paths now account for standard strong `Arc` construction,
 cloning, readonly payload access and explicit/implicit destruction. Backing and

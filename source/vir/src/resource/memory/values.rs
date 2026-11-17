@@ -275,6 +275,7 @@ impl Analysis<'_> {
                         ids: [id].into_iter().collect(),
                         origins: [id].into_iter().collect(),
                         parameter: None,
+                        environment: None,
                     },
                 );
             }
