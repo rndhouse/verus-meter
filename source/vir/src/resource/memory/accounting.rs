@@ -8,6 +8,8 @@ use crate::messages::{Span, note};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+mod transport;
+
 #[derive(Clone, Copy)]
 pub(super) enum CheckKind {
     Function,
@@ -16,6 +18,7 @@ pub(super) enum CheckKind {
     CurrentCheckpoint,
 }
 
+#[derive(Clone)]
 pub(super) struct Obligation {
     pub(super) span: Span,
     pub(super) cost: Footprint,

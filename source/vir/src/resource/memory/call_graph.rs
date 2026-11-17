@@ -117,6 +117,9 @@ impl AstVisitor<Walk, VirErr, NoScoper> for Collector<'_> {
 }
 
 impl CallGraph {
+    pub(super) fn publishes_workers(&self, function: &Function) -> bool {
+        self.spawns.get(&function.x.name).is_some_and(|sites| !sites.is_empty())
+    }
     /// Discover the checked call edges using the same execution boundaries as accounting.
     pub(super) fn new(
         functions: &HashMap<Fun, Function>,

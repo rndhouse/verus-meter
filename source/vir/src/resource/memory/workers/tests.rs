@@ -108,8 +108,8 @@ fn executable_handle_drop_retains_the_worker_and_its_capture_allocation() {
             ResourceIntrinsic::Concurrency(Operation::StdSpawn),
             vec![expression],
         );
-        let value = analysis.produce(&spawn).unwrap();
-        let owner = analysis.result_owner.take().unwrap();
+        let value = analysis.fresh_value(&spawn.span, &spawn.typ).unwrap();
+        let owner = analysis.publish_owner(&spawn).unwrap().unwrap();
         assert_reference(analysis, &owner, "worker_reference", &owner.worker.unwrap().descriptor());
         let name = VarIdent(Arc::new("handle".into()), VarIdentDisambiguate::RustcId(2));
         analysis.var_modes.insert(name.clone(), Mode::Exec);
@@ -166,7 +166,7 @@ fn repeated_publications_at_one_site_have_distinct_worker_identities() {
             analysis
                 .heap
                 .workers
-                .complete(
+                .transition_completion(
                     id,
                     &span(12),
                     Storage { typ: crate::ast_util::unit_typ(), value: Value::unit(), owner: None },
@@ -212,12 +212,12 @@ fn child_families_preserve_the_enclosing_worker_occurrence() {
                 analysis.release_owner(owner, &span(13));
             }
             analysis.release_value(frame.value, &span(13));
-            analysis.heap.workers.complete(child, &span(14), empty_result()).unwrap();
+            analysis.heap.workers.transition_completion(child, &span(14), empty_result()).unwrap();
             finish_join(analysis, child, handle);
         }
         analysis.current_worker = None;
         for (parent, handle) in [(first, first_handle), (second, second_handle)] {
-            analysis.heap.workers.complete(parent, &span(15), empty_result()).unwrap();
+            analysis.heap.workers.transition_completion(parent, &span(15), empty_result()).unwrap();
             finish_join(analysis, parent, handle);
         }
         analysis.current_worker = None;
@@ -612,6 +612,7 @@ fn with_analysis(evidence: &Evidence, run: impl FnOnce(&mut Analysis<'_>, &Dt)) 
     let budgets = HashMap::new();
     let site = span(0);
     let mut analysis = Analysis {
+        capture_views: Default::default(),
         evaluations: Default::default(),
         concurrency: evidence,
         current_worker: None,
@@ -648,15 +649,14 @@ fn spawn(
     let TypX::AnonymousClosure(_, result, _, _) = &*expression.typ else { unreachable!() };
     let typ =
         Arc::new(TypX::Datatype(handle.clone(), Arc::new(vec![result.clone()]), Arc::new(vec![])));
-    let value = analysis
-        .produce(&call(
-            &span(site),
-            &typ,
-            ResourceIntrinsic::Concurrency(Operation::StdSpawn),
-            vec![expression],
-        ))
-        .unwrap();
-    let owner = analysis.result_owner.take().unwrap();
+    let expression = call(
+        &span(site),
+        &typ,
+        ResourceIntrinsic::Concurrency(Operation::StdSpawn),
+        vec![expression],
+    );
+    let value = analysis.fresh_value(&expression.span, &expression.typ).unwrap();
+    let owner = analysis.publish_owner(&expression).unwrap().unwrap();
     (owner.worker.unwrap(), value)
 }
 
@@ -684,6 +684,10 @@ fn capture_and_result_ownership_survive_publication_completion_and_join() {
         assert!(!analysis.slots.contains_key(&source));
         assert_eq!(analysis.storage.live(), 81); // backing + capture + handle + tag
         let mut entry = analysis.heap.workers.enter(id, &site).unwrap();
+        assert!(
+            analysis.heap.workers.complete(id, &site).is_err(),
+            "a ledger entry alone is not checked executable completion"
+        );
         let ExprX::NonSpecClosure { body, .. } = &entry.definition.x else {
             panic!("worker definition")
         };
@@ -697,7 +701,7 @@ fn capture_and_result_ownership_survive_publication_completion_and_join() {
         analysis.release_owner(environment, &site);
         let result =
             Storage { typ: initializer.typ.clone(), value: frame.value, owner: Some(payload) };
-        analysis.heap.workers.complete(id, &site, result).unwrap();
+        analysis.heap.workers.transition_completion(id, &site, result).unwrap();
         assert_eq!(analysis.storage.live(), 81); // completion has not collected the result
         assert!(analysis.heap.workers.check_closed(&site).is_err());
         let result = finish_join(analysis, id, handle_value);
@@ -908,7 +912,11 @@ fn shared_capture_and_completed_result_retain_one_canonical_payload() {
         analysis
             .heap
             .workers
-            .complete(id, &span(13), Storage { typ, value: frame.value, owner: Some(returned) })
+            .transition_completion(
+                id,
+                &span(13),
+                Storage { typ, value: frame.value, owner: Some(returned) },
+            )
             .unwrap();
         assert_eq!(analysis.storage.live(), 105);
         let result = finish_join(analysis, id, handle_value);
@@ -972,11 +980,11 @@ fn parent_completion_requires_its_actual_child_to_be_joined() {
         analysis.release_value(frame.value, &span(13));
         let output =
             || Storage { typ: crate::ast_util::unit_typ(), value: Value::unit(), owner: None };
-        assert!(analysis.heap.workers.complete(parent, &span(14), output()).is_err());
-        analysis.heap.workers.complete(child, &span(14), output()).unwrap();
-        assert!(analysis.heap.workers.complete(parent, &span(14), output()).is_err());
+        assert!(analysis.heap.workers.transition_completion(parent, &span(14), output()).is_err());
+        analysis.heap.workers.transition_completion(child, &span(14), output()).unwrap();
+        assert!(analysis.heap.workers.transition_completion(parent, &span(14), output()).is_err());
         finish_join(analysis, child, child_handle);
-        analysis.heap.workers.complete(parent, &span(15), output()).unwrap();
+        analysis.heap.workers.transition_completion(parent, &span(15), output()).unwrap();
         analysis.current_worker = None;
         finish_join(analysis, parent, parent_handle);
         analysis.heap.workers.check_closed(&span(16)).unwrap();
@@ -1013,9 +1021,9 @@ fn join_waits_reject_cycles_and_resume_only_the_actual_waiting_actor() {
         assert!(workers.blocked(Some(first)));
         assert!(workers.blocked(Some(second)));
         assert!(!workers.blocked(Some(third)));
-        assert!(workers.complete(first, &span(20), empty_result()).is_err());
-        assert!(workers.complete(second, &span(20), empty_result()).is_err());
-        workers.complete(third, &span(21), empty_result()).unwrap();
+        assert!(workers.transition_completion(first, &span(20), empty_result()).is_err());
+        assert!(workers.transition_completion(second, &span(20), empty_result()).is_err());
+        workers.transition_completion(third, &span(21), empty_result()).unwrap();
         assert!(workers.take_result(third, Some(first), &span(22)).is_err());
         assert_eq!(analysis.storage.live(), 27);
         analysis.current_worker = Some(second);
@@ -1023,13 +1031,13 @@ fn join_waits_reject_cycles_and_resume_only_the_actual_waiting_actor() {
         assert_eq!(analysis.storage.live(), 18);
         assert!(!analysis.heap.workers.blocked(Some(second)));
         assert!(analysis.heap.workers.blocked(Some(first)));
-        analysis.heap.workers.complete(second, &span(24), empty_result()).unwrap();
+        analysis.heap.workers.transition_completion(second, &span(24), empty_result()).unwrap();
         analysis.current_worker = Some(first);
         analysis.collect_worker_result(second, &span(25)).unwrap();
         assert_eq!(analysis.storage.live(), 9);
         assert!(!analysis.heap.workers.blocked(Some(first)));
         assert!(analysis.heap.workers.blocked(None));
-        analysis.heap.workers.complete(first, &span(26), empty_result()).unwrap();
+        analysis.heap.workers.transition_completion(first, &span(26), empty_result()).unwrap();
         analysis.current_worker = None;
         analysis.collect_worker_result(first, &span(27)).unwrap();
         assert_eq!(analysis.storage.live(), 0);

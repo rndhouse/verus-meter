@@ -19,12 +19,19 @@ pub(super) struct Field {
     /// Native scalar frozen at construction, including mutable parent bindings.
     /// Aggregate scalars need separately checked projections before use.
     pub(super) scalar: Option<Expr>,
+    /// Scalar fields of an inline aggregate, observed before the capture moves.
+    /// Paths never cross shared pointers or mutable references.
+    pub(super) projections: Vec<(Vec<Ident>, Expr)>,
     /// A captured closure keeps its own earlier construction epoch.
     pub(super) environment: Option<EnvironmentId>,
 }
 
 struct Environment {
     definition: usize,
+    /// Static construction and its required loop-occurrence binders. A single
+    /// snapshot cannot instantiate these across retained dynamic visits.
+    construction: crate::messages::AstId,
+    loops: Vec<crate::messages::AstId>,
     fields: Vec<Field>,
     /// A source loop can overwrite the same ghost snapshots on its next visit.
     /// Until lifted through checked occurrence substitutions, this describes
@@ -40,11 +47,37 @@ pub(in super::super) struct Environments {
 }
 
 impl Environments {
+    pub(in super::super) fn projections(
+        &self,
+        id: EnvironmentId,
+        field: usize,
+    ) -> &[(Vec<Ident>, Expr)] {
+        self.records
+            .get(&id)
+            .filter(|environment| !environment.repeated)
+            .and_then(|environment| environment.fields.get(field))
+            .map_or(&[], |field| field.projections.as_slice())
+    }
+
+    pub(in super::super) fn nested(
+        &self,
+        id: EnvironmentId,
+        field: usize,
+    ) -> Option<EnvironmentId> {
+        self.records
+            .get(&id)
+            .filter(|environment| !environment.repeated)?
+            .fields
+            .get(field)?
+            .environment
+    }
     pub(super) fn insert(
         &mut self,
         definition: usize,
         fields: Vec<Field>,
         repeated: bool,
+        construction: crate::messages::AstId,
+        loops: Vec<crate::messages::AstId>,
     ) -> EnvironmentId {
         let repeated = repeated
             || fields.iter().any(|field| {
@@ -53,16 +86,24 @@ impl Environments {
                 })
             });
         let id = EnvironmentId(super::super::accounting::Accounting::fresh_allocation());
-        self.records.insert(id, Environment { definition, fields, repeated });
+        self.records.insert(id, Environment { definition, fields, repeated, construction, loops });
         id
+    }
+
+    pub(in super::super) fn constructed_at(
+        &self,
+        id: EnvironmentId,
+        site: crate::messages::AstId,
+    ) -> bool {
+        self.records.get(&id).is_some_and(|environment| {
+            environment.construction == site
+                && environment.loops.is_empty()
+                && !environment.repeated
+        })
     }
 
     /// Only direct native scalars may currently supply scalar substitutions.
     /// This supplies no observation of mutable storage behind a shared handle.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "worker body inputs consume scalar observations")
-    )]
     pub(in super::super) fn scalar(&self, id: EnvironmentId, field: usize) -> Option<&Expr> {
         let environment = self.records.get(&id)?;
         if environment.repeated {
@@ -100,6 +141,58 @@ impl Environments {
 }
 
 impl Analysis<'_> {
+    /// Preserve fixed aggregate scalar inputs without treating an owning handle
+    /// as an observation of its separately allocated, potentially mutable data.
+    pub(in super::super) fn observe_capture_projections(
+        &mut self,
+        place: &Place,
+        span: &Span,
+    ) -> Result<Vec<(Vec<Ident>, Expr)>, VirErr> {
+        fn visit(
+            analysis: &mut Analysis<'_>,
+            place: &Place,
+            path: &mut Vec<Ident>,
+            span: &Span,
+            observed: &mut Vec<(Vec<Ident>, Expr)>,
+        ) -> Result<(), VirErr> {
+            if !path.is_empty() && contracts::scalar(&place.typ) {
+                observed.push((
+                    path.clone(),
+                    analysis.observe_capture_scalar(place, &place.typ, span)?.unwrap(),
+                ));
+            } else if let TypX::Datatype(datatype, _, _) = &*place.typ {
+                // Only already supported one-variant layouts have fixed fields.
+                let Ok(variant) = analysis.layouts.struct_variant(&place.typ, span) else {
+                    return Ok(());
+                };
+                let variant = variant.clone();
+                for field in variant.fields.iter().filter(|field| field.a.1 == Mode::Exec) {
+                    let projection = SpannedTyped::new(
+                        span,
+                        &field.a.0,
+                        PlaceX::Field(
+                            FieldOpr {
+                                datatype: datatype.clone(),
+                                variant: variant.name.clone(),
+                                field: field.name.clone(),
+                                get_variant: false,
+                                check: VariantCheck::None,
+                            },
+                            place.clone(),
+                        ),
+                    );
+                    path.push(field.name.clone());
+                    visit(analysis, &projection, path, span, observed)?;
+                    path.pop();
+                }
+            }
+            Ok(())
+        }
+        let mut observed = vec![];
+        visit(self, place, &mut vec![], span, &mut observed)?;
+        Ok(observed)
+    }
+
     /// Freeze a direct scalar with an ordinary erased assignment at the actual
     /// construction expression, before it reads/moves any capture. Never infer
     /// a captured value from the parent's current binding at publication.

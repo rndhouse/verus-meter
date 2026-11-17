@@ -47,6 +47,8 @@ pub(crate) struct QueryError {
 pub(crate) type Res<T> = Result<T, QueryError>;
 
 pub(crate) struct State<'tcx> {
+    /// Incomplete concurrent obligations cannot be exported as a verified crate.
+    incomplete_memory: bool,
     /// Imported crates
     cache_other_vir_crates: Option<Res<Arc<Vec<Krate>>>>,
     /// Pre-crate before functions are lowered to VIR and checked in full
@@ -102,6 +104,10 @@ macro_rules! cache_or_compute {
 }
 
 impl<'tcx> Query<'tcx> {
+    pub(crate) fn memory_export_allowed(&self) -> bool {
+        !self.state.borrow().incomplete_memory
+    }
+
     pub fn new(
         args: Args,
         reporter: Box<dyn Diagnostics + 'tcx>,
@@ -116,6 +122,7 @@ impl<'tcx> Query<'tcx> {
             reporter,
             crate_id,
             state: RefCell::new(State {
+                incomplete_memory: false,
                 cache_other_vir_crates: Some(Ok(Arc::new(other_vir_crates))),
                 cache_pre_crate: Some(Ok(Arc::new(pre_crate))),
                 cache_demote_trait_lookup: None,
@@ -594,7 +601,7 @@ impl<'tcx> Query<'tcx> {
         }
 
         // Check all mode-checked local bodies before export or resolution inference.
-        let memory_diagnostics = crate::resource::memory::pipeline::check(
+        let (memory_diagnostics, incomplete_memory) = crate::resource::memory::pipeline::check(
             &pre_crate.ctxt,
             &mut cratex,
             &resource_modes,
@@ -604,6 +611,8 @@ impl<'tcx> Query<'tcx> {
         )
         .map_err(|e| self.emit_error(e))?;
         self.emit_diags(memory_diagnostics);
+        self.state.borrow_mut().incomplete_memory = !incomplete_memory.is_empty();
+        self.emit_non_blocking_errors(incomplete_memory);
 
         let other_vir_crates = self.get_other_vir_crates()?;
         vir::traits::set_krate_dyn_compatibility(&other_vir_crates, &mut cratex);

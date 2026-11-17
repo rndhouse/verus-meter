@@ -112,7 +112,7 @@ impl Analysis<'_> {
         Ok(Some(bytes))
     }
 
-    fn option_pattern(
+    pub(super) fn option_pattern(
         &mut self,
         pattern: &Pattern,
         typ: &Typ,
@@ -214,6 +214,9 @@ impl Analysis<'_> {
         arms: &Arms,
         new_value: bool,
     ) -> Result<(), VirErr> {
+        if self.layouts.result_payloads(&scrutinee.typ).is_some() {
+            return self.worker_result_match(expr, scrutinee, arms, new_value);
+        }
         if !self.layouts.option(&scrutinee.typ) {
             return Err(unsupported(&expr.span, "matches other than by-value Option matches"));
         }

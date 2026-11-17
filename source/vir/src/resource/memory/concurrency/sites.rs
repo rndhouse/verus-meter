@@ -233,6 +233,32 @@ pub(in super::super) fn validate(
     Ok(())
 }
 
+/// Validate only closure bodies that the memory pass actually entered. Latent
+/// closures remain construction effects, with no executable body obligations.
+pub(in super::super) fn validate_workers(
+    function: &Function,
+    modes: &HashMap<VarIdent, Mode>,
+    functions: &[Function],
+    evidence: &super::super::synchronization::CompilerEvidence,
+    definitions: &BTreeSet<usize>,
+) -> Result<(), VirErr> {
+    let scopes: BTreeSet<_> = definitions
+        .iter()
+        .filter_map(|id| {
+            evidence.concurrency.closures.get(id).map(|closure| closure.function.clone())
+        })
+        .collect();
+    for call in collect(function, modes, functions, &evidence.concurrency, true) {
+        if scopes.contains(&call.scope) && !bound(&call, evidence) {
+            return Err(super::super::model::unsupported(
+                &call.span,
+                "a worker effect without its exact source/native scope binding",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn bound(call: &Call, evidence: &super::super::synchronization::CompilerEvidence) -> bool {
     use super::super::synchronization::flow::{Call as NativeCall, Terminator};
     let Some(binding) = evidence.concurrency.native_site(call.id) else { return false };

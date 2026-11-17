@@ -10,10 +10,17 @@ use std::collections::BTreeMap;
 
 mod body;
 mod captures;
+pub(super) mod execution;
 mod identity;
+mod inputs;
+mod outputs;
+mod results;
 mod waits;
 
 pub(super) use identity::{Families, WorkerId};
+pub(super) use inputs::restore_proof_bindings;
+pub(crate) use results::generated_join_move;
+pub(super) use results::resolve_join;
 
 #[derive(Clone)]
 enum Stage {
@@ -27,6 +34,9 @@ enum Stage {
 
 #[derive(Clone)]
 struct Worker {
+    /// Independent checked execution, including its retained result. Analysis of
+    /// this graph does not assert that the child already ran at publication.
+    execution: Option<std::sync::Arc<execution::Execution>>,
     parent: Option<WorkerId>,
     /// Actual executable body retained across publication and source moves.
     definition: Expr,
@@ -89,6 +99,7 @@ impl Workers {
         self.records.insert(
             id,
             Worker {
+                execution: None,
                 parent,
                 definition: entry.definition.clone(),
                 environment: entry.storage.value.environment.expect("checked worker inputs"),
@@ -106,12 +117,6 @@ impl Workers {
         Ok(())
     }
 
-    // The checked body-summary adapter in TODO 05 consumes entry and completion.
-    // Until then these transitions cannot discharge a source worker proof.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "worker body-summary entry is connected in TODO 05")
-    )]
     pub(super) fn enter(&mut self, id: WorkerId, span: &Span) -> Result<body::Entry, VirErr> {
         let worker =
             self.records.get_mut(&id).ok_or_else(|| unsupported(span, "an unknown worker"))?;
@@ -131,11 +136,20 @@ impl Workers {
         })
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "worker body-summary return is connected in TODO 05")
-    )]
-    pub(super) fn complete(
+    /// Production completion takes its result only from the checked execution.
+    /// Callers cannot supply an alternate owner tree or result charge.
+    fn complete(&mut self, id: WorkerId, span: &Span) -> Result<(), VirErr> {
+        let execution =
+            self.records.get(&id).and_then(|worker| worker.execution.as_ref()).ok_or_else(
+                || unsupported(span, "worker completion without checked executable effects"),
+            )?;
+        if execution.actor != id {
+            return Err(unsupported(span, "worker completion with a foreign execution"));
+        }
+        self.transition_completion(id, span, execution.result.clone())
+    }
+
+    fn transition_completion(
         &mut self,
         id: WorkerId,
         span: &Span,
@@ -211,11 +225,7 @@ impl Workers {
 impl Analysis<'_> {
     /// Collect the completed payload without copying or freeing its allocations.
     /// This does not build a native Result or prove that a native join succeeds;
-    /// that adapter must consume checked body/domain effects in TODO 05.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the TODO 05 join adapter consumes the completed payload")
-    )]
+    /// the result adapter retains these proof dependencies at collection.
     pub(super) fn collect_worker_result(
         &mut self,
         id: WorkerId,
@@ -237,6 +247,24 @@ impl Analysis<'_> {
     /// Publication transfers an existing closure value, retaining its storage.
     /// The child may run before this call returns; no body peak is added here.
     pub(super) fn spawn_owner(&mut self, expr: &Expr) -> Result<Option<Owner>, VirErr> {
+        if (self.current_worker.is_some() || self.growth.loop_depth != 0)
+            && matches!(&expr.x, ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), .. }
+                if matches!(attrs.resource_intrinsic, Some(ResourceIntrinsic::Concurrency(op)) if op.spawns()))
+        {
+            return Err(unsupported(
+                &expr.span,
+                "symbolic or nested worker populations before concurrent lifetime accounting is available",
+            ));
+        }
+        let Some(owner) = self.publish_owner(expr)? else { return Ok(None) };
+        self.analyze_worker(owner.worker.expect("published actor"), &expr.span)?;
+        Ok(Some(owner))
+    }
+
+    /// Publication is a separate transition from body analysis. Keeping this
+    /// boundary explicit also permits testing invalid lifecycle transitions
+    /// without inventing checked executable summaries.
+    fn publish_owner(&mut self, expr: &Expr) -> Result<Option<Owner>, VirErr> {
         let ExprX::Call {
             target: CallTarget::Fun(_, _, _, _, attrs),
             args,
@@ -310,15 +338,18 @@ impl Analysis<'_> {
     /// A native join is a waiting boundary. Its source handle moves into the
     /// retained call frame, not into free storage. The result adapter needs a
     /// checked body summary and panic-free-domain proof before claiming success.
-    pub(super) fn wait_for_worker(&mut self, expr: &Expr) -> Result<(), VirErr> {
+    pub(super) fn join_worker(
+        &mut self,
+        expr: &Expr,
+    ) -> Result<Option<super::lifetime::Value>, VirErr> {
         let ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), args, .. } = &expr.x else {
-            return Ok(());
+            return Ok(None);
         };
         let Some(ResourceIntrinsic::Concurrency(operation)) = attrs.resource_intrinsic else {
-            return Ok(());
+            return Ok(None);
         };
         if !operation.joins() {
-            return Ok(());
+            return Ok(None);
         }
         let [argument] = args.as_slice() else {
             return Err(unsupported(&expr.span, "this join signature"));
@@ -332,10 +363,71 @@ impl Analysis<'_> {
             .worker
             .ok_or_else(|| unsupported(&argument.span, "joining without worker provenance"))?;
         self.heap.workers.wait(id, self.current_worker, &expr.span, value)?;
-        Err(unsupported(
+        let execution = self.heap.workers.records[&id].execution.clone().ok_or_else(|| {
+            unsupported(&expr.span, "join without checked executable worker effects")
+        })?;
+        let worker = &self.heap.workers.records[&id];
+        if execution.actor != id
+            || !matches!(&*worker.definition.typ, TypX::AnonymousClosure(_, _, _, definition) if *definition == execution.definition)
+        {
+            return Err(unsupported(&expr.span, "wrong worker actor or definition at join"));
+        }
+        let Some((success, failure)) = self.layouts.result_payloads(&expr.typ) else {
+            return Err(unsupported(&expr.span, "join without its primitive-specific Result type"));
+        };
+        if !crate::ast_util::types_equal(success, &execution.result.typ)
+            || (operation == super::concurrency::Operation::VstdJoin
+                && !super::model::unit(failure))
+        {
+            return Err(unsupported(&expr.span, "inconsistent primitive join result payloads"));
+        }
+        self.heap.workers.complete(id, &expr.span)?;
+        let mut retained = execution.retained.clone();
+        let mut result_owner = execution.result.owner.clone();
+        if let Some(owner) = &mut result_owner {
+            self.rebind_worker_output(owner, &mut retained, &execution, &expr.span, true)?;
+        }
+        let mut shared = execution.shared.clone();
+        shared.map_owned(|owner| {
+            self.rebind_worker_output(owner, &mut retained, &execution, &expr.span, false)
+        })?;
+        self.storage.receive_storage(retained, &expr.span)?;
+        for backing in self.heap.shared.receive_worker(&shared, &expr.span)? {
+            self.release_owner(backing, &expr.span);
+        }
+        let mut result = self.collect_worker_result(id, &expr.span)?;
+        result.owner = result_owner;
+        self.growth.worker_joins.insert(expr.span.id, id);
+        let bytes = self.layouts.size(&expr.typ, &expr.span)?;
+        let extra = bytes
+            .checked_sub(result.value.bytes)
+            .ok_or_else(|| unsupported(&expr.span, "a join result smaller than its payload"))?;
+        let tag = self.storage.reserve_value(
             &expr.span,
-            "join result ownership requires checked worker-body and completion effects",
-        ))
+            super::footprint::MemoryKind::host_local(),
+            extra,
+        )?;
+        let packed = self
+            .storage
+            .pack_values(&[(&result.value.ids, result.value.bytes), (&[tag].into(), extra)], bytes);
+        let mut origins = result.value.origins;
+        origins.insert(packed);
+        self.result_owner = Some(Owner {
+            joined: Some(id),
+            children: result
+                .owner
+                .into_iter()
+                .map(|owner| (super::heap::OwnerSlot::Contents, owner))
+                .collect(),
+            ..Default::default()
+        });
+        Ok(Some(super::lifetime::Value {
+            bytes,
+            ids: [packed].into(),
+            origins,
+            parameter: None,
+            environment: None,
+        }))
     }
 }
 

@@ -57,6 +57,99 @@ pub(super) struct SharedRoots {
 }
 
 impl SharedRoots {
+    /// Rebind newly owned backing without changing shared identity or counts.
+    pub(super) fn map_owned(
+        &mut self,
+        mut map: impl FnMut(&mut Owner) -> Result<(), VirErr>,
+    ) -> Result<(), VirErr> {
+        for root in self.roots.values_mut() {
+            if let Backing::Owned(owner) = &mut root.storage {
+                map(owner)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Separate backing transferred out of this actor, excluding imported roots.
+    /// This tree is an accounting transport descriptor, never a source value.
+    pub(super) fn owned_backing(&self) -> Owner {
+        Owner {
+            children: self
+                .roots
+                .values()
+                .filter_map(|root| match &root.storage {
+                    Backing::Owned(owner) => Some((**owner).clone()),
+                    Backing::Imported { .. } => None,
+                })
+                .enumerate()
+                .map(|(index, owner)| (OwnerSlot::Capture(index), owner))
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    /// Every surviving handle must occur in the result or its newly owned
+    /// backing. Lost local handles cannot be hidden by an outgoing byte total.
+    pub(super) fn check_result(&self, result: Option<&Owner>, span: &Span) -> Result<(), VirErr> {
+        let mut outgoing = self.owned_backing();
+        if let Some(result) = result {
+            outgoing.children.insert(OwnerSlot::Contents, result.clone());
+        }
+        let view = self.captured_view(Some(&outgoing), span)?;
+        if self
+            .roots
+            .iter()
+            .any(|(id, root)| view.roots.get(id).map_or(0, |root| root.strong) != root.strong)
+        {
+            return Err(unsupported(span, "worker completion with unaccounted strong handles"));
+        }
+        Ok(())
+    }
+
+    /// Apply a fixed worker's checked entry-to-exit ownership relation at join.
+    /// Earlier releases stay in its independent phase history. Applying the
+    /// relation here cannot establish the global reclamation time (TODO 03.3).
+    pub(super) fn receive_worker(
+        &mut self,
+        outgoing: &Self,
+        span: &Span,
+    ) -> Result<Vec<Owner>, VirErr> {
+        let mut next = self.clone();
+        let mut released = Vec::new();
+        for (id, root) in &outgoing.roots {
+            match &root.storage {
+                Backing::Owned(_) => {
+                    if next.roots.insert(*id, root.clone()).is_some() {
+                        return Err(unsupported(
+                            span,
+                            "duplicate shared backing at worker collection",
+                        ));
+                    }
+                }
+                Backing::Imported { entry } => {
+                    let target = next.roots.get_mut(id).ok_or_else(|| {
+                        unsupported(span, "worker result outside its original shared-root domain")
+                    })?;
+                    target.strong = target
+                        .strong
+                        .checked_sub(*entry)
+                        .and_then(|remaining| remaining.checked_add(root.strong))
+                        .ok_or_else(|| {
+                            unsupported(span, "inconsistent worker strong-reference transfer")
+                        })?;
+                    if target.strong == 0 && matches!(target.storage, Backing::Owned(_)) {
+                        let Backing::Owned(backing) = next.roots.remove(id).unwrap().storage else {
+                            unreachable!()
+                        };
+                        released.push(*backing);
+                    }
+                }
+            }
+        }
+        *self = next;
+        Ok(released)
+    }
+
     pub(super) fn is_empty(&self) -> bool {
         self.roots.values().all(|root| root.strong == 0)
     }
@@ -416,6 +509,7 @@ mod tests {
             let concurrency = super::super::concurrency::Evidence::default();
             let site = span();
             let mut analysis = Analysis {
+                capture_views: Default::default(),
                 evaluations: Default::default(),
                 concurrency: &concurrency,
                 current_worker: None,

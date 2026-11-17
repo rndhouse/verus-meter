@@ -250,7 +250,21 @@ impl Analysis<'_> {
     }
 
     pub(super) fn call_expr(&mut self, expr: &Expr, destination: bool) -> Result<u64, VirErr> {
-        self.wait_for_worker(expr)?;
+        if let Some(value) = self.extract_worker_result(expr)? {
+            if let Some(owner) = self.result_owner.take() {
+                self.release_owner(owner, &expr.span);
+            }
+            return self.expression_value(value, &expr.span);
+        }
+        if self.worker_result_predicate(expr)? {
+            return Ok(0);
+        }
+        if let Some(value) = self.join_worker(expr)? {
+            if let Some(owner) = self.result_owner.take() {
+                self.release_owner(owner, &expr.span);
+            }
+            return self.expression_value(value, &expr.span);
+        }
         if self.shared_borrow(expr)? {
             return Ok(0);
         }

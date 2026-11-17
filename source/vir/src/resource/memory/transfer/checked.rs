@@ -172,7 +172,7 @@ pub(in super::super) enum Pattern {
 /// Categories keep a place's move distinct from a surrounding operation at
 /// the same source span. Coverage is checked before a template can be exported.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub(super) enum Kind {
+pub(in super::super) enum Kind {
     Operation,
     Branch,
     Move,
@@ -305,7 +305,7 @@ impl Checked {
             .any(|(name, path)| name == &place.0 && path.starts_with(&place.1))
     }
 
-    pub(super) fn covered(&self, used: &HashSet<(Kind, u64)>) -> bool {
+    pub(in super::super) fn covered(&self, used: &HashSet<(Kind, u64)>) -> bool {
         self.branches.keys().all(|id| used.contains(&(Kind::Branch, *id)))
             && self.operations.keys().all(|id| used.contains(&(Kind::Operation, *id)))
             && self.moves.keys().all(|id| used.contains(&(Kind::Move, *id)))

@@ -167,6 +167,14 @@ impl Layouts {
         matches!(&**typ, TypX::Datatype(name, _, _) if Some(name) == self.option.as_ref())
     }
 
+    /// Only the compiler-identified standard Result carries primitive outcomes.
+    pub(super) fn result_payloads<'t>(&self, typ: &'t Typ) -> Option<(&'t Typ, &'t Typ)> {
+        let TypX::Datatype(name, args, _) = &**typ else { return None };
+        (self.synchronization_types.get(name) == Some(&super::synchronization::LibraryType::Result)
+            && args.len() == 2)
+            .then(|| (&args[0], &args[1]))
+    }
+
     pub(super) fn option_payload<'a>(&self, typ: &'a Typ, span: &Span) -> Result<&'a Typ, VirErr> {
         let TypX::Datatype(_, args, _) = &**typ else {
             return Err(unsupported(span, "this Option type"));
@@ -194,6 +202,9 @@ impl Layouts {
     }
 
     fn owner_inner(&self, typ: &Typ, visiting: &mut HashSet<Dt>) -> bool {
+        if self.result_payloads(typ).is_some() {
+            return true;
+        }
         if self.join_handle(typ).is_some() {
             return true;
         }
@@ -253,6 +264,7 @@ impl Layouts {
         fn visit(layouts: &Layouts, typ: &Typ, visiting: &mut Vec<LayoutNode>) -> bool {
             if matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _))
                 || layouts.join_handle(typ).is_some()
+                || layouts.result_payloads(typ).is_some()
             {
                 return true;
             }
@@ -333,6 +345,15 @@ impl Layouts {
     ) -> Result<std::collections::BTreeMap<super::heap::OwnerSlot, Typ>, VirErr> {
         use super::heap::OwnerSlot;
         let mut children = std::collections::BTreeMap::new();
+        if let Some((success, _)) = self.result_payloads(typ) {
+            // Executable Result ownership requires a checked join-success
+            // witness. Unknown outcomes are rejected at inputs/construction;
+            // sizing alone never permits dropping an unmodeled Err payload.
+            if self.owner(success) {
+                children.insert(OwnerSlot::Contents, success.clone());
+            }
+            return Ok(children);
+        }
         if self.join_handle(typ).is_some() {
             return Ok(children);
         }

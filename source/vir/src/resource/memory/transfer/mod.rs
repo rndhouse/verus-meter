@@ -229,7 +229,7 @@ fn root(span: &Span, memory: Expr) -> Expr {
     simplify::simplify(&expr::lookup(span, memory, expr::path(span, [])))
 }
 
-fn property(span: &Span, memory: Expr, field: &str) -> Expr {
+pub(super) fn property(span: &Span, memory: Expr, field: &str) -> Expr {
     simplify::simplify(&expr::record_field(span, root(span, memory), field))
 }
 

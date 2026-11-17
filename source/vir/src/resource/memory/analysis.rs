@@ -14,7 +14,10 @@ pub(super) struct FunctionAnalysis {
     /// Collected peaks and diagnostic events for this checked body.
     pub(super) report: MemoryReport,
     /// Call-composition facts published only after body accounting succeeds.
-    pub(super) summary: super::summary::FunctionSummary,
+    pub(super) summary: Option<super::summary::FunctionSummary>,
+    /// Local obligations can be checked while a required global proof is still
+    /// unavailable. Such functions cannot publish a callable memory summary.
+    pub(super) incomplete: Option<VirErr>,
     /// Executed direct call sites cross-checked against the canonical graph.
     pub(super) calls: Vec<(Fun, Span)>,
     /// Declared bound when it must be proved as a formula rather than a constant.
@@ -39,6 +42,9 @@ pub(super) struct Checkpoint {
 
 /// One function's evolving ownership state and already checked callee facts.
 pub(super) struct Analysis<'a> {
+    /// Body-local views into a retained closure environment. Moving a view
+    /// creates destination inline storage without retiring the enclosing slot.
+    pub(super) capture_views: HashSet<VarIdent>,
     /// Nested accounting views of one source boundary are one evaluation.
     pub(super) evaluations: std::collections::BTreeMap<crate::messages::AstId, usize>,
     /// Runtime capture types and bodies recovered by mode checking and rustc.
@@ -88,6 +94,41 @@ pub(super) struct Analysis<'a> {
 }
 
 impl Analysis<'_> {
+    /// Reuse the same transfer-derived loop and extent evidence in ordinary
+    /// functions and asynchronous bodies. Every condition remains a proof obligation.
+    pub(super) fn apply_transfer_evidence(
+        &mut self,
+        inferred: &super::transfer::Inferred,
+    ) -> Result<(), VirErr> {
+        self.apply_progress_evidence(&inferred.progress);
+        self.apply_loop_evidence(
+            &inferred.loops,
+            &inferred.growth,
+            &inferred.scratch,
+            &inferred.repetitions,
+        )?;
+        for (span, condition) in &inferred.checks {
+            let check = SpannedTyped::new(
+                span,
+                &crate::ast_util::unit_typ(),
+                ExprX::AssertAssume {
+                    is_assume: false,
+                    expr: condition.clone(),
+                    msg: Some(super::model::unsupported(
+                        span,
+                        "an allocation extent beyond the inferred iteration bound",
+                    )),
+                },
+            );
+            self.growth
+                .before
+                .entry(span.id)
+                .or_default()
+                .push(crate::def::Spanned::new(span.clone(), StmtX::Expr(check)));
+        }
+        Ok(())
+    }
+
     /// Operation-local allocation observations include the current unit counters.
     /// Persistent contracts still use only immutable function inputs.
     pub(super) fn allocation_scalars(&self) -> HashSet<VarIdent> {
@@ -592,6 +633,7 @@ pub(super) fn check(
     })?;
     super::control::validate(body, &modes.var_modes)?;
     let mut analysis = Analysis {
+        capture_views: Default::default(),
         evaluations: Default::default(),
         concurrency,
         current_worker: None,
@@ -692,6 +734,27 @@ pub(super) fn check(
         return Err(unsupported(&function.span, "unclosed compiler receiver-temporary scopes"));
     }
     analysis.heap.workers.check_closed(&function.span)?;
+    if let Some(incomplete) = analysis.check_worker_domain(&function.span)? {
+        analysis.check_checkpoints()?;
+        analysis.worker_obligations()?;
+        let report = analysis.storage.finish_conditional();
+        analysis.obligations.extend(report.cost_points.iter().map(|(span, cost)| Obligation {
+            span: span.clone(),
+            cost: cost.clone(),
+            bound: super::footprint::MemoryBudget::total(analysis.bound.clone()),
+            kind: CheckKind::Function,
+        }));
+        return Ok(Some(FunctionAnalysis {
+            report,
+            summary: None,
+            incomplete: Some(incomplete),
+            calls: analysis.calls,
+            symbolic_bound,
+            obligations: analysis.obligations,
+            checks: analysis.checks,
+            growth: analysis.growth,
+        }));
+    }
     let return_parameter = result.parameter;
     let zero_charges = analysis.growth.zero_charges();
     let zero_forests = analysis.growth.zero_forests();
@@ -750,33 +813,7 @@ pub(super) fn check(
         &analysis.transitions,
     )?;
     if let Some(inferred) = &inferred {
-        analysis.apply_progress_evidence(&inferred.progress);
-        analysis.apply_loop_evidence(
-            &inferred.loops,
-            &inferred.growth,
-            &inferred.scratch,
-            &inferred.repetitions,
-        )?;
-        for (span, condition) in &inferred.checks {
-            let check = SpannedTyped::new(
-                span,
-                &crate::ast_util::unit_typ(),
-                ExprX::AssertAssume {
-                    is_assume: false,
-                    expr: condition.clone(),
-                    msg: Some(super::model::unsupported(
-                        span,
-                        "an allocation extent beyond the inferred iteration bound",
-                    )),
-                },
-            );
-            analysis
-                .growth
-                .before
-                .entry(span.id)
-                .or_default()
-                .push(crate::def::Spanned::new(span.clone(), StmtX::Expr(check)));
-        }
+        analysis.apply_transfer_evidence(inferred)?;
     }
     let report = if symbolic_bound.is_some() {
         analysis.storage.finish_conditional()
@@ -792,6 +829,7 @@ pub(super) fn check(
         kind: CheckKind::Function,
     }));
     let summary = super::summary::FunctionSummary {
+        effects: None,
         modified_parameters: super::transfer::modified_parameters(
             &function.x.params,
             layouts,
@@ -858,10 +896,17 @@ pub(super) fn check(
             },
         },
     };
+    let mut summary = summary;
+    summary.effects = Some(std::sync::Arc::new(super::summary::BodyEffects {
+        body: body.clone(),
+        ownership: analysis.transitions,
+        calls: analysis.calls.clone(),
+    }));
     super::transfer::validate(function, layouts, &summary)?;
     Ok(Some(FunctionAnalysis {
         report,
-        summary,
+        summary: Some(summary),
+        incomplete: None,
         calls: analysis.calls,
         symbolic_bound,
         obligations: analysis.obligations,

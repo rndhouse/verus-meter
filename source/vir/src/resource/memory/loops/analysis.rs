@@ -91,6 +91,7 @@ impl Analysis<'_> {
         );
         self.storage.event(&expr.span, "analyze reusable while iteration".into());
         self.growth.loop_depth += 1;
+        self.growth.loop_regions.push(expr.span.id);
         let mut counters: std::collections::HashSet<_> = record
             .scalar_steps
             .keys()
@@ -160,6 +161,7 @@ impl Analysis<'_> {
             self.finish_element_reservations()?;
         }
         self.growth.loop_depth -= 1;
+        self.growth.loop_regions.pop();
         for counter in inserted {
             self.growth.loop_counters.remove(&counter);
         }

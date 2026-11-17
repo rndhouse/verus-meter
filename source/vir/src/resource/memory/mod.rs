@@ -81,6 +81,7 @@ pub use budget::{BudgetExpr, BudgetExprX};
 pub use footprint::{Footprint, MemoryBudget, MemoryKind, MemorySelection};
 pub(crate) use growth::resolution_modes;
 pub use model::ResourceContract;
+pub(crate) use workers::generated_join_move;
 
 use crate::ast::*;
 use crate::messages::Span;
@@ -92,6 +93,9 @@ use std::sync::Arc;
 /// Call accounting uses declared bounds; together with the function proofs,
 /// their validity follows over this acyclic executable call graph. Never rely
 /// on functional termination to bound storage.
+/// `incomplete` collects mandatory deferred errors: callers must report them
+/// and prohibit export even if the generated local obligations verify. Reports
+/// for such functions describe actor-local history, not a concurrent theorem.
 pub fn check_crate(
     functions: &mut [Function],
     datatypes: &[Datatype],
@@ -101,6 +105,7 @@ pub fn check_crate(
     option: Option<Dt>,
     synchronization: &synchronization::CompilerEvidence,
     fresh_span: &dyn Fn(&Span) -> Span,
+    incomplete: &mut Vec<VirErr>,
 ) -> Result<Vec<(Span, MemoryReport)>, VirErr> {
     for function in functions.iter_mut() {
         let empty = HashMap::new();
@@ -122,7 +127,14 @@ pub fn check_crate(
                 "runtime synchronization without compiler-derived guard cleanup evidence",
             ));
         }
-        synchronization::reject_unaccounted(function, modes, &synchronization.types, datatypes)?;
+        if !graph.publishes_workers(function) {
+            synchronization::reject_unaccounted(
+                function,
+                modes,
+                &synchronization.types,
+                datatypes,
+            )?;
+        }
         concurrency::sites::validate(function, modes, functions, synchronization)?;
     }
     let layouts = layout::Layouts::new(datatypes, global_allocator, vector, option)
@@ -141,7 +153,25 @@ pub fn check_crate(
             &summaries,
             &synchronization.concurrency,
         )? {
-            summaries.insert(function.x.name.clone(), checked.summary.clone());
+            let empty = HashMap::new();
+            concurrency::sites::validate_workers(
+                function,
+                modes.get(&function.x.name).map(|modes| &modes.var_modes).unwrap_or(&empty),
+                functions,
+                synchronization,
+                &checked
+                    .growth
+                    .worker_executions
+                    .values()
+                    .map(|execution| execution.definition)
+                    .collect(),
+            )?;
+            if let Some(summary) = &checked.summary {
+                summaries.insert(function.x.name.clone(), summary.clone());
+            }
+            if let Some(error) = &checked.incomplete {
+                incomplete.push(error.clone());
+            }
             graph.validate_calls(function, &checked.calls)?;
             reports.push((function.clone(), checked));
         }
@@ -163,7 +193,7 @@ pub fn check_crate(
                 fresh_span,
             )?;
             let target = functions.iter_mut().find(|f| f.x.name == function.x.name).unwrap();
-            *target = updated;
+            *target = workers::restore_proof_bindings(&updated, &checked.growth, fresh_span)?;
         }
     }
     Ok(reports.into_iter().map(|(f, checked)| (f.span.clone(), checked.report)).collect())

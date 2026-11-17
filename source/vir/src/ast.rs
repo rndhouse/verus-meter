@@ -1073,6 +1073,10 @@ pub enum ResourceIntrinsic {
     Synchronization(crate::resource::memory::synchronization::Operation),
     /// Reviewed worker publication/join and strong shared-ownership operations.
     Concurrency(crate::resource::memory::concurrency::Operation),
+    /// Reviewed standard Result operations; ownership requires an outcome witness.
+    ResultUnwrap,
+    ResultIsOk,
+    ResultIsErr,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToDebugSNode)]

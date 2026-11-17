@@ -355,6 +355,98 @@ impl Analysis<'_> {
         )
     }
 
+    /// Transfer a collection into a separate actor's proof frame. The original
+    /// sum identities and records remain, while future mutations use new locals.
+    /// The new frame's insertion count starts at zero over its complete entry
+    /// charge; previous-frame insertions are not new local allocations.
+    pub(super) fn fork_elements(&mut self, old: Elements, span: &Span) -> Elements {
+        let charges = old
+            .states
+            .iter()
+            .map(|(kind, id)| (kind.clone(), self.growth.elements[*id].bytes.clone()))
+            .collect();
+        let mut new = self.elements_from_bytes(span, charges);
+        for (kind, next) in &new.states {
+            let previous = &self.growth.elements[old.states[kind]];
+            let (identity, uncharged) = (previous.id, previous.uncharged);
+            let state = &mut self.growth.elements[*next];
+            self.storage.release_dynamic(state.id);
+            state.id = identity;
+            state.uncharged = uncharged;
+            self.storage.set_allocation(state.id, kind.clone(), state.bytes.clone());
+        }
+        self.growth.before.entry(span.id).or_default().push(super::symbolic::assign(
+            span,
+            &new.records,
+            old.records,
+        ));
+        new.view = old.view;
+        new.precise = old.precise;
+        new.has_references = old.has_references;
+        new.minima = old.minima;
+        new.inputs = old.inputs;
+        new
+    }
+
+    /// Rebind an outgoing runtime forest while preserving each charge identity.
+    /// The forest must come from the checked parametric body transformation;
+    /// a byte ceiling alone cannot describe which children survived.
+    pub(super) fn collect_worker_elements(
+        &mut self,
+        old: Elements,
+        records: Option<Expr>,
+        retained: &mut super::accounting::Accounting,
+        span: &Span,
+    ) -> Result<Elements, VirErr> {
+        if old.has_references {
+            return Err(unsupported(
+                span,
+                "worker reference populations without an outgoing occurrence descriptor",
+            ));
+        }
+        let zero = old.zero_charge(&self.growth);
+        let records = records
+            .or_else(|| {
+                zero.then(|| {
+                    super::metadata::expr::empty(span, super::metadata::expr::record_type())
+                })
+            })
+            .ok_or_else(|| {
+                unsupported(span, "a worker result requiring a runtime ownership substitution")
+            })?;
+        let charges = old
+            .states
+            .keys()
+            .map(|kind| {
+                (
+                    kind.clone(),
+                    if zero {
+                        contracts::literal(span, 0)
+                    } else {
+                        self.metadata_cost(span, records.clone(), kind)
+                    },
+                )
+            })
+            .collect();
+        let mut new = self.elements_from_bytes(span, charges);
+        for (kind, next) in &new.states {
+            let identity = self.growth.elements[old.states[kind]].id;
+            let state = &mut self.growth.elements[*next];
+            self.storage.release_dynamic(state.id);
+            state.id = identity;
+            retained.set_allocation(identity, kind.clone(), state.bytes.clone());
+        }
+        self.growth.before.entry(span.id).or_default().push(super::symbolic::assign(
+            span,
+            &new.records,
+            records,
+        ));
+        new.view = old.view;
+        new.precise = true;
+        new.inputs = old.inputs;
+        Ok(new)
+    }
+
     pub(super) fn elements_from_bytes(
         &mut self,
         span: &Span,

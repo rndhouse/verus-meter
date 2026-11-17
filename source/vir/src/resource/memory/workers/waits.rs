@@ -74,10 +74,6 @@ impl Workers {
 
     /// Only the actor that actually waited can receive the completed storage.
     /// Removing this record ends that actor's wait, not the result's lifetime.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the TODO 05 join adapter consumes checked completion effects")
-    )]
     pub(super) fn take_result(
         &mut self,
         id: WorkerId,

@@ -367,6 +367,9 @@ pub fn run_verus(
             verus_args.push("2".to_string());
         } else if *option == "--compile" {
             verus_args.push("--compile".to_string());
+        } else if let Some(path) = option.strip_prefix("--export=") {
+            verus_args.push("--export".to_string());
+            verus_args.push(path.to_string());
         } else if *option == "--no-external-by-default" {
             no_external_by_default = true;
         } else if *option == "--no-lifetime" {

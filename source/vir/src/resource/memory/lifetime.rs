@@ -81,6 +81,11 @@ impl Analysis<'_> {
             return Err(unsupported(&place.span, "moving part of a stored value"));
         };
         self.access(place, &place.typ)?;
+        if self.capture_views.contains(name) {
+            // Captured fields occupy the retained environment. A source move
+            // transfers descendants, while its destination has a new inline slot.
+            return self.fresh_value(&place.span, &place.typ);
+        }
         let mut value = self
             .slots
             .remove(name)
@@ -155,6 +160,12 @@ impl Analysis<'_> {
     }
 
     fn produce_inner(&mut self, expr: &Expr) -> Result<Value, VirErr> {
+        if let Some(value) = self.extract_worker_result(expr)? {
+            return Ok(value);
+        }
+        if let Some(value) = self.join_worker(expr)? {
+            return Ok(value);
+        }
         if let Some(copied) = self.copied_closure_read(expr) {
             return self.produce(&copied);
         }

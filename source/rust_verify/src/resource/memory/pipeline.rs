@@ -22,7 +22,7 @@ pub(crate) fn check(
     erasure: &HashMap<Fun, Arc<crate::context::ErasureInfo>>,
     trace: bool,
     lifetime_checks: bool,
-) -> Result<Vec<VirErrAs>, VirErr> {
+) -> Result<(Vec<VirErrAs>, Vec<VirErr>), VirErr> {
     let (global_allocator, vector, option) = identities(ctxt);
     let synchronization_types = synchronization_types(ctxt);
     let synchronization = synchronization_evidence(
@@ -88,6 +88,7 @@ pub(crate) fn check(
             }
         }
     }
+    let mut incomplete = Vec::new();
     let reports = vir::resource::memory::check_crate(
         &mut krate.functions,
         &krate.datatypes,
@@ -101,13 +102,15 @@ pub(crate) fn check(
             span.id = ctxt.spans.get_next_span_id();
             span
         },
+        &mut incomplete,
     )?;
     vir::resource::memory::erase_annotations(&mut krate.functions)?;
-    Ok(if trace {
+    let diagnostics = if trace && incomplete.is_empty() {
         reports.into_iter().flat_map(|(span, report)| report.diagnostics(&span)).collect()
     } else {
         Vec::new()
-    })
+    };
+    Ok((diagnostics, incomplete))
 }
 
 /// Obtain cleanup only for actual runtime synchronization. Ordinary sequential

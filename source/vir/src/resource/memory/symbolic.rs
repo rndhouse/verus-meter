@@ -245,8 +245,8 @@ pub(super) fn instrument(
             if matches!(expr.x, ExprX::TwoPhaseBorrowMut(_)) {
                 return Ok(expr.clone());
             }
-            let scheduled =
-                [&growth.before, &growth.updates, &growth.after].iter().any(|schedule| {
+            let scheduled = growth.worker_joins.contains_key(&expr.span.id)
+                || [&growth.before, &growth.updates, &growth.after].iter().any(|schedule| {
                     schedule.get(&expr.span.id).is_some_and(|actions| !actions.is_empty())
                 });
             let repeated = !seen.expressions.insert(expr.span.id);
@@ -319,6 +319,16 @@ pub(super) fn instrument(
                 seen.obligations.insert(expr.span.id);
                 checks.extend(statements.iter().cloned());
             }
+            // Moving a field out of a retained closure environment creates a
+            // destination value at the read. Its place has a distinct AST ID.
+            if let ExprX::ReadPlace(place, _) = &expr.x
+                && matches!(place.x, PlaceX::Local(_))
+                && place.span.id != expr.span.id
+                && let Some((_, statements)) = sites.get(&place.span.id)
+            {
+                seen.obligations.insert(place.span.id);
+                checks.extend(statements.iter().cloned());
+            }
             if let Some(updates) = growth.updates.get(&expr.span.id) {
                 checks.extend(updates.clone());
             }
@@ -334,6 +344,7 @@ pub(super) fn instrument(
                     ExprX::EvalAndResolve(rewritten, effects),
                 );
             }
+            rewritten = super::workers::resolve_join(expr, rewritten, growth, fresh_span)?;
             if !checks.is_empty() {
                 let checks = checks
                     .iter()
@@ -345,10 +356,20 @@ pub(super) fn instrument(
             }
         },
         &|seen, _, stmt| {
-            if let StmtX::Decl { .. } = &stmt.x
-                && let Some((_, statements)) = sites.get(&stmt.span.id)
-            {
-                seen.obligations.insert(stmt.span.id);
+            if let StmtX::Decl { init, .. } = &stmt.x {
+                let mut statements = Vec::new();
+                for id in std::iter::once(stmt.span.id).chain(
+                    init.iter()
+                        .filter(|place| {
+                            matches!(place.x, PlaceX::Local(_)) && place.span.id != stmt.span.id
+                        })
+                        .map(|place| place.span.id),
+                ) {
+                    if let Some((_, checks)) = sites.get(&id) {
+                        seen.obligations.insert(id);
+                        statements.extend(checks.iter().cloned());
+                    }
+                }
                 Ok(statements
                     .iter()
                     .map(|s| crate::ast_visitor::map_stmt_spans(s, &mut |span| fresh_span(span)))
@@ -370,6 +391,11 @@ pub(super) fn instrument(
         }
     }
     // State actions carry the same proof significance as budget assertions.
+    for id in growth.worker_joins.keys() {
+        if !seen.expressions.contains(id) {
+            return Err(error(&function.span, "unsupported worker join proof site"));
+        }
+    }
     // Missing snapshots or commits must never leave their initialized zero
     // counters standing in for an operation that was actually executed.
     for (phase, schedule, entry_allowed) in [

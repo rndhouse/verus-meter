@@ -21,6 +21,25 @@ pub(in super::super) struct Prepared {
 }
 
 impl Analysis<'_> {
+    /// Specialize a checked asynchronous result using construction observations.
+    /// This runs only the common descriptor algebra, never synchronous call
+    /// accounting or a copy of the worker's peak history.
+    pub(in super::super) fn specialize_worker_result(
+        &mut self,
+        span: &Span,
+        template: &Template,
+        values: &HashMap<VarIdent, Expr>,
+    ) -> Result<Option<Node>, VirErr> {
+        let Value::Owner(node) = instantiate_value(&template.result, values) else {
+            return Ok(None);
+        };
+        self.enable_transfer_algebra(span);
+        let mut proofs = Vec::new();
+        super::proofs::forest_views(span, &node.memory, &mut proofs, template.ordered)?;
+        self.growth.before.entry(span.id).or_default().extend(proofs);
+        Ok(Some(node))
+    }
+
     pub(in super::super) fn prepare_transfer_call(
         &mut self,
         value: &Expr,

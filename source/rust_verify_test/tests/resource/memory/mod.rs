@@ -10,6 +10,7 @@ mod call_graph;
 mod checkpoints;
 mod children;
 mod concurrency;
+mod worker_execution;
 mod conditional;
 mod conditional_loops;
 mod control_flow;

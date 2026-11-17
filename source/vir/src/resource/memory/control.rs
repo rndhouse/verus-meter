@@ -339,7 +339,8 @@ pub(super) fn compatible(a: &Owner, b: &Owner) -> bool {
             _ => false,
         }
     }
-    a.worker == b.worker
+    a.joined == b.joined
+        && a.worker == b.worker
         && a.closure == b.closure
         && a.shared == b.shared
         && a.bytes == b.bytes

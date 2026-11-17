@@ -136,7 +136,7 @@ including nested closures: erased tracked state cannot hide runtime copies.
 Creating a closure does not execute its body. General closure invocation,
 capture summaries across function interfaces and closure `value_size` queries
 remain unsupported.
-Direct scalar captures and owned collection geometry are observed at construction;
+Scalar captures, supported inline scalar projections and owned collection geometry are observed at construction;
 moving or copying the closure preserves those observations. Repeated environments
 still require checked occurrence bindings before supplying worker inputs.
 
@@ -148,8 +148,24 @@ through its moves and drops. Returned owners stay separate from environment clea
 Implicit capture destruction order is unspecified by
 [Rust's source rules](https://doc.rust-lang.org/reference/destructors.html#destructors.operation);
 capture indices cannot justify a synchronization release order. Original body
-cleanup and unwind edges remain proof obligations. This interface does not enable
-worker execution or establish a concurrent byte bound on its own.
+cleanup and unwind edges remain proof obligations.
+
+Fixed standard/vstd workers now undergo the ordinary symbolic body analysis,
+including supported helpers, branches, loops and capture cleanup. Their summaries
+retain ordered source effects, ownership templates, construction inputs and
+compiler synchronization identities. Each worker has independent allocation proof
+state and history. Publication transfers existing captures; completion retains
+the body-derived result; join transfers it once while retaining the waiting frame.
+Shared links keep their canonical backing identity. Implicit capture cleanup is
+recorded as an unordered group at each source exit.
+
+For these checked workers, join-result matching and `unwrap` use the successful
+normal-execution outcome, conditional on Verus checking the actual body/helper
+obligations and on the model's environmental assumptions. The original functional
+join call and its postconditions remain. An ordinary `Result` or an external
+functional specification cannot supply this evidence. Outgoing allocation facts
+must close over construction observations or a checked ownership template;
+body-local proof variables cannot escape through a result.
 
 Supported sequential paths now account for standard strong `Arc` construction,
 cloning, readonly payload access and explicit/implicit destruction. Backing and
@@ -168,10 +184,12 @@ resource-contracted code until concurrent allocation coverage and bound checking
 are connected. Native functional specifications assume neither acquisition
 success nor a protected payload invariant. The
 [concurrent TODOs](todo/concurrent/README.md) track the remaining requirements.
-An internal worker-storage ledger separates publication, execution, completion
-and collection; it does not yet enable source worker proofs. Worker-body effects,
-join-result adapters and symbolic worker populations remain required before
-concurrent contracts can be checked.
+Worker-local obligations are checked, but a required global diagnostic still
+rejects every concurrent memory contract and prevents exporting it. These local
+checks are necessary inequalities, not a sum of thread peaks or a simultaneous
+memory theorem. Repeated and nested worker populations, global shared-lifetime
+composition, synchronization containment and the simultaneous envelope still
+require the remaining concurrent interfaces. Detaching a worker is rejected.
 
 ## Concurrent extension specification
 

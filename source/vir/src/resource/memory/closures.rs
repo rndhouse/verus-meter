@@ -167,6 +167,7 @@ impl Analysis<'_> {
         for (index, capture) in captures.iter().enumerate() {
             let place = self.layouts.capture_place(capture, &expr.span)?;
             let scalar = self.observe_capture_scalar(&place, &capture.typ, &expr.span)?;
+            let projections = self.observe_capture_projections(&place, &expr.span)?;
             let owns = self.layouts.owner(&capture.typ);
             let mode = if self.layouts.copy_closure(&capture.typ) {
                 CaptureMode::Copy
@@ -216,7 +217,11 @@ impl Analysis<'_> {
                     location,
                 },
             ));
-            observations.push(observations::Field { scalar, environment: value.environment });
+            observations.push(observations::Field {
+                scalar,
+                projections,
+                environment: value.environment,
+            });
             values.push(value);
         }
         let fields: Vec<_> = values.iter().map(|value| (&value.ids, value.bytes)).collect();
@@ -238,8 +243,13 @@ impl Analysis<'_> {
         );
         self.storage
             .event(&expr.span, "construct executable closure; transfer capture ownership".into());
-        let environment =
-            self.growth.environments.insert(definition, observations, self.growth.loop_depth != 0);
+        let environment = self.growth.environments.insert(
+            definition,
+            observations,
+            self.growth.loop_depth != 0,
+            expr.span.id,
+            self.growth.loop_regions.clone(),
+        );
         Ok(Value {
             bytes,
             ids: [id].into_iter().collect(),

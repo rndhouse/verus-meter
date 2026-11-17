@@ -43,6 +43,14 @@ pub(super) struct VectorState {
 
 #[derive(Default)]
 pub(super) struct Growth {
+    /// Result facts tied to an exact native join and its checked worker actor.
+    pub(super) worker_joins: std::collections::BTreeMap<u64, super::workers::WorkerId>,
+    /// Checked independent actor graphs remain available after their handles
+    /// are collected. These are effects, not a count of outstanding workers.
+    pub(super) worker_executions: std::collections::BTreeMap<
+        super::workers::WorkerId,
+        std::sync::Arc<super::workers::execution::Execution>,
+    >,
     /// Erased loop observations and ordinals do not mutate allocation state.
     /// Argument effect guards must still observe every allocation-state write.
     loop_proof_locals: std::collections::HashSet<VarIdent>,
@@ -65,6 +73,9 @@ pub(super) struct Growth {
     pub(super) loop_ensures: HashMap<u64, Vec<Expr>>,
     /// Universal sibling and reservation facts are needed only by reusable bodies.
     pub(super) loop_depth: usize,
+    /// Source loop binders surrounding a construction. Their dynamic occurrence
+    /// substitutions are required before repeated environments can be published.
+    pub(super) loop_regions: Vec<crate::messages::AstId>,
     /// Counted iteration observations admitted in allocation sizes only.
     pub(super) loop_counters: std::collections::HashSet<VarIdent>,
     /// Function-wide demand for runtime-child classification across loops.
@@ -445,7 +456,7 @@ impl super::analysis::Analysis<'_> {
     }
 }
 
-/// Register only the proof locals introduced after execution mode checking.
+/// Register the proof locals and join-result bindings introduced after mode checking.
 /// Rust source identifiers cannot contain `$`, and the internal disambiguator
 /// distinguishes these bindings from all user locals.
 pub(crate) fn resolution_modes(
@@ -458,15 +469,18 @@ pub(crate) fn resolution_modes(
             return Ok::<(), VirErr>(());
         };
         for statement in statements.iter() {
-            if let StmtX::Decl { pattern, init, mode: Some((Mode::Spec, _)), .. } = &statement.x {
+            if let StmtX::Decl { pattern, init, mode: Some((mode, _)), .. } = &statement.x {
                 if let PatternX::Var(binding) = &pattern.x {
                     if matches!(binding.name.1, VarIdentDisambiguate::VirTemp(_))
                         && binding.name.0.starts_with("$memory_")
+                        && (*mode == Mode::Spec
+                            || (*mode == Mode::Exec
+                                && binding.name.0.as_str() == "$memory_join_result"))
                     {
-                        variables.insert(binding.name.clone(), Mode::Spec);
-                        temporaries.insert(statement.span.id, Mode::Spec);
+                        variables.insert(binding.name.clone(), *mode);
+                        temporaries.insert(statement.span.id, *mode);
                         if let Some(init) = init {
-                            temporaries.insert(init.span.id, Mode::Spec);
+                            temporaries.insert(init.span.id, *mode);
                         }
                     }
                 }

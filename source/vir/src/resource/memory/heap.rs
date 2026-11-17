@@ -52,6 +52,9 @@ pub(super) type OwnerPath = Vec<OwnerSlot>;
 /// its inline storage belongs to the enclosing value or allocation layout.
 #[derive(Clone)]
 pub(super) struct Owner {
+    /// Native/vstd successful join payload, conditional on this checked worker's
+    /// normal-domain proof dependencies. Ordinary Result values cannot invent it.
+    pub(super) joined: Option<super::workers::WorkerId>,
     /// A join handle names storage kept in the domain's worker registry.
     pub(super) worker: Option<super::workers::WorkerId>,
     /// Concrete closure definition; its owned fields occupy Capture child slots.
@@ -91,6 +94,7 @@ pub(super) struct Owner {
 impl Default for Owner {
     fn default() -> Self {
         Self {
+            joined: None,
             worker: None,
             closure: None,
             shared: None,
@@ -114,7 +118,8 @@ impl Default for Owner {
 impl Owner {
     /// Byte-free owner nodes and forests still carry strong/worker lifetimes.
     pub(super) fn has_references(&self) -> bool {
-        self.shared.is_some()
+        self.joined.is_some()
+            || self.shared.is_some()
             || self.worker.is_some()
             || self.elements.as_ref().is_some_and(|elements| elements.has_references)
             || self.children.values().any(Self::has_references)
@@ -374,6 +379,12 @@ impl Analysis<'_> {
     ) -> Result<Owner, VirErr> {
         if matches!(&**typ, TypX::AnonymousClosure(..)) {
             return Err(unsupported(span, "closure inputs without a checked capture summary"));
+        }
+        if self.layouts.result_payloads(typ).is_some() {
+            return Err(unsupported(
+                span,
+                "primitive Result inputs without checked outcome provenance",
+            ));
         }
         if self.layouts.join_handle(typ).is_some() {
             return Err(unsupported(

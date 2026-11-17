@@ -1305,7 +1305,9 @@ impl<'a> Builder<'a> {
             }
             ExprX::ReadPlace(place, unfinal_read_kind) => {
                 let (p, bb) = unwrap!(self.build_place_typed(place, bb, TypInv::No));
-                if self.is_move(unfinal_read_kind) {
+                if crate::resource::memory::generated_join_move(place, unfinal_read_kind)
+                    || self.is_move(unfinal_read_kind)
+                {
                     if !matches!(p, ComputedPlaceTyped::Exact(..)) {
                         self.emit_bad_move_err(&p, &place.span);
                     }

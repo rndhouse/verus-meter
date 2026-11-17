@@ -2783,13 +2783,15 @@ impl Verifier {
             crate_id: spans.local_crate.as_u64(),
             original_files: spans.local_files.clone(),
         };
-        crate::import_export::export_crate(
-            &self.args,
-            &self.export_vir_path_via_cargo,
-            crate_metadata,
-            local_crate.clone(),
-        )
-        .map_err(map_err_diagnostics)?;
+        if query.memory_export_allowed() {
+            crate::import_export::export_crate(
+                &self.args,
+                &self.export_vir_path_via_cargo,
+                crate_metadata,
+                local_crate.clone(),
+            )
+            .map_err(map_err_diagnostics)?;
+        }
 
         let merged_crate = query.get_merged_crate().map_err(map_query_err)?;
         self.maybe_log_impl_names(&merged_crate).map_err(map_err_diagnostics)?;

@@ -7,6 +7,7 @@ use crate::ast::*;
 
 /// The exact source definition and existing storage transferred at worker entry.
 /// Consuming this frame does not itself prove execution, completion or a bound.
+#[derive(Clone)]
 pub(in super::super) struct Entry {
     /// NonSpecClosure from the accounting AST, including restored native calls.
     pub(in super::super) definition: Expr,
@@ -27,10 +28,7 @@ impl Entry {
     /// Move only owned descendants out of a captured field, using the original
     /// source binding's exact path. The environment's inline charge stays live;
     /// body accounting must preserve the destination's actual value storage.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "worker body ownership effects consume capture views")
-    )]
+    #[cfg(test)]
     pub(in super::super) fn take_capture_owner(
         &mut self,
         source: &super::super::paths::LocalPath,
@@ -59,10 +57,6 @@ impl Entry {
     /// not use the owner map's iteration order to infer exclusion. Explicit body
     /// moves/drops retain their own control-flow ordering. Unwind is not a normal
     /// exit and cannot use this operation to discharge panic-free obligations.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "checked worker body returns are connected in TODO 03.2")
-    )]
     pub(in super::super) fn into_return_cleanup(
         self,
         layouts: &Layouts,
@@ -104,11 +98,10 @@ impl Entry {
             .closures
             .get(id)
             .ok_or_else(|| unsupported(span, "worker entry without executable capture evidence"))?;
-        if storage
-            .value
-            .environment
-            .is_none_or(|environment| !environments.matches(environment, *id, &evidence.captures))
-        {
+        if storage.value.environment.is_none_or(|environment| {
+            !environments.matches(environment, *id, &evidence.captures)
+                || !environments.constructed_at(environment, definition.span.id)
+        }) {
             return Err(unsupported(
                 span,
                 "worker entry without its construction-epoch capture observations",
