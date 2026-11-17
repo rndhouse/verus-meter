@@ -33,6 +33,20 @@ Retain the upstream `verusfmt` workflow for Verus syntax as documented in
 
 ## Implementation and documentation
 
+### Concurrent TODO coordination
+
+For the concurrent symbolic analysis work, the `main` branch checkout owns
+`docs/verus-meter/todo/concurrent/` and its completion tracking. Locate that
+checkout with `git worktree list`; read, edit, move and commit these TODOs there.
+Implement and validate code in `feature/concurrent-symbolic-analysis`. Inherited
+TODO copies in implementation worktrees are not authoritative: do not update or
+delete them to synchronize tracking. Commit implementation first, then update the
+authoritative TODOs with evidence from that branch. Keep unrelated changes in
+each checkout separate. This coordination rule does not relocate ordinary code
+documentation or tests.
+
+### Implementation conventions
+
 Inspect existing changes before editing and preserve unrelated work. Keep
 fork-specific behavior in focused modules and upstream integration points thin.
 Prefer existing project facilities and established libraries over custom

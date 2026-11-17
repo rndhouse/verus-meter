@@ -16,7 +16,8 @@ locks or semaphores.
 
 This document defines one core feature and its completion checklist. The work
 areas below are parts of that feature, not separate prototypes or releases.
-Nothing in this plan is marked implemented. The
+The [concurrent semantics](../concurrent-model.md) settle the design and supported
+operation matrix from TODO 01; implementation checklist items remain open. The
 [numbered implementation TODOs](concurrent/README.md) map back to this checklist
 and define the workflow for moving completed tasks into `concurrent/complete/`.
 

@@ -60,6 +60,15 @@ concern; broaden checks where the integration review exposes another affected
 boundary. Do not mark this task complete while material checks remain unrun or
 failing. Explain and leave it open if an external blocker prevents validation.
 
+## Decisions from TODO 01
+
+Audit the concrete surface, cost table, certificate obligations and all transition
+review cases in `docs/verus-meter/concurrent-model.md`. Check both implementation
+and fail-closed diagnostics for every row of the scope matrix, including nested
+workers, strong Arc final drops, protected owners, implicit guard release and the
+panic-free domain. Compare new static/runtime model sizes and verify that the
+model-version change does not silently alter existing sequential contracts.
+
 ## Starting points
 
 - `docs/verus-meter/todo/plan-concurrent-symbolic-analysis.md`

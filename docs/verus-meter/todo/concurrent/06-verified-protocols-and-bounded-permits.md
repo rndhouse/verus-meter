@@ -54,6 +54,23 @@ not `assume`, to establish custom protocol properties in acceptance tests.
 Run the README memory checks plus relevant atomic/invariant/mode regressions.
 End-to-end symbolic memory bounds using these proofs are required in 07–08.
 
+## Decisions from TODO 01
+
+Implement the verification obligations in `docs/verus-meter/concurrent-model.md`:
+
+- [ ] Check initialization, executable transition refinement, invariant-preserved
+  holder multiset bounds, witness encapsulation and interference stability. Local
+  postconditions or a disconnected abstract state machine are insufficient.
+- [ ] Deliver reusable verified `vstd::resource::semaphore::Semaphore` and unit
+  `Permit` with new/acquire/try_acquire/explicit release, immutable symbolic capacity
+  and occupied capacity for discarded unreleased witnesses. Use existing SC
+  PAtomicBool/PAtomicUsize facilities; no async runtime dependency is required.
+- [ ] Support the selected vstd RwLock read/write APIs with explicit release and
+  persistent payload ownership. Readers do not gain writer-style exclusion.
+- [ ] Account for executable fields/locals of verified bodies. Only reviewed opaque
+  primitive contracts use the source abstraction table; custom code has no blanket
+  zero-workspace exemption.
+
 ## Starting points
 
 - `source/vstd/invariant.rs`

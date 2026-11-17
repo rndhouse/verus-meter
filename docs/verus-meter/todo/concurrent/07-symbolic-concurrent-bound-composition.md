@@ -58,6 +58,23 @@ projection, define it from compiler-owned allocation identities and also verify
 total storage; it must not exempt other allocations from accounting. Run all
 applicable README checks after building the changed verifier.
 
+## Decisions from TODO 01
+
+Implement the global proof and query rules in
+`docs/verus-meter/concurrent-model.md`:
+
+- [ ] Generate initialization/preservation obligations for coverage, protocol state,
+  worker-family counts and the simultaneous byte envelope under interference.
+  Local effect graphs cannot assume other threads stop during helper execution.
+- [ ] Compose acyclic worker trees and finite phase families with symbolic
+  multiplicities. Retain source budget grammar and u64 obligations; use ordinary
+  verified lemmas for aggregate envelopes requiring additional reasoning.
+- [ ] Bound sections/checkpoints over their full covered subtree, require joins
+  before section exit, and preserve fixed checkpoint/section bound restrictions.
+  Reject cross-thread ancestor checkpoint references. Runtime peak queries still
+  evaluate declared formulas, and all admitted new size queries must agree with
+  the static model.
+
 ## Starting points
 
 - `source/vir/src/resource/memory/footprint.rs`
