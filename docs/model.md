@@ -1,7 +1,7 @@
 # Memory contracts
 
 Verus Meter proves upper bounds on peak memory for a supported subset of Rust.
-Use the [executable examples](../../examples/resource/memory/README.md) to learn
+Use the [executable examples](../examples/resource/memory/README.md) to learn
 contract syntax, heap ownership, loops, and expected failures.
 
 ## Contracts and queries
@@ -21,7 +21,7 @@ contract syntax, heap ownership, loops, and expected failures.
 Function budgets can depend on immutable scalar inputs and use arithmetic,
 conditionals, and local verified numeric specification functions. Budget
 arithmetic must fit in `u64`; sections and checkpoints currently require fixed
-bounds. See [contract examples](../../examples/resource/memory/README.md#contracts).
+bounds. See [contract examples](../examples/resource/memory/README.md#contracts).
 
 ## Runtime queries (prototype)
 
@@ -48,7 +48,7 @@ Compare an allowance with an explicit model-byte budget before calling the targe
 after establishing its execution preconditions separately. An allowance exceeding
 the budget does not prove that execution cannot fit. Query and caller costs are
 separate; OS RAM discovery and reservation remain future work.
-See the [example and run instructions](../../source/verus-meter/runtime/README.md#run-the-example).
+See the [example and run instructions](../source/verus-meter/runtime/README.md#run-the-example).
 
 ## What the guarantee covers
 
@@ -100,7 +100,7 @@ while exporting caller-visible ownership remains unsupported.
 Other owning containers, shared ownership, custom destructors, recursion,
 generic layouts, and cross-crate resource summaries remain unsupported. Examples
 illustrate supported programs rather than promise every operation on their types.
-See [heap and loop examples](../../examples/resource/memory/README.md#heap).
+See [heap and loop examples](../examples/resource/memory/README.md#heap).
 
 Internally, charges distinguish `host.local` and `host.heap`. Current source
 contracts bound total `memory`; separate kind-specific limits and GPU allocator

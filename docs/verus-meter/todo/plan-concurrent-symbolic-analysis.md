@@ -23,7 +23,7 @@ and define the workflow for moving completed tasks into `concurrent/complete/`.
 
 Background: [high-level explanation](../high-level-concurrent-symbolic-analysis.md),
 [technical assessment](../concurrent-symbolic-analysis.md), and the existing
-[memory model](../model.md). This plan incorporates the subsequent clarification
+[memory model](../../model.md). This plan incorporates the subsequent clarification
 that standard synchronization guarantees and user-defined synchronization proofs
 both feed the same memory analysis.
 

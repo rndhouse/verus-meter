@@ -26,7 +26,7 @@ this clause receive ordinary Verus verification only. The analysis generates
 ordinary proof obligations; normal Rust/Verus bounds, overflow, and logical
 correctness checks still apply.
 
-Primary references: [memory model](../../../model.md),
+Primary references: [memory model](../../../../model.md),
 [analysis implementation](../../../../../source/vir/src/resource/memory/mod.rs), and
 [completed heap-loop work](README.md).
 

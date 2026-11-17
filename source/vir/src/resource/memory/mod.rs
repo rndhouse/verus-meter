@@ -28,7 +28,7 @@
 //! module validates the crate-wide call graph before publishing any reports.
 //! Unsupported operations are rejected, never assigned a zero cost.
 //!
-//! The authoritative model is documented in `docs/verus-meter/model.md`.
+//! The authoritative model is documented in `docs/model.md`.
 
 mod accounting;
 mod allocations;

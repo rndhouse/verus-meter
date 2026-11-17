@@ -28,7 +28,7 @@ or verify concurrent memory support. All source links are repository-relative.
 
 ## Existing implementation and reusable foundations
 
-The authoritative [memory model](model.md) is a source-level byte model, currently
+The authoritative [memory model](../model.md) is a source-level byte model, currently
 named `source-values-v38-64` in
 [model.rs](../../source/vir/src/resource/memory/model.rs). It assumes eight-byte
 words, sums struct fields without ABI padding, excludes ghost/proof storage, and

@@ -72,7 +72,7 @@ model-version change does not silently alter existing sequential contracts.
 ## Starting points
 
 - `docs/verus-meter/todo/plan-concurrent-symbolic-analysis.md`
-- `docs/verus-meter/model.md`
+- `docs/model.md`
 - `examples/resource/memory/README.md`
 - `source/rust_verify_test/tests/resource.rs`
 - `source/rust_verify_test/tests/resource/memory/mod.rs`

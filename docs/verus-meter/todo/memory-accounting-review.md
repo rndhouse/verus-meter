@@ -4,7 +4,7 @@ This tracker covers development correctness review of our own unreleased,
 experimental Verus fork. Describe findings by their incorrect behavior, affected
 cases, and development impact, without severity ratings.
 
-Review the [memory model](../model.md): an accepted contract must bound all
+Review the [memory model](../../model.md): an accepted contract must bound all
 simultaneous storage charged by that model. Focus on fork-specific memory
 accounting; the completed checks do not establish exhaustive correctness.
 
@@ -13,7 +13,7 @@ accounting; the completed checks do not establish exhaustive correctness.
 For every permitted execution, modeled live storage must be no greater than
 accounted storage, which must be no greater than the declared bound. Verus checks
 the generated mathematical obligations; the fork must connect those obligations
-to executable behavior under the [documented model](../model.md) and ordinary
+to executable behavior under the [documented model](../../model.md) and ordinary
 Verus trust assumptions. The guarantee concerns model bytes, not physical RAM.
 
 These broader audits remain open. Completed bounded passes below supply evidence

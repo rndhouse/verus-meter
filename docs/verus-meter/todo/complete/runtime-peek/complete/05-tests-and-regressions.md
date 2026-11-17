@@ -36,7 +36,7 @@ require no new formal proofs; describe their correctness evidence as testing.
 
 - [Resource tests](../../../../../../source/rust_verify_test/tests/resource/)
 - [Example test harness](../../../../../../source/rust_verify_test/tests/examples.rs)
-- [Memory semantics](../../../../model.md)
+- [Memory semantics](../../../../../model.md)
 - [Required project checks](../../../../../../AGENTS.md)
 
 ## Implemented boundary

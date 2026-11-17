@@ -78,7 +78,7 @@ prose only, so no verifier build or memory test results are claimed.
 
 ## Starting points
 
-- `docs/verus-meter/model.md`
+- `docs/model.md`
 - `source/rust_verify/src/resource/memory/pipeline.rs`
 - `source/vir/src/resource/memory/model.rs`
 - `source/vir/src/resource/memory/summary.rs`

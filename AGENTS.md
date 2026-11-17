@@ -20,7 +20,7 @@ when useful; keep raw logs and build output in ignored disposable locations.
 ## Project layout and conventions
 
 This is a Verus fork. Read `README.md`, `BUILD.md`, and
-`docs/verus-meter/model.md` for the memory contract semantics and supported scope.
+`docs/model.md` for the memory contract semantics and supported scope.
 The Cargo workspace is `source/`; run workspace commands there with the pinned
 toolchain in `rust-toolchain.toml`.
 

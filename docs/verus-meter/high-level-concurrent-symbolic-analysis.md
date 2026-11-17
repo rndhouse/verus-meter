@@ -50,7 +50,7 @@ The missing pieces include concurrent worker lifetimes, shared ownership and the
 connection between synchronization and memory. Existing sequential memory tests
 do not establish those properties.
 
-The guarantee remains the [source-level memory model](model.md). It counts
+The guarantee remains the [source-level memory model](../model.md). It counts
 modeled storage in bytes, not exact physical RAM use. OS thread stacks, allocator
 overhead and fragmentation do not automatically become covered by this extension.
 

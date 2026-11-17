@@ -76,7 +76,7 @@ contract. Describe runtime queries as tested tooling for evaluating that contrac
 do not claim the query implementation itself is formally verified.
 
 Follow [AGENTS.md](../../../../../AGENTS.md), the [build instructions](../../../../../BUILD.md),
-and the [memory model](../../../model.md). Commit coherent, validated implementation
+and the [memory model](../../../../model.md). Commit coherent, validated implementation
 steps locally; do not push or publish without authorization. Mark tasks complete
 only when their acceptance criteria hold. Keep raw logs disposable and preserve
 lasting investigation evidence in commit messages and explanations beside code.

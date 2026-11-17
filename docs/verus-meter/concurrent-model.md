@@ -2,7 +2,7 @@
 
 This is the implementation specification for the concurrent core, established by
 TODO 01. It describes required behavior, not currently available verifier support.
-The [memory model](model.md) remains authoritative for existing sequential behavior;
+The [memory model](../model.md) remains authoritative for existing sequential behavior;
 [the implementation index](todo/concurrent/README.md) tracks delivery. Concurrency
 must remain rejected until its coverage and bound obligations are implemented.
 

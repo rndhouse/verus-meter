@@ -94,4 +94,4 @@ Explore the [memory examples](examples/resource/memory/README.md):
 
 ## Docs
 
-- [Memory contracts](docs/verus-meter/model.md): how to write and understand the guarantees.
+- [Memory contracts](docs/model.md): how to write and understand the guarantees.
