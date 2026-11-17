@@ -310,6 +310,7 @@ fn worker_entry_checks_capture_coverage_and_native_cleanup() {
                 &evidence,
                 analysis.layouts,
                 &analysis.growth.environments,
+                &analysis.heap.shared,
             )
             .is_ok()
         );
@@ -322,6 +323,7 @@ fn worker_entry_checks_capture_coverage_and_native_cleanup() {
                 &evidence,
                 analysis.layouts,
                 &analysis.growth.environments,
+                &analysis.heap.shared,
             )
             .is_err()
         );
@@ -334,6 +336,7 @@ fn worker_entry_checks_capture_coverage_and_native_cleanup() {
                 &missing_projection,
                 analysis.layouts,
                 &analysis.growth.environments,
+                &analysis.heap.shared,
             )
             .is_err()
         );
@@ -356,6 +359,7 @@ fn worker_entry_checks_capture_coverage_and_native_cleanup() {
                 &evidence,
                 analysis.layouts,
                 &analysis.growth.environments,
+                &analysis.heap.shared,
             )
             .is_err()
         );
@@ -436,6 +440,7 @@ fn scalar_capture_observations_survive_parent_mutation_and_closure_copies() {
                 &evidence,
                 analysis.layouts,
                 &analysis.growth.environments,
+                &analysis.heap.shared,
             )
             .is_ok()
         );
@@ -447,6 +452,7 @@ fn scalar_capture_observations_survive_parent_mutation_and_closure_copies() {
                 &evidence,
                 analysis.layouts,
                 &analysis.growth.environments,
+                &analysis.heap.shared,
             )
             .is_err()
         );
@@ -776,6 +782,14 @@ fn shared_capture_and_completed_result_retain_one_canonical_payload() {
         analysis.release_value(value, &span(11));
         assert_eq!(analysis.storage.live(), 105);
         let mut entry = analysis.heap.workers.enter(id, &span(12)).unwrap();
+        assert!(!entry.shared.is_empty());
+        // An alternative body-analysis snapshot can release its imported
+        // handle without changing this entry or freeing caller-owned backing.
+        let mut alternative = entry.shared.clone();
+        assert!(alternative.release(identity.unwrap()).is_none());
+        assert!(alternative.is_empty());
+        assert!(!entry.shared.is_empty());
+        assert_eq!(analysis.storage.live(), 105);
         let returned = entry.take_capture_owner(&(copy, vec![])).unwrap();
         let mut frame = entry.storage;
         let environment = frame.owner.take().unwrap();

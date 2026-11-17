@@ -18,6 +18,9 @@ pub(in super::super) struct Entry {
     pub(super) captures: super::captures::Captures,
     /// A borrowed body return is followed by the actual FnOnce adapter cleanup.
     pub(super) invocation: concurrency::invocation::Invocation,
+    /// Only the actual captured strong handles, with backing retained in the
+    /// enclosing domain. Local final release is not global reclamation.
+    pub(in super::super) shared: super::super::shared::SharedRoots,
 }
 
 impl Entry {
@@ -49,6 +52,7 @@ impl Entry {
         evidence: &concurrency::Evidence,
         layouts: &Layouts,
         environments: &super::super::closures::observations::Environments,
+        shared: &super::super::shared::SharedRoots,
     ) -> Result<Self, VirErr> {
         let span = &definition.span;
         let TypX::AnonymousClosure(_, _, kind, id) = &*definition.typ else {
@@ -124,7 +128,8 @@ impl Entry {
         } else if layouts.owner(&storage.typ) || !fields.is_empty() {
             return Err(unsupported(span, "worker entry missing owned capture storage"));
         }
-        Ok(Self { definition, storage, captures, invocation })
+        let shared = shared.captured_view(storage.owner.as_ref(), span)?;
+        Ok(Self { definition, storage, captures, invocation, shared })
     }
 }
 

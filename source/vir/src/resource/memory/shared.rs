@@ -1,8 +1,10 @@
 //! Strong handles refer to one canonical allocation tree.
 //!
 //! Cloning an analysis snapshot is not an executable Arc clone. Moves keep the
-//! same root link; only a reviewed strong-clone event increments ownership. This
-//! registry belongs to the closed accounting domain, including its workers.
+//! same root link; only a reviewed strong-clone event increments ownership.
+//! Owned backing belongs to a closed domain including its workers. Body views
+//! count their captured handles while backing stays in the enclosing domain;
+//! their local final release cannot establish global reclamation.
 
 use super::{
     analysis::Analysis,
@@ -25,14 +27,28 @@ impl RootId {
 
 #[derive(Clone)]
 struct Root {
-    /// Live strong handles in this ownership state, not historical clone calls.
+    /// Live strong handles in this accounting domain, not historical clones.
+    /// An imported view counts only the handles transferred into that view.
     strong: u64,
-    /// Backing control storage, inline payload and separately owned descendants.
-    storage: Owner,
+    /// Backing belongs either to this closed domain or to its enclosing caller.
+    /// Releasing the last handle in an imported view cannot decide whether the
+    /// enclosing domain has another live alias or reclaim its allocation tree.
+    storage: Backing,
 }
 
-/// Single storage descriptor per shared root. Inline handles remain in ordinary
-/// value/aggregate storage; their owner nodes contain only a root link.
+#[derive(Clone)]
+enum Backing {
+    /// Control storage, inline payload and separately owned descendants, once.
+    Owned(Box<Owner>),
+    /// Initial handles obtained from executable capture ownership. Keep the
+    /// entry observation after the last local release for checked phase/call
+    /// composition; a zero local count is not a global final-release proof.
+    Imported { entry: u64 },
+}
+
+/// Shared roots and backing owned by this domain. Imported roots carry only
+/// handle observations. Inline handles remain in ordinary value/aggregate
+/// storage; their owner nodes contain only a root link.
 #[derive(Clone, Default)]
 pub(super) struct SharedRoots {
     // Keep root traversal deterministic and avoid consuming a randomized hash
@@ -42,12 +58,16 @@ pub(super) struct SharedRoots {
 
 impl SharedRoots {
     pub(super) fn is_empty(&self) -> bool {
-        self.roots.is_empty()
+        self.roots.values().all(|root| root.strong == 0)
     }
 
     fn insert(&mut self, storage: Owner) -> Owner {
         let id = RootId(super::accounting::Accounting::fresh_allocation());
-        assert!(self.roots.insert(id, Root { strong: 1, storage }).is_none());
+        assert!(
+            self.roots
+                .insert(id, Root { strong: 1, storage: Backing::Owned(Box::new(storage)) })
+                .is_none()
+        );
         Owner { shared: Some(id), ..Default::default() }
     }
 
@@ -55,6 +75,12 @@ impl SharedRoots {
         let root = self.roots.get_mut(&id).ok_or_else(|| {
             unsupported(span, "cloning a shared root without live ownership provenance")
         })?;
+        if root.strong == 0 {
+            return Err(unsupported(
+                span,
+                "cloning a shared root after its last local handle ended",
+            ));
+        }
         root.strong = root
             .strong
             .checked_add(1)
@@ -62,12 +88,56 @@ impl SharedRoots {
         Ok(Owner { shared: Some(id), ..Default::default() })
     }
 
-    /// Return the allocation tree exactly once, at the final strong destruction.
-    /// The ordinary heap release path then destroys its owned descendants.
+    /// Return an owned allocation tree exactly once at final destruction in
+    /// this closed domain. An imported root exports its local release instead;
+    /// the enclosing composition must establish global reclamation separately.
     pub(super) fn release(&mut self, id: RootId) -> Option<Owner> {
         let root = self.roots.get_mut(&id).expect("live strong handle retains its shared root");
         root.strong = root.strong.checked_sub(1).expect("positive strong ownership");
-        (root.strong == 0).then(|| self.roots.remove(&id).unwrap().storage)
+        if root.strong == 0 && matches!(root.storage, Backing::Owned(_)) {
+            let Backing::Owned(storage) = self.roots.remove(&id).unwrap().storage else {
+                unreachable!()
+            };
+            Some(*storage)
+        } else {
+            None
+        }
+    }
+
+    /// Derive a worker's entry references from its actual captured owner tree.
+    /// This lends no backing charge and executes no clone/destructor. References
+    /// inside an opaque runtime population require a checked population view.
+    pub(super) fn captured_view(&self, owner: Option<&Owner>, span: &Span) -> Result<Self, VirErr> {
+        let mut references = BTreeMap::<RootId, u64>::new();
+        let mut opaque = false;
+        if let Some(owner) = owner {
+            owner.visit(&mut |owner| {
+                opaque |= owner.elements.as_ref().is_some_and(|elements| elements.has_references);
+                if let Some(id) = owner.shared {
+                    let count = references.entry(id).or_default();
+                    // A finite compiler-owned tree has at most usize::MAX
+                    // nodes; symbolic populations must use their own binders.
+                    *count = count.checked_add(1).expect("finite captured reference count");
+                }
+            });
+        }
+        if opaque {
+            return Err(unsupported(
+                span,
+                "imported reference populations without checked occurrence descriptors",
+            ));
+        }
+        let mut roots = BTreeMap::new();
+        for (id, count) in references {
+            if self.roots.get(&id).is_none_or(|root| root.strong < count) {
+                return Err(unsupported(
+                    span,
+                    "worker captures outside their live shared-root domain",
+                ));
+            }
+            roots.insert(id, Root { strong: count, storage: Backing::Imported { entry: count } });
+        }
+        Ok(Self { roots })
     }
 
     /// A control-flow merge cannot silently discard a surviving root or adopt
@@ -78,7 +148,15 @@ impl SharedRoots {
             && self.roots.iter().all(|(id, root)| {
                 other.roots.get(id).is_some_and(|other| {
                     root.strong == other.strong
-                        && super::control::compatible(&root.storage, &other.storage)
+                        && match (&root.storage, &other.storage) {
+                            (Backing::Owned(a), Backing::Owned(b)) => {
+                                super::control::compatible(a, b)
+                            }
+                            (Backing::Imported { entry: a }, Backing::Imported { entry: b }) => {
+                                a == b
+                            }
+                            _ => false,
+                        }
                 })
             })
     }
@@ -246,6 +324,49 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::Arc;
+
+    #[test]
+    fn captured_views_do_not_reclaim_the_enclosing_domains_backing() {
+        let mut enclosing = SharedRoots::default();
+        let first = enclosing.insert(Owner { bytes: 64, ..Default::default() });
+        let id = first.shared.unwrap();
+        let second = enclosing.clone_strong(id, &span()).unwrap();
+        let captures = Owner {
+            children: [(OwnerSlot::Capture(0), first), (OwnerSlot::Capture(1), second)].into(),
+            ..Default::default()
+        };
+        let mut body = enclosing.captured_view(Some(&captures), &span()).unwrap();
+        assert_eq!(body.roots[&id].strong, 2);
+        assert!(matches!(body.roots[&id].storage, Backing::Imported { entry: 2 }));
+        body.clone_strong(id, &span()).unwrap();
+        assert_eq!(enclosing.roots[&id].strong, 2);
+        assert_eq!(body.clone().roots[&id].strong, 3);
+        for _ in 0..3 {
+            assert!(body.release(id).is_none());
+        }
+        assert!(body.is_empty());
+        assert!(matches!(body.roots[&id].storage, Backing::Imported { entry: 2 }));
+        assert!(body.clone_strong(id, &span()).is_err());
+        assert!(body.captured_view(Some(&captures), &span()).is_err());
+        assert!(enclosing.release(id).is_none());
+        assert_eq!(enclosing.release(id).unwrap().bytes, 64);
+        assert!(enclosing.is_empty());
+    }
+
+    #[test]
+    fn capture_import_cannot_turn_analysis_snapshots_into_extra_strong_handles() {
+        let mut enclosing = SharedRoots::default();
+        let handle = enclosing.insert(Owner { bytes: 64, ..Default::default() });
+        assert!(SharedRoots::default().captured_view(Some(&handle), &span()).is_err());
+        let copied_analysis = handle.clone();
+        let duplicated = Owner {
+            children: [(OwnerSlot::Capture(0), handle), (OwnerSlot::Capture(1), copied_analysis)]
+                .into(),
+            ..Default::default()
+        };
+        assert!(enclosing.captured_view(Some(&duplicated), &span()).is_err());
+        assert!(enclosing.captured_view(None, &span()).unwrap().is_empty());
+    }
 
     fn span() -> Span {
         Span {

@@ -34,6 +34,8 @@ struct Worker {
     environment: super::closures::observations::EnvironmentId,
     /// Exact body invocation and remaining-environment cleanup boundaries.
     invocation: super::concurrency::invocation::Invocation,
+    /// Imported entry references are requirements, not a sampled global count.
+    entry_shared: super::shared::SharedRoots,
     /// Source/body paths refer to fields of the retained environment charge.
     captures: captures::Captures,
     /// The completion tag is one distinct allocation, independent of the
@@ -91,6 +93,7 @@ impl Workers {
                 definition: entry.definition.clone(),
                 environment: entry.storage.value.environment.expect("checked worker inputs"),
                 invocation: entry.invocation,
+                entry_shared: entry.shared,
                 captures: entry.captures,
                 completion,
                 result: result.clone(),
@@ -124,6 +127,7 @@ impl Workers {
             captures: worker.captures.clone(),
             storage: captures,
             invocation: worker.invocation.clone(),
+            shared: worker.entry_shared.clone(),
         })
     }
 
@@ -187,6 +191,7 @@ impl Workers {
                         && a.definition.span.id == b.definition.span.id
                         && a.environment == b.environment
                         && a.invocation == b.invocation
+                        && a.entry_shared.compatible(&b.entry_shared)
                         && a.captures.compatible(&b.captures)
                         && a.completion == b.completion
                         && crate::ast_util::types_equal(&a.result, &b.result)
@@ -296,6 +301,7 @@ impl Analysis<'_> {
                 self.concurrency,
                 self.layouts,
                 &self.growth.environments,
+                &self.heap.shared,
             )?,
         )?;
         Ok(Some(Owner { worker: Some(id), ..Default::default() }))
