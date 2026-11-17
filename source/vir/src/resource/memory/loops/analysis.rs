@@ -20,6 +20,18 @@ impl Analysis<'_> {
         let nested = self.growth.loop_depth > 0;
         record.nested = nested;
         self.prepare_element_loop(&record)?;
+        for (name, owner) in &self.heap.owners {
+            owner.visit_paths(&mut vec![], &mut |path, node| {
+                if let (Some(elements), Some((typ, _))) = (&node.elements, &node.source) {
+                    if elements.precise && self.layouts.contains_references(typ) {
+                        record.reference_forests.insert(
+                            (name.clone(), path.clone()),
+                            (typ.clone(), elements.records.clone()),
+                        );
+                    }
+                }
+            });
+        }
         let mut forest_bounds = self.element_loop_bounds(&record);
         forest_bounds.extend(self.loop_charge_candidates(&mut record));
         let loop_scalars = self.stable_scalars.clone();

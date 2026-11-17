@@ -15,7 +15,8 @@ pub struct Record {
     /// Position relative to the containing owner.
     pub path: Seq<int>,
     /// Nonnegative memory-kind identity for storage; -1 denotes a shared link
-    /// and -2 a worker link. Link records have no separate byte charge.
+    /// and -2 a worker link; -3 stores a scalar observation. These records have
+    /// no separate byte charge.
     pub kind: int,
     /// Upper bound on model storage charged for this allocation.
     pub bytes: int,
@@ -27,11 +28,25 @@ pub struct Record {
     /// only its owner path. Typed queries live in the references module. Reuse
     /// the discriminator above to keep sequential allocation proofs narrow.
     pub reference_identity: Seq<int>,
+    /// Immutable worker data, opaque to allocation and collection proofs. Only
+    /// worker queries apply this specification function; ordinary storage does
+    /// not unfold recursive capture/result descriptions. A false argument selects
+    /// construction inputs; true selects the conditional result. These are proof
+    /// data, not live allocations or evidence of completion.
+    pub worker: spec_fn(bool) -> Seq<Record>,
 }
 
 /// A missing allocation has no storage or reservation.
 pub open spec fn empty_record(path: Seq<int>) -> Record {
-    Record { path, kind: 0, bytes: 0, capacity: 0, length: 0, reference_identity: Seq::empty() }
+    Record {
+        path,
+        kind: 0,
+        bytes: 0,
+        capacity: 0,
+        length: 0,
+        reference_identity: Seq::empty(),
+        worker: |result: bool| Seq::empty(),
+    }
 }
 
 /// Resource metadata uses nonnegative byte bounds and reservation minima.
@@ -254,7 +269,7 @@ pub open spec fn allocated(
     capacity: int,
     length: int,
 ) -> Record {
-    Record { path, kind, bytes, capacity, length, reference_identity: Seq::empty() }
+    Record { kind, bytes, capacity, length, ..empty_record(path) }
 }
 
 /// All allocations below an owner, excluding its own root descriptor.

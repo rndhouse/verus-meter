@@ -24,6 +24,38 @@ pub(super) fn empty(value: &Expr) -> bool {
     call(value, "empty").is_some()
 }
 
+/// Every reviewed descriptor constructor preserves its explicit ownership path.
+pub(super) fn record_path(value: &Expr) -> Option<&Expr> {
+    [
+        "allocated",
+        "shared_reference",
+        "worker_reference",
+        "worker_observation",
+        "scalar_observation",
+    ]
+    .iter()
+    .find_map(|name| call(value, name).map(|args| &args[0]))
+}
+
+/// Change only a reviewed constructor's ownership path. All identity and
+/// observation arguments remain shared, including nested worker snapshots.
+pub(super) fn record_at(value: &Expr, path: Expr) -> Option<Expr> {
+    record_path(value)?;
+    let ExprX::Call { target, args, post_args, body } = &value.x else { unreachable!() };
+    let mut args = args.as_ref().clone();
+    args[0] = path;
+    Some(SpannedTyped::new(
+        &value.span,
+        &value.typ,
+        ExprX::Call {
+            target: target.clone(),
+            args: Arc::new(args),
+            post_args: post_args.clone(),
+            body: body.clone(),
+        },
+    ))
+}
+
 /// Recover the ordered slots of a path built from finite sequence constructors.
 pub(in super::super) fn path(value: &Expr) -> Option<Vec<Expr>> {
     if empty(value) {
@@ -43,6 +75,11 @@ pub(super) fn make_path(span: &Span, values: &[Expr]) -> Expr {
 /// Recognize forest constructors that cannot contain an enclosing root record.
 pub(super) fn rootless(value: &Expr) -> bool {
     empty(value)
+        || call(value, "push").is_some_and(|args| {
+            rootless(&args[0])
+                && record_path(&args[1])
+                    .is_some_and(|value| path(value).is_some_and(|path| !path.is_empty()))
+        })
         || call(value, "runtime").is_some()
         || call(value, "descendants").is_some()
         || call(value, "repeat").is_some()
@@ -62,8 +99,13 @@ pub(super) fn known_root(value: &Expr) -> Option<Expr> {
         return Some(args[1].clone());
     }
     if let Some(args) = call(value, "push") {
-        if call(&args[1], "allocated").is_some_and(|record| empty(&record[0])) {
+        if record_path(&args[1]).is_some_and(empty) {
             return Some(args[1].clone());
+        }
+        if record_path(&args[1])
+            .is_some_and(|value| path(value).is_some_and(|path| !path.is_empty()))
+        {
+            return known_root(&args[0]);
         }
     }
     if let Some(args) = call(value, "add") {

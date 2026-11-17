@@ -629,9 +629,10 @@ impl Analysis<'_> {
         &mut self,
         span: &Span,
         elements: &mut Elements,
-        child: Owner,
+        mut child: Owner,
         length: Expr,
     ) -> Result<(), VirErr> {
+        self.retain_worker_in_forest(&mut child, span)?;
         self.merge_element_minima(span, elements, &child);
         let mut complete = child.inputs().is_empty();
         child.visit(&mut |node| {

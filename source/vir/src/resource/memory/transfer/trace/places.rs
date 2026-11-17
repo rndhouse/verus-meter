@@ -170,6 +170,9 @@ impl Trace<'_> {
         // type must govern this decision rather than the enclosing place type.
         if let PlaceX::Local(name) = &place.x {
             return Some(match self.state.values.get(name) {
+                Some(Value::Owner(value)) if matches!(&**typ, TypX::AnonymousClosure(..)) => {
+                    Value::Owner(value.clone())
+                }
                 Some(Value::Owner(_)) => Value::Unknown,
                 value => value.cloned().unwrap_or(Value::Unknown),
             });

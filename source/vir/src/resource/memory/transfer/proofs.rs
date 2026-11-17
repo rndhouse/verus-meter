@@ -4,10 +4,13 @@ use super::*;
 use std::sync::Arc;
 
 mod builders;
+mod prefixes;
 mod ranges;
 mod scope;
 
 use scope::ForestProofs;
+
+pub(super) use prefixes::prefix;
 
 #[cfg(test)]
 mod tests;
@@ -85,6 +88,12 @@ impl ForestProofs {
                 self.forest(span, right, proofs)?;
             }
             ExprX::Call { target: CallTarget::Fun(_, function, _, _, _), args, .. } => {
+                // Moving a worker record preserves opaque observations. Their
+                // validity belongs to the checked body and to result selection,
+                // not to the collection that transports the handle.
+                if expr::is_operation(function, "worker_observation") {
+                    return Ok(());
+                }
                 for arg in args.iter() {
                     self.forest(span, arg, proofs)?;
                 }
@@ -108,6 +117,7 @@ impl ForestProofs {
                         "generate_children" => {
                             let args = builders::generated(span, args, proofs, self)?;
                             self.lemma(span, "generate_children_facts", args.clone(), proofs);
+                            self.lemma(span, "block_bounds_generate", args.clone(), proofs);
                             self.lemma(span, "generate_children_views", args, proofs);
                         }
                         "tile_children" => {
@@ -118,7 +128,7 @@ impl ForestProofs {
                         "repeat" => self.lemma(span, "repeat_facts", args.as_ref().clone(), proofs),
                         "take_children" => {
                             ranges::retention(span, &args[0], &args[1], proofs, self);
-                            self.lemma(span, "take_children_facts", args.as_ref().clone(), proofs)
+                            self.lemma(span, "take_children_facts", args.as_ref().clone(), proofs);
                         }
                         "reverse_children" => {
                             ranges::retention(span, &args[0], &args[1], proofs, self);
@@ -255,6 +265,9 @@ impl ForestProofs {
                         return Ok(());
                     };
                     match name.as_str() {
+                        "empty" => {
+                            self.lemma(span, "cost_empty", vec![expr::integer(span, 0)], proofs)
+                        }
                         "add" => {
                             self.lemma(span, "runtime_add", args.as_ref().clone(), proofs);
                             self.lemma(span, "descendants_add", args.as_ref().clone(), proofs);

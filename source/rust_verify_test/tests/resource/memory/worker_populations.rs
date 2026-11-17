@@ -6,6 +6,160 @@ use super::support::rejects;
 const GLOBAL: &str = "checked worker effects still require global lifetime and interference proofs";
 
 #[test]
+fn retained_workers_keep_each_construction_until_collection() {
+    rejects(
+        "retained_worker_inputs",
+        r#"
+        fn f(n: u16) resources peak(memory) <= n * 65536 + n * 128 + 512 {
+            let mut handles = Vec::with_capacity(n as usize);
+            let mut i = 0u16;
+            while i < n invariant i <= n, handles.len() == i, decreases n - i, {
+                let worker = std::thread::spawn(move || Vec::<u8>::with_capacity(i as usize));
+                handles.push(worker);
+                i += 1;
+            }
+            while handles.len() > 0 decreases handles.len(), {
+                let worker = handles.pop().unwrap();
+                let result = worker.join().unwrap();
+                drop(result);
+            }
+        }
+        "#,
+        GLOBAL,
+    );
+}
+
+#[test]
+fn partial_collection_preserves_the_remaining_worker_observations() {
+    rejects(
+        "partial_worker_collection",
+        r#"
+        fn f(n: u16, keep: u16)
+            requires keep <= n,
+            resources peak(memory) <= n * 65536 + n * 128 + 512
+        {
+            let mut handles = Vec::with_capacity(n as usize);
+            let mut i = 0u16;
+            while i < n invariant i <= n, handles.len() == i, decreases n - i, {
+                let worker = std::thread::spawn(move || Vec::<u8>::with_capacity(i as usize));
+                handles.push(worker);
+                i += 1;
+            }
+            while handles.len() > keep as usize
+                invariant handles.len() <= n,
+                decreases handles.len(),
+            {
+                let worker = handles.pop().unwrap();
+                let moved = worker;
+                let result = moved.join().unwrap();
+                drop(result);
+            }
+            while handles.len() > 0 decreases handles.len(), {
+                let worker = handles.pop().unwrap();
+                let result = worker.join().unwrap();
+                drop(result);
+            }
+        }
+        "#,
+        GLOBAL,
+    );
+}
+
+#[test]
+fn retained_workers_still_check_executable_allocation_sizes() {
+    let error = crate::verify_one_file(
+        "retained_worker_large_result",
+        r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f(n: u16) resources peak(memory) <= n * 65536 + n * 128 + 512 {
+            let mut handles = Vec::with_capacity(n as usize);
+            let mut i = 0u16;
+            while i < n invariant i <= n, handles.len() == i, decreases n - i, {
+                let worker = std::thread::spawn(move || Vec::<u8>::with_capacity(200_000));
+                handles.push(worker);
+                i += 1;
+            }
+            while handles.len() > 0 decreases handles.len(), {
+                let worker = handles.pop().unwrap();
+                let result = worker.join().unwrap();
+                drop(result);
+            }
+        }
+        }
+        "#
+        .to_string(),
+        &[],
+    )
+    .unwrap_err();
+    assert!(error.errors.iter().any(|error| error.message.contains("memory budget exceeded")));
+    assert!(error.errors.iter().any(|error| error.message.contains(GLOBAL)));
+    assert!(
+        error.errors.iter().all(|error| error.message.contains("memory budget exceeded")
+            || error.message.contains(GLOBAL))
+    );
+}
+
+#[test]
+fn discarding_a_collection_cannot_retire_its_workers() {
+    let source = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f(n: u16) resources peak(memory) <= n * 128 + 512 {
+            let mut handles = Vec::with_capacity(n as usize);
+            let mut i = 0u16;
+            while i < n invariant i <= n, handles.len() == i, decreases n - i, {
+                let worker = std::thread::spawn(move || 7u64);
+                handles.push(worker);
+                i += 1;
+            }
+            CLEANUP
+        }
+        }
+        "#;
+    // Each form must observe the final collection, not its empty declaration.
+    for (name, cleanup) in [
+        ("discard_retained_workers", "drop(handles);"),
+        ("implicitly_discard_retained_workers", ""),
+        ("return_discards_retained_workers", "return;"),
+    ] {
+        let error =
+            crate::verify_one_file(name, source.replace("CLEANUP", cleanup), &[]).unwrap_err();
+        crate::common::assert_vir_error_msgs(
+            error,
+            &["cannot discard outstanding worker handles", GLOBAL],
+        );
+    }
+}
+
+#[test]
+fn return_operand_collects_workers_before_lexical_cleanup() {
+    rejects(
+        "return_collects_retained_workers",
+        r#"
+        fn f(n: u16) -> u64 resources peak(memory) <= n * 65536 + n * 128 + 512 {
+            let mut handles = Vec::with_capacity(n as usize);
+            let mut i = 0u16;
+            while i < n invariant i <= n, handles.len() == i, decreases n - i, {
+                let worker = std::thread::spawn(move || Vec::<u8>::with_capacity(i as usize));
+                handles.push(worker);
+                i += 1;
+            }
+            return {
+                while handles.len() > 0 decreases handles.len(), {
+                    let worker = handles.pop().unwrap();
+                    let result = worker.join().unwrap();
+                    drop(result);
+                }
+                7u64
+            };
+        }
+        "#,
+        GLOBAL,
+    );
+}
+
+#[test]
 fn repeated_shared_results_preserve_the_coordinators_alias() {
     rejects(
         "repeated_worker_aliases",

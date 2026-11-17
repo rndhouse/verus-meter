@@ -55,9 +55,11 @@ impl Trace<'_> {
                     minima: [(vec![], Floor { capacity, element })].into(),
                 }))
             }
-            // Closure environments require the capture/worker summary interface.
-            // They cannot be exported as an ordinary unique-owner constructor.
-            Operation::Closure { .. } => None,
+            Operation::Closure { captures } => self.closure(value, captures),
+            Operation::WorkerPublish { source, identity, inputs, result } => {
+                self.publish_worker(value, source, identity, inputs, result)
+            }
+            Operation::WorkerJoin { source } => self.join_worker(value, source),
             Operation::Box { payload, bytes } => {
                 let child = self.value(&payload)?;
                 if self.loop_tokens.is_some() {

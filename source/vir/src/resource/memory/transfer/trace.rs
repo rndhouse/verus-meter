@@ -20,6 +20,7 @@ mod operations;
 mod patterns;
 mod places;
 mod provenance;
+mod workers;
 
 #[cfg(test)]
 mod tests;

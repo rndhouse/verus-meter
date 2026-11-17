@@ -30,6 +30,17 @@ pub(in super::super) fn integer(span: &Span, n: i128) -> Expr {
     SpannedTyped::new(span, &int_typ(), ExprX::Const(const_int_from_i128(n)))
 }
 
+/// Freeze a scalar as erased observation data, without an allocation or strong
+/// link. Boolean captures use 0/1; integers retain their mathematical value.
+pub(in super::super) fn scalar_observation(span: &Span, path: Expr, value: Expr) -> Expr {
+    let value = if matches!(&*value.typ, TypX::Bool) {
+        super::super::growth::select(span, value, integer(span, 1), integer(span, 0))
+    } else {
+        SpannedTyped::new(span, &int_typ(), value.x.clone())
+    };
+    operation(span, "scalar_observation", vec![path, value], record_type())
+}
+
 /// Canonical identity shared by generated calls and scoped definition reveals.
 pub(in super::super) fn function(name: &str) -> Fun {
     super::algebra::function(name)
@@ -70,6 +81,23 @@ pub(in super::super) fn operation(span: &Span, name: &str, args: Vec<Expr>, resu
 
 pub(in super::super) fn lemma(span: &Span, name: &str, args: Vec<Expr>) -> Stmt {
     Spanned::new(span.clone(), StmtX::Expr(operation(span, name, args, unit_typ())))
+}
+
+/// A generated metadata obligation with a domain-specific diagnostic. This
+/// creates an assertion, never an assumption or an executable storage effect.
+pub(in super::super) fn check(span: &Span, condition: Expr, message: &str) -> Stmt {
+    Spanned::new(
+        span.clone(),
+        StmtX::Expr(SpannedTyped::new(
+            span,
+            &unit_typ(),
+            ExprX::AssertAssume {
+                is_assume: false,
+                expr: condition,
+                msg: Some(crate::messages::error(span, message)),
+            },
+        )),
+    )
 }
 
 pub(in super::super) fn empty(span: &Span, element: Typ) -> Expr {

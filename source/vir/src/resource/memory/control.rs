@@ -189,33 +189,44 @@ impl Analysis<'_> {
 
     /// A scope cleans only edges created inside it. Outer pending edges already
     /// passed through their own scopes and must not be dropped a second time.
-    pub(super) fn cleanup_scope(&mut self, locals: &[(Span, VarIdent)], first_exit: usize) {
-        fn cleanup(analysis: &mut Analysis<'_>, locals: &[(Span, VarIdent)]) {
+    pub(super) fn cleanup_scope(
+        &mut self,
+        scope: &Span,
+        locals: &[(Span, VarIdent)],
+        first_exit: usize,
+    ) {
+        fn cleanup(analysis: &mut Analysis<'_>, site: &Span, locals: &[(Span, VarIdent)]) {
             for (span, name) in locals.iter().rev() {
                 // Lexical destruction is mandated by the exit; transfer guards
                 // restrict source operations, not cleanup of an ending scope.
                 if let Some(owner) = analysis.heap.owners.remove(name) {
-                    analysis.release_owner(owner, span);
+                    analysis.release_owner_after(owner, site);
                 }
                 if let Some(value) = analysis.slots.remove(name) {
                     analysis.release_value(value, span);
                 }
             }
         }
-        self.cleanup_edges(first_exit, |analysis| cleanup(analysis, locals));
+        self.cleanup_edges(first_exit, |analysis, exit| {
+            cleanup(analysis, exit.unwrap_or(scope), locals)
+        });
     }
 
     /// Apply mandated cleanup independently to fallthrough and every new exit.
     /// Existing outer edges have already passed their own scopes.
-    pub(super) fn cleanup_edges(&mut self, first_exit: usize, mut cleanup: impl FnMut(&mut Self)) {
-        cleanup(self);
+    pub(super) fn cleanup_edges(
+        &mut self,
+        first_exit: usize,
+        mut cleanup: impl FnMut(&mut Self, Option<&Span>),
+    ) {
+        cleanup(self, None);
         let normal = self.branch_state();
         let produced = self.produced.take();
         let owner = self.result_owner.take();
         let mut edges = self.flow.exits.split_off(first_exit);
         for edge in &mut edges {
             self.restore_branch(&edge.state);
-            cleanup(self);
+            cleanup(self, Some(&edge.span));
             edge.state = self.branch_state();
         }
         self.flow.exits.extend(edges);
@@ -340,6 +351,14 @@ pub(super) fn compatible(a: &Owner, b: &Owner) -> bool {
         }
     }
     a.joined == b.joined
+        && match (&a.worker_occurrence, &b.worker_occurrence) {
+            (None, None) => true,
+            (Some(a), Some(b)) => {
+                a.template == b.template
+                    && super::transfer::simplify::inspect::same_expression(&a.record, &b.record)
+            }
+            _ => false,
+        }
         && a.worker == b.worker
         && a.closure == b.closure
         && a.shared == b.shared

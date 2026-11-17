@@ -66,6 +66,59 @@ fn shared_forests_do_not_repeat_allocation_proofs() {
 }
 
 #[test]
+fn worker_selection_preserves_observations_without_charging_future_storage() {
+    let span = span();
+    let inputs = expr::push(
+        &span,
+        expr::empty(&span, expr::record_type()),
+        expr::operation(
+            &span,
+            "scalar_observation",
+            vec![expr::path(&span, [-2]), expr::integer(&span, 37)],
+            expr::record_type(),
+        ),
+    );
+    let result = memory(&span);
+    let worker = |path| {
+        expr::operation(
+            &span,
+            "worker_observation",
+            vec![path, expr::path(&span, [11, 7]), inputs.clone(), result.clone()],
+            expr::record_type(),
+        )
+    };
+    let records =
+        expr::push(&span, expr::empty(&span, expr::record_type()), worker(expr::path(&span, [4])));
+    let selected =
+        simplify::simplify(&expr::subtree(&span, records.clone(), expr::path(&span, [4])));
+    let root = simplify::simplify(&expr::lookup(&span, selected.clone(), expr::path(&span, [])));
+    assert!(simplify::inspect::same_expression(&root, &worker(expr::path(&span, []))));
+    for (projection, expected) in [("worker_inputs", inputs), ("worker_result", result)] {
+        let value = simplify::simplify(&expr::operation(
+            &span,
+            projection,
+            vec![root.clone()],
+            expr::memory_type(),
+        ));
+        assert!(simplify::inspect::same_expression(&value, &expected));
+    }
+    assert_eq!(
+        crate::resource::memory::contracts::constant(&simplify::simplify(&expr::cost(
+            &span,
+            selected,
+            expr::integer(&span, 0)
+        ))),
+        Some(0)
+    );
+    let remaining =
+        simplify::simplify(&expr::without(&span, records.clone(), expr::path(&span, [4])));
+    assert!(simplify::inspect::call(&remaining, "empty").is_some());
+    let untouched =
+        simplify::simplify(&expr::without(&span, records.clone(), expr::path(&span, [5])));
+    assert!(simplify::inspect::same_expression(&untouched, &records));
+}
+
+#[test]
 fn branch_facts_do_not_escape_to_siblings_or_following_operations() {
     let span = span();
     let shared = memory(&span);

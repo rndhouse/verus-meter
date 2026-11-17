@@ -112,6 +112,15 @@ pub(in super::super) enum Operation {
     Box { payload: Expr, bytes: u64 },
     /// Capture transport happens at construction; it does not execute the body.
     Closure { captures: Vec<(super::super::concurrency::CaptureMode, Place)> },
+    /// Publish a checked body with a snapshot of its concrete capture values.
+    WorkerPublish {
+        source: Expr,
+        identity: Expr,
+        inputs: Vec<(Typ, OwnerSlot)>,
+        result: super::Template,
+    },
+    /// Collect exactly the runtime handle consumed by the source operation.
+    WorkerJoin { source: Expr },
     /// Initialize checked child slots. The tag distinguishes optional payloads.
     Aggregate { fields: Vec<(Expr, Option<OwnerSlot>)>, tag: u64 },
     /// Append one value, retaining its complete forest beneath the next index.
@@ -185,6 +194,9 @@ pub(in super::super) enum Kind {
 
 #[derive(Default)]
 pub(in super::super) struct Checked {
+    /// Retained workers require a complete occurrence transformation even when
+    /// the enclosing function returns no owned value.
+    pub(in super::super) retained_workers: bool,
     /// Exit destinations accepted by lexical lifetime accounting.
     pub(in super::super) exits: HashMap<u64, crate::resource::memory::control::Target>,
     /// Shared loop structure and boundaries, published after body accounting.

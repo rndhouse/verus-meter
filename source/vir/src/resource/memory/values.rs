@@ -298,7 +298,7 @@ impl Analysis<'_> {
             }
             let locals =
                 slots.iter().map(|(name, _)| (arm.span.clone(), name.clone())).collect::<Vec<_>>();
-            self.cleanup_scope(&locals, arm_exits);
+            self.cleanup_scope(&arm.x.body.span, &locals, arm_exits);
             if self.flow.reachable {
                 if let Some(joined) = &joined {
                     self.join_branch(&expr.span, joined)?;

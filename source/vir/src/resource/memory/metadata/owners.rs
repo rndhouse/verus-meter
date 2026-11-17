@@ -33,7 +33,9 @@ impl Analysis<'_> {
             .map(|id| self.growth.vectors[id].capacity.clone())
             .or_else(|| owner.capacity.clone())
             .unwrap_or_else(|| expr::integer(span, 0));
-        let record = if let Some(root) = owner.shared {
+        let record = if let Some(occurrence) = &owner.worker_occurrence {
+            occurrence.record.clone()
+        } else if let Some(root) = owner.shared {
             expr::operation(
                 span,
                 "shared_reference",
@@ -54,7 +56,7 @@ impl Analysis<'_> {
                 vec![
                     expr::path(span, []),
                     expr::integer(span, 0),
-                    bytes,
+                    bytes.clone(),
                     capacity,
                     self.owner_length(span, owner),
                 ],
@@ -69,6 +71,27 @@ impl Analysis<'_> {
             "cost_push",
             vec![empty.clone(), record.clone(), expr::integer(span, 0)],
         ));
+        if owner.worker_occurrence.is_some() {
+            let tag = expr::operation(
+                span,
+                "allocated",
+                vec![
+                    expr::path(span, [-1]),
+                    expr::integer(span, 0),
+                    bytes,
+                    expr::integer(span, 0),
+                    expr::integer(span, 0),
+                ],
+                expr::record_type(),
+            );
+            proofs.push(expr::lemma(
+                span,
+                "cost_push",
+                vec![memory.clone(), tag.clone(), expr::integer(span, 0)],
+            ));
+            proofs.push(expr::lemma(span, "well_formed_push", vec![memory.clone(), tag.clone()]));
+            memory = expr::push(span, memory, tag);
+        }
         let mut parts = Vec::new();
         for (slot, child) in &owner.children {
             if matches!(slot, OwnerSlot::Element(_)) {
@@ -229,9 +252,10 @@ impl Analysis<'_> {
         view: super::View,
         zero_charge: bool,
     ) -> Result<Owner, VirErr> {
-        if matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _))
-            || self.layouts.join_handle(typ).is_some()
-        {
+        if self.layouts.join_handle(typ).is_some() {
+            return self.worker_from_metadata(span, typ, memory, view, zero_charge);
+        }
+        if matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _)) {
             return Err(super::super::model::unsupported(
                 span,
                 "shared or worker references without a checked population descriptor",

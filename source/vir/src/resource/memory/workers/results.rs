@@ -187,6 +187,7 @@ impl Analysis<'_> {
             self.initialize_expr(&arm.x.body)?;
         }
         self.cleanup_scope(
+            &arm.x.body.span,
             &bindings.into_iter().map(|(name, _)| (arm.span.clone(), name)).collect::<Vec<_>>(),
             exits,
         );
@@ -218,6 +219,10 @@ impl Analysis<'_> {
             unsupported(&expr.span, "Result extraction without checked outcome ownership")
         })?;
         self.checked_result(&owner, &expr.span)?;
+        self.transitions.operation(
+            &expr.span,
+            super::super::transfer::checked::Operation::Unwrap { source: source.clone() },
+        );
         let result = self.fresh_value(&expr.span, &expr.typ)?;
         self.result_owner = owner.children.remove(&OwnerSlot::Contents);
         owner.joined = None;

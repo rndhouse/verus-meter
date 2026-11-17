@@ -314,6 +314,25 @@ pub open spec fn shift_children(memory: Seq<Record>, base: int) -> Seq<Record>
     }
 }
 
+/// Moving a complete child to another runtime slot preserves its full contents.
+pub proof fn shift_children_prefix(child: Seq<Record>, index: int, base: int)
+    requires
+        index >= 0,
+    ensures
+        shift_children(prefix(child, seq![index]), base) == prefix(child, seq![index + base]),
+    decreases child.len(),
+{
+    reveal_with_fuel(shift_children, 2);
+    reveal_with_fuel(prefix, 2);
+    if child.len() > 0 {
+        shift_children_prefix(child.drop_last(), index, base);
+        let before = prefix(child.drop_last(), seq![index]);
+        let value = Record { path: seq![index] + child.last().path, ..child.last() };
+        assert(before.push(value).drop_last() =~= before);
+        assert(value.path.update(0, index + base) =~= seq![index + base] + child.last().path);
+    }
+}
+
 /// Shifts preserve charges exactly, independently of child layout.
 pub proof fn shift_children_facts(memory: Seq<Record>, base: int)
     requires
@@ -404,6 +423,27 @@ pub open spec fn take_children(memory: Seq<Record>, length: int) -> Seq<Record>
         } else {
             before
         }
+    }
+}
+
+/// Removing the last retained child advances a consuming loop by one step.
+/// Record contents, including identities and observations, are never rebuilt.
+pub proof fn take_children_pop(memory: Seq<Record>, length: int)
+    ensures
+        without(take_children(memory, length), seq![length - 1]) == take_children(
+            memory,
+            length - 1,
+        ),
+    decreases memory.len(),
+{
+    reveal_with_fuel(take_children, 2);
+    reveal_with_fuel(without, 2);
+    if memory.len() > 0 {
+        take_children_pop(memory.drop_last(), length);
+        let value = memory.last();
+        slot_prefix(length - 1, value.path);
+        let before = take_children(memory.drop_last(), length);
+        assert(before.push(value).drop_last() =~= before);
     }
 }
 

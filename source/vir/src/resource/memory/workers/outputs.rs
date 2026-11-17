@@ -56,7 +56,7 @@ impl Analysis<'_> {
     /// Instantiate the same parameter-relative transformation used by ordinary
     /// helpers. Entry owners and their charge state are immutable observations;
     /// no body-local proof variable is allowed to escape through this interface.
-    fn worker_result_memory(
+    pub(super) fn worker_result_memory(
         &mut self,
         execution: &Execution,
         span: &Span,

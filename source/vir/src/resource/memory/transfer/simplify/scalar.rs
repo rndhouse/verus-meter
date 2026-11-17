@@ -41,6 +41,13 @@ pub(super) fn arithmetic(value: &Expr) -> Option<Expr> {
 pub(super) fn record_field(value: &Expr) -> Option<Expr> {
     let span = &value.span;
     if let ExprX::UnaryOpr(UnaryOpr::Field(field), record) = &value.x {
+        if ["shared_reference", "worker_reference", "worker_observation", "scalar_observation"]
+            .iter()
+            .any(|name| call(record, name).is_some())
+            && matches!(field.field.as_str(), "bytes" | "capacity" | "length")
+        {
+            return Some(expr::integer(span, 0));
+        }
         if let Some(args) = call(record, "allocated") {
             let index = match field.field.as_str() {
                 "kind" => 1,
@@ -83,6 +90,12 @@ pub(super) fn cost(value: &Expr) -> Option<Expr> {
             )));
         }
         if let Some(parts) = call(memory, "push") {
+            if ["shared_reference", "worker_reference", "worker_observation", "scalar_observation"]
+                .iter()
+                .any(|name| call(&parts[1], name).is_some())
+            {
+                return Some(simplify(&cost(parts[0].clone())));
+            }
             if let Some(record) = call(&parts[1], "allocated") {
                 let amount = choice(
                     span,

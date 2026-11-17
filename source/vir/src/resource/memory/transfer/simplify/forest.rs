@@ -88,6 +88,37 @@ pub(super) fn branch_projection(value: &Expr) -> Option<Expr> {
 /// Normalize root lookup, composition, descendants, and replacement.
 pub(super) fn ownership(value: &Expr) -> Option<Expr> {
     let span = &value.span;
+    // Filtering a known root/fixed slot must not drag its capacity arithmetic
+    // into an invariant about runtime children. Payload observations are opaque.
+    for (filter, keep_runtime) in [("runtime", true), ("nonruntime", false)] {
+        if let Some(args) = call(value, filter) {
+            if let Some(parts) = call(&args[0], "push") {
+                if let Some(path) = super::inspect::record_path(&parts[1]).and_then(path) {
+                    let runtime = if path.is_empty() {
+                        Some(false)
+                    } else {
+                        match &path[0].x {
+                            ExprX::Const(Constant::Int(value)) => Some(*value >= 0.into()),
+                            _ => None,
+                        }
+                    };
+                    if let Some(runtime) = runtime {
+                        let before = expr::operation(
+                            span,
+                            filter,
+                            vec![parts[0].clone()],
+                            expr::memory_type(),
+                        );
+                        return Some(simplify(&if runtime == keep_runtime {
+                            expr::push(span, before, parts[1].clone())
+                        } else {
+                            before
+                        }));
+                    }
+                }
+            }
+        }
+    }
     if let Some(args) = call(value, "lookup") {
         if empty(&args[1]) {
             if let Some(parts) = call(&args[0], "add") {
@@ -446,13 +477,39 @@ pub(super) fn select_path(value: &Expr) -> Option<Expr> {
             )));
         }
         if let Some(parts) = call(memory, "push") {
-            if call(&parts[1], "allocated").is_some_and(|record| empty(&record[0])) {
+            if let Some(record_path) = super::inspect::record_path(&parts[1]).and_then(path)
+                // Preserve allocation subtrees as algebraic selections. Expanding
+                // their symbolic slots into per-record branches makes ordinary
+                // nested collection proofs grow with the whole forest.
+                && (record_path.is_empty() || call(&parts[1], "allocated").is_none())
+            {
                 let prior = apply(parts[0].clone());
-                return Some(simplify(&if cutting {
-                    expr::push(span, prior, parts[1].clone())
+                let matches = if selected_path.len() > record_path.len() {
+                    crate::ast_util::mk_bool(span, false)
                 } else {
-                    prior
-                }));
+                    crate::ast_util::conjoin(
+                        span,
+                        &selected_path
+                            .iter()
+                            .zip(&record_path)
+                            .map(|(selected, actual)| {
+                                crate::ast_util::mk_eq(span, selected, actual)
+                            })
+                            .collect(),
+                    )
+                };
+                let (yes, no) = if cutting {
+                    (prior.clone(), expr::push(span, prior, parts[1].clone()))
+                } else if selected_path.len() <= record_path.len() {
+                    let record = super::inspect::record_at(
+                        &parts[1],
+                        make_path(span, &record_path[selected_path.len()..]),
+                    )?;
+                    (expr::push(span, prior.clone(), record), prior)
+                } else {
+                    (prior.clone(), prior)
+                };
+                return Some(simplify(&choice(span, matches, yes, no)));
             }
         }
         if let Some(parts) = call(memory, "prefix") {

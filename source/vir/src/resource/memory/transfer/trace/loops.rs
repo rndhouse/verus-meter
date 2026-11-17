@@ -8,6 +8,7 @@ use crate::resource::memory::loops::Loop;
 mod composition;
 mod guards;
 mod indexed;
+mod prefixes;
 mod progress;
 
 /// One iteration's disjoint roles and whole-child transfer edges. Applying this
@@ -138,21 +139,9 @@ impl Trace<'_> {
         let mut blocks = Vec::new();
         for interval in programs {
             let mut phase = Vec::new();
-            for program in interval {
-                let effects = composition::compose(program.effects);
-                let effects =
-                    composition::blocks(span, effects.clone(), &tokens, &binder, self.layouts)
-                        .filter(|effects| transfer_edges(effects).is_some())
-                        .or_else(|| {
-                            composition::generators(
-                                span,
-                                effects,
-                                &tokens,
-                                &binder,
-                                self.layouts,
-                                &self.loop_inputs,
-                            )
-                        })?;
+            for mut program in interval {
+                program.effects =
+                    self.collection_blocks(span, program.effects, &tokens, &binder)?;
                 for (checked_length, reads) in
                     [(left_progress, &progress.left_reads), (right_progress, &bound_effects)]
                 {
@@ -162,17 +151,18 @@ impl Trace<'_> {
                     if !checked_length
                         && reads.iter().any(|effect| {
                             !matches!(effect, Effect::Read(name)
-                            if effects.iter().all(|effect| effect.root() != name))
+                            if program.effects.iter().all(|effect| effect.root() != name))
                         })
                     {
                         return None;
                     }
                 }
-                phase.push((effects, program.count, program.start, program.condition));
+                phase.push(program);
             }
             blocks.push(phase);
         }
         self.record_prefix_lengths(record, &persistent, &tokens, &binder)?;
+        self.record_prefix_forests(record, &persistent, &tokens, &binder, &before)?;
         // Frame every persistent role left unchanged by every selected program,
         // including empty selections after conditional helper effects close.
         // Sources of transfers count as mutations as well as their destinations.
@@ -180,10 +170,10 @@ impl Trace<'_> {
             if blocks
                 .iter()
                 .flatten()
-                .filter(|(_, _, _, condition)| {
-                    !matches!(condition.x, ExprX::Const(Constant::Bool(false)))
+                .filter(|program| {
+                    !matches!(program.condition.x, ExprX::Const(Constant::Bool(false)))
                 })
-                .flat_map(|(effects, _, _, _)| effects)
+                .flat_map(|program| &program.effects)
                 .all(|effect| !touches(effect, role))
             {
                 if let Some(transfer) = record.transfer(role, role) {
@@ -203,41 +193,7 @@ impl Trace<'_> {
                 Some((region.location.clone(), memory))
             })
             .collect::<Option<BTreeMap<_, _>>>()?;
-        for phase in blocks {
-            let entry = self.state.clone();
-            let entry_original = original.clone();
-            let mut joined = entry.clone();
-            let mut joined_original = entry_original.clone();
-            let mut completed = Vec::new();
-            for (effects, count, interval_start, condition) in phase {
-                self.state = entry.clone();
-                let mut selected_original = entry_original.clone();
-                let first_effect = self.effects.len();
-                self.apply_program(record, effects, count, interval_start, &mut selected_original)?;
-                let effects = self.effects.split_off(first_effect);
-                completed.extend(effects.into_iter().map(|effect| {
-                    if matches!(condition.x, ExprX::Const(Constant::Bool(true))) {
-                        effect
-                    } else {
-                        Effect::Guarded {
-                            condition: condition.clone(),
-                            selected: true,
-                            effect: Box::new(effect),
-                        }
-                    }
-                }));
-                joined = Self::join_state(span, condition.clone(), self.state.clone(), joined)?;
-                for (role, memory) in selected_original {
-                    joined_original.insert(
-                        role.clone(),
-                        choice(span, condition.clone(), memory, joined_original[&role].clone()),
-                    );
-                }
-            }
-            self.state = joined;
-            original = joined_original;
-            self.effects.extend(completed);
-        }
+        self.apply_phases(record, blocks, &mut original)?;
         // Intermediate identities are first-iteration peak witnesses, just as
         // for unconditional loops. Their total original storage cannot increase
         // on later visits. Loop exits instead retain the complete interval map.
@@ -277,6 +233,86 @@ impl Trace<'_> {
         // count; it cannot repeat a count that depends on another changing role.
         self.effects.extend(progress.reads);
         Some(Value::Unit)
+    }
+
+    /// Use one planner for loop exits and induction prefixes. In particular,
+    /// a direct block plan must have valid transfer edges before it can replace
+    /// the more general generator representation.
+    fn collection_blocks(
+        &self,
+        span: &Span,
+        effects: Vec<Effect>,
+        tokens: &HashSet<VarIdent>,
+        binder: &VarIdent,
+    ) -> Option<Vec<Effect>> {
+        let effects = composition::compose(effects);
+        composition::blocks(span, effects.clone(), tokens, binder, self.layouts)
+            .filter(|effects| transfer_edges(effects).is_some())
+            .or_else(|| {
+                composition::generators(
+                    span,
+                    effects,
+                    tokens,
+                    binder,
+                    self.layouts,
+                    &self.loop_inputs,
+                )
+            })
+    }
+
+    /// Apply selected intervals identically at loop exits and arbitrary loop
+    /// prefixes. Preserve each branch's physical storage, input identities and
+    /// exported effects under the same condition.
+    fn apply_phases(
+        &mut self,
+        record: &Loop,
+        phases: Vec<Vec<guards::Program>>,
+        original: &mut BTreeMap<crate::resource::memory::paths::LocalPath, Expr>,
+    ) -> Option<()> {
+        let span = &record.span;
+        for phase in phases {
+            let entry = self.state.clone();
+            let entry_original = original.clone();
+            let mut joined = entry.clone();
+            let mut joined_original = entry_original.clone();
+            let mut completed = Vec::new();
+            for program in phase {
+                self.state = entry.clone();
+                let mut selected_original = entry_original.clone();
+                let first_effect = self.effects.len();
+                self.apply_program(
+                    record,
+                    program.effects,
+                    program.count,
+                    program.start,
+                    &mut selected_original,
+                )?;
+                let condition = program.condition;
+                let effects = self.effects.split_off(first_effect);
+                completed.extend(effects.into_iter().map(|effect| {
+                    if matches!(condition.x, ExprX::Const(Constant::Bool(true))) {
+                        effect
+                    } else {
+                        Effect::Guarded {
+                            condition: condition.clone(),
+                            selected: true,
+                            effect: Box::new(effect),
+                        }
+                    }
+                }));
+                joined = Self::join_state(span, condition.clone(), self.state.clone(), joined)?;
+                for (role, memory) in selected_original {
+                    joined_original.insert(
+                        role.clone(),
+                        choice(span, condition.clone(), memory, joined_original[&role].clone()),
+                    );
+                }
+            }
+            self.state = joined;
+            *original = joined_original;
+            self.effects.extend(completed);
+        }
+        Some(())
     }
 
     /// Apply one branch-selected interval using the same forest graph for full

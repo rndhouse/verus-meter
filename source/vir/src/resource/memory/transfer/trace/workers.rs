@@ -1,0 +1,160 @@
+//! Worker transport uses the same checked capture and ownership templates as
+//! body accounting. Snapshot data is immutable across repeated constructions.
+
+use super::*;
+use crate::resource::memory::concurrency::CaptureMode;
+
+impl Trace<'_> {
+    pub(super) fn closure(
+        &mut self,
+        value: &Expr,
+        captures: Vec<(CaptureMode, checked::Place)>,
+    ) -> Option<Value> {
+        let span = &value.span;
+        let mut memory = expr::empty(span, expr::record_type());
+        for (index, (mode, capture)) in captures.into_iter().enumerate() {
+            let path = expr::path(span, [self.layouts.metadata_slot(&OwnerSlot::Capture(index))]);
+            if contracts::scalar(&capture.typ) {
+                let scalar = self.scalar(&capture.source)?;
+                memory = expr::push(span, memory, expr::scalar_observation(span, path, scalar));
+            } else if self.layouts.owner(&capture.typ) {
+                if mode != CaptureMode::Move {
+                    return None;
+                }
+                let location = self.checked_location(&capture)?;
+                let owner = self.take(span, &location, &capture.typ)?;
+                if self.checked.moves.contains_key(&capture.source.span.id) {
+                    self.used.insert((checked::Kind::Move, capture.source.span.id));
+                }
+                memory = expr::add(span, memory, expr::prefix(span, owner.memory, path));
+            } else {
+                return None;
+            }
+        }
+        Some(Value::Owner(Node {
+            origin: None,
+            typ: value.typ.clone(),
+            memory,
+            minima: Default::default(),
+        }))
+    }
+
+    pub(super) fn publish_worker(
+        &mut self,
+        value: &Expr,
+        source: Expr,
+        identity: Expr,
+        inputs: Vec<(Typ, OwnerSlot)>,
+        template: Template,
+    ) -> Option<Value> {
+        let span = &value.span;
+        let Value::Owner(captures) = self.value(&source)? else { return None };
+        let selected = |index: usize, path: &[OwnerSlot]| {
+            let slots = std::iter::once(&inputs[index].1)
+                .chain(path.iter())
+                .map(|slot| self.layouts.metadata_slot(slot));
+            simplify::simplify(&expr::subtree(
+                span,
+                captures.memory.clone(),
+                expr::path(span, slots),
+            ))
+        };
+        let mut replacements = HashMap::new();
+        for symbol in &template.symbols {
+            let replacement = match &symbol.input {
+                Input::Complete => crate::ast_util::mk_bool(span, true),
+                Input::Forest(index) => selected(*index, &[]),
+                Input::Scalar(index) => {
+                    let record = expr::lookup(span, selected(*index, &[]), expr::path(span, []));
+                    let scalar = expr::operation(span, "scalar_value", vec![record], int_typ());
+                    match &*inputs[*index].0 {
+                        TypX::Bool => mk_eq(span, &scalar, &expr::integer(span, 1)),
+                        TypX::Int(range) => SpannedTyped::new(
+                            span,
+                            &inputs[*index].0,
+                            ExprX::Unary(UnaryOp::Clip { range: *range, truncate: false }, scalar),
+                        ),
+                        _ => return None,
+                    }
+                }
+                Input::Property(index, path, field) => {
+                    property(span, selected(*index, path), field)
+                }
+                Input::Minimum(_, _) => expr::integer(span, 0),
+            };
+            replacements.insert(symbol.name.clone(), replacement);
+        }
+        let result = match instantiate_value(&template.result, &replacements) {
+            Value::Owner(node) => node.memory,
+            Value::Unit | Value::Scalar(_) | Value::Unknown => {
+                expr::empty(span, expr::record_type())
+            }
+            _ => return None,
+        };
+        // Progress inference already relates each erased ordinal to the bound
+        // visit index. Reuse that relation; a compiler visit is not a count.
+        let indices = self
+            .proof_values
+            .iter()
+            .filter_map(|(name, observation)| {
+                if let ExprX::Var(observed) = &observation.x {
+                    Some((
+                        observed.clone(),
+                        SpannedTyped::new(span, &observation.typ, ExprX::Var(name.clone())),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let identity = substitute(&identity, &indices);
+        let record = expr::operation(
+            span,
+            "worker_observation",
+            vec![expr::path(span, []), identity, captures.memory, result],
+            expr::record_type(),
+        );
+        let memory = expr::push(span, expr::empty(span, expr::record_type()), record);
+        let tag = expr::operation(
+            span,
+            "allocated",
+            vec![
+                expr::path(span, [-1]),
+                expr::integer(span, 0),
+                contracts::literal(span, verus_meter_model::completion_bytes(0)?),
+                expr::integer(span, 0),
+                expr::integer(span, 0),
+            ],
+            expr::record_type(),
+        );
+        let memory = expr::push(span, memory, tag);
+        Some(Value::Owner(Node {
+            origin: None,
+            typ: value.typ.clone(),
+            memory,
+            minima: Default::default(),
+        }))
+    }
+
+    pub(super) fn join_worker(&mut self, value: &Expr, source: Expr) -> Option<Value> {
+        let Value::Owner(handle) = self.value(&source)? else { return None };
+        let span = &value.span;
+        let record = expr::lookup(span, handle.memory, expr::path(span, []));
+        let result = expr::operation(span, "worker_result", vec![record], expr::memory_type());
+        let result = expr::prefix(
+            span,
+            result,
+            expr::path(span, [self.layouts.metadata_slot(&OwnerSlot::Contents)]),
+        );
+        let root =
+            allocated(span, expr::integer(span, 0), expr::integer(span, 0), expr::integer(span, 1));
+        let memory =
+            expr::add(span, expr::push(span, expr::empty(span, expr::record_type()), root), result);
+        Some(Value::Owner(Node {
+            origin: None,
+            typ: value.typ.clone(),
+            memory,
+            minima: Default::default(),
+        }))
+    }
+}

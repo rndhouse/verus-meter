@@ -27,6 +27,16 @@ use std::collections::{BTreeMap, HashMap};
 pub(super) use checked::Checked;
 pub(super) use consistency::{modified_parameters, validate};
 
+/// Establish descriptor properties and one-step membership laws in a loop's
+/// source proof context. The proposed invariant remains an ordinary obligation.
+pub(super) fn prove_loop_prefix(
+    span: &Span,
+    memory: &Expr,
+    statements: &mut Vec<Stmt>,
+) -> Result<(), VirErr> {
+    proofs::prefix(span, memory, statements)
+}
+
 /// Disjoint original regions at fixed output paths. `None` names the result;
 /// `Some(parameter)` names a borrowed parameter after the operation.
 pub(super) type Origins<T> = BTreeMap<Option<usize>, BTreeMap<super::heap::OwnerPath, T>>;
@@ -172,7 +182,7 @@ pub(super) fn requires_summary(
     checked: &Checked,
     summaries: &HashMap<Fun, super::summary::FunctionSummary>,
 ) -> Result<bool, VirErr> {
-    if required(function, layouts)? || checked.has_regions() {
+    if checked.retained_workers || required(function, layouts)? || checked.has_regions() {
         return Ok(true);
     }
     if !layouts.owner(&function.x.outer_ret.x.typ) {

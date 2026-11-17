@@ -19,12 +19,14 @@ fn module(name: &str) -> Option<&'static str> {
         | "block_bounds_prefix"
         | "block_bounds_repeat"
         | "block_bounds_shift"
+        | "block_bounds_take"
         | "block_bounds_tile"
         | "block_bounds_weaken"
         | "generate_children"
         | "generate_children_at"
         | "generate_children_facts"
         | "generate_children_outside"
+        | "generate_children_step"
         | "generate_children_views"
         | "generated_cost"
         | "generated_cost_affine"
@@ -69,7 +71,9 @@ fn module(name: &str) -> Option<&'static str> {
         "group_metadata_algebra" | "group_metadata_loop_algebra" | "group_runtime_shape" => {
             "groups"
         }
-        "shared_reference" | "worker_reference" => "references",
+        "shared_reference" | "worker_reference" | "worker_observation" | "scalar_observation"
+        | "worker_inputs" | "worker_result" | "worker_matches" | "workers_empty"
+        | "scalar_value" => "references",
         "iterate"
         | "iterate_closed"
         | "iterate_closed_facts"
@@ -85,12 +89,14 @@ fn module(name: &str) -> Option<&'static str> {
         | "reverse_children_views"
         | "shift_children"
         | "shift_children_facts"
+        | "shift_children_prefix"
         | "shift_children_select"
         | "take_children"
         | "take_children_add"
         | "take_children_empty"
         | "take_children_facts"
         | "take_children_prefix"
+        | "take_children_pop"
         | "take_children_repeat"
         | "take_children_root"
         | "take_children_runtime" => "ranges",

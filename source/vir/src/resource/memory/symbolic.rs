@@ -319,9 +319,9 @@ pub(super) fn instrument(
             if let Some((_, statements)) = sites.get(&expr.span.id) {
                 seen.obligations.insert(expr.span.id);
                 if matches!(&expr.x, ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), .. }
-                    if attrs.resource_intrinsic == Some(ResourceIntrinsic::ResultUnwrap))
+                    if matches!(attrs.resource_intrinsic, Some(ResourceIntrinsic::ResultUnwrap | ResourceIntrinsic::OptionUnwrap)))
                 {
-                    // An inline join operand establishes the returned allocation
+                    // An inline join/pop operand establishes the returned allocation
                     // observations. Checking extraction before that operand can
                     // read a previous iteration's bytes (or initialized zero).
                     // Unwrap changes no allocation extent; its recorded overlap
@@ -350,11 +350,7 @@ pub(super) fn instrument(
                     .map(|s| crate::ast_visitor::map_stmt_spans(s, &mut |span| fresh_span(span)))
                     .collect();
                 let effects = mk_block(&fresh_span(&expr.span), statements, None);
-                rewritten = SpannedTyped::new(
-                    &fresh_span(&expr.span),
-                    &expr.typ,
-                    ExprX::EvalAndResolve(rewritten, effects),
-                );
+                rewritten = after_evaluation(rewritten, effects, fresh_span);
             }
             rewritten = super::workers::resolve_join(expr, rewritten, growth, fresh_span)?;
             if !after_operands.is_empty() {
@@ -472,6 +468,36 @@ pub(super) fn instrument(
     let mut result = function.clone();
     Arc::make_mut(&mut result).x.body = Some(body);
     Ok(result)
+}
+
+/// Scope cleanup runs after the result operand, but before a return or loop
+/// exit transfers control. Wrapping the exit itself would make the proof dead
+/// code. For ordinary expressions, EvalAndResolve preserves the produced value.
+fn after_evaluation(expr: Expr, effects: Expr, fresh_span: &dyn Fn(&Span) -> Span) -> Expr {
+    let resolve = |value: &Expr| {
+        SpannedTyped::new(
+            &fresh_span(&value.span),
+            &value.typ,
+            ExprX::EvalAndResolve(value.clone(), effects.clone()),
+        )
+    };
+    let exit = match &expr.x {
+        ExprX::Return(Some(value)) => ExprX::Return(Some(resolve(value))),
+        ExprX::BreakOrContinue { label, is_break, value: Some(value) } => ExprX::BreakOrContinue {
+            label: label.clone(),
+            is_break: *is_break,
+            value: Some(resolve(value)),
+        },
+        ExprX::Return(None) | ExprX::BreakOrContinue { value: None, .. } => {
+            return mk_block(
+                &fresh_span(&expr.span),
+                vec![Spanned::new(effects.span.clone(), StmtX::Expr(effects))],
+                Some(expr),
+            );
+        }
+        _ => return resolve(&expr),
+    };
+    SpannedTyped::new(&fresh_span(&expr.span), &expr.typ, exit)
 }
 
 #[cfg(test)]

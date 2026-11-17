@@ -103,6 +103,23 @@ impl Analysis<'_> {
         inferred: &super::transfer::Inferred,
     ) -> Result<(), VirErr> {
         self.apply_progress_evidence(&inferred.progress);
+        for (id, progress) in &inferred.progress {
+            let record = self.transitions.loops[id].clone();
+            for (_, expected) in &progress.forests {
+                let mut proofs = Vec::new();
+                super::transfer::prove_loop_prefix(&record.span, expected, &mut proofs)?;
+                let proof = crate::def::Spanned::new(
+                    record.span.clone(),
+                    StmtX::Expr(crate::ast_util::mk_block(&record.span, proofs, None)),
+                );
+                self.growth.before_loop_proof(&record.span, proof.clone());
+                self.growth.before.entry(record.body.span.id).or_default().push(proof.clone());
+                self.growth.after.entry(record.body.span.id).or_default().push(proof.clone());
+                // Isolated body facts do not escape the loop. Instantiate the
+                // laws at its exit count before later selections or destruction.
+                self.growth.after.entry(record.span.id).or_default().push(proof);
+            }
+        }
         self.apply_loop_evidence(
             &inferred.loops,
             &inferred.growth,
@@ -309,7 +326,7 @@ impl Analysis<'_> {
         if !owned_locals.is_empty() {
             self.transitions.scope(&expr.span, owned_locals);
         }
-        self.cleanup_scope(&locals, first_exit);
+        self.cleanup_scope(&expr.span, &locals, first_exit);
         self.storage.event(&expr.span, "exit lexical scope".into());
         Ok(())
     }
@@ -738,6 +755,21 @@ pub(super) fn check(
     }
     analysis.heap.workers.check_closed(&function.span)?;
     if let Some(incomplete) = analysis.check_worker_domain(&function.span)? {
+        if analysis.transitions.retained_workers {
+            // The global envelope remains unavailable, but population induction
+            // must consume the coordinator's actual ownership transformation.
+            let inferred = super::transfer::summarize(
+                function,
+                layouts,
+                functions,
+                summaries,
+                &modes.var_modes,
+                &analysis.transitions,
+            )?;
+            if let Some(inferred) = &inferred {
+                analysis.apply_transfer_evidence(inferred)?;
+            }
+        }
         analysis.check_checkpoints()?;
         analysis.worker_obligations()?;
         let report = analysis.storage.finish_conditional();

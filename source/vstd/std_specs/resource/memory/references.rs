@@ -39,6 +39,58 @@ pub open spec fn worker_reference(path: Seq<int>, identity: Seq<int>) -> Record 
     Record { kind: -2, reference_identity: identity, ..super::forest::empty_record(path) }
 }
 
+/// A publication freezes its checked input and result descriptions. A result
+/// description is a conditional ownership effect of the verified body; storing
+/// it here neither executes that body nor charges its future allocations.
+pub open spec fn worker_observation(
+    path: Seq<int>,
+    identity: Seq<int>,
+    inputs: Seq<Record>,
+    result: Seq<Record>,
+) -> Record {
+    Record {
+        worker: |result_view: bool|
+            if result_view {
+                result
+            } else {
+                inputs
+            },
+        ..worker_reference(path, identity)
+    }
+}
+
+/// Scalar observations have no byte charge or ownership multiplicity. Their
+/// signed mathematical value is preserved even for a negative source integer.
+pub open spec fn scalar_observation(path: Seq<int>, value: int) -> Record {
+    Record { kind: -3, reference_identity: seq![value], ..super::forest::empty_record(path) }
+}
+
+/// Recover a scalar frozen by a checked closure construction.
+pub open spec fn scalar_value(record: Record) -> int {
+    record.reference_identity[0]
+}
+
+/// Capture observations follow the worker identity through ownership moves.
+pub open spec fn worker_inputs(record: Record) -> Seq<Record> {
+    (record.worker)(false)
+}
+
+/// The checked conditional result description, independent of the handle path.
+pub open spec fn worker_result(record: Record) -> Seq<Record> {
+    (record.worker)(true)
+}
+
+/// This predicate describes an existing link; it cannot create an occurrence.
+pub open spec fn worker_matches(record: Record, family: Seq<int>) -> bool {
+    record.kind == -2 && family.is_prefix_of(record.reference_identity)
+        && super::forest::well_formed(worker_result(record))
+}
+
+/// Scope exit must not discard a handle hidden in a runtime ownership forest.
+pub open spec fn workers_empty(memory: Seq<Record>) -> bool {
+    forall|i: int| 0 <= i < memory.len() ==> #[trigger] memory[i].kind != -2
+}
+
 /// Query links without adding nested datatype invariants to every byte record.
 pub open spec fn refers_to(record: Record, reference: Reference) -> bool {
     record.bytes == 0 && record.capacity == 0 && record.length == 0 && match reference {

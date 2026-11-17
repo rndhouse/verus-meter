@@ -361,6 +361,8 @@ impl Trace<'_> {
         self.loop_progress.insert(
             record.span.id,
             crate::resource::memory::loops::progress::Evidence {
+                forests: Vec::new(),
+                backing_bounds: BTreeMap::new(),
                 stride,
                 lengths,
                 bounds,

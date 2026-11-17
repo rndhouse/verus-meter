@@ -12,7 +12,7 @@ pub(super) mod progress;
 use super::{layout::Layouts, model, paths::LocalPath, summary::FunctionSummary};
 use crate::ast::*;
 use crate::messages::Span;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// A comparison observation; the checked iteration determines its progress.
 #[derive(Clone)]
@@ -52,6 +52,9 @@ struct Effects {
 /// One loop's shared structure, proof snapshots, and original-input boundary.
 #[derive(Clone)]
 pub(super) struct Loop {
+    /// Identity-bearing runtime roles need their complete prefix transformation,
+    /// not only a byte sum, in the executable loop's induction query.
+    pub(super) reference_forests: BTreeMap<LocalPath, (Typ, Expr)>,
     /// Existing for-loop lowering, when successful visits advance an iterator.
     pub(super) iterator: Option<super::for_loops::ForLoop>,
     /// Compiler-resolved destination of breaks and continues for this loop.
@@ -351,6 +354,7 @@ impl Loop {
             element_sources: HashMap::new(),
             proof_scalars: HashSet::new(),
             element_facts: vec![],
+            reference_forests: BTreeMap::new(),
         })
     }
 

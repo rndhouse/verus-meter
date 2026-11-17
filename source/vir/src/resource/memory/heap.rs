@@ -52,6 +52,8 @@ pub(super) type OwnerPath = Vec<OwnerSlot>;
 /// its inline storage belongs to the enclosing value or allocation layout.
 #[derive(Clone)]
 pub(super) struct Owner {
+    /// One occurrence selected from a runtime forest, with immutable snapshots.
+    pub(super) worker_occurrence: Option<super::workers::Occurrence>,
     /// Native/vstd successful join payload, conditional on this checked worker's
     /// normal-domain proof dependencies. Ordinary Result values cannot invent it.
     pub(super) joined: Option<super::workers::WorkerId>,
@@ -94,6 +96,7 @@ pub(super) struct Owner {
 impl Default for Owner {
     fn default() -> Self {
         Self {
+            worker_occurrence: None,
             joined: None,
             worker: None,
             closure: None,
@@ -118,7 +121,8 @@ impl Default for Owner {
 impl Owner {
     /// Byte-free owner nodes and forests still carry strong/worker lifetimes.
     pub(super) fn has_references(&self) -> bool {
-        self.joined.is_some()
+        self.worker_occurrence.is_some()
+            || self.joined.is_some()
             || self.shared.is_some()
             || self.worker.is_some()
             || self.elements.as_ref().is_some_and(|elements| elements.has_references)
@@ -544,14 +548,26 @@ impl Analysis<'_> {
     }
 
     pub(super) fn release_owner(&mut self, owner: Owner, span: &Span) {
-        self.destroy_owner(owner, span, true);
+        let mut proofs = Vec::new();
+        self.destroy_owner(owner, span, true, &mut proofs);
+        self.growth.before.entry(span.id).or_default().extend(proofs);
+    }
+
+    /// Lexical cleanup observes the state after evaluating the scope or exit
+    /// operand. A declaration's span is not its eventual destruction site.
+    pub(super) fn release_owner_after(&mut self, owner: Owner, span: &Span) {
+        let mut proofs = Vec::new();
+        self.destroy_owner(owner, span, true, &mut proofs);
+        if !proofs.is_empty() {
+            self.growth.after.entry(span.id).or_default().extend(proofs);
+        }
     }
 
     /// Transfers into an aggregate release the old charge identities while
     /// keeping incoming allocation lifetimes attached to their new owner.
     pub(super) fn release_owner_storage(
         &mut self,
-        owner: Owner,
+        mut owner: Owner,
         span: &Span,
         inputs: bool,
     ) -> Result<(), VirErr> {
@@ -568,11 +584,27 @@ impl Analysis<'_> {
                 "shared handles, closures or workers in runtime ownership forests without an identity summary",
             ));
         }
-        self.destroy_owner(owner, span, inputs);
+        fn transported(owner: &mut Owner) {
+            owner.worker_occurrence = None;
+            if let Some(elements) = &mut owner.elements {
+                elements.has_references = false;
+            }
+            for child in owner.children.values_mut() {
+                transported(child);
+            }
+        }
+        transported(&mut owner);
+        let mut proofs = Vec::new();
+        self.destroy_owner(owner, span, inputs, &mut proofs);
+        self.growth.before.entry(span.id).or_default().extend(proofs);
         Ok(())
     }
 
-    fn destroy_owner(&mut self, owner: Owner, span: &Span, inputs: bool) {
+    fn destroy_owner(&mut self, owner: Owner, span: &Span, inputs: bool, proofs: &mut Vec<Stmt>) {
+        if owner.worker_occurrence.is_some() {
+            self.heap.workers.detach_occurrence(span);
+            return;
+        }
         if let Some(worker) = owner.worker {
             assert!(
                 owner.bytes == 0
@@ -599,7 +631,7 @@ impl Analysis<'_> {
                 // A shared target is outside its enclosing unique-owner tree.
                 // Even if that parent's inputs were scanned already, the final
                 // strong release must retire this target's own incoming regions.
-                self.destroy_owner(backing, span, true);
+                self.destroy_owner(backing, span, true, proofs);
             }
             return;
         }
@@ -609,9 +641,21 @@ impl Analysis<'_> {
             }
         }
         for child in owner.children.into_values() {
-            self.destroy_owner(child, span, false);
+            self.destroy_owner(child, span, false, proofs);
         }
         if let Some(elements) = owner.elements {
+            if elements.has_references {
+                proofs.push(super::metadata::expr::check(
+                    span,
+                    super::metadata::expr::operation(
+                        span,
+                        "workers_empty",
+                        vec![elements.records.clone()],
+                        crate::ast_util::bool_typ(),
+                    ),
+                    "cannot discard outstanding worker handles",
+                ));
+            }
             for state in elements.states.into_values() {
                 self.storage.release_dynamic(self.growth.elements[state].id);
             }

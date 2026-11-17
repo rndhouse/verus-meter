@@ -122,6 +122,42 @@ pub open spec fn generated_cost(builder: spec_fn(int) -> Seq<Record>, count: int
     }
 }
 
+/// One loop transition appends one complete block. The builder remains opaque:
+/// this law preserves every descriptor without inspecting its worker snapshots.
+pub proof fn generate_children_step(
+    builder: spec_fn(int) -> Seq<Record>,
+    width: int,
+    count: int,
+    start: int,
+)
+    ensures
+        count <= 0 ==> generate_children(builder, width, count, start) == Seq::<Record>::empty(),
+        count > 0 ==> generate_children(builder, width, count, start) == generate_children(
+            builder,
+            width,
+            count - 1,
+            start,
+        ) + shift_children(builder(count - 1), start + width * (count - 1)),
+{
+    reveal(generate_children);
+}
+
+/// A bounded block is unchanged by a cut beyond its last possible child.
+pub proof fn block_bounds_take(memory: Seq<Record>, width: int, length: int)
+    requires
+        block_bounds(memory, width),
+        width <= length,
+    ensures
+        super::ranges::take_children(memory, length) == memory,
+    decreases memory.len(),
+{
+    reveal_with_fuel(super::ranges::take_children, 2);
+    if memory.len() > 0 {
+        block_bounds_take(memory.drop_last(), width, length);
+        assert(memory.drop_last().push(memory.last()) =~= memory);
+    }
+}
+
 /// Sum an affine footprint over any number of generated iterations. Doubling
 /// the sum avoids division and preserves an exact integer equality.
 pub proof fn generated_cost_affine(

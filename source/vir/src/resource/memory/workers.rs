@@ -14,12 +14,14 @@ pub(super) mod execution;
 mod identity;
 mod inputs;
 mod outputs;
+mod populations;
 mod results;
 mod waits;
 
 pub(super) use identity::{Families, WorkerId};
 pub(super) use inputs::Input;
 pub(super) use inputs::restore_proof_bindings;
+pub(super) use populations::Occurrence;
 pub(crate) use results::generated_join_move;
 pub(super) use results::resolve_join;
 
@@ -65,6 +67,8 @@ struct Worker {
 /// Cloning an analysis branch is not publication of another executable worker.
 #[derive(Clone, Default)]
 pub(super) struct Workers {
+    /// Losing a selected runtime handle cannot erase its outstanding worker.
+    detached_occurrence: Option<Span>,
     /// Executing actor of an isolated body frame. Its own completion record
     /// remains in the publishing frame; it is not an outstanding child here.
     active: Option<WorkerId>,
@@ -92,7 +96,7 @@ impl Workers {
         if ids.iter().any(|id| *id == actor || !self.records.contains_key(id)) {
             return Err(unsupported(span, "worker capture outside its outstanding actor domain"));
         }
-        let mut scope = Self { active: Some(actor), records: BTreeMap::new() };
+        let mut scope = Self { active: Some(actor), ..Default::default() };
         let mut tags = Vec::new();
         for id in ids {
             let worker = self.records.remove(&id).unwrap();
@@ -230,6 +234,9 @@ impl Workers {
     }
 
     pub(super) fn check_closed(&self, span: &Span) -> Result<(), VirErr> {
+        if let Some(span) = &self.detached_occurrence {
+            return Err(unsupported(span, "detached workers in a memory accounting scope"));
+        }
         if let Some(worker) = self.records.values().next() {
             return Err(unsupported(
                 worker.detached.as_ref().unwrap_or(span),
@@ -245,7 +252,9 @@ impl Workers {
     }
 
     pub(super) fn compatible(&self, other: &Self) -> bool {
-        self.active == other.active
+        self.detached_occurrence.as_ref().map(|span| span.id)
+            == other.detached_occurrence.as_ref().map(|span| span.id)
+            && self.active == other.active
             && self.records.len() == other.records.len()
             && self.records.iter().all(|(id, a)| {
                 other.records.get(id).is_some_and(|b| {
@@ -314,6 +323,7 @@ impl Analysis<'_> {
     pub(super) fn spawn_owner(&mut self, expr: &Expr) -> Result<Option<Owner>, VirErr> {
         let Some(owner) = self.publish_owner(expr)? else { return Ok(None) };
         self.analyze_worker(owner.worker.expect("published actor"), &expr.span)?;
+        self.observe_worker_publication(owner.worker.unwrap(), expr)?;
         Ok(Some(owner))
     }
 
@@ -455,6 +465,9 @@ impl Analysis<'_> {
             .result_owner
             .take()
             .ok_or_else(|| unsupported(&argument.span, "joining without an owned handle"))?;
+        if owner.worker_occurrence.is_some() {
+            return self.join_occurrence(expr, argument, value, owner).map(Some);
+        }
         let id = owner
             .worker
             .ok_or_else(|| unsupported(&argument.span, "joining without worker provenance"))?;
@@ -493,6 +506,15 @@ impl Analysis<'_> {
         }
         let mut result = self.collect_worker_result(id, &expr.span)?;
         result.owner = result_owner;
+        self.pack_worker_result(expr, id, result).map(Some)
+    }
+
+    pub(super) fn pack_worker_result(
+        &mut self,
+        expr: &Expr,
+        id: WorkerId,
+        result: Storage,
+    ) -> Result<super::lifetime::Value, VirErr> {
         self.growth.worker_joins.insert(expr.span.id, id);
         let bytes = self.layouts.size(&expr.typ, &expr.span)?;
         let extra = bytes
@@ -517,13 +539,13 @@ impl Analysis<'_> {
                 .collect(),
             ..Default::default()
         });
-        Ok(Some(super::lifetime::Value {
+        Ok(super::lifetime::Value {
             bytes,
             ids: [packed].into(),
             origins,
             parameter: None,
             environment: None,
-        }))
+        })
     }
 }
 

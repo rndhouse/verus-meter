@@ -139,9 +139,8 @@ remain unsupported.
 Scalar captures, supported inline scalar projections and owned collection geometry
 are observed at construction; moving or copying the closure preserves those
 observations. Repeated constructions bind their observations to the executing
-source-loop occurrence. Workers collected within that iteration are supported;
-retaining different environments across iterations still requires population
-ownership and snapshot substitution.
+source-loop occurrence. Supported retained-worker collections preserve each
+construction's observations across iterations and partial collection.
 
 Worker invocation evidence describes the original body's owned or borrowed
 environment and its cleanup responsibility, without inspecting a generated FnOnce
@@ -165,9 +164,23 @@ recorded as an unordered group at each source exit.
 A worker can spawn and join children or receive an existing join handle in its
 captures. Handle transfer moves responsibility for the target's completion record
 and imported shared references; it executes neither a join nor a strong destructor.
-Nested actors have separate loop contexts. Supported spawn/join loops retain
-parent and local occurrence coordinates and require the outstanding-worker state
-to match at the back edge. Dropping a transferred handle remains a rejected detach.
+Nested actors have separate loop contexts. Spawn/join loops retain parent and
+local occurrence coordinates. For supported retained collections, exact
+membership invariants describe the outstanding occurrences at each back edge;
+selecting a handle preserves its own inputs and conditional result description.
+These paths currently require one compatible worker family and exclude shared
+captures/results. Other loops require the outstanding-worker state to match at
+the back edge. Dropping a transferred handle remains a rejected detach.
+
+The proof boundary separates construction, transport and byte accounting.
+Generated builders establish worker-description properties; verified one-step
+collection laws preserve those descriptions without reopening them. Loop exits
+and membership invariants use the same ownership transformation, with a separate
+checked inequality for backing storage. Worker data is an opaque specification
+value, opened only by worker queries, so ordinary allocation proofs do not expand
+its recursive descriptions. Descriptions do not assert completion
+or charge future results as already live. Explicit and lexical destruction must
+prove that no outstanding worker remains in a discarded collection.
 
 For these checked workers, join-result matching and `unwrap` use the successful
 normal-execution outcome, conditional on Verus checking the actual body/helper
@@ -197,9 +210,9 @@ success nor a protected payload invariant. The
 Worker-local obligations are checked, but a required global diagnostic still
 rejects every concurrent memory contract and prevents exporting it. These local
 checks are necessary inequalities, not a sum of thread peaks or a simultaneous
-memory theorem. Retained symbolic worker populations, general handle/helper
-interfaces, global shared-lifetime composition, synchronization containment and
-the simultaneous envelope still require the remaining concurrent interfaces.
+memory theorem. General population and handle/helper interfaces, global
+shared-lifetime composition, synchronization containment and the simultaneous
+envelope still require the remaining concurrent interfaces.
 Detaching a worker is rejected.
 
 ## Concurrent extension specification

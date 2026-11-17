@@ -46,7 +46,7 @@ impl Analysis<'_> {
             return;
         }
         self.evaluations.remove(&site);
-        self.cleanup_edges(first_exit, |analysis| {
+        self.cleanup_edges(first_exit, |analysis, _| {
             let mut remaining = Vec::new();
             while let Some(temporary) = analysis.heap.temporaries.pop() {
                 if temporary.scope == site {

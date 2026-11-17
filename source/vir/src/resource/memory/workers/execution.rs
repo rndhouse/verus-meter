@@ -278,13 +278,9 @@ impl Analysis<'_> {
         // Each source return must keep its result separate while captures end.
         // An implicit capture group has no promised release order for exclusion.
         let mut cleanup_error = None;
-        let mut cleanup_sites = std::iter::once(body.span.clone())
-            .chain(worker.flow.exits.iter().map(|edge| edge.span.clone()))
-            .collect::<Vec<_>>()
-            .into_iter();
         let mut capture_cleanup = Vec::new();
-        worker.cleanup_edges(0, |worker| {
-            let exit = cleanup_sites.next().expect("one cleanup per source exit");
+        worker.cleanup_edges(0, |worker, exit| {
+            let exit = exit.unwrap_or(&body.span).clone();
             if worker.flow.reachable {
                 capture_cleanup.push(CaptureCleanup {
                     exit,

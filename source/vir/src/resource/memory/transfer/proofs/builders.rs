@@ -52,17 +52,31 @@ pub(super) fn generated(
         &binders[0].name,
     );
     let mut facts = vec![
-        expr::operation(span, "well_formed", vec![applied.clone()], crate::ast_util::bool_typ()),
-        crate::ast_util::mk_eq(
-            span,
-            &expr::operation(span, "runtime", vec![applied.clone()], expr::memory_type()),
-            &applied,
+        (
+            expr::operation(
+                span,
+                "well_formed",
+                vec![applied.clone()],
+                crate::ast_util::bool_typ(),
+            ),
+            "cannot prove generated collection block validity",
         ),
-        expr::operation(
-            span,
-            "block_bounds",
-            vec![applied.clone(), args[1].clone()],
-            crate::ast_util::bool_typ(),
+        (
+            crate::ast_util::mk_eq(
+                span,
+                &expr::operation(span, "runtime", vec![applied.clone()], expr::memory_type()),
+                &applied,
+            ),
+            "cannot prove generated collection block runtime paths",
+        ),
+        (
+            expr::operation(
+                span,
+                "block_bounds",
+                vec![applied.clone(), args[1].clone()],
+                crate::ast_util::bool_typ(),
+            ),
+            "cannot prove generated collection block index range",
         ),
     ];
     if let Some((slope, intercept)) = &affine {
@@ -71,22 +85,49 @@ pub(super) fn generated(
             contracts::multiply(span, slope.clone(), index),
             intercept.clone(),
         );
-        facts.push(crate::ast_util::mk_eq(
-            span,
-            &expr::cost(span, applied.clone(), expr::integer(span, 0)),
-            &expected,
+        facts.push((
+            crate::ast_util::mk_eq(
+                span,
+                &expr::cost(span, applied.clone(), expr::integer(span, 0)),
+                &expected,
+            ),
+            "cannot prove generated collection block byte charge",
         ));
     }
-    let ensure = crate::ast_util::conjoin(span, &facts);
-    let ensure = SpannedTyped::new(
-        span,
-        &crate::ast_util::bool_typ(),
-        ExprX::WithTriggers { triggers: Arc::new(vec![Arc::new(vec![applied])]), body: ensure },
-    );
     let mut body_proofs = Vec::new();
     let mut body_emitter = ForestProofs::new();
     body_emitter.forest(span, body, &mut body_proofs)?;
     block(span, body, &args[1], &mut body_proofs, &mut body_emitter)?;
+    let mut descriptions = Vec::new();
+    worker_descriptions(span, body, crate::ast_util::mk_bool(span, true), &mut descriptions);
+    for result in descriptions {
+        // Validate the checked body's description at its construction, under
+        // this occurrence's range. Collection operations merely preserve it.
+        body_emitter.forest(span, &result, &mut body_proofs)?;
+        facts.push((
+            expr::operation(span, "well_formed", vec![result.clone()], crate::ast_util::bool_typ()),
+            "cannot prove generated worker result validity",
+        ));
+        let cost = expr::cost(span, result, expr::integer(span, 0));
+        facts.push((
+            crate::ast_util::mk_eq(span, &cost, &simplify::simplify(&cost)),
+            "cannot prove generated worker result byte charge",
+        ));
+    }
+    for (fact, label) in &facts {
+        body_proofs.push(expr::check(span, fact.clone(), label));
+    }
+    let ensure = SpannedTyped::new(
+        span,
+        &crate::ast_util::bool_typ(),
+        ExprX::WithTriggers {
+            triggers: Arc::new(vec![Arc::new(vec![applied])]),
+            body: crate::ast_util::conjoin(
+                span,
+                &facts.into_iter().map(|(fact, _)| fact).collect(),
+            ),
+        },
+    );
     let proof = SpannedTyped::new(
         span,
         &crate::ast_util::unit_typ(),
@@ -120,6 +161,47 @@ pub(super) fn generated(
     let mut args = args.as_ref().clone();
     args[0] = builder;
     Ok(args)
+}
+
+/// Conditional publications validate only the description selected on that
+/// branch. Captured metadata is immutable data, not another collection to walk.
+fn worker_descriptions(span: &Span, value: &Expr, guard: Expr, output: &mut Vec<Expr>) {
+    if let Some(args) = simplify::inspect::call(value, "worker_observation") {
+        output.push(simplify::simplify(&super::super::choice(
+            span,
+            guard,
+            args[3].clone(),
+            expr::empty(span, expr::record_type()),
+        )));
+        return;
+    }
+    match &value.x {
+        ExprX::Call { args, .. } => {
+            for arg in args.iter() {
+                worker_descriptions(span, arg, guard.clone(), output);
+            }
+        }
+        ExprX::If(condition, yes, Some(no)) => {
+            worker_descriptions(
+                span,
+                yes,
+                crate::ast_util::conjoin(span, &vec![guard.clone(), condition.clone()]),
+                output,
+            );
+            let opposite = SpannedTyped::new(
+                span,
+                &crate::ast_util::bool_typ(),
+                ExprX::Unary(UnaryOp::Not, condition.clone()),
+            );
+            worker_descriptions(
+                span,
+                no,
+                crate::ast_util::conjoin(span, &vec![guard, opposite]),
+                output,
+            );
+        }
+        _ => {}
+    }
 }
 
 /// Check one ordered recurrence step under the same validity assumption that

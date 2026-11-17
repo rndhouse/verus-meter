@@ -61,7 +61,9 @@ impl Trace<'_> {
                                 }
                             }
                             if !locals.contains(&binding.name) {
-                                if matches!(value, Value::Owner(_)) {
+                                if matches!(value, Value::Owner(_))
+                                    && !matches!(&*binding.typ, TypX::AnonymousClosure(..))
+                                {
                                     return None;
                                 }
                                 locals.push(binding.name.clone());
@@ -122,7 +124,10 @@ impl Trace<'_> {
         if let Some(operation) = self.checked.operations.get(&span.id).cloned() {
             // Temporary wrappers may share a call's source span. Dispatch only
             // at the executable operation, so its operands are evaluated once.
-            if matches!(&value.x, ExprX::Call { .. } | ExprX::Ctor(..)) {
+            if matches!(
+                &value.x,
+                ExprX::Call { .. } | ExprX::Ctor(..) | ExprX::NonSpecClosure { .. }
+            ) {
                 self.used.insert((checked::Kind::Operation, span.id));
                 return self.operation(value, operation);
             }

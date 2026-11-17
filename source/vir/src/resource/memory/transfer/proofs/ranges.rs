@@ -121,6 +121,29 @@ pub(super) fn retention(
     } else if *function == crate::fun!(CrateId::Vstd => "seq", "Seq"; "add") {
         retention(span, &args[0], length, proofs, emitter);
         retention(span, &args[1], length, proofs, emitter);
+    } else if expr::is_operation(function, "generate_children") {
+        let extent = contracts::add(
+            span,
+            args[3].clone(),
+            contracts::multiply(span, args[1].clone(), args[2].clone()),
+        );
+        let lemma = expr::lemma(
+            span,
+            "block_bounds_take",
+            vec![memory.clone(), extent.clone(), length.clone()],
+        );
+        proofs.push(crate::def::Spanned::new(
+            span.clone(),
+            StmtX::Expr(SpannedTyped::new(
+                span,
+                &crate::ast_util::unit_typ(),
+                ExprX::If(
+                    crate::ast_util::mk_ineq(span, &extent, length, InequalityOp::Le),
+                    crate::ast_util::mk_block(span, vec![lemma], None),
+                    None,
+                ),
+            )),
+        ));
     }
     emitter.complete_retention(memory, length);
 }

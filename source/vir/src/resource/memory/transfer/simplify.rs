@@ -82,7 +82,8 @@ fn rewrite(value: &Expr, values: Option<&HashMap<VarIdent, Expr>>) -> Expr {
 /// Apply the first applicable rule in the established normalization order.
 /// A rule can finish with an unchanged expression; only `None` tries the next rule.
 fn node(value: &Expr) -> Expr {
-    forest::empty_forest(value)
+    worker_observation(value)
+        .or_else(|| forest::empty_forest(value))
         .or_else(|| forest::branch_projection(value))
         .or_else(|| scalar::arithmetic(value))
         .or_else(|| collections::reverse_children(value))
@@ -95,4 +96,21 @@ fn node(value: &Expr) -> Expr {
         .or_else(|| collections::take_children(value))
         .or_else(|| forest::select_path(value))
         .unwrap_or_else(|| scalar::fold_constants(value))
+}
+
+/// These projections describe immutable data, without executing a worker or
+/// replacing its dynamic identity with its family's representative instance.
+fn worker_observation(value: &Expr) -> Option<Expr> {
+    for (name, constructor, index) in [
+        ("worker_inputs", "worker_observation", 2),
+        ("worker_result", "worker_observation", 3),
+        ("scalar_value", "scalar_observation", 1),
+    ] {
+        if let Some(args) = inspect::call(value, name) {
+            if let Some(record) = inspect::call(&args[0], constructor) {
+                return Some(record[index].clone());
+            }
+        }
+    }
+    None
 }
