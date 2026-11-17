@@ -4,7 +4,7 @@ use crate::prelude::*;
 #[cfg(verus_keep_ghost)]
 use super::cost::{cost_add, cost_empty, cost_prefix, cost_push, cost_repeat};
 #[cfg(verus_keep_ghost)]
-use super::forest::{runtime_add, runtime_class, runtime_prefix, runtime_push};
+use super::forest::{runtime_add, runtime_class, runtime_prefix, runtime_push, well_formed_empty};
 #[cfg(verus_keep_ghost)]
 use super::removal::{partition_remove, remove_add, remove_prefix};
 #[cfg(verus_keep_ghost)]
@@ -30,6 +30,7 @@ broadcast use crate::seq::group_seq_axioms;
 // a forest alone does not need arbitrary views through its removed subtrees.
 
 pub broadcast group group_metadata_algebra {
+    well_formed_empty,
     Seq::add_empty_left,
     Seq::add_empty_right,
     cost_empty,

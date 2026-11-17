@@ -264,6 +264,7 @@ pub proof fn repeat_facts(child: Seq<Record>, start: int, count: int)
     decreases count,
 {
     reveal_with_fuel(repeat, 2);
+    super::forest::well_formed_empty(Seq::empty());
     cost_repeat(child, start, count, 0);
     if count > 0 {
         repeat_facts(child, start, count - 1);

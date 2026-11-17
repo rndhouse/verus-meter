@@ -266,7 +266,8 @@ impl ForestProofs {
                     };
                     match name.as_str() {
                         "empty" => {
-                            self.lemma(span, "cost_empty", vec![expr::integer(span, 0)], proofs)
+                            self.lemma(span, "well_formed_empty", vec![value.clone()], proofs);
+                            self.lemma(span, "cost_empty", vec![expr::integer(span, 0)], proofs);
                         }
                         "add" => {
                             self.lemma(span, "runtime_add", args.as_ref().clone(), proofs);

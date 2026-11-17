@@ -62,6 +62,7 @@ fn module(name: &str) -> Option<&'static str> {
         | "subtree"
         | "well_formed"
         | "well_formed_add"
+        | "well_formed_empty"
         | "well_formed_prefix"
         | "well_formed_push"
         | "well_formed_record"

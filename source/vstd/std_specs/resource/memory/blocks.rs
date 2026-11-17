@@ -86,6 +86,7 @@ pub proof fn tile_children_facts(block: Seq<Record>, width: int, count: int, sta
         assert(cost(before, 0) + cost(next, 0) == count * cost(block, 0));
     } else {
         cost_empty(0);
+        super::forest::well_formed_empty(Seq::empty());
     }
 }
 
@@ -246,6 +247,7 @@ pub proof fn generate_children_facts(
         descendants_add(before, next);
     } else {
         cost_empty(0);
+        super::forest::well_formed_empty(Seq::empty());
     }
 }
 

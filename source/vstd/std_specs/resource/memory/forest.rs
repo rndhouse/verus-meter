@@ -51,11 +51,24 @@ pub open spec fn empty_record(path: Seq<int>) -> Record {
 
 /// Resource metadata uses nonnegative byte bounds and reservation minima.
 /// Path uniqueness is unnecessary for conservative charge partitioning.
+/// Constructor and transport lemmas establish validity without expanding every
+/// sequence prefix in the caller's byte-bound query.
+#[verifier::opaque]
 pub open spec fn well_formed(memory: Seq<Record>) -> bool
     decreases memory.len(),
 {
     memory.len() == 0 || (well_formed(memory.drop_last()) && memory.last().bytes >= 0
         && memory.last().capacity >= 0 && memory.last().length >= 0)
+}
+
+/// Empty metadata needs no per-record validity checks.
+pub broadcast proof fn well_formed_empty(memory: Seq<Record>)
+    requires
+        memory.len() == 0,
+    ensures
+        #[trigger] well_formed(memory),
+{
+    reveal(well_formed);
 }
 
 /// One nonnegative allocation is a valid forest.
@@ -240,6 +253,7 @@ pub proof fn runtime_without_facts(memory: Seq<Record>, path: Seq<int>)
         cost(runtime(without(memory, path)), 0) <= cost(runtime(memory), 0),
     decreases memory.len(),
 {
+    reveal_with_fuel(well_formed, 2);
     reveal_with_fuel(runtime, 2);
     reveal_with_fuel(without, 2);
     if memory.len() > 0 {
