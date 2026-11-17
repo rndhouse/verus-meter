@@ -140,6 +140,17 @@ Direct scalar captures and owned collection geometry are observed at constructio
 moving or copying the closure preserves those observations. Repeated environments
 still require checked occurrence bindings before supplying worker inputs.
 
+Worker invocation evidence describes the original body's owned or borrowed
+environment and its cleanup responsibility, without inspecting a generated FnOnce
+wrapper. A borrowed body returning leaves its captured owners live until the
+consuming invocation cleans them up; an owned body must account for each capture
+through its moves and drops. Returned owners stay separate from environment cleanup.
+Implicit capture destruction order is unspecified by
+[Rust's source rules](https://doc.rust-lang.org/reference/destructors.html#destructors.operation);
+capture indices cannot justify a synchronization release order. Original body
+cleanup and unwind edges remain proof obligations. This interface does not enable
+worker execution or establish a concurrent byte bound on its own.
+
 Supported sequential paths now account for standard strong `Arc` construction,
 cloning, readonly payload access and explicit/implicit destruction. Backing and
 owned payload storage remain charged until the last strong release. Copies of

@@ -16,7 +16,7 @@ pub(in super::super) struct Entry {
     pub(in super::super) storage: Storage,
     /// Disjoint source/compiler views into the original environment storage.
     pub(super) captures: super::captures::Captures,
-    /// A borrowed body return is followed by the actual FnOnce adapter cleanup.
+    /// Source receiver convention and responsibility for remaining capture cleanup.
     pub(super) invocation: concurrency::invocation::Invocation,
     /// Only the actual captured strong handles, with backing retained in the
     /// enclosing domain. Local final release is not global reclamation.
@@ -26,7 +26,7 @@ pub(in super::super) struct Entry {
 impl Entry {
     /// Move only owned descendants out of a captured field, using the original
     /// source binding's exact path. The environment's inline charge stays live;
-    /// the body adapter must account for the destination's actual value storage.
+    /// body accounting must preserve the destination's actual value storage.
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "worker body ownership effects consume capture views")
@@ -35,12 +35,54 @@ impl Entry {
         &mut self,
         source: &super::super::paths::LocalPath,
     ) -> Result<super::super::heap::Owner, VirErr> {
+        if self.invocation.cleans_up_after_body() {
+            return Err(unsupported(
+                &self.definition.span,
+                "moving a capture out of a borrowed worker body without replacement",
+            ));
+        }
         let path = self.captures.source_path(source).ok_or_else(|| {
             unsupported(&self.definition.span, "a worker access outside its executable captures")
         })?;
         self.storage.owner.as_mut().and_then(|owner| owner.take_child(&path)).ok_or_else(|| {
             unsupported(&self.definition.span, "an absent or already moved worker capture owner")
         })
+    }
+
+    /// End a normal invocation after checked body effects have been applied.
+    /// The returned storage still owns its inline environment and, for a borrowed
+    /// body, the remaining captures. The caller must destroy that storage while
+    /// retaining the separately produced result; this is not worker completion.
+    ///
+    /// Implicit capture cleanup is an unordered group under Rust's source rules.
+    /// A synchronization-aware consumer must cover every permitted release order,
+    /// not use the owner map's iteration order to infer exclusion. Explicit body
+    /// moves/drops retain their own control-flow ordering. Unwind is not a normal
+    /// exit and cannot use this operation to discharge panic-free obligations.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "checked worker body returns are connected in TODO 03.2")
+    )]
+    pub(in super::super) fn into_return_cleanup(
+        self,
+        layouts: &Layouts,
+    ) -> Result<Storage, VirErr> {
+        let remaining: std::collections::BTreeSet<_> =
+            self.storage.owner.iter().flat_map(|owner| owner.children.keys().cloned()).collect();
+        if self.invocation.cleans_up_after_body() {
+            if remaining != self.captures.owned_slots(layouts) {
+                return Err(unsupported(
+                    &self.definition.span,
+                    "a borrowed worker body returning with incomplete capture ownership",
+                ));
+            }
+        } else if !remaining.is_empty() {
+            return Err(unsupported(
+                &self.definition.span,
+                "an owned worker body returning before its capture moves and cleanup are accounted for",
+            ));
+        }
+        Ok(self.storage)
     }
 
     /// Check the transferred environment against actual executable fields. Its
@@ -91,24 +133,7 @@ impl Entry {
                 "inconsistent source and compiler closure invocation kinds",
             ));
         }
-        let invocation = concurrency::invocation::Invocation::checked(
-            evidence,
-            layouts.owner(&storage.typ),
-            span,
-        )?;
-        if evidence.body.arguments != 1
-            || evidence.captures.iter().any(|capture| {
-                capture
-                    .body_place
-                    .as_ref()
-                    .is_none_or(|place| place.local != 1 || place.local >= evidence.body.locals)
-            })
-        {
-            return Err(unsupported(
-                span,
-                "worker captures without exact compiler body projections",
-            ));
-        }
+        let invocation = concurrency::invocation::Invocation::checked(evidence, span)?;
         let captures = super::captures::Captures::new(evidence, layouts, span)?;
         let fields = captures.owned_slots(layouts);
         if let Some(owner) = &storage.owner {

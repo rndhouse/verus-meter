@@ -52,7 +52,7 @@ pub struct Closure {
     /// Resolved body identity, distinct from the function creating the closure.
     pub function: Fun,
     /// Original compiler call kind. Proof erasure may change runtime Copy, but
-    /// cannot substitute a different invocation/cleanup graph in this evidence.
+    /// the original body still uses this receiver convention.
     pub kind: crate::ast::ClosureKind,
     /// Source creation site.
     pub span: Span,
@@ -66,9 +66,6 @@ pub struct Closure {
     pub copy: bool,
     /// Canonical closure body, retaining actual return and cleanup edges.
     pub body: flow::Graph,
-    /// Actual FnOnce adapter for Fn/FnMut closures. Its cleanup destroys the
-    /// remaining captured owners after the borrowed body returns.
-    pub once_adapter: Option<flow::Graph>,
 }
 
 /// A real operation whose ordinary functional translation is an identity.

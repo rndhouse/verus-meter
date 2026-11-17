@@ -32,7 +32,7 @@ struct Worker {
     definition: Expr,
     /// Construction-epoch inputs survive capture consumption during execution.
     environment: super::closures::observations::EnvironmentId,
-    /// Exact body invocation and remaining-environment cleanup boundaries.
+    /// Source receiver convention and responsibility for environment cleanup.
     invocation: super::concurrency::invocation::Invocation,
     /// Imported entry references are requirements, not a sampled global count.
     entry_shared: super::shared::SharedRoots,
@@ -126,7 +126,7 @@ impl Workers {
             definition: worker.definition.clone(),
             captures: worker.captures.clone(),
             storage: captures,
-            invocation: worker.invocation.clone(),
+            invocation: worker.invocation,
             shared: worker.entry_shared.clone(),
         })
     }

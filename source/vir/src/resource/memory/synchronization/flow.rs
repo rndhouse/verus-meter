@@ -118,8 +118,8 @@ pub enum Call {
     Primitive(Operation),
     /// Worker/shared-owner operations; publication is not a completed helper call.
     Concurrent(super::super::concurrency::Operation),
-    /// Statically identified closure invocation, including a compiler FnOnce
-    /// adapter calling its Fn/FnMut body. It still requires a checked summary.
+    /// Statically identified closure invocation. The source call convention and
+    /// a checked body summary must justify its ownership and cleanup effects.
     Closure(Fun),
     /// Actual `core::mem::drop`: consume the argument and execute its drop glue.
     Drop,

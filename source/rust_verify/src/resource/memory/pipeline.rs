@@ -58,24 +58,13 @@ pub(crate) fn check(
                     closure.captures.len()
                 ),
             )));
-            if let Some(adapter) = &closure.once_adapter {
-                use vir::resource::memory::concurrency::invocation::Invocation;
-                use vir::resource::memory::synchronization::flow::{Call, Terminator};
-                let body_calls = adapter
-                    .blocks
-                    .iter()
-                    .filter(|block| {
-                        matches!(&block.terminator,
-                        Terminator::Call { call: Call::Closure(body), .. }
-                            if *body == closure.function)
-                    })
-                    .count();
-                let checked = Invocation::checked(closure, !closure.copy, &closure.span).is_ok();
+            use vir::resource::memory::concurrency::invocation::Invocation;
+            if let Ok(invocation) = Invocation::checked(closure, &closure.span) {
                 ctxt.diagnostics.borrow_mut().push(vir::ast::VirErrAs::Note(vir::messages::note(
                     &closure.span,
                     format!(
-                        "memory FnOnce adapter: {body_calls} resolved body call(s), {} arguments; checked invocation: {checked}",
-                        adapter.arguments,
+                        "memory worker invocation: {invocation:?}; remaining capture cleanup after body: {}; implicit capture order: unspecified",
+                        invocation.cleans_up_after_body(),
                     ),
                 )));
             }

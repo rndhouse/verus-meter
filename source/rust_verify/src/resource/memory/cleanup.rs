@@ -23,14 +23,14 @@ pub(crate) fn lower<'tcx>(
     // Borrow rather than steal the compiler body; the ordinary borrow checker
     // and code generator must still consume their own query results.
     let body = tcx.mir_drops_elaborated_and_const_checked(owner).borrow();
-    lower_body(tcx, &body, Some(owner), function, span)
+    lower_body(tcx, &body, owner, function, span)
 }
 
-/// Project a real compiler body, including generated FnOnce cleanup adapters.
-pub(super) fn lower_body<'tcx>(
+/// Project a source body while retaining transport, cleanup and unwind edges.
+fn lower_body<'tcx>(
     tcx: ty::TyCtxt<'tcx>,
     body: &mir::Body<'tcx>,
-    owner: Option<LocalDefId>,
+    owner: LocalDefId,
     function: &dyn Fn(DefId) -> Fun,
     span: &dyn Fn(rustc_span::Span) -> Span,
 ) -> Graph {
@@ -172,7 +172,7 @@ pub(super) fn lower_body<'tcx>(
         .collect();
     Graph {
         blocks,
-        bindings: owner.map(|owner| bindings(tcx, owner, body)).unwrap_or_default(),
+        bindings: bindings(tcx, owner, body),
         locals: body.local_decls.len(),
         arguments: body.arg_count,
     }

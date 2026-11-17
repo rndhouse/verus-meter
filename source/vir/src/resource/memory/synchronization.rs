@@ -68,7 +68,7 @@ pub struct CompilerEvidence {
 
 impl CompilerEvidence {
     /// Resolve a compiler graph in its original function-local namespace.
-    /// A closure body and its FnOnce adapter are separate graphs; no missing
+    /// A closure and its enclosing function have separate graphs; no missing
     /// graph or reused local index can establish executable effects.
     pub fn graph(&self, function: &crate::ast::Fun) -> Option<&flow::Graph> {
         self.cleanup.get(function).or_else(|| {

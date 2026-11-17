@@ -14,8 +14,8 @@ use super::super::{
 use crate::{ast::*, messages::Span};
 
 /// A runtime field has both source and function-local compiler coordinates.
-/// Body places belong to the original closure body, not its FnOnce adapter;
-/// composing that adapter requires its actual move/borrow and call edges.
+/// Body places belong to the original closure body. The invocation contract
+/// describes its receiver and the remaining environment cleanup separately.
 #[derive(Clone)]
 struct CaptureView {
     /// Exact original binding and fixed path selected by runtime capture analysis.

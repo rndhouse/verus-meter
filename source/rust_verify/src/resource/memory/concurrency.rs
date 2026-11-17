@@ -190,20 +190,6 @@ pub(super) fn closure(
     }
     let function = |id| std::sync::Arc::new(vir::ast::FunX { path: ctxt.def_id_to_vir_path(id) });
     let body = super::cleanup::lower(tcx, owner, &function, &|span| ctxt.spans.to_air_span(span));
-    let instance =
-        ty::Instance::resolve_closure(tcx, owner.to_def_id(), args, ty::ClosureKind::FnOnce);
-    let once_adapter = (args.as_closure().kind() != ty::ClosureKind::FnOnce).then(|| {
-        // ClosureOnce shim MIR is polymorphic in Self and Args. Instantiate it
-        // before classifying its FnMut call, or the graph retains a generic
-        // trait call instead of the actual closure body and receiver transport.
-        // Keep the compiler query intact for ordinary borrow checking/codegen.
-        let body = ty::EarlyBinder::bind(tcx, tcx.instance_mir(instance.def).clone())
-            .instantiate(tcx, instance.args)
-            .skip_norm_wip();
-        super::cleanup::lower_body(tcx, &body, None, &function, &|span| {
-            ctxt.spans.to_air_span(span)
-        })
-    });
     Ok(Closure {
         id: owner.local_def_index.index(),
         function: function(owner.to_def_id()),
@@ -220,6 +206,5 @@ pub(super) fn closure(
             typeck.expr_ty(expr),
         ),
         body,
-        once_adapter,
     })
 }

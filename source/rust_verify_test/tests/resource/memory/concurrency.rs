@@ -137,9 +137,9 @@ fn native_calls_keep_their_executable_function_and_worker_body_scopes() {
 }
 
 #[test]
-fn generated_fnonce_adapters_resolve_the_original_worker_bodies() {
+fn source_worker_invocation_distinguishes_borrowed_and_owned_environments() {
     let error = crate::verify_one_file(
-        "instantiated_worker_invocation_adapters",
+        "source_worker_invocation",
         r#"
         use vstd::prelude::*;
         verus! {
@@ -147,10 +147,14 @@ fn generated_fnonce_adapters_resolve_the_original_worker_bodies() {
                 let root = std::sync::Arc::new(7u64);
                 let reader = move || *root;
                 let scalar = move || n;
+                let payload = Box::new([0u8; 16]);
+                let owned = move || { if n == 0 { return payload; } payload };
                 let read = std::thread::spawn(reader);
                 let copy = std::thread::spawn(scalar);
+                let owned = std::thread::spawn(owned);
                 let result = read.join();
                 let result = copy.join();
+                let result = owned.join();
             }
         }
         "#
@@ -168,11 +172,16 @@ fn generated_fnonce_adapters_resolve_the_original_worker_bodies() {
             .iter()
             .filter(|note| note
                 .message
-                .contains("memory FnOnce adapter: 1 resolved body call(s), 2 arguments; checked invocation: true"))
+                .contains("memory worker invocation: SharedBody; remaining capture cleanup after body: true; implicit capture order: unspecified"))
             .count(),
         2,
     );
-    assert!(!error.notes.iter().any(|note| note.message.contains("0 resolved body call(s)")));
+    assert_eq!(
+        error.notes.iter().filter(|note| note.message.contains(
+            "memory worker invocation: OwnedBody; remaining capture cleanup after body: false; implicit capture order: unspecified"
+        )).count(),
+        1,
+    );
 }
 
 #[test]
@@ -679,6 +688,37 @@ fn invoking_a_latent_body_requires_a_checked_memory_effect() {
         }
     "#,
         "calls with generic, dynamic, or unsupported targets",
+    );
+}
+
+#[test]
+fn early_return_in_a_borrowed_body_does_not_change_owned_capture_destruction() {
+    exact_peak(
+        "borrowed_body_capture_cleanup",
+        r#"
+        fn f(flag: bool) resources peak(memory) <= BUDGET {
+            let root = std::sync::Arc::new(7u64);
+            let closure = move || {
+                if flag { return *root; }
+                *root
+            };
+            drop(closure);
+            let scratch = [0u8;128];
+        }
+        "#,
+        129,
+    );
+    exact_peak(
+        "returned_capture_is_owned_until_invocation_or_drop",
+        r#"
+        fn f() resources peak(memory) <= BUDGET {
+            let root = std::sync::Arc::new(7u64);
+            let closure = move || root;
+            drop(closure);
+            let scratch = [0u8;128];
+        }
+        "#,
+        128,
     );
 }
 

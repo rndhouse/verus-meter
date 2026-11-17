@@ -577,7 +577,6 @@ fn closure(id: usize, capture: Option<(VarIdent, Typ)>) -> (Closure, Expr) {
             locals: 2,
             arguments: 1,
         },
-        once_adapter: None,
     };
     let typ =
         Arc::new(TypX::AnonymousClosure(Arc::new(vec![]), result.clone(), ClosureKind::FnOnce, id));
@@ -693,7 +692,7 @@ fn capture_and_result_ownership_survive_publication_completion_and_join() {
         );
         let payload = entry.take_capture_owner(&(source.clone(), vec![])).unwrap();
         assert!(entry.take_capture_owner(&(source, vec![])).is_err());
-        let mut frame = entry.storage;
+        let mut frame = entry.into_return_cleanup(analysis.layouts).unwrap();
         let environment = frame.owner.take().unwrap();
         analysis.release_owner(environment, &site);
         let result =
@@ -709,6 +708,117 @@ fn capture_and_result_ownership_survive_publication_completion_and_join() {
         assert_eq!(analysis.storage.live(), 0);
         assert_eq!(analysis.storage.peak().bytes, 81);
     });
+}
+
+/// Exercise the invocation boundary using the same Box/closure constructors as
+/// accounting. These are boundary checks, not a substitute for body verification.
+#[test]
+fn normal_return_requires_body_cleanup_or_retains_the_borrowed_environment() {
+    use crate::resource::memory::concurrency::invocation::Invocation;
+
+    for kind in [ClosureKind::FnOnce, ClosureKind::Fn, ClosureKind::FnMut] {
+        let site = span(1);
+        let initializer = source_box(&site);
+        let source = VarIdent(Arc::new("source".into()), VarIdentDisambiguate::RustcId(1));
+        let (mut info, mut expression) =
+            closure(1, Some((source.clone(), initializer.typ.clone())));
+        info.kind = kind;
+        if kind != ClosureKind::FnOnce {
+            info.captures[0]
+                .body_place
+                .as_mut()
+                .unwrap()
+                .projection
+                .insert(0, flow::Projection::Deref);
+        }
+        // Borrowed bodies retain their Box and produce unit. Owned-body cleanup
+        // is applied explicitly below; none of these synthetic bodies is a proof.
+        Arc::make_mut(&mut expression).typ = Arc::new(TypX::AnonymousClosure(
+            Arc::new(vec![]),
+            crate::ast_util::unit_typ(),
+            kind,
+            1,
+        ));
+        let ExprX::NonSpecClosure { body, ret, .. } = &mut Arc::make_mut(&mut expression).x else {
+            unreachable!()
+        };
+        *body = unit(&site);
+        Arc::make_mut(ret).a = crate::ast_util::unit_typ();
+        let mut evidence = Evidence::default();
+        evidence.closures.insert(info.id, info);
+        with_analysis(&evidence, |analysis, _| {
+            let value = analysis.produce(&initializer).unwrap();
+            analysis.var_modes.insert(source.clone(), Mode::Exec);
+            analysis.slots.insert(source.clone(), value);
+            analysis.heap.owners.insert(source.clone(), analysis.result_owner.take().unwrap());
+            let value = analysis.produce(&expression).unwrap();
+            let storage =
+                Storage { typ: expression.typ.clone(), value, owner: analysis.result_owner.take() };
+            let entry = |storage| {
+                body::Entry::checked(
+                    expression.clone(),
+                    storage,
+                    &evidence,
+                    analysis.layouts,
+                    &analysis.growth.environments,
+                    &analysis.heap.shared,
+                )
+                .unwrap()
+            };
+            let mut valid = entry(storage.clone());
+            if kind == ClosureKind::FnOnce {
+                assert_eq!(valid.invocation, Invocation::OwnedBody);
+                assert!(entry(storage).into_return_cleanup(analysis.layouts).is_err());
+                let owner = valid.take_capture_owner(&(source.clone(), vec![])).unwrap();
+                assert!(valid.take_capture_owner(&(source.clone(), vec![])).is_err());
+                analysis.release_owner(owner, &site);
+                assert_eq!(analysis.storage.live(), 8);
+            } else {
+                assert!(valid.invocation.cleans_up_after_body());
+                assert!(valid.take_capture_owner(&(source.clone(), vec![])).is_err());
+                let mut missing = entry(storage);
+                missing.storage.owner.as_mut().unwrap().children.clear();
+                assert!(missing.into_return_cleanup(analysis.layouts).is_err());
+                assert_eq!(analysis.storage.live(), 72);
+            }
+            let cleanup = valid.into_return_cleanup(analysis.layouts).unwrap();
+            // A return description does not release anything by itself.
+            assert_eq!(analysis.storage.live(), if kind == ClosureKind::FnOnce { 8 } else { 72 });
+            analysis.release_owner(cleanup.owner.unwrap(), &site);
+            analysis.release_value(cleanup.value, &site);
+            assert_eq!(analysis.storage.live(), 0);
+        });
+    }
+}
+
+#[test]
+fn invocation_requires_receiver_evidence_without_matching_body_control_flow() {
+    use crate::resource::memory::concurrency::invocation::Invocation;
+
+    let source = VarIdent(Arc::new("source".into()), VarIdentDisambiguate::RustcId(1));
+    let (mut info, _) = closure(1, Some((source, source_box(&span(1)).typ.clone())));
+    info.kind = ClosureKind::Fn;
+    let check = |info: &Closure| Invocation::checked(info, &info.span);
+    assert!(check(&info).is_err()); // shared body requires a borrowed receiver view
+    info.captures[0].body_place.as_mut().unwrap().projection.insert(0, flow::Projection::Deref);
+    assert_eq!(check(&info).unwrap(), Invocation::SharedBody);
+    // Unwind/unsupported paths remain evidence for the subsequent body checker,
+    // never assumed absent because the invocation boundary is well formed.
+    info.body.blocks[0].terminator = flow::Terminator::Unsupported;
+    info.body.blocks.push(flow::Block {
+        statements: vec![],
+        span: span(2),
+        terminator: flow::Terminator::Unwind,
+        cleanup: true,
+    });
+    assert_eq!(check(&info).unwrap(), Invocation::SharedBody);
+    info.body.arguments = 2;
+    assert!(check(&info).is_err());
+    info.body.arguments = 1;
+    info.captures[0].body_place.as_mut().unwrap().local = 0;
+    assert!(check(&info).is_err());
+    info.captures[0].body_place = None;
+    assert!(check(&info).is_err());
 }
 
 #[test]
@@ -791,7 +901,7 @@ fn shared_capture_and_completed_result_retain_one_canonical_payload() {
         assert!(!entry.shared.is_empty());
         assert_eq!(analysis.storage.live(), 105);
         let returned = entry.take_capture_owner(&(copy, vec![])).unwrap();
-        let mut frame = entry.storage;
+        let mut frame = entry.into_return_cleanup(analysis.layouts).unwrap();
         let environment = frame.owner.take().unwrap();
         assert_eq!(returned.shared, identity);
         analysis.release_owner(environment, &span(12));
