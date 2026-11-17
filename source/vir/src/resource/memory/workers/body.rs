@@ -10,7 +10,9 @@ use crate::ast::*;
 pub(in super::super) struct Entry {
     /// NonSpecClosure from the accounting AST, including restored native calls.
     pub(in super::super) definition: Expr,
-    /// Inline captures and separately owned descendants, without a second charge.
+    /// Existing inline captures and separately owned descendants, without a
+    /// second charge. Never reconstruct their values by rereading parent
+    /// variables at publication: captures belong to their construction epoch.
     pub(in super::super) storage: Storage,
     /// Disjoint source/compiler views into the original environment storage.
     pub(super) captures: super::captures::Captures,

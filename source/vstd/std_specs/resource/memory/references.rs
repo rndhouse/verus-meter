@@ -22,7 +22,8 @@ pub enum Reference {
     Shared(Seq<int>),
     /// A handle for one publication; transferring it does not complete the worker.
     Worker(Seq<int>),
-    /// All handles whose identity consists of this family followed by one index.
+    /// All handles with this family prefix and a nonempty occurrence suffix.
+    /// Nested loops/calls can contribute several occurrence coordinates.
     /// This query cannot construct a handle or establish worker completion.
     WorkerFamily(Seq<int>),
 }
@@ -46,7 +47,7 @@ pub open spec fn refers_to(record: Record, reference: Reference) -> bool {
         Reference::Worker(identity) => record.reference_kind == 2 && record.reference_identity
             == identity,
         Reference::WorkerFamily(family) => record.reference_kind == 2
-            && record.reference_identity.len() == family.len() + 1 && family.is_prefix_of(
+            && record.reference_identity.len() > family.len() && family.is_prefix_of(
             record.reference_identity,
         ),
     }
@@ -253,6 +254,42 @@ pub proof fn generated_reference_count_uniform(
             requires
                 count == 0,
         ;
+    }
+}
+
+/// One indexed publication has one exact handle identity, even when its family
+/// contains many workers. This is distinct from the family's total population.
+pub proof fn generated_reference_count_selected(
+    builder: spec_fn(int) -> Seq<Record>,
+    count: int,
+    reference: Reference,
+    selected: int,
+)
+    requires
+        count >= 0,
+        forall|index: int|
+            0 <= index < count ==> reference_count(#[trigger] builder(index), reference) == if index
+                == selected {
+                1int
+            } else {
+                0int
+            },
+    ensures
+        generated_reference_count(builder, count, reference) == if 0 <= selected < count {
+            1int
+        } else {
+            0int
+        },
+    decreases count,
+{
+    reveal_with_fuel(generated_reference_count, 2);
+    if count > 0 {
+        generated_reference_count_selected(builder, count - 1, reference, selected);
+        assert(reference_count(builder(count - 1), reference) == if count - 1 == selected {
+            1int
+        } else {
+            0int
+        });
     }
 }
 

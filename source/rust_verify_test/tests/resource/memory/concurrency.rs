@@ -2,6 +2,98 @@
 use super::support::{exact_peak, rejects, verifies};
 
 #[test]
+fn indexed_worker_populations_preserve_one_handle_per_occurrence() {
+    verifies(
+        "unique_worker_population",
+        r#"
+        use vstd::std_specs::resource::memory::{blocks::*, forest::*, references::*};
+        proof fn unique(count: nat, family: Seq<int>, selected: int) {
+            let target = Reference::Worker(family.push(selected));
+            let builder = |index: int| Seq::<Record>::empty().push(
+                worker_reference(seq![0], family.push(index)));
+            assert forall|index: int| 0 <= index < count implies
+                reference_count(#[trigger] builder(index), target)
+                    == if index == selected { 1int } else { 0int } by
+            {
+                reveal_with_fuel(reference_count, 2);
+                if index != selected {
+                    assert(family.push(index) != family.push(selected)) by {
+                        assert(family.push(index).last() != family.push(selected).last());
+                    }
+                }
+            }
+            reference_count_generate(builder, 1, count as int, 0, target);
+            generated_reference_count_selected(builder, count as int, target, selected);
+            assert(reference_count(generate_children(builder, 1, count as int, 0), target)
+                == if 0 <= selected < count { 1int } else { 0int });
+        }
+        "#,
+    );
+}
+
+#[test]
+fn nested_occurrence_coordinates_preserve_symbolic_family_populations() {
+    verifies(
+        "nested_worker_population",
+        r#"
+        use vstd::std_specs::resource::memory::{blocks::*, forest::*, references::*};
+        proof fn nested(parents: nat, children: nat, family: Seq<int>) {
+            let target = Reference::WorkerFamily(family);
+            let block = |parent: int| generate_children(
+                |child: int| Seq::<Record>::empty().push(worker_reference(
+                    seq![0], family.push(parent).push(child))),
+                1, children as int, 0);
+            assert forall|parent: int| 0 <= parent < parents implies
+                reference_count(#[trigger] block(parent), target) == children by
+            {
+                let builder = |child: int| Seq::<Record>::empty().push(worker_reference(
+                    seq![0], family.push(parent).push(child)));
+                assert forall|child: int| 0 <= child < children implies
+                    reference_count(#[trigger] builder(child), target) == 1 by
+                {
+                    reveal_with_fuel(reference_count, 2);
+                    assert(family.is_prefix_of(family.push(parent).push(child)));
+                }
+                reference_count_generate(builder, 1, children as int, 0, target);
+                generated_reference_count_uniform(builder, children as int, target, 1);
+            }
+            reference_count_generate(block, children as int, parents as int, 0, target);
+            generated_reference_count_uniform(block, parents as int, target, children as int);
+            assert(reference_count(generate_children(block, children as int, parents as int, 0), target)
+                == parents * children);
+        }
+        "#,
+    );
+}
+
+#[test]
+fn a_family_count_cannot_hide_repeated_worker_identities() {
+    rejects(
+        "duplicate_worker_population_identity",
+        r#"
+        use vstd::std_specs::resource::memory::{blocks::*, forest::*, references::*};
+        proof fn duplicated(count: nat, family: Seq<int>)
+            requires count >= 2,
+        {
+            let identity = family.push(0);
+            let target = Reference::Worker(identity);
+            // A compiler generator that omitted its occurrence index would
+            // retain this same identity at every publication.
+            let builder = |index: int| Seq::<Record>::empty().push(
+                worker_reference(seq![0], identity));
+            assert forall|index: int| 0 <= index < count implies
+                reference_count(#[trigger] builder(index), target) == 1 by
+            { reveal_with_fuel(reference_count, 2); }
+            reference_count_generate(builder, 1, count as int, 0, target);
+            generated_reference_count_uniform(builder, count as int, target, 1);
+            assert(reference_count(generate_children(builder, 1, count as int, 0), target) == 1);
+        }
+        "#,
+        "assertion failed",
+    );
+}
+
+#[test]
 fn native_calls_keep_their_executable_function_and_worker_body_scopes() {
     let error = crate::verify_one_file(
         "native_worker_call_bindings",
