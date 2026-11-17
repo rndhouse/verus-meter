@@ -11,6 +11,26 @@ use crate::{
 };
 use std::collections::{BTreeSet, HashMap};
 
+/// A repeated source region whose dynamic visit must be bound at execution.
+/// The function/closure scope namespaces `site`; these are binder requirements,
+/// not iteration ordinals or proofs of a particular number of visits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Iteration {
+    /// Original loop identity, retained by memory's for-loop preparation.
+    pub site: AstId,
+    /// Conditions and successful bodies have different visit populations.
+    pub part: LoopPart,
+}
+
+/// A condition can execute once more than its body, or exit without entering it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoopPart {
+    /// Executable condition, including effects before a false result.
+    Head,
+    /// Executable body, including exits before a back edge.
+    Body,
+}
+
 /// One executable source operation before functional identity erasure.
 #[derive(Clone)]
 pub struct Call {
@@ -24,6 +44,10 @@ pub struct Call {
     pub scope: Fun,
     /// Resolved primitive, independent of source spelling or specifications.
     pub operation: Operation,
+    /// Enclosing local loop regions, from outermost to innermost. A closure
+    /// body starts a new local context; its parent's visits belong to its
+    /// invocation identity, not to the child's local iteration counters.
+    pub iterations: Vec<Iteration>,
 }
 
 /// An exact compiler point, not an assumed operation count or completion fact.
@@ -37,6 +61,8 @@ pub struct Binding {
     pub point: super::super::synchronization::flow::Point,
     /// Primitive executed at that point.
     pub operation: Operation,
+    /// Local repeated-region binders required by this source operation.
+    pub iterations: Vec<Iteration>,
 }
 
 /// Collect runtime operations using the same erasure boundaries as accounting.
@@ -64,6 +90,7 @@ fn collect(
         functions: &'a [Function],
         evidence: &'a Evidence,
         scope: Fun,
+        iterations: Vec<Iteration>,
         include_closures: bool,
         seen: BTreeSet<AstId>,
         calls: Vec<Call>,
@@ -77,6 +104,7 @@ fn collect(
                     span: span.clone(),
                     scope: self.scope.clone(),
                     operation,
+                    iterations: self.iterations.clone(),
                 });
             }
         }
@@ -104,16 +132,30 @@ fn collect(
                     && let Some(closure) = self.evidence.closures.get(id)
                 {
                     let previous = std::mem::replace(&mut self.scope, closure.function.clone());
+                    let iterations = std::mem::take(&mut self.iterations);
                     self.visit_expr(body)?;
                     self.scope = previous;
+                    self.iterations = iterations;
                 }
                 return Ok(());
             }
-            if let ExprX::Loop { cond, body, .. } = &expression.x {
+            if let ExprX::Loop { cond, body, source, .. } = &expression.x {
+                let repeated = matches!(source, LoopSource::Loop);
+                if repeated {
+                    self.iterations
+                        .push(Iteration { site: expression.span.id, part: LoopPart::Head });
+                }
                 if let Some(condition) = cond {
                     self.visit_expr(condition)?;
                 }
-                return self.visit_expr(body);
+                if repeated {
+                    self.iterations.last_mut().unwrap().part = LoopPart::Body;
+                }
+                self.visit_expr(body)?;
+                if repeated {
+                    self.iterations.pop();
+                }
+                return Ok(());
             }
             if let ExprX::Call { target: CallTarget::Fun(_, target, _, _, attrs), args, .. } =
                 &expression.x
@@ -163,6 +205,7 @@ fn collect(
         functions,
         evidence,
         scope: function.x.name.clone(),
+        iterations: vec![],
         include_closures: include_closure_bodies,
         seen: BTreeSet::new(),
         calls: vec![],
@@ -196,6 +239,7 @@ fn bound(call: &Call, evidence: &super::super::synchronization::CompilerEvidence
     if binding.anchor != call.anchor
         || binding.scope != call.scope
         || binding.operation != call.operation
+        || binding.iterations != call.iterations
     {
         return false;
     }
@@ -251,6 +295,7 @@ mod tests {
             span: span(10),
             scope: first.clone(),
             operation: Operation::ArcClone,
+            iterations: vec![],
         };
         assert!(!bound(&call, &evidence));
         for (id, block) in [(10, 0), (11, 1)] {
@@ -261,12 +306,20 @@ mod tests {
                     scope: first.clone(),
                     operation: Operation::ArcClone,
                     point: flow::Point { block, statement: 0 },
+                    iterations: vec![],
                 },
             );
         }
         assert!(bound(&call, &evidence));
         let next = Call { id: 11, ..call.clone() };
         assert!(bound(&next, &evidence));
+        assert!(!bound(
+            &Call {
+                iterations: vec![Iteration { site: 100, part: LoopPart::Body }],
+                ..next.clone()
+            },
+            &evidence
+        ));
         // Reusing a block index in another function does not bind this source
         // call. A named helper also cannot impersonate a reviewed native call.
         assert!(!bound(&Call { scope: second, ..next.clone() }, &evidence));

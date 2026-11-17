@@ -39,6 +39,7 @@ pub(super) fn resolve(
                     scope: call.scope,
                     point: *point,
                     operation: call.operation,
+                    iterations: call.iterations,
                 },
             );
         }
@@ -58,13 +59,22 @@ pub(super) fn diagnostics(
         .map(|call| {
             let scope =
                 if call.scope == function.x.name { "function body" } else { "closure body" };
+            let iterations = call.iterations.len();
+            let region = call.iterations.last().map(|iteration| match iteration.part {
+                sites::LoopPart::Head => "head",
+                sites::LoopPart::Body => "body",
+            });
+            let context = region.map_or_else(
+                || "no local loop".to_owned(),
+                |region| format!("{iterations} local loop(s), {region}"),
+            );
             let message = if let Some(binding) = evidence.concurrency.native_site(call.id) {
                 format!(
-                    "memory native call binding: {:?} ({scope}, compiler block {})",
+                    "memory native call binding: {:?} ({scope}, {context}, compiler block {})",
                     call.operation, binding.point.block,
                 )
             } else {
-                format!("memory native call unbound: {:?} ({scope})", call.operation)
+                format!("memory native call unbound: {:?} ({scope}, {context})", call.operation)
             };
             vir::ast::VirErrAs::Note(vir::messages::note(&call.span, message))
         })

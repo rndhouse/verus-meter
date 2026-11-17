@@ -153,6 +153,75 @@ fn ghost_call_arguments_do_not_create_executable_strong_aliases() {
 }
 
 #[test]
+fn native_worker_sites_keep_local_loop_contexts_separate_from_parent_visits() {
+    let error = crate::verify_one_file(
+        "worker_loop_call_contexts",
+        r#"
+        use vstd::prelude::*;
+        verus! {
+            fn f(n: u16) resources peak(memory) <= 100000 {
+                let mut index = 0u16;
+                while {
+                    let probe = std::thread::spawn(move || true);
+                    let result = probe.join();
+                    index < n
+                } {
+                    let handle = std::thread::spawn(move || {
+                        let child = std::thread::spawn(move || 7u64);
+                        let result = child.join();
+                    });
+                    let result = handle.join();
+                    index += 1;
+                }
+            }
+        }
+        "#
+        .into(),
+        &["--trace"],
+    )
+    .unwrap_err();
+    crate::common::assert_vir_error_msg(
+        error.clone(),
+        "before concurrent lifetime accounting is available",
+    );
+    for operation in ["StdSpawn", "StdJoin"] {
+        for context in [
+            "function body, 1 local loop(s), head",
+            "function body, 1 local loop(s), body",
+            "closure body, no local loop",
+        ] {
+            let marker = format!("memory native call binding: {operation} ({context},");
+            assert_eq!(
+                error.notes.iter().filter(|note| note.message.contains(&marker)).count(),
+                1,
+                "{marker}",
+            );
+        }
+    }
+    assert!(!error.notes.iter().any(|note| note.message.contains("memory native call unbound")));
+}
+
+#[test]
+fn native_loop_bindings_survive_for_preparation_and_breakable_blocks() {
+    verifies(
+        "native_for_call_contexts",
+        r#"
+        fn f(n: u16) resources peak(memory) <= 1000 {
+            let root = std::sync::Arc::new(7u64);
+            for _ in 0u16..n {
+                'block: {
+                    let alias = root.clone();
+                    drop(alias);
+                    break 'block;
+                }
+            }
+            drop(root);
+        }
+        "#,
+    );
+}
+
+#[test]
 fn logical_clone_erasure_cannot_shorten_an_unsupported_borrowing_comparison() {
     rejects(
         "shared_comparison_temporary_lifetime",
