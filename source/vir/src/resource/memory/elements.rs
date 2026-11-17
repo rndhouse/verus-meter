@@ -5,9 +5,11 @@
 //! extraction transfer complete subtrees. Opaque input allocations remain
 //! caller-charged and retain their provenance.
 
+use super::accounting::Accounting;
 use super::analysis::Analysis;
 use super::contracts;
 use super::footprint::MemoryKind;
+use super::growth::Growth;
 use super::heap::{Owner, OwnerPath};
 use super::model::unsupported;
 use crate::ast::*;
@@ -100,6 +102,36 @@ impl ElementState {
 }
 
 impl Elements {
+    /// Install fresh proof locals in the receiving frame. Each kind keeps its
+    /// existing allocation identity. The caller supplies the records and charge
+    /// evidence appropriate to capture or return.
+    fn transfer_storage(
+        self,
+        span: &Span,
+        frame: Self,
+        growth: &mut Growth,
+        destination: &mut Accounting,
+    ) -> Self {
+        for (kind, next) in &frame.states {
+            let identity = growth.elements[self.states[kind]].id;
+            let state = &mut growth.elements[*next];
+            state.id = identity;
+            destination.set_allocation(identity, kind.clone(), state.bytes.clone());
+        }
+        growth.before.entry(span.id).or_default().push(super::symbolic::assign(
+            span,
+            &frame.records,
+            self.records,
+        ));
+        Self {
+            records: frame.records,
+            next_records: frame.next_records,
+            states: frame.states,
+            source: None,
+            ..self
+        }
+    }
+
     pub(super) fn zero_charge(&self, growth: &super::growth::Growth) -> bool {
         self.states.values().all(|id| growth.elements[*id].unchanged_zero())
     }
@@ -376,27 +408,13 @@ impl Analysis<'_> {
             .iter()
             .map(|(kind, id)| (kind.clone(), self.growth.elements[*id].bytes.clone()))
             .collect();
-        let mut new = self.elements_from_bytes(span, charges);
-        for (kind, next) in &new.states {
-            let previous = &self.growth.elements[old.states[kind]];
-            let (identity, uncharged) = (previous.id, previous.uncharged);
-            let state = &mut self.growth.elements[*next];
-            self.storage.release_dynamic(state.id);
-            state.id = identity;
-            state.uncharged = uncharged;
-            self.storage.set_allocation(state.id, kind.clone(), state.bytes.clone());
+        let frame = self.declare_element_frame(span, charges);
+        for (kind, next) in &frame.states {
+            // Entry bytes are a proof local even when the source proved zero.
+            self.growth.elements[*next].uncharged =
+                self.growth.elements[old.states[kind]].uncharged;
         }
-        self.growth.before.entry(span.id).or_default().push(super::symbolic::assign(
-            span,
-            &new.records,
-            old.records,
-        ));
-        new.view = old.view;
-        new.precise = old.precise;
-        new.references = old.references;
-        new.minima = old.minima;
-        new.inputs = old.inputs;
-        new
+        old.transfer_storage(span, frame, &mut self.growth, &mut self.storage)
     }
 
     /// Rebind an outgoing runtime forest while preserving each charge identity.
@@ -404,9 +422,9 @@ impl Analysis<'_> {
     /// a byte ceiling alone cannot describe which children survived.
     pub(super) fn collect_worker_elements(
         &mut self,
-        old: Elements,
+        mut old: Elements,
         records: Option<Expr>,
-        retained: &mut super::accounting::Accounting,
+        retained: &mut Accounting,
         span: &Span,
     ) -> Result<Elements, VirErr> {
         if old.references != References::None {
@@ -439,26 +457,31 @@ impl Analysis<'_> {
                 )
             })
             .collect();
-        let mut new = self.elements_from_bytes(span, charges);
-        for (kind, next) in &new.states {
-            let identity = self.growth.elements[old.states[kind]].id;
-            let state = &mut self.growth.elements[*next];
-            self.storage.release_dynamic(state.id);
-            state.id = identity;
-            retained.set_allocation(identity, kind.clone(), state.bytes.clone());
-        }
-        self.growth.before.entry(span.id).or_default().push(super::symbolic::assign(
-            span,
-            &new.records,
-            records,
-        ));
-        new.view = old.view;
-        new.precise = true;
-        new.inputs = old.inputs;
-        Ok(new)
+        let frame = self.declare_element_frame(span, charges);
+        old.records = records;
+        old.precise = true;
+        // The result template supplies the outgoing forest. Reservation minima
+        // from the worker frame do not establish floors for the caller.
+        old.minima.clear();
+        Ok(old.transfer_storage(span, frame, &mut self.growth, retained))
     }
 
     pub(super) fn elements_from_bytes(
+        &mut self,
+        span: &Span,
+        charges: BTreeMap<MemoryKind, Expr>,
+    ) -> Elements {
+        let frame = self.declare_element_frame(span, charges);
+        for (kind, id) in &frame.states {
+            let state = &self.growth.elements[*id];
+            self.storage.set_allocation(state.id, kind.clone(), state.bytes.clone());
+        }
+        frame
+    }
+
+    /// Declare the records and byte counters. The caller registers their
+    /// charges in the accounting domain that owns the collection.
+    fn declare_element_frame(
         &mut self,
         span: &Span,
         charges: BTreeMap<MemoryKind, Expr>,
@@ -495,7 +518,6 @@ impl Analysis<'_> {
                 super::symbolic::assign(span, &bytes, initial.clone()),
                 super::symbolic::assign(span, &count, zero.clone()),
             ]);
-            self.storage.set_allocation(allocation, kind.clone(), bytes.clone());
             let id = self.growth.elements.len();
             self.growth.elements.push(ElementState {
                 records: records.clone(),

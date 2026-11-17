@@ -232,6 +232,35 @@ fn aggregate_captures_and_delayed_copies_keep_construction_inputs() {
 }
 
 #[test]
+fn a_collection_keeps_its_boxed_child_across_capture_and_return() {
+    let code = r#"
+        use vstd::prelude::*;
+        verus! {
+            fn f() resources peak(memory) <= 1024 {
+                let mut children = Vec::with_capacity(1);
+                children.push(Box::new([0u8; 64]));
+                let worker = std::thread::spawn(move || children);
+                let result = worker.join().unwrap();
+                assert(current(memory) <= LIMIT);
+                drop(result);
+                assert(current(memory) <= 0);
+            }
+        }
+    "#;
+    // The Vec header, its one reserved Box slot, and the separately owned array.
+    let check = |name: &str, bound: &str, expected: &[&str]| {
+        let error = crate::verify_one_file(name, code.replace("LIMIT", bound), &[]).unwrap_err();
+        crate::common::assert_vir_error_msgs(error, expected);
+    };
+    check("worker_collection_round_trip", "96", &[GLOBAL]);
+    check(
+        "worker_collection_round_trip_short",
+        "95",
+        &["conditional memory budget exceeded", GLOBAL],
+    );
+}
+
+#[test]
 fn captured_and_returned_vector_keeps_allocation_metadata() {
     rejects(
         "worker_vector_return",
