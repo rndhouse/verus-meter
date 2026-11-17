@@ -438,3 +438,30 @@ fn shared_returns_preserve_the_actual_backing_instance() {
         crate::verify_one_file("worker_backing_identity_short", code.into(), &[]).unwrap_err();
     crate::common::assert_vir_error_msgs(error, &["conditional memory budget exceeded", GLOBAL]);
 }
+
+#[test]
+fn siblings_retain_shared_backing_through_a_transferred_join_handle() {
+    let code = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f() resources peak(memory) <= 2048 {
+            let inner = std::sync::Arc::new(Vec::<u8>::with_capacity(64));
+            let peer = inner.clone();
+            let left = std::thread::spawn(move || std::sync::Arc::new(inner));
+            let right = std::thread::spawn(move || peer);
+            let collector = std::thread::spawn(move || left.join().unwrap());
+            let nested = collector.join().unwrap();
+            drop(nested);
+            let survivor = right.join().unwrap();
+            assert(current(memory) <= 112);
+            drop(survivor);
+            assert(current(memory) <= 0);
+        }
+        }
+    "#;
+    let valid = crate::verify_one_file("sibling_shared_backing", code.into(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+    let short = code.replace("<= 112", "<= 111");
+    let error = crate::verify_one_file("sibling_shared_backing_short", short, &[]).unwrap_err();
+    crate::common::assert_vir_error_msgs(error, &["conditional memory budget exceeded", GLOBAL]);
+}

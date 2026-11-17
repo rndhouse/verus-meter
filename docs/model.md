@@ -208,6 +208,12 @@ functional specification cannot supply this evidence. Outgoing allocation facts
 must close over construction observations or a checked ownership template;
 body-local proof variables cannot escape through a result.
 
+For fixed workers, publication checks the combined strong handles claimed by
+outstanding siblings. Transferring a join handle moves its existing claim to the
+receiving worker. Completion checks that each surviving strong handle is reachable
+from the result through acyclic shared payloads. Imported backing stays in the
+enclosing domain until the worker's reference changes are composed there.
+
 Supported sequential paths now account for standard strong `Arc` construction,
 cloning, readonly payload access and explicit/implicit destruction. Backing and
 owned payload storage remain charged until the last strong release. Copies of

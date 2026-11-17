@@ -424,8 +424,9 @@ impl Analysis<'_> {
             &self.growth.environments,
             &self.heap.shared,
         )?;
-        for captured in Workers::captured_workers(entry.storage.owner.as_ref(), &expr.span)? {
-            let worker = self.heap.workers.records.get(&captured).ok_or_else(|| {
+        let transferred = Workers::captured_workers(entry.storage.owner.as_ref(), &expr.span)?;
+        for captured in &transferred {
+            let worker = self.heap.workers.records.get(captured).ok_or_else(|| {
                 unsupported(&expr.span, "capturing a worker outside its outstanding domain")
             })?;
             if worker.detached.is_some() || worker.waiter.is_some() {
@@ -436,6 +437,18 @@ impl Analysis<'_> {
                 &self.heap.shared,
                 &expr.span,
             )?;
+        }
+        if !entry.shared.is_empty() {
+            let siblings = self
+                .heap
+                .workers
+                .records
+                .iter()
+                .filter(|(actor, _)| !transferred.contains(actor))
+                .map(|(_, worker)| &worker.entry_shared);
+            self.heap
+                .shared
+                .check_worker_imports(siblings.chain(std::iter::once(&entry.shared)), &expr.span)?;
         }
         self.heap.workers.publish(id, &expr.span, self.current_worker, completion, entry)?;
         Ok(Some(Owner { worker: Some(id), ..Default::default() }))

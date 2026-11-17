@@ -56,6 +56,29 @@ pub(super) struct SharedRoots {
     roots: BTreeMap<RootId, Root>,
 }
 
+/// Enumerate strong handles stored directly in this finite ownership tree.
+fn visit_strong_handles(
+    owner: &Owner,
+    span: &Span,
+    mut visit: impl FnMut(RootId) -> Result<(), VirErr>,
+) -> Result<(), VirErr> {
+    let mut result = Ok(());
+    owner.visit(&mut |node| {
+        if result.is_err() {
+            return;
+        }
+        if node.elements.as_ref().is_some_and(|elements| elements.has_references) {
+            result = Err(unsupported(
+                span,
+                "imported reference populations without checked occurrence descriptors",
+            ));
+        } else if let Some(id) = node.shared {
+            result = visit(id);
+        }
+    });
+    result
+}
+
 impl SharedRoots {
     /// A transferred join handle also transfers responsibility for its target's
     /// imported aliases. They remain reserved in the enclosing domain until the
@@ -67,10 +90,10 @@ impl SharedRoots {
         span: &Span,
     ) -> Result<(), VirErr> {
         for (id, input) in &captured.roots {
-            if !matches!(input.storage, Backing::Imported { .. }) {
+            if !matches!(input.storage, Backing::Imported { entry } if entry == input.strong) {
                 return Err(unsupported(
                     span,
-                    "captured worker inputs with duplicate shared backing",
+                    "captured worker without its original shared entry view",
                 ));
             }
             let count = self
@@ -87,6 +110,21 @@ impl SharedRoots {
             }
             self.roots
                 .insert(*id, Root { strong: count, storage: Backing::Imported { entry: count } });
+        }
+        Ok(())
+    }
+
+    /// Check the disjoint claims of outstanding fixed workers against the
+    /// enclosing domain's live aliases. A captured join handle moves its whole
+    /// claim into the recipient, so the caller supplies each claim once.
+    pub(super) fn check_worker_imports<'a>(
+        &self,
+        imports: impl Iterator<Item = &'a Self>,
+        span: &Span,
+    ) -> Result<(), VirErr> {
+        let mut claimed = Self::default();
+        for view in imports {
+            claimed.include_captured_domain(view, self, span)?;
         }
         Ok(())
     }
@@ -122,19 +160,38 @@ impl SharedRoots {
         }
     }
 
-    /// Every surviving handle must occur in the result or its newly owned
-    /// backing. Lost local handles cannot be hidden by an outgoing byte total.
+    /// Account for each outgoing strong handle starting from the actual result.
+    /// When all aliases of an owned root are accounted for, visit its payload
+    /// once. Imported roots stop at the domain boundary. A cycle leaves counts
+    /// outstanding even if counting every stored payload would balance them.
+    /// This checks the graph without executing a destructor or releasing bytes.
     pub(super) fn check_result(&self, result: Option<&Owner>, span: &Span) -> Result<(), VirErr> {
-        let mut outgoing = self.owned_backing();
-        if let Some(result) = result {
-            outgoing.children.insert(OwnerSlot::Contents, result.clone());
+        let mut remaining: BTreeMap<_, _> =
+            self.roots.iter().map(|(id, root)| (*id, root.strong)).collect();
+        let mut pending: Vec<_> = result.into_iter().collect();
+        while let Some(owner) = pending.pop() {
+            visit_strong_handles(owner, span, |id| {
+                let count = remaining
+                    .get_mut(&id)
+                    .and_then(|count| {
+                        *count = count.checked_sub(1)?;
+                        Some(*count)
+                    })
+                    .ok_or_else(|| {
+                        unsupported(
+                            span,
+                            "outgoing strong handle outside its live shared-root domain",
+                        )
+                    })?;
+                if count == 0
+                    && let Backing::Owned(backing) = &self.roots[&id].storage
+                {
+                    pending.push(backing.as_ref());
+                }
+                Ok(())
+            })?;
         }
-        let view = self.captured_view(Some(&outgoing), span)?;
-        if self
-            .roots
-            .iter()
-            .any(|(id, root)| view.roots.get(id).map_or(0, |root| root.strong) != root.strong)
-        {
+        if remaining.values().any(|count| *count != 0) {
             return Err(unsupported(span, "worker completion with unaccounted strong handles"));
         }
         Ok(())
@@ -236,23 +293,14 @@ impl SharedRoots {
     /// inside an opaque runtime population require a checked population view.
     pub(super) fn captured_view(&self, owner: Option<&Owner>, span: &Span) -> Result<Self, VirErr> {
         let mut references = BTreeMap::<RootId, u64>::new();
-        let mut opaque = false;
         if let Some(owner) = owner {
-            owner.visit(&mut |owner| {
-                opaque |= owner.elements.as_ref().is_some_and(|elements| elements.has_references);
-                if let Some(id) = owner.shared {
-                    let count = references.entry(id).or_default();
-                    // A finite compiler-owned tree has at most usize::MAX
-                    // nodes; symbolic populations must use their own binders.
-                    *count = count.checked_add(1).expect("finite captured reference count");
-                }
-            });
-        }
-        if opaque {
-            return Err(unsupported(
-                span,
-                "imported reference populations without checked occurrence descriptors",
-            ));
+            visit_strong_handles(owner, span, |id| {
+                let count = references.entry(id).or_default();
+                *count = count
+                    .checked_add(1)
+                    .ok_or_else(|| unsupported(span, "captured strong counts exceeding u64"))?;
+                Ok(())
+            })?;
         }
         let mut roots = BTreeMap::new();
         for (id, count) in references {
@@ -451,6 +499,57 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::Arc;
+
+    #[test]
+    fn outgoing_aliases_reach_nested_backing_once() {
+        let mut roots = SharedRoots::default();
+        let inner = roots.insert(Owner { bytes: 48, ..Default::default() });
+        let alias = roots.clone_strong(inner.shared.unwrap(), &span()).unwrap();
+        let outer = roots.insert(inner);
+        let outer_alias = roots.clone_strong(outer.shared.unwrap(), &span()).unwrap();
+        let result = Owner {
+            children: [
+                (OwnerSlot::Capture(0), alias),
+                (OwnerSlot::Capture(1), outer),
+                (OwnerSlot::Capture(2), outer_alias),
+            ]
+            .into(),
+            ..Default::default()
+        };
+        roots.check_result(Some(&result), &span()).unwrap();
+        let mut missing = result.clone();
+        missing.children.remove(&OwnerSlot::Capture(0));
+        assert!(roots.check_result(Some(&missing), &span()).is_err());
+        // Checking an output must preserve its actual counts and storage.
+        roots.check_result(Some(&result), &span()).unwrap();
+    }
+
+    #[test]
+    fn balanced_cycles_cannot_be_exported_as_owned_backing() {
+        let mut roots = SharedRoots::default();
+        let first = roots.insert(Owner::default());
+        let id = first.shared.unwrap();
+        let second = roots.insert(first);
+        let Backing::Owned(payload) = &mut roots.roots.get_mut(&id).unwrap().storage else {
+            unreachable!()
+        };
+        **payload = second;
+        assert!(roots.check_result(None, &span()).is_err());
+        // Even an additional actual result handle cannot discharge the cycle.
+        let returned = roots.clone_strong(id, &span()).unwrap();
+        assert!(roots.check_result(Some(&returned), &span()).is_err());
+    }
+
+    #[test]
+    fn simultaneous_workers_cannot_share_one_strong_handle_claim() {
+        let mut enclosing = SharedRoots::default();
+        let handle = enclosing.insert(Owner::default());
+        let worker = enclosing.captured_view(Some(&handle), &span()).unwrap();
+        assert!(enclosing.check_worker_imports([&worker, &worker].into_iter(), &span()).is_err());
+        let second = enclosing.clone_strong(handle.shared.unwrap(), &span()).unwrap();
+        let sibling = enclosing.captured_view(Some(&second), &span()).unwrap();
+        enclosing.check_worker_imports([&worker, &sibling].into_iter(), &span()).unwrap();
+    }
 
     #[test]
     fn captured_views_do_not_reclaim_the_enclosing_domains_backing() {
