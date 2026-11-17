@@ -250,6 +250,9 @@ impl Analysis<'_> {
 
     pub(super) fn call_expr(&mut self, expr: &Expr, destination: bool) -> Result<u64, VirErr> {
         self.wait_for_worker(expr)?;
+        if self.shared_borrow(expr)? {
+            return Ok(0);
+        }
         if let Some(bytes) = self.iterator_call(expr, destination)? {
             return Ok(bytes);
         }

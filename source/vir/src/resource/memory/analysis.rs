@@ -39,6 +39,8 @@ pub(super) struct Checkpoint {
 
 /// One function's evolving ownership state and already checked callee facts.
 pub(super) struct Analysis<'a> {
+    /// Nested accounting views of one source boundary are one evaluation.
+    pub(super) evaluations: std::collections::BTreeMap<crate::messages::AstId, usize>,
     /// Runtime capture types and bodies recovered by mode checking and rustc.
     pub(super) concurrency: &'a super::concurrency::Evidence,
     /// Current checked worker body; None denotes the enclosing accounting function.
@@ -164,82 +166,93 @@ impl Analysis<'_> {
             if !self.flow.reachable {
                 break;
             }
-            match &stmt.x {
-                StmtX::Expr(e) => self.discard(e)?,
-                StmtX::Decl { pattern, init, els, .. } => {
-                    if super::execution::ignored_statement(stmt, &self.var_modes) {
-                        continue;
-                    }
-                    if matches!(pattern.x, PatternX::Wildcard)
-                        && super::contracts::scalar(&pattern.typ)
-                        && els.is_none()
-                        && let Some(init) = init
-                    {
-                        // A discarded scalar item evaluates its initializer but
-                        // creates no named value lifetime, including in `for _`.
-                        let scratch = self.read(init, &pattern.typ)?;
-                        self.storage.release(
-                            &stmt.span,
-                            MemoryKind::host_local(),
-                            scratch,
-                            "discarded scalar initializer",
-                        );
-                        continue;
-                    }
-                    let PatternX::Var(binding) = &pattern.x else {
-                        return Err(unsupported(
-                            &stmt.span,
-                            "destructuring or wildcard declarations",
-                        ));
-                    };
-                    match self.var_modes.get(&binding.name) {
-                        Some(Mode::Spec | Mode::Proof) => continue,
-                        Some(Mode::Exec) => {}
-                        None => {
+            let evaluation = self.enter_temporary_scope(stmt.span.id);
+            // Even an early source exit must pass its statement's temporary
+            // cleanup before the enclosing lexical scopes unwind.
+            'statement: {
+                match &stmt.x {
+                    StmtX::Expr(e) => self.discard(e)?,
+                    StmtX::Decl { pattern, init, els, .. } => {
+                        if super::execution::ignored_statement(stmt, &self.var_modes) {
+                            break 'statement;
+                        }
+                        if matches!(pattern.x, PatternX::Wildcard)
+                            && super::contracts::scalar(&pattern.typ)
+                            && els.is_none()
+                            && let Some(init) = init
+                        {
+                            // A discarded scalar item evaluates its initializer but
+                            // creates no named value lifetime, including in `for _`.
+                            let scratch = self.read(init, &pattern.typ)?;
+                            self.storage.release(
+                                &stmt.span,
+                                MemoryKind::host_local(),
+                                scratch,
+                                "discarded scalar initializer",
+                            );
+                            break 'statement;
+                        }
+                        let PatternX::Var(binding) = &pattern.x else {
                             return Err(unsupported(
                                 &stmt.span,
-                                "declarations without a resolved execution mode",
+                                "destructuring or wildcard declarations",
+                            ));
+                        };
+                        match self.var_modes.get(&binding.name) {
+                            Some(Mode::Spec | Mode::Proof) => break 'statement,
+                            Some(Mode::Exec) => {}
+                            None => {
+                                return Err(unsupported(
+                                    &stmt.span,
+                                    "declarations without a resolved execution mode",
+                                ));
+                            }
+                        }
+                        if els.is_some()
+                            || !matches!(binding.by_ref, ByRef::No)
+                            || binding.user_mut.is_none()
+                        {
+                            return Err(unsupported(
+                                &stmt.span,
+                                "let-else, ref bindings, or generated declarations",
                             ));
                         }
-                    }
-                    if els.is_some()
-                        || !matches!(binding.by_ref, ByRef::No)
-                        || binding.user_mut.is_none()
-                    {
-                        return Err(unsupported(
-                            &stmt.span,
-                            "let-else, ref bindings, or generated declarations",
-                        ));
-                    }
-                    if binding.user_mut == Some(false) && super::contracts::scalar(&binding.typ) {
-                        self.stable_scalars.insert(binding.name.clone());
-                    }
-                    locals.push((stmt.span.clone(), binding.name.clone()));
-                    let value = if let Some(init) = init {
-                        self.produce_place(init, &binding.typ, binding.copy, &stmt.span)?
-                    } else {
-                        self.fresh_value(&stmt.span, &binding.typ)?
-                    };
-                    if !self.flow.reachable {
-                        break;
-                    }
-                    self.slots.insert(binding.name.clone(), value);
-                    if self.layouts.owner(&binding.typ) {
-                        owned_locals.push(binding.name.clone());
-                        let mut owner = self
-                            .result_owner
-                            .take()
-                            .ok_or_else(|| unsupported(&stmt.span, "uninitialized heap owners"))?;
-                        let value = SpannedTyped::new(
-                            &stmt.span,
-                            &binding.typ,
-                            ExprX::Var(binding.name.clone()),
-                        );
-                        self.bind_collection_sources(&stmt.span, &mut owner, &binding.typ, value)?;
-                        self.heap.owners.insert(binding.name.clone(), owner);
+                        if binding.user_mut == Some(false) && super::contracts::scalar(&binding.typ)
+                        {
+                            self.stable_scalars.insert(binding.name.clone());
+                        }
+                        locals.push((stmt.span.clone(), binding.name.clone()));
+                        let value = if let Some(init) = init {
+                            self.produce_place(init, &binding.typ, binding.copy, &stmt.span)?
+                        } else {
+                            self.fresh_value(&stmt.span, &binding.typ)?
+                        };
+                        if !self.flow.reachable {
+                            break 'statement;
+                        }
+                        self.slots.insert(binding.name.clone(), value);
+                        if self.layouts.owner(&binding.typ) {
+                            owned_locals.push(binding.name.clone());
+                            let mut owner = self.result_owner.take().ok_or_else(|| {
+                                unsupported(&stmt.span, "uninitialized heap owners")
+                            })?;
+                            let value = SpannedTyped::new(
+                                &stmt.span,
+                                &binding.typ,
+                                ExprX::Var(binding.name.clone()),
+                            );
+                            self.bind_collection_sources(
+                                &stmt.span,
+                                &mut owner,
+                                &binding.typ,
+                                value,
+                            )?;
+                            self.heap.owners.insert(binding.name.clone(), owner);
+                        }
                     }
                 }
             }
+            self.finish_temporary_scope(evaluation);
         }
         if let Some(tail) = tail.as_ref().filter(|_| self.flow.reachable) {
             if new_value {
@@ -261,6 +274,13 @@ impl Analysis<'_> {
     /// Evaluate source expressions. Only a standalone aggregate leaves a storage
     /// charge; scalar/reference operations introduce no implicit objects.
     pub(super) fn expr(&mut self, expr: &Expr) -> Result<u64, VirErr> {
+        let evaluation = self.enter_temporary_scope(expr.span.id);
+        let result = self.expr_inner(expr)?;
+        self.finish_temporary_scope(evaluation);
+        Ok(result)
+    }
+
+    fn expr_inner(&mut self, expr: &Expr) -> Result<u64, VirErr> {
         if let Some(copied) = self.copied_closure_read(expr) {
             return self.expr(&copied);
         }
@@ -406,6 +426,16 @@ impl Analysis<'_> {
                 lhs,
                 rhs,
             ) => {
+                if self.layouts.owner(&lhs.typ) || self.layouts.owner(&rhs.typ) {
+                    // Comparison borrows its operands. Releasing an owned
+                    // temporary after evaluating only the left operand could
+                    // free its backing before the right operand allocates.
+                    // Owning comparisons need a reviewed call/lifetime rule.
+                    return Err(unsupported(
+                        &expr.span,
+                        "owning comparisons without reviewed memory effects",
+                    ));
+                }
                 let left = self.expr(lhs)?;
                 let right = self.expr(rhs)?;
                 operands = left.checked_add(right).expect("bounded by live total");
@@ -562,6 +592,7 @@ pub(super) fn check(
     })?;
     super::control::validate(body, &modes.var_modes)?;
     let mut analysis = Analysis {
+        evaluations: Default::default(),
         concurrency,
         current_worker: None,
         flow: Default::default(),
@@ -657,6 +688,9 @@ pub(super) fn check(
 
     let result = analysis.produce(body)?;
     let result = analysis.finish_returns(&function.span, result)?;
+    if !analysis.heap.temporaries.is_empty() || !analysis.evaluations.is_empty() {
+        return Err(unsupported(&function.span, "unclosed compiler receiver-temporary scopes"));
+    }
     analysis.heap.workers.check_closed(&function.span)?;
     let return_parameter = result.parameter;
     let zero_charges = analysis.growth.zero_charges();

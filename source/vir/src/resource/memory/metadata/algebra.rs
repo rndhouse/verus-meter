@@ -69,6 +69,7 @@ fn module(name: &str) -> Option<&'static str> {
         "group_metadata_algebra" | "group_metadata_loop_algebra" | "group_runtime_shape" => {
             "groups"
         }
+        "shared_reference" | "worker_reference" => "references",
         "iterate"
         | "iterate_closed"
         | "iterate_closed_facts"

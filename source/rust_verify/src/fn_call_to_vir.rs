@@ -121,6 +121,9 @@ pub(crate) fn fn_call_to_vir<'tcx>(
                             operation: vir::resource::memory::concurrency::Operation::ArcClone,
                             result: expr_typ()?,
                             span: bctx.ctxt.spans.to_air_span(expr.span),
+                            receiver_scope: crate::resource::memory::temporaries::receiver_scope(
+                                bctx, args[0],
+                            ),
                         });
                 }
                 record_misc(bctx, expr, MiscCall::IdentityClone { is_method });

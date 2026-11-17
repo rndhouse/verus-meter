@@ -55,6 +55,29 @@ fn call(site: &Span, typ: &Typ, intrinsic: ResourceIntrinsic, args: Vec<Expr>) -
     )
 }
 
+/// Inspect the descriptor emitted for an actual constructor's owner. The
+/// verified forest algebra checks transport; this checks the compiler bridge
+/// supplies the canonical identity rather than dropping it into byte-only data.
+fn assert_reference(analysis: &mut Analysis<'_>, owner: &Owner, operation: &str, serial: i128) {
+    use crate::resource::memory::{metadata::expr, transfer::simplify::inspect::same_expression};
+    let site = span(900);
+    let before = analysis.storage.live();
+    let records = analysis.call_metadata(&site, owner, &mut vec![]).unwrap();
+    let mut found = 0;
+    crate::ast_visitor::expr_visitor_check(&records, &mut |_, value| {
+        if let ExprX::Call { target: CallTarget::Fun(_, function, _, _, _), args, .. } = &value.x
+            && expr::is_operation(function, operation)
+        {
+            found += 1;
+            assert!(same_expression(&args[1], &expr::path(&site, [serial])));
+        }
+        Ok::<_, ()>(())
+    })
+    .unwrap();
+    assert_eq!(found, 1);
+    assert_eq!(analysis.storage.live(), before);
+}
+
 #[test]
 fn executable_handle_drop_retains_the_worker_and_its_capture_allocation() {
     let site = span(1);
@@ -81,6 +104,7 @@ fn executable_handle_drop_retains_the_worker_and_its_capture_allocation() {
         );
         let value = analysis.produce(&spawn).unwrap();
         let owner = analysis.result_owner.take().unwrap();
+        assert_reference(analysis, &owner, "worker_reference", owner.worker.unwrap().serial());
         let name = VarIdent(Arc::new("handle".into()), VarIdentDisambiguate::RustcId(2));
         analysis.var_modes.insert(name.clone(), Mode::Exec);
         analysis.slots.insert(name.clone(), value);
@@ -246,6 +270,7 @@ fn with_analysis(evidence: &Evidence, run: impl FnOnce(&mut Analysis<'_>, &Dt)) 
     let budgets = HashMap::new();
     let site = span(0);
     let mut analysis = Analysis {
+        evaluations: Default::default(),
         concurrency: evidence,
         current_worker: None,
         flow: Default::default(),
@@ -357,6 +382,20 @@ fn shared_capture_and_completed_result_retain_one_canonical_payload() {
         let owner = analysis.result_owner.take().unwrap();
         let identity = owner.shared;
         assert!(identity.is_some());
+        assert_reference(analysis, &owner, "shared_reference", identity.unwrap().serial());
+        // This local view has zero charged bytes but still carries a strong
+        // reference. Completing its source geometry must preserve that link.
+        let mut local_view = owner.clone();
+        local_view.view = crate::resource::memory::metadata::View::Local;
+        local_view.source =
+            Some((typ.clone(), SpannedTyped::new(&site, &typ, ExprX::Var(root.clone()))));
+        assert_reference(analysis, &local_view, "shared_reference", identity.unwrap().serial());
+        let records = analysis.owner_metadata(&site, &owner, &mut vec![]);
+        // A forest consumer without the population interface must reject, even
+        // though the linked owner itself has no charged bytes.
+        assert!(
+            analysis.owner_from_metadata(&site, &typ, records, Default::default(), false).is_err()
+        );
         analysis.var_modes.insert(root.clone(), Mode::Exec);
         analysis.slots.insert(root.clone(), value);
         analysis.heap.owners.insert(root.clone(), owner);
@@ -380,6 +419,7 @@ fn shared_capture_and_completed_result_retain_one_canonical_payload() {
             .unwrap();
         let owner = analysis.result_owner.take().unwrap();
         assert_eq!(owner.shared, identity);
+        assert_reference(analysis, &owner, "shared_reference", identity.unwrap().serial());
         analysis.var_modes.insert(copy.clone(), Mode::Exec);
         analysis.slots.insert(copy.clone(), value);
         analysis.heap.owners.insert(copy, owner);

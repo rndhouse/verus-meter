@@ -9,6 +9,7 @@ pub mod forest;
 pub mod groups;
 pub mod iteration;
 pub mod ranges;
+pub mod references;
 pub mod removal;
 pub mod selection;
 pub mod views;

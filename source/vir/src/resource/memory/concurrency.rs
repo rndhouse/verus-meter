@@ -76,6 +76,27 @@ pub struct ErasedOperation {
     pub result: Typ,
     /// Source call site used for accounting and diagnostics.
     pub span: Span,
+    /// Rust's destruction scope for a borrowed temporary receiver. A missing
+    /// or unresolved scope cannot justify an early temporary release.
+    pub receiver_scope: Option<TemporaryScope>,
+}
+
+/// Source boundary selected by rustc's temporary-lifetime rules.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TemporaryBoundary {
+    /// After the executable statement, including all initializer operands.
+    Statement,
+    /// After the complete expression, including block-local cleanup.
+    Expression,
+}
+
+/// Compiler lifetime information, awaiting an unambiguous executable VIR site.
+#[derive(Clone, Debug)]
+pub struct TemporaryScope {
+    /// Source node at which rustc ends the temporary's lifetime.
+    pub span: Span,
+    /// Distinguishes statements from expressions sharing a source location.
+    pub boundary: TemporaryBoundary,
 }
 
 /// Compiler-owned evidence. These records cannot establish a memory theorem
@@ -88,6 +109,64 @@ pub struct Evidence {
     /// Several nested identity translations can share one surviving expression;
     /// preserve every executable operation in evaluation order.
     pub erased_operations: HashMap<AstId, Vec<ErasedOperation>>,
+    /// Native operation site to its resolved destruction boundary in source VIR.
+    /// Unresolved/ambiguous boundaries are deliberately absent.
+    temporary_scopes: std::collections::BTreeMap<AstId, AstId>,
+    /// Index boundaries so sequential expression accounting does not scan every
+    /// native operation in the crate at every source expression.
+    temporary_scope_ends: std::collections::BTreeSet<AstId>,
+}
+
+impl Evidence {
+    /// Attach one uniquely resolved executable boundary to its native call.
+    pub fn record_temporary_scope(&mut self, operation: AstId, boundary: AstId) {
+        if let Some(previous) = self.temporary_scopes.insert(operation, boundary) {
+            assert_eq!(previous, boundary, "one compiler destruction scope per operation");
+        }
+        self.temporary_scope_ends.insert(boundary);
+    }
+
+    pub(super) fn temporary_scope(&self, operation: AstId) -> Option<AstId> {
+        self.temporary_scopes.get(&operation).copied()
+    }
+
+    pub(super) fn ends_temporary_scope(&self, site: AstId) -> bool {
+        self.temporary_scope_ends.contains(&site)
+    }
+
+    /// Restored identity operations share the surviving source AST ID. Their
+    /// nesting order selects the original native site and its cleanup evidence.
+    pub(super) fn clone_operation(
+        &self,
+        expression: &crate::ast::Expr,
+    ) -> Option<&ErasedOperation> {
+        use crate::ast::*;
+        let mut current = expression;
+        let mut count = 0usize;
+        while current.span.id == expression.span.id {
+            let ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), args, .. } = &current.x
+            else {
+                break;
+            };
+            if attrs.resource_intrinsic != Some(ResourceIntrinsic::Concurrency(Operation::ArcClone))
+            {
+                break;
+            }
+            count += 1;
+            let [argument] = args.as_slice() else { return None };
+            current = argument;
+        }
+        let operation =
+            self.erased_operations.get(&expression.span.id)?.get(count.checked_sub(1)?)?;
+        let ExprX::Call { target: CallTarget::Fun(_, function, _, _, _), .. } = &expression.x
+        else {
+            return None;
+        };
+        (operation.function == *function
+            && operation.operation == Operation::ArcClone
+            && crate::ast_util::types_equal(&operation.result, &expression.typ))
+        .then_some(operation)
+    }
 }
 
 /// Inline closure field storage under the existing source model. Captured heap
@@ -241,6 +320,7 @@ mod tests {
                         operation: Operation::ArcClone,
                         result: result.clone(),
                         span: site,
+                        receiver_scope: None,
                     }
                 })
                 .to_vec(),

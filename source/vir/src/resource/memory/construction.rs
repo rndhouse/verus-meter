@@ -31,6 +31,13 @@ impl Analysis<'_> {
 
     /// Evaluate into storage already charged to a local, field, or parameter.
     pub(super) fn initialize_expr(&mut self, expr: &Expr) -> Result<(), VirErr> {
+        let evaluation = self.enter_temporary_scope(expr.span.id);
+        self.initialize_expr_inner(expr)?;
+        self.finish_temporary_scope(evaluation);
+        Ok(())
+    }
+
+    fn initialize_expr_inner(&mut self, expr: &Expr) -> Result<(), VirErr> {
         if let Some(copied) = self.copied_closure_read(expr) {
             return self.initialize_expr(&copied);
         }

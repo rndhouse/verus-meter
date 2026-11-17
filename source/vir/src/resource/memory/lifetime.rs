@@ -15,6 +15,34 @@ pub(super) struct Value {
     pub(super) parameter: Option<usize>,
 }
 
+/// Inline value and separately owned descendants travel together across a
+/// temporary, worker-entry or completion boundary. Snapshot clones do not copy
+/// executable storage or increment any strong-reference count.
+#[derive(Clone)]
+pub(super) struct Storage {
+    /// Concrete executable layout of the transferred value.
+    pub(super) typ: Typ,
+    /// Its existing inline charge and lifetime provenance.
+    pub(super) value: Value,
+    /// Owned descendants or canonical links, absent for a non-owning value.
+    pub(super) owner: Option<super::heap::Owner>,
+}
+
+impl Storage {
+    pub(super) fn compatible(&self, other: &Self) -> bool {
+        crate::ast_util::types_equal(&self.typ, &other.typ)
+            && self.value.bytes == other.value.bytes
+            && self.value.ids == other.value.ids
+            && self.value.origins == other.value.origins
+            && self.value.parameter == other.value.parameter
+            && match (&self.owner, &other.owner) {
+                (None, None) => true,
+                (Some(a), Some(b)) => super::control::compatible(a, b),
+                _ => false,
+            }
+    }
+}
+
 impl Value {
     /// Unreachable expressions do not manufacture a value or allocation charge.
     pub(super) fn unit() -> Self {
@@ -111,6 +139,13 @@ impl Analysis<'_> {
     }
 
     pub(super) fn produce(&mut self, expr: &Expr) -> Result<Value, VirErr> {
+        let evaluation = self.enter_temporary_scope(expr.span.id);
+        let result = self.produce_inner(expr)?;
+        self.finish_temporary_scope(evaluation);
+        Ok(result)
+    }
+
+    fn produce_inner(&mut self, expr: &Expr) -> Result<Value, VirErr> {
         if let Some(copied) = self.copied_closure_read(expr) {
             return self.produce(&copied);
         }
@@ -272,6 +307,7 @@ impl Analysis<'_> {
     pub(super) fn join_branch(&mut self, span: &Span, state: &BranchState) -> Result<(), VirErr> {
         if !self.heap.shared.compatible(&state.heap.shared)
             || !self.heap.workers.compatible(&state.heap.workers)
+            || !super::temporaries::compatible(&self.heap.temporaries, &state.heap.temporaries)
         {
             return Err(unsupported(
                 span,
@@ -290,6 +326,7 @@ impl Analysis<'_> {
                     {
                         elements.precise &= node.elements.as_ref().is_some_and(|old| old.precise);
                         if let Some(old) = &node.elements {
+                            elements.has_references |= old.has_references;
                             super::metadata::reservations::join_minima(
                                 &old.records.span,
                                 &mut elements.minima,
@@ -299,6 +336,19 @@ impl Analysis<'_> {
                         }
                     }
                 });
+                let mut incomplete_references = false;
+                current.visit(&mut |owner| {
+                    incomplete_references |= owner
+                        .elements
+                        .as_ref()
+                        .is_some_and(|elements| elements.has_references && !elements.precise);
+                });
+                if incomplete_references {
+                    return Err(unsupported(
+                        span,
+                        "branch-dependent incomplete identity descriptors",
+                    ));
+                }
             }
         }
         for (name, value) in &state.slots {

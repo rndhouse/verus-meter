@@ -4,7 +4,12 @@
 //! body execution/cleanup, completion and join remain separate effects; later
 //! composition must consider every permitted interleaving of their phase graphs.
 
-use super::{analysis::Analysis, heap::Owner, lifetime::Value, model::unsupported};
+use super::{
+    analysis::Analysis,
+    heap::Owner,
+    lifetime::{Storage, Value},
+    model::unsupported,
+};
 use crate::{
     ast::*,
     messages::{AstId, Span},
@@ -15,34 +20,19 @@ use std::collections::BTreeMap;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) struct WorkerId(u64);
 
+impl WorkerId {
+    /// Stable identity encoded in an ownership descriptor, not a worker count.
+    pub(super) fn serial(self) -> i128 {
+        i128::from(self.0)
+    }
+}
+
 /// Static publication family. Each executable publication receives a distinct
 /// WorkerId, including repeated visits to the same site and closure definition.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Family {
     site: AstId,
     closure: usize,
-}
-
-/// Inline value and its separately owned descendants move together. References
-/// and strong aliases retain their existing provenance; no charge is cloned.
-#[derive(Clone)]
-pub(super) struct Storage {
-    pub(super) typ: Typ,
-    pub(super) value: Value,
-    pub(super) owner: Option<Owner>,
-}
-
-impl Storage {
-    fn compatible(&self, other: &Self) -> bool {
-        crate::ast_util::types_equal(&self.typ, &other.typ)
-            && self.value.bytes == other.value.bytes
-            && self.value.ids == other.value.ids
-            && match (&self.owner, &other.owner) {
-                (None, None) => true,
-                (Some(a), Some(b)) => super::control::compatible(a, b),
-                _ => false,
-            }
-    }
 }
 
 #[derive(Clone)]

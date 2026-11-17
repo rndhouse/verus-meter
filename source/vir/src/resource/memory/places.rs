@@ -4,6 +4,13 @@ use super::analysis::Analysis;
 use super::model::{slice, unsupported};
 use crate::ast::*;
 
+fn arc_borrow_adapter(from: &Typ, to: &Typ) -> bool {
+    let TypX::Decorate(TypDecoration::Ref, None, source) = &**from else { return false };
+    let TypX::Decorate(TypDecoration::Arc, _, payload) = &**source else { return false };
+    let TypX::Decorate(TypDecoration::Ref, None, target) = &**to else { return false };
+    crate::ast_util::types_equal(payload, target)
+}
+
 impl Analysis<'_> {
     fn local(&self, place: &Place) -> Result<(), VirErr> {
         if let PlaceX::Local(name) = &place.x {
@@ -42,7 +49,8 @@ impl Analysis<'_> {
             PlaceX::Field(op, base) => {
                 let mut base_typ = &base.typ;
                 while let TypX::Decorate(TypDecoration::Ref, None, inner)
-                | TypX::Decorate(TypDecoration::Box, _, inner) = &**base_typ
+                | TypX::Decorate(TypDecoration::Box | TypDecoration::Arc, _, inner) =
+                    &**base_typ
                 {
                     base_typ = inner;
                 }
@@ -70,7 +78,8 @@ impl Analysis<'_> {
             PlaceX::Index(base, index, _, BoundsCheck::Error) => {
                 let mut base_typ = &base.typ;
                 while let TypX::Decorate(TypDecoration::Ref, None, inner)
-                | TypX::Decorate(TypDecoration::Box, _, inner) = &**base_typ
+                | TypX::Decorate(TypDecoration::Box | TypDecoration::Arc, _, inner) =
+                    &**base_typ
                 {
                     base_typ = inner;
                 }
@@ -88,6 +97,13 @@ impl Analysis<'_> {
             // Compiler reborrows can materialize a reference expression as a
             // temporary place. Evaluate that reference, which recursively checks
             // its backing place; aggregate/box temporaries remain unsupported.
+            PlaceX::Temporary(value) if arc_borrow_adapter(&value.typ, &place.typ) => {
+                // Native Arc::deref is logical identity in functional VIR:
+                // the adapter has type &T but its expression still has &Arc<T>.
+                // Reading it retains the existing strong owner and payload.
+                // Owned receiver temporaries require their own cleanup evidence.
+                self.expr(value)
+            }
             PlaceX::Temporary(value)
                 if matches!(
                     &*place.typ,

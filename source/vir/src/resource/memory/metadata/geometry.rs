@@ -26,14 +26,16 @@ impl Analysis<'_> {
             return Ok(self.owner_metadata(span, owner, proofs));
         };
         let shape = self.source_geometry(span, typ, source.clone())?;
-        if self.growth.owner_zero_charge(owner) {
+        if self.growth.owner_zero_charge(owner) && !owner.has_references() {
             return Ok(super::super::transfer::simplify::simplify(&shape));
         }
         let mut charged_owner = owner.clone();
         charged_owner.visit_mut(&mut |node| {
             // Descriptor-only histories can be arbitrarily long while their
             // charge stays zero. The logical source supplies those views anew.
-            if node.elements.as_ref().is_some_and(|elements| elements.zero_charge(&self.growth)) {
+            if node.elements.as_ref().is_some_and(|elements| {
+                elements.zero_charge(&self.growth) && !elements.has_references
+            }) {
                 node.elements = None;
             }
         });

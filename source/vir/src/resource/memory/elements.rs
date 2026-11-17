@@ -31,6 +31,9 @@ pub(super) struct Elements {
     pub(super) next_records: Expr,
     /// Every allocation charge in this view has descriptors; opaque additions disable this.
     pub(super) precise: bool,
+    /// Identity descriptors may be live even when every local byte sum is zero.
+    /// Such a forest cannot be replaced by source geometry or an opaque sum.
+    pub(super) has_references: bool,
     /// Stable counter identities; the containing owner controls their lifetime.
     pub(super) states: BTreeMap<MemoryKind, usize>,
     /// Disjoint input nodes captured by element insertion.
@@ -160,6 +163,7 @@ impl Analysis<'_> {
             state.extent = None;
         }
         old.precise = true;
+        old.has_references |= new.has_references;
         old.view = new.view;
         old.minima = new.minima.clone();
     }
@@ -219,6 +223,7 @@ impl Analysis<'_> {
             return Ok(());
         }
         let uncharged = self.growth.owner_zero_charge(&child);
+        elements.has_references |= child.has_references();
         self.merge_element_minima(span, elements, &child);
         let mut proofs = Vec::new();
         let child_records = self.owner_metadata(span, &child, &mut proofs);
@@ -304,6 +309,12 @@ impl Analysis<'_> {
                 elements.precise = false;
             }
         });
+        if elements.has_references && !elements.precise {
+            return Err(unsupported(
+                span,
+                "identity-bearing collections without complete descriptors",
+            ));
+        }
         self.release_owner_storage(child, span, false)?;
         self.set_element_records(span, elements, true);
         self.assert_element_minima(span, elements, true)?;
@@ -408,6 +419,7 @@ impl Analysis<'_> {
             records,
             next_records,
             precise,
+            has_references: false,
             states,
             inputs: HashSet::new(),
         }
@@ -535,6 +547,13 @@ impl Analysis<'_> {
             complete &= node.geometry_known || node.source.is_some();
         });
         elements.precise &= complete;
+        elements.has_references |= child.has_references();
+        if elements.has_references && !elements.precise {
+            return Err(unsupported(
+                span,
+                "identity-bearing collections without complete descriptors",
+            ));
+        }
         if elements.precise {
             let records = self.snapshot_owner_metadata(span, &child);
             let path = self.metadata_path(span, length.clone())?;

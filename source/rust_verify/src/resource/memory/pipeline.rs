@@ -141,6 +141,11 @@ fn synchronization_evidence(
                 let info = super::concurrency::closure(ctxt, *closure, span)?;
                 evidence.concurrency.closures.insert(info.id, info);
             }
+            super::temporaries::resolve(
+                function,
+                &erasure.resource_operations,
+                &mut evidence.concurrency,
+            );
         }
         evidence.cleanup.insert(function.x.name.clone(), graph);
     }

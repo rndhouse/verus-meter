@@ -69,6 +69,7 @@ mod spec_budget;
 mod summary;
 mod symbolic;
 pub mod synchronization;
+mod temporaries;
 mod transfer;
 mod values;
 mod vector_calls;

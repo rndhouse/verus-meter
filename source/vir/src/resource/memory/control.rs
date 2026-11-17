@@ -202,14 +202,20 @@ impl Analysis<'_> {
                 }
             }
         }
-        cleanup(self, locals);
+        self.cleanup_edges(first_exit, |analysis| cleanup(analysis, locals));
+    }
+
+    /// Apply mandated cleanup independently to fallthrough and every new exit.
+    /// Existing outer edges have already passed their own scopes.
+    pub(super) fn cleanup_edges(&mut self, first_exit: usize, mut cleanup: impl FnMut(&mut Self)) {
+        cleanup(self);
         let normal = self.branch_state();
         let produced = self.produced.take();
         let owner = self.result_owner.take();
         let mut edges = self.flow.exits.split_off(first_exit);
         for edge in &mut edges {
             self.restore_branch(&edge.state);
-            cleanup(self, locals);
+            cleanup(self);
             edge.state = self.branch_state();
         }
         self.flow.exits.extend(edges);
@@ -276,7 +282,8 @@ fn direct_result(value: &Expr) -> bool {
 /// Continuing roles may share mutable proof state, but fixed allocation and
 /// provenance identities cannot change implicitly at a loop exit.
 pub(super) fn compatible_heap(a: &super::heap::Heap, b: &super::heap::Heap) -> bool {
-    a.workers.compatible(&b.workers)
+    super::temporaries::compatible(&a.temporaries, &b.temporaries)
+        && a.workers.compatible(&b.workers)
         && a.shared.compatible(&b.shared)
         && [(&a.owners, &b.owners), (&a.borrowed, &b.borrowed)].iter().all(|(left, right)| {
             left.len() == right.len()
@@ -349,6 +356,7 @@ pub(super) fn compatible(a: &Owner, b: &Owner) -> bool {
             (None, None) => true,
             (Some(a), Some(b)) => {
                 a.view == b.view
+                    && a.has_references == b.has_references
                     && a.states == b.states
                     && a.inputs == b.inputs
                     && super::transfer::simplify::inspect::same_expression(&a.records, &b.records)

@@ -246,6 +246,71 @@ impl Layouts {
         }
     }
 
+    /// Detect identity-bearing ownership even when the local charge view is
+    /// empty. Recursion revisits add no new field types to this reachability
+    /// query; validating the executable layout remains the sizing pass's job.
+    pub(super) fn contains_references(&self, typ: &Typ) -> bool {
+        fn visit(layouts: &Layouts, typ: &Typ, visiting: &mut Vec<LayoutNode>) -> bool {
+            if matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _))
+                || layouts.join_handle(typ).is_some()
+            {
+                return true;
+            }
+            // Generic containers can nest the same constructor at different
+            // types. Inspect their actual arguments before the datatype-only
+            // recursion guard (Vec<Vec<Arc<T>>> is not a recursive type).
+            if let TypX::Decorate(TypDecoration::Box, _, inner) = &**typ {
+                return visit(layouts, inner, visiting);
+            }
+            if let TypX::Datatype(_, args, _) | TypX::Primitive(_, args) = &**typ {
+                for argument in args.iter() {
+                    if visit(layouts, argument, visiting) {
+                        return true;
+                    }
+                }
+            }
+            if layouts.vector(typ) || layouts.option(typ) {
+                return false;
+            }
+            let (key, children): (_, Vec<Typ>) = match &**typ {
+                TypX::Datatype(name, _, _) => (
+                    LayoutNode::Datatype(name.clone()),
+                    layouts
+                        .datatypes
+                        .get(name)
+                        .into_iter()
+                        .flat_map(|datatype| datatype.x.variants.iter())
+                        .flat_map(|variant| variant.fields.iter())
+                        .filter(|field| field.a.1 == Mode::Exec)
+                        .map(|field| field.a.0.clone())
+                        .collect(),
+                ),
+                TypX::AnonymousClosure(_, _, _, id) => (
+                    LayoutNode::Closure(*id),
+                    layouts
+                        .closures
+                        .get(id)
+                        .into_iter()
+                        .flat_map(|layout| layout.fields.iter())
+                        .map(|(typ, _)| typ.clone())
+                        .collect(),
+                ),
+                _ => return false,
+            };
+            if visiting.contains(&key) {
+                return false;
+            }
+            visiting.push(key);
+            let mut found = false;
+            for child in children {
+                found |= visit(layouts, &child, visiting);
+            }
+            visiting.pop();
+            found
+        }
+        visit(self, typ, &mut Vec::new())
+    }
+
     fn element_size(
         &self,
         typ: &Typ,
@@ -253,7 +318,7 @@ impl Layouts {
         visiting: &mut HashSet<LayoutNode>,
     ) -> Result<u64, VirErr> {
         if matches!(&**typ, TypX::MutRef(_))
-            || matches!(&**typ, TypX::Decorate(d, _, _) if *d != TypDecoration::Box)
+            || matches!(&**typ, TypX::Decorate(d, _, _) if !matches!(d, TypDecoration::Box | TypDecoration::Arc))
         {
             return Err(unsupported(span, "reference-valued collection elements"));
         }
@@ -403,7 +468,7 @@ impl Layouts {
             return Err(unsupported(span, "boxes with custom allocator types"));
         }
         if matches!(&**inner, TypX::MutRef(_))
-            || matches!(&**inner, TypX::Decorate(d, _, _) if *d != TypDecoration::Box)
+            || matches!(&**inner, TypX::Decorate(d, _, _) if !matches!(d, TypDecoration::Box | TypDecoration::Arc))
         {
             return Err(unsupported(span, "reference-valued heap objects"));
         }
@@ -551,7 +616,7 @@ impl Layouts {
                         return Err(unsupported(span, "ghost or tracked struct fields"));
                     }
                     if matches!(&**typ, TypX::MutRef(_))
-                        || matches!(&**typ, TypX::Decorate(d, _, _) if *d != TypDecoration::Box)
+                        || matches!(&**typ, TypX::Decorate(d, _, _) if !matches!(d, TypDecoration::Box | TypDecoration::Arc))
                     {
                         return Err(unsupported(span, "reference or decorated struct fields"));
                     }
@@ -582,5 +647,40 @@ impl Layouts {
                 "this type (expected bool, a native integer, a fixed integer array, unit, a concrete struct, a local box, or a supported reference)",
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn repeated_container_types_preserve_nested_reference_presence() {
+        let vector = Dt::Path(crate::fun!(CrateId::Internal => "layout_test"; "Vec").path.clone());
+        let layouts = Layouts::new(&[], None, Some(vector.clone()), None);
+        let allocator = Arc::new(TypX::Primitive(Primitive::Global, Arc::new(vec![])));
+        let nested = |element: Typ| {
+            let inner = Arc::new(TypX::Datatype(
+                vector.clone(),
+                Arc::new(vec![element, allocator.clone()]),
+                Arc::new(vec![]),
+            ));
+            Arc::new(TypX::Datatype(
+                vector.clone(),
+                Arc::new(vec![inner, allocator.clone()]),
+                Arc::new(vec![]),
+            ))
+        };
+        let scalar = Arc::new(TypX::Int(IntRange::U(64)));
+        let shared = Arc::new(TypX::Decorate(
+            TypDecoration::Arc,
+            Some(TypDecorationArg { allocator_typ: allocator.clone() }),
+            scalar.clone(),
+        ));
+        assert!(layouts.contains_references(&nested(shared.clone())));
+        assert!(!layouts.contains_references(&nested(scalar)));
+        let erased = Arc::new(TypX::Decorate(TypDecoration::Tracked, None, shared));
+        assert!(!layouts.contains_references(&nested(erased)));
     }
 }

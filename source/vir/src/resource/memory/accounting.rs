@@ -140,6 +140,16 @@ pub(super) struct Accounting {
 }
 
 impl Accounting {
+    /// Snapshot surviving charges without copying a section's peak/proof history.
+    pub(super) fn live_storage(&self) -> Vec<Live> {
+        self.paths.clone()
+    }
+
+    /// Retire a ledger after its history has been composed separately.
+    pub(super) fn into_live_storage(self) -> Vec<Live> {
+        self.paths
+    }
+
     pub(super) fn new(span: &Span, budget: u64) -> Self {
         Self {
             observed_peak: 0,
@@ -163,13 +173,17 @@ impl Accounting {
     pub(super) fn restore_live(&mut self, other: &Self) {
         self.paths = other.paths.clone();
     }
-    /// A terminating section edge may retain its result beyond the section.
+    /// A section may retain a result or compiler-scoped temporary beyond its boundary.
     /// Compose only live charges here; the section's history is represented in
     /// the parent by its declared allowance, just as on normal completion.
-    pub(super) fn retain_section_exit(&mut self, other: &Self, span: &Span) -> Result<(), VirErr> {
+    pub(super) fn retain_section_storage(
+        &mut self,
+        other: &[Live],
+        span: &Span,
+    ) -> Result<(), VirErr> {
         let mut paths = Vec::new();
         for parent in &self.paths {
-            for local in &other.paths {
+            for local in other {
                 let mut path = parent.clone();
                 for (kind, amount) in &local.fixed {
                     let sum = path.fixed.entry(kind.clone()).or_default();

@@ -14,6 +14,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone, Default)]
 pub(super) struct Heap {
+    /// Owned native receivers stay live until rustc's actual destruction scope.
+    pub(super) temporaries: Vec<super::temporaries::Temporary>,
     /// Executing workers and completed results survive their source handle slots.
     pub(super) workers: super::workers::Workers,
     /// Shared allocations live once in the closed domain, independently of
@@ -110,6 +112,14 @@ impl Default for Owner {
 }
 
 impl Owner {
+    /// Byte-free owner nodes and forests still carry strong/worker lifetimes.
+    pub(super) fn has_references(&self) -> bool {
+        self.shared.is_some()
+            || self.worker.is_some()
+            || self.elements.as_ref().is_some_and(|elements| elements.has_references)
+            || self.children.values().any(Self::has_references)
+    }
+
     /// A fresh fixed wrapper does not make its incoming children fully charged.
     pub(super) fn complete(&self) -> bool {
         let mut complete = true;
@@ -374,6 +384,12 @@ impl Analysis<'_> {
         if matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _)) {
             return Err(unsupported(span, "shared input roots without a checked alias descriptor"));
         }
+        if self.layouts.owning_elements(typ) && self.layouts.contains_references(typ) {
+            return Err(unsupported(
+                span,
+                "incoming reference populations without a checked accounting-domain descriptor",
+            ));
+        }
         let mut owner = Owner {
             view: super::metadata::View::Local,
             geometry_known: !self.layouts.cardinality(typ),
@@ -533,9 +549,9 @@ impl Analysis<'_> {
             shared |= node.shared.is_some() || node.closure.is_some() || node.worker.is_some()
         });
         if shared {
-            // The old forest stores unique-owner byte charges. It cannot yet
-            // carry a strong root link or justify destroying that handle when
-            // merely transferring the charge to a symbolic collection sum.
+            // Forest records retain identity links, but the population consumer
+            // must also preserve their multiplicity and canonical lifetimes.
+            // Moving a charge into a sum cannot execute a strong destructor.
             return Err(unsupported(
                 span,
                 "shared handles, closures or workers in runtime ownership forests without an identity summary",
@@ -569,7 +585,10 @@ impl Analysis<'_> {
                     && owner.input.is_none()
             );
             if let Some(backing) = self.heap.shared.release(root) {
-                self.destroy_owner(backing, span, inputs);
+                // A shared target is outside its enclosing unique-owner tree.
+                // Even if that parent's inputs were scanned already, the final
+                // strong release must retire this target's own incoming regions.
+                self.destroy_owner(backing, span, true);
             }
             return;
         }
@@ -615,6 +634,19 @@ impl Analysis<'_> {
                     &expr.span,
                     "drop of anything other than a named local heap owner",
                 ));
+            }
+            if matches!(&*types[0], TypX::Decorate(TypDecoration::Arc, _, _))
+                && !matches!(&args[0].x, ExprX::ReadPlace(_, _))
+            {
+                // drop consumes this owned argument by value. Borrowed receiver
+                // temporaries inside it keep their separate compiler scopes.
+                let value = self.produce(&args[0])?;
+                let owner = self.result_owner.take().ok_or_else(|| {
+                    unsupported(&expr.span, "dropping a temporary without shared ownership")
+                })?;
+                self.release_owner(owner, &expr.span);
+                self.release_value(value, &expr.span);
+                return Ok(Some(0));
             }
             let ExprX::ReadPlace(place, _) = &args[0].x else {
                 return Err(unsupported(

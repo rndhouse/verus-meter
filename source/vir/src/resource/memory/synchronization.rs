@@ -371,7 +371,7 @@ pub fn needs_cleanup(
     let empty = HashMap::new();
     let modes = modes.map(|m| &m.var_modes).unwrap_or(&empty);
     super::closures::needs_evidence(function, modes)
-        || reject_unaccounted(function, modes, types, datatypes).is_err()
+        || reject_unaccounted_inner(function, modes, types, datatypes, false).is_err()
 }
 
 /// Distinguish executable roots from tracked protocol witnesses and specification
@@ -399,12 +399,33 @@ pub(super) fn reject_unaccounted(
     types: &LibraryTypes,
     datatypes: &[crate::ast::Datatype],
 ) -> Result<(), crate::ast::VirErr> {
+    reject_unaccounted_inner(function, modes, types, datatypes, true)
+}
+
+/// Evidence collection still observes supported shared operations. Their logical
+/// erasure and runtime cleanup must be recovered even after their storage paths
+/// are accounted, independently of the remaining synchronization/worker gate.
+fn reject_unaccounted_inner(
+    function: &crate::ast::Function,
+    modes: &HashMap<VarIdent, crate::ast::Mode>,
+    types: &LibraryTypes,
+    datatypes: &[crate::ast::Datatype],
+    shared_accounted: bool,
+) -> Result<(), crate::ast::VirErr> {
     use crate::ast::*;
     use crate::ast_visitor::{AstVisitor, NoScoper, Walk};
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum SharedCheck {
+        Evidence,
+        Local,
+        Input,
+        Output,
+    }
     struct Check<'a> {
         modes: &'a HashMap<VarIdent, Mode>,
         types: &'a LibraryTypes,
         datatypes: HashMap<crate::ast::Dt, &'a crate::ast::Datatype>,
+        shared: SharedCheck,
     }
     impl Check<'_> {
         fn runtime_type(&self, typ: &Typ, span: &crate::messages::Span) -> Result<(), VirErr> {
@@ -420,11 +441,24 @@ pub(super) fn reject_unaccounted(
                 TypX::Decorate(TypDecoration::Ghost | TypDecoration::Tracked, _, _) => {
                     return Ok(());
                 }
-                TypX::Decorate(TypDecoration::Arc, _, _) => {
-                    return Err(super::model::unsupported(
-                        span,
-                        "runtime shared ownership before concurrent lifetime accounting is available",
-                    ));
+                TypX::Decorate(TypDecoration::Arc, _, inner) => {
+                    if self.shared != SharedCheck::Local {
+                        return Err(super::model::unsupported(
+                            span,
+                            match self.shared {
+                                SharedCheck::Input => {
+                                    "shared input roots without a checked alias descriptor"
+                                }
+                                SharedCheck::Output => {
+                                    "shared results without a checked outgoing alias descriptor"
+                                }
+                                _ => {
+                                    "runtime shared ownership requires executable lifetime evidence"
+                                }
+                            },
+                        ));
+                    }
+                    self.runtime_type_inner(inner, span, visiting)?;
                 }
                 TypX::Datatype(name, args, _) => {
                     if self.types.get(name).is_some_and(|kind| *kind != LibraryType::Result) {
@@ -488,12 +522,21 @@ pub(super) fn reject_unaccounted(
             if let ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), .. } = &expr.x
                 && let Some(ResourceIntrinsic::Concurrency(operation)) = attrs.resource_intrinsic
             {
-                return Err(super::model::unsupported(
-                    &expr.span,
-                    &format!(
-                        "concurrent operation {operation:?} before concurrent lifetime accounting is available"
-                    ),
-                ));
+                if self.shared != SharedCheck::Local
+                    || !matches!(
+                        operation,
+                        super::concurrency::Operation::ArcNew
+                            | super::concurrency::Operation::ArcClone
+                            | super::concurrency::Operation::ArcBorrow
+                    )
+                {
+                    return Err(super::model::unsupported(
+                        &expr.span,
+                        &format!(
+                            "concurrent operation {operation:?} before concurrent lifetime accounting is available"
+                        ),
+                    ));
+                }
             }
             self.runtime_type(&expr.typ, &expr.span)?;
             self.visit_expr_rec(expr)
@@ -515,11 +558,18 @@ pub(super) fn reject_unaccounted(
         modes,
         types,
         datatypes: datatypes.iter().map(|d| (d.x.name.clone(), d)).collect(),
+        shared: if shared_accounted { SharedCheck::Input } else { SharedCheck::Evidence },
     };
     for parameter in function.x.params.iter().filter(|p| p.x.mode == Mode::Exec) {
         check.runtime_type(&parameter.x.typ, &parameter.span)?;
     }
+    if shared_accounted {
+        check.shared = SharedCheck::Output;
+    }
     check.runtime_type(&function.x.outer_ret.x.typ, &function.span)?;
+    if shared_accounted {
+        check.shared = SharedCheck::Local;
+    }
     if let Some(body) = &function.x.body {
         check.visit_expr(body)?;
     }

@@ -61,6 +61,40 @@ fn zero_forest(value: &Expr, forests: &HashSet<VarIdent>) -> bool {
 
 fn zero_record(value: &Expr) -> bool {
     matches!(&value.x, ExprX::Call { target: CallTarget::Fun(_, fun, _, _, _), args, .. }
-        if super::expr::is_operation(fun, "allocated")
-            && contracts::constant(&contracts::simplify(&args[2])) == Some(0))
+        if super::expr::is_operation(fun, "shared_reference")
+            || super::expr::is_operation(fun, "worker_reference")
+            || (super::expr::is_operation(fun, "allocated")
+                && contracts::constant(&contracts::simplify(&args[2])) == Some(0)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::expr;
+    use super::*;
+
+    #[test]
+    fn zero_reference_costs_do_not_erase_identity_descriptors() {
+        let span = crate::messages::Span {
+            raw_span: std::sync::Arc::new(()),
+            id: 1,
+            data: std::sync::Arc::new([]),
+            as_string: "reference-only footprint".into(),
+        };
+        for constructor in ["shared_reference", "worker_reference"] {
+            let record = expr::operation(
+                &span,
+                constructor,
+                vec![expr::path(&span, []), expr::path(&span, [17])],
+                expr::record_type(),
+            );
+            let forest = expr::push(&span, expr::empty(&span, expr::record_type()), record);
+            let empty = Default::default();
+            let cost = expr::cost(&span, forest.clone(), expr::integer(&span, 0));
+            assert_eq!(contracts::constant(&simplify(&cost, &empty, &empty).unwrap()), Some(0));
+            let preserved = simplify(&forest, &empty, &empty).unwrap();
+            assert!(crate::resource::memory::transfer::simplify::inspect::same_expression(
+                &preserved, &forest,
+            ));
+        }
+    }
 }

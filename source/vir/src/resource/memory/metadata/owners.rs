@@ -33,18 +33,34 @@ impl Analysis<'_> {
             .map(|id| self.growth.vectors[id].capacity.clone())
             .or_else(|| owner.capacity.clone())
             .unwrap_or_else(|| expr::integer(span, 0));
-        let record = expr::operation(
-            span,
-            "allocated",
-            vec![
-                expr::path(span, []),
-                expr::integer(span, 0),
-                bytes,
-                capacity,
-                self.owner_length(span, owner),
-            ],
-            expr::record_type(),
-        );
+        let record = if let Some(root) = owner.shared {
+            expr::operation(
+                span,
+                "shared_reference",
+                vec![expr::path(span, []), expr::path(span, [root.serial()])],
+                expr::record_type(),
+            )
+        } else if let Some(worker) = owner.worker {
+            expr::operation(
+                span,
+                "worker_reference",
+                vec![expr::path(span, []), expr::path(span, [worker.serial()])],
+                expr::record_type(),
+            )
+        } else {
+            expr::operation(
+                span,
+                "allocated",
+                vec![
+                    expr::path(span, []),
+                    expr::integer(span, 0),
+                    bytes,
+                    capacity,
+                    self.owner_length(span, owner),
+                ],
+                expr::record_type(),
+            )
+        };
         let empty = expr::empty(span, expr::record_type());
         let mut memory = expr::push(span, empty.clone(), record.clone());
         proofs.push(expr::lemma(span, "well_formed_record", vec![record.clone()]));
@@ -213,6 +229,14 @@ impl Analysis<'_> {
         view: super::View,
         zero_charge: bool,
     ) -> Result<Owner, VirErr> {
+        if matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _))
+            || self.layouts.join_handle(typ).is_some()
+        {
+            return Err(super::super::model::unsupported(
+                span,
+                "shared or worker references without a checked population descriptor",
+            ));
+        }
         let memory = self.metadata_local(span, "selected_records", memory);
         self.growth.before.entry(span.id).or_default().push(expr::lemma(
             span,
@@ -271,6 +295,7 @@ impl Analysis<'_> {
                 children,
             ));
             elements.precise = true;
+            elements.has_references = self.layouts.contains_references(typ);
             elements.view = view;
             owner.elements = Some(elements);
             rest = expr::operation(span, "nonruntime", vec![rest], expr::memory_type());

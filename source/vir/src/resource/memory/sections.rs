@@ -44,6 +44,7 @@ impl Analysis<'_> {
         self.check_checkpoints()?;
         let section = std::mem::replace(&mut self.storage, parent);
         self.checkpoints = parent_checkpoints;
+        let retained = section.live_storage();
         let report = section.finish_section(contract_span);
         let bound = super::contracts::literal(contract_span, budget);
         self.obligations.extend(report.cost_points.iter().map(|(span, cost)| Obligation {
@@ -64,7 +65,7 @@ impl Analysis<'_> {
         self.storage.section_allowance(contract_span, budget)?;
         for edge in &mut self.flow.exits[first_exit..] {
             let local = std::mem::replace(&mut edge.state.storage, self.storage.clone());
-            edge.state.storage.retain_section_exit(&local, &edge.span)?;
+            edge.state.storage.retain_section_storage(&local.into_live_storage(), &edge.span)?;
             for (name, value) in &parent_slots {
                 if !edge.state.slots.contains_key(name)
                     && edge.value.origins.is_disjoint(&value.ids)
@@ -89,6 +90,13 @@ impl Analysis<'_> {
             if !self.slots.contains_key(&name) {
                 self.storage.release_values(&value.ids);
             }
+        }
+        // A borrowed receiver's compiler scope can end outside this block.
+        // Adopt its live values/backing after checking the declared allowance.
+        // Exit edges above use their own retained charges, not this normal
+        // path's temporaries.
+        if self.flow.reachable {
+            self.storage.retain_section_storage(&retained, contract_span)?;
         }
         Ok(())
     }

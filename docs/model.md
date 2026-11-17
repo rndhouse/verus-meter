@@ -137,6 +137,14 @@ Creating a closure does not execute its body. General closure invocation,
 capture summaries across function interfaces and closure `value_size` queries
 remain unsupported.
 
+Supported sequential paths now account for standard strong `Arc` construction,
+cloning, readonly payload access and explicit/implicit destruction. Backing and
+owned payload storage remain charged until the last strong release. Copies of
+analysis state do not create handles. Nested clone receivers retain their owned
+temporary storage through rustc's destruction scope, including later operands;
+unresolved scopes reject. Imported aliases, retained reference populations and
+outgoing shared descriptors still require the remaining concurrent interfaces.
+
 Primitive identification uses compiler definitions, including through aliases.
 Compiler-derived synchronization graphs preserve moves, acquisition outcomes and
 actual guard cleanup. Runtime synchronization values still reject in

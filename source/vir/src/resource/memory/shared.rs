@@ -16,6 +16,13 @@ use std::collections::BTreeMap;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) struct RootId(u64);
 
+impl RootId {
+    /// Stable identity encoded in an ownership descriptor, not an allocation cost.
+    pub(super) fn serial(self) -> i128 {
+        i128::from(self.0)
+    }
+}
+
 #[derive(Clone)]
 struct Root {
     /// Live strong handles in this ownership state, not historical clone calls.
@@ -78,6 +85,47 @@ impl SharedRoots {
 }
 
 impl Analysis<'_> {
+    /// A reviewed native dereference returns a view of existing backing. It
+    /// neither clones a strong handle nor allocates or transfers the payload.
+    pub(super) fn shared_borrow(&mut self, expr: &Expr) -> Result<bool, VirErr> {
+        let ExprX::Call {
+            target: CallTarget::Fun(_, _, _, _, attrs),
+            args,
+            post_args: None,
+            body: None,
+        } = &expr.x
+        else {
+            return Ok(false);
+        };
+        if attrs.resource_intrinsic
+            != Some(ResourceIntrinsic::Concurrency(super::concurrency::Operation::ArcBorrow))
+        {
+            return Ok(false);
+        }
+        let [argument] = args.as_slice() else {
+            return Err(unsupported(&expr.span, "this shared dereference signature"));
+        };
+        let TypX::Decorate(TypDecoration::Ref, None, receiver) = &*argument.typ else {
+            return Err(unsupported(
+                &expr.span,
+                "a shared dereference without a borrowed receiver",
+            ));
+        };
+        let TypX::Decorate(TypDecoration::Arc, _, payload) = &**receiver else {
+            return Err(unsupported(&expr.span, "this shared dereference receiver type"));
+        };
+        let TypX::Decorate(TypDecoration::Ref, None, target) = &*expr.typ else {
+            return Err(unsupported(&expr.span, "this shared dereference result type"));
+        };
+        if !crate::ast_util::types_equal(payload, target) {
+            return Err(unsupported(&expr.span, "this shared dereference payload coercion"));
+        }
+        self.layouts.size(receiver, &expr.span)?;
+        self.discard(argument)?;
+        self.result_owner = None;
+        Ok(true)
+    }
+
     /// Construct or clone a strong owner into an already charged handle slot.
     pub(super) fn shared_owner(&mut self, expr: &Expr) -> Result<Option<Owner>, VirErr> {
         use super::concurrency::Operation;
@@ -137,12 +185,40 @@ impl Analysis<'_> {
             }
             return Ok(Some(self.heap.shared.insert(storage)));
         }
-        let (name, path) = super::paths::expr(argument, &expr.typ).ok_or_else(|| {
-            unsupported(
+        let Some((name, path)) = super::paths::expr(argument, &expr.typ) else {
+            let receiver = match &argument.x {
+                ExprX::ReadPlace(place, kind)
+                    if matches!(kind.preliminary_kind, ReadKind::ImmutBor) =>
+                {
+                    let PlaceX::Temporary(value) = &place.x else {
+                        return Err(unsupported(&argument.span, "this shared clone receiver"));
+                    };
+                    value
+                }
+                _ => argument,
+            };
+            if !crate::ast_util::types_equal(&receiver.typ, &expr.typ) {
+                return Err(unsupported(&argument.span, "this shared clone receiver coercion"));
+            }
+            let operation = self.concurrency.clone_operation(expr).ok_or_else(|| {
+                unsupported(&expr.span, "a temporary clone receiver without native call evidence")
+            })?;
+            let operation = operation.span.id;
+            let value = self.produce(receiver)?;
+            let owner = self.result_owner.take().ok_or_else(|| {
+                unsupported(&argument.span, "a temporary clone receiver without ownership")
+            })?;
+            let root = owner.shared.ok_or_else(|| {
+                unsupported(&argument.span, "a temporary clone receiver without shared provenance")
+            })?;
+            let cloned = self.heap.shared.clone_strong(root, &expr.span)?;
+            self.retain_temporary(
+                operation,
                 &argument.span,
-                "a shared clone without a stable source owner; bind its source first",
-            )
-        })?;
+                super::lifetime::Storage { typ: expr.typ.clone(), value, owner: Some(owner) },
+            )?;
+            return Ok(Some(cloned));
+        };
         let root = self
             .heap
             .root(&name)
@@ -153,7 +229,14 @@ impl Analysis<'_> {
             })?;
         // Evaluating a reference argument retains the source handle and all
         // its storage. It is never a move or a second payload allocation.
-        self.discard(argument)?;
+        if let ExprX::ReadPlace(place, _) = &argument.x {
+            // Logical identity translation can retain the owning Arc type in
+            // a consuming context such as drop(root.clone()). The native clone
+            // still borrows its receiver; do not infer a move from that type.
+            self.access(place, &expr.typ)?;
+        } else {
+            self.discard(argument)?;
+        }
         Ok(Some(self.heap.shared.clone_strong(root, &expr.span)?))
     }
 }
@@ -212,6 +295,7 @@ mod tests {
             let concurrency = super::super::concurrency::Evidence::default();
             let site = span();
             let mut analysis = Analysis {
+                evaluations: Default::default(),
                 concurrency: &concurrency,
                 current_worker: None,
                 flow: Default::default(),
