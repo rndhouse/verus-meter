@@ -553,6 +553,12 @@ fn ownership_forests_preserve_reference_identity_and_alias_multiplicity() {
         proof fn transport(identity: Seq<int>, parent: Seq<int>) {
             let shared = Reference::Shared(identity);
             let worker = Reference::Worker(identity);
+            let storage = allocated(Seq::empty(), 0, 8, 0, 0);
+            assert(!refers_to(storage, shared));
+            assert(!refers_to(storage, worker));
+            // A link cannot simultaneously stand for separately charged storage.
+            let malformed = Record { bytes: 8, ..shared_reference(Seq::empty(), identity) };
+            assert(!refers_to(malformed, shared));
             let one = Seq::<Record>::empty().push(shared_reference(Seq::empty(), identity));
             let another = Seq::<Record>::empty().push(worker_reference(Seq::empty(), identity));
             reveal_with_fuel(reference_count, 2);

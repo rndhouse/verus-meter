@@ -31,25 +31,21 @@ pub enum Reference {
 /// A strong handle's owner node has no separate byte charge. Its inline slot
 /// belongs to its containing value, and backing storage belongs to the root.
 pub open spec fn shared_reference(path: Seq<int>, identity: Seq<int>) -> Record {
-    Record { reference_kind: 1, reference_identity: identity, ..super::forest::empty_record(path) }
+    Record { kind: -1, reference_identity: identity, ..super::forest::empty_record(path) }
 }
 
 /// Join-handle ownership names a worker independently of the source handle slot.
 pub open spec fn worker_reference(path: Seq<int>, identity: Seq<int>) -> Record {
-    Record { reference_kind: 2, reference_identity: identity, ..super::forest::empty_record(path) }
+    Record { kind: -2, reference_identity: identity, ..super::forest::empty_record(path) }
 }
 
 /// Query links without adding nested datatype invariants to every byte record.
 pub open spec fn refers_to(record: Record, reference: Reference) -> bool {
-    match reference {
-        Reference::Shared(identity) => record.reference_kind == 1 && record.reference_identity
-            == identity,
-        Reference::Worker(identity) => record.reference_kind == 2 && record.reference_identity
-            == identity,
-        Reference::WorkerFamily(family) => record.reference_kind == 2
-            && record.reference_identity.len() > family.len() && family.is_prefix_of(
-            record.reference_identity,
-        ),
+    record.bytes == 0 && record.capacity == 0 && record.length == 0 && match reference {
+        Reference::Shared(identity) => record.kind == -1 && record.reference_identity == identity,
+        Reference::Worker(identity) => record.kind == -2 && record.reference_identity == identity,
+        Reference::WorkerFamily(family) => record.kind == -2 && record.reference_identity.len()
+            > family.len() && family.is_prefix_of(record.reference_identity),
     }
 }
 

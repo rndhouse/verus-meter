@@ -10,11 +10,12 @@ verus! {
 
 broadcast use crate::seq::group_seq_axioms;
 
-/// One allocation's charged byte upper bound and reserved-slot lower bound.
+/// Storage bounds or an identity link at one ownership position.
 pub struct Record {
     /// Position relative to the containing owner.
     pub path: Seq<int>,
-    /// Compiler-assigned memory-kind identity.
+    /// Nonnegative memory-kind identity for storage; -1 denotes a shared link
+    /// and -2 a worker link. Link records have no separate byte charge.
     pub kind: int,
     /// Upper bound on model storage charged for this allocation.
     pub bytes: int,
@@ -22,25 +23,15 @@ pub struct Record {
     pub capacity: int,
     /// Logical child count, independent of the allocation's reserved storage.
     pub length: int,
-    /// Zero for ordinary storage, one for a shared link, two for a worker link.
-    /// Keep descriptors flat so sequential forest proofs need no reference
-    /// datatype invariants. Typed queries live in the references module.
-    pub reference_kind: int,
-    /// Canonical target identity. Moving a record changes only its owner path.
+    /// Canonical link target; empty for ordinary storage. Moving a record changes
+    /// only its owner path. Typed queries live in the references module. Reuse
+    /// the discriminator above to keep sequential allocation proofs narrow.
     pub reference_identity: Seq<int>,
 }
 
 /// A missing allocation has no storage or reservation.
 pub open spec fn empty_record(path: Seq<int>) -> Record {
-    Record {
-        path,
-        kind: 0,
-        bytes: 0,
-        capacity: 0,
-        length: 0,
-        reference_kind: 0,
-        reference_identity: Seq::empty(),
-    }
+    Record { path, kind: 0, bytes: 0, capacity: 0, length: 0, reference_identity: Seq::empty() }
 }
 
 /// Resource metadata uses nonnegative byte bounds and reservation minima.
@@ -263,15 +254,7 @@ pub open spec fn allocated(
     capacity: int,
     length: int,
 ) -> Record {
-    Record {
-        path,
-        kind,
-        bytes,
-        capacity,
-        length,
-        reference_kind: 0,
-        reference_identity: Seq::empty(),
-    }
+    Record { path, kind, bytes, capacity, length, reference_identity: Seq::empty() }
 }
 
 /// All allocations below an owner, excluding its own root descriptor.
