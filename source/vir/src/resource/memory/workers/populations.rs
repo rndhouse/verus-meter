@@ -8,6 +8,16 @@ use super::{Stage, WorkerId};
 use crate::{ast::*, messages::Span};
 use std::collections::BTreeSet;
 
+/// Evidence available for a handle carried by a worker collection. Either
+/// variant carries the obligation to join the worker or transfer its handle.
+#[derive(Clone)]
+pub(in super::super) enum SelectedWorker {
+    /// A helper parameter supplies a handle whose publication belongs to the caller.
+    Parameter,
+    /// The local analysis has a checked record for this particular worker.
+    Recorded(Occurrence),
+}
+
 #[derive(Clone)]
 pub(in super::super) struct Occurrence {
     /// Possible checked bodies, not a population count. The record identifies
@@ -29,9 +39,9 @@ impl Analysis<'_> {
         source: &Expr,
         argument: &Expr,
         handle: super::super::lifetime::Value,
-        mut owner: Owner,
+        owner: Owner,
+        occurrence: Occurrence,
     ) -> Result<super::super::lifetime::Value, VirErr> {
-        let occurrence = owner.worker_occurrence.take().unwrap();
         if self.heap.workers.blocked(self.current_worker) {
             return Err(unsupported(&source.span, "collection while the caller is waiting"));
         }
@@ -153,7 +163,7 @@ impl Analysis<'_> {
             bytes.clone(),
         );
         Ok(Owner {
-            worker_occurrence: Some(Occurrence { templates, record }),
+            selected_worker: Some(SelectedWorker::Recorded(Occurrence { templates, record })),
             view,
             dynamic: Some(allocation),
             extent: Some(bytes),
@@ -291,10 +301,10 @@ impl Analysis<'_> {
         owner.worker = None;
         owner.dynamic = Some(worker.completion);
         owner.extent = Some(tag);
-        owner.worker_occurrence = Some(Occurrence {
+        owner.selected_worker = Some(SelectedWorker::Recorded(Occurrence {
             templates: [actor].into(),
             record: expr::lookup(span, memory, expr::path(span, [])),
-        });
+        }));
         self.growth.retained_worker_families.insert(actor);
         // Later selections need the inverse indexed view of the symbolic
         // collection, just as selections from a helper-produced forest do.

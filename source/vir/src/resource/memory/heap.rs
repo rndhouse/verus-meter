@@ -8,6 +8,7 @@
 use super::analysis::Analysis;
 use super::footprint::MemoryKind;
 use super::model::unsupported;
+use super::workers::SelectedWorker;
 use crate::ast::*;
 use crate::messages::Span;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -52,11 +53,8 @@ pub(super) type OwnerPath = Vec<OwnerSlot>;
 /// its inline storage belongs to the enclosing value or allocation layout.
 #[derive(Clone)]
 pub(super) struct Owner {
-    /// One occurrence selected from a runtime forest, with immutable snapshots.
-    pub(super) worker_occurrence: Option<super::workers::Occurrence>,
-    /// An individually moved handle selected from a helper parameter. Its
-    /// publication belongs to the caller, so it supplies no local body facts.
-    pub(super) input_worker: bool,
+    /// A collection handle and the evidence its owner can use at join.
+    pub(super) selected_worker: Option<SelectedWorker>,
     /// Native/vstd successful join payload, conditional on every possible body's
     /// normal-domain proofs. Ordinary Result values cannot invent this witness.
     pub(super) joined: Option<std::collections::BTreeSet<super::workers::WorkerId>>,
@@ -99,8 +97,7 @@ pub(super) struct Owner {
 impl Default for Owner {
     fn default() -> Self {
         Self {
-            worker_occurrence: None,
-            input_worker: false,
+            selected_worker: None,
             joined: None,
             worker: None,
             closure: None,
@@ -126,17 +123,13 @@ impl Owner {
     /// Byte-free owner nodes and forests still carry strong/worker lifetimes.
     pub(super) fn references(&self) -> super::elements::References {
         use super::elements::References;
-        if self.input_worker
-            || self.shared.is_some()
-            || self.worker.is_some()
-            || self.joined.is_some()
-        {
+        if self.shared.is_some() || self.worker.is_some() || self.joined.is_some() {
             return References::Unclassified;
         }
-        let own = if self.worker_occurrence.is_some() {
-            References::WorkerOccurrences
-        } else {
-            References::None
+        let own = match self.selected_worker {
+            Some(SelectedWorker::Parameter) => return References::Unclassified,
+            Some(SelectedWorker::Recorded(_)) => References::WorkerOccurrences,
+            None => References::None,
         };
         self.children
             .values()
@@ -594,7 +587,7 @@ impl Analysis<'_> {
     ) -> Result<(), VirErr> {
         let mut shared = false;
         owner.visit(&mut |node| {
-            shared |= node.input_worker
+            shared |= matches!(node.selected_worker, Some(SelectedWorker::Parameter))
                 || node.shared.is_some()
                 || node.closure.is_some()
                 || node.worker.is_some()
@@ -609,7 +602,7 @@ impl Analysis<'_> {
             ));
         }
         fn transported(owner: &mut Owner) {
-            owner.worker_occurrence = None;
+            owner.selected_worker = None;
             if let Some(elements) = &mut owner.elements {
                 elements.references = super::elements::References::None;
             }
@@ -625,7 +618,7 @@ impl Analysis<'_> {
     }
 
     fn destroy_owner(&mut self, owner: Owner, span: &Span, inputs: bool, proofs: &mut Vec<Stmt>) {
-        if owner.input_worker || owner.worker_occurrence.is_some() {
+        if owner.selected_worker.is_some() {
             self.heap.workers.detach_occurrence(span);
             return;
         }

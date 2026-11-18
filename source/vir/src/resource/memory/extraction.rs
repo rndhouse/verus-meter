@@ -7,6 +7,7 @@ use super::{
     heap::{Owner, OwnerSlot},
     metadata::{expr as metadata, operations::Removal},
     model::unsupported,
+    workers::SelectedWorker,
 };
 use crate::ast::*;
 
@@ -202,19 +203,21 @@ impl Analysis<'_> {
                 } else {
                     source.typ.clone()
                 };
-                let mut child =
-                    if self.transitions.worker_parameter.is_some_and(|(_, vector)| vector == state)
-                    {
-                        Owner { input_worker: true, ..Default::default() }
-                    } else {
-                        self.owner_from_metadata(
-                            &source.span,
-                            &payload,
-                            selected,
-                            elements.view,
-                            elements.zero_charge(&self.growth),
-                        )?
-                    };
+                let mut child = if self
+                    .transitions
+                    .worker_parameter
+                    .is_some_and(|(_, vector)| vector == state)
+                {
+                    Owner { selected_worker: Some(SelectedWorker::Parameter), ..Default::default() }
+                } else {
+                    self.owner_from_metadata(
+                        &source.span,
+                        &payload,
+                        selected,
+                        elements.view,
+                        elements.zero_charge(&self.growth),
+                    )?
+                };
                 let input = self.split_input(
                     &source.span,
                     &(name.clone(), path.clone()),

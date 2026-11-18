@@ -6,6 +6,7 @@ use super::super::{
     contracts,
     footprint::Charge,
     heap::{Owner, OwnerSlot},
+    workers::SelectedWorker,
 };
 use super::expr;
 use crate::ast::*;
@@ -33,7 +34,11 @@ impl Analysis<'_> {
             .map(|id| self.growth.vectors[id].capacity.clone())
             .or_else(|| owner.capacity.clone())
             .unwrap_or_else(|| expr::integer(span, 0));
-        let record = if let Some(occurrence) = &owner.worker_occurrence {
+        let occurrence = match &owner.selected_worker {
+            Some(SelectedWorker::Recorded(occurrence)) => Some(occurrence),
+            Some(SelectedWorker::Parameter) | None => None,
+        };
+        let record = if let Some(occurrence) = occurrence {
             occurrence.record.clone()
         } else if let Some(root) = owner.shared {
             expr::operation(
@@ -71,7 +76,7 @@ impl Analysis<'_> {
             "cost_push",
             vec![empty.clone(), record.clone(), expr::integer(span, 0)],
         ));
-        if owner.worker_occurrence.is_some() {
+        if occurrence.is_some() {
             let tag = expr::operation(
                 span,
                 "allocated",

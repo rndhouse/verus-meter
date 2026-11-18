@@ -56,7 +56,7 @@ impl Analysis<'_> {
         source: &Expr,
         argument: &Expr,
         handle: Value,
-        mut owner: Owner,
+        owner: Owner,
     ) -> Result<Value, VirErr> {
         let Some((success, failure)) = self.layouts.result_payloads(&source.typ) else {
             return Err(unsupported(&source.span, "a parameter join without a native result"));
@@ -71,7 +71,6 @@ impl Analysis<'_> {
             ));
         }
         let result = self.fresh_value(&source.span, &source.typ)?;
-        owner.input_worker = false;
         self.release_owner(owner, &source.span);
         self.release_value(handle, &source.span);
         self.result_owner = Some(Owner::default());

@@ -9,6 +9,7 @@ use super::{
     heap::Owner,
     lifetime::{BranchState, Value},
     model::unsupported,
+    workers::SelectedWorker,
 };
 use crate::ast_visitor::{AstVisitor, NoScoper, Walk};
 use crate::{ast::*, messages::Span};
@@ -350,11 +351,12 @@ pub(super) fn compatible(a: &Owner, b: &Owner) -> bool {
             _ => false,
         }
     }
-    a.input_worker == b.input_worker
-        && a.joined == b.joined
-        && match (&a.worker_occurrence, &b.worker_occurrence) {
-            (None, None) => true,
-            (Some(a), Some(b)) => {
+    a.joined == b.joined
+        && match (&a.selected_worker, &b.selected_worker) {
+            (None, None) | (Some(SelectedWorker::Parameter), Some(SelectedWorker::Parameter)) => {
+                true
+            }
+            (Some(SelectedWorker::Recorded(a)), Some(SelectedWorker::Recorded(b))) => {
                 a.templates == b.templates
                     && super::transfer::simplify::inspect::same_expression(&a.record, &b.record)
             }

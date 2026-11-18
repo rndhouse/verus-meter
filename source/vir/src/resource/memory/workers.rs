@@ -23,7 +23,7 @@ pub(super) use identity::{Families, WorkerId};
 pub(super) use inputs::Input;
 pub(super) use inputs::restore_proof_bindings;
 pub(super) use parameters::parameter_domain_error;
-pub(super) use populations::Occurrence;
+pub(super) use populations::SelectedWorker;
 pub(crate) use results::generated_join_move;
 pub(super) use results::resolve_join;
 
@@ -476,15 +476,20 @@ impl Analysis<'_> {
             return Err(unsupported(&expr.span, "this join signature"));
         };
         let value = self.produce(argument)?;
-        let owner = self
+        let mut owner = self
             .result_owner
             .take()
             .ok_or_else(|| unsupported(&argument.span, "joining without an owned handle"))?;
-        if owner.input_worker {
-            return self.join_parameter_handle(expr, argument, value, owner).map(Some);
-        }
-        if owner.worker_occurrence.is_some() {
-            return self.join_occurrence(expr, argument, value, owner).map(Some);
+        if let Some(selected) = owner.selected_worker.take() {
+            return match selected {
+                SelectedWorker::Parameter => {
+                    self.join_parameter_handle(expr, argument, value, owner)
+                }
+                SelectedWorker::Recorded(occurrence) => {
+                    self.join_occurrence(expr, argument, value, owner, occurrence)
+                }
+            }
+            .map(Some);
         }
         let id = owner
             .worker
