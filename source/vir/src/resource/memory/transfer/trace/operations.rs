@@ -62,7 +62,7 @@ impl Trace<'_> {
                 }
                 Some(Value::Unknown)
             }
-            Operation::Vector { capacity, element } => {
+            Operation::Vector { capacity, element, snapshot } => {
                 let actual =
                     contracts::multiply(span, capacity.clone(), contracts::literal(span, element));
                 let capacity = match self.value(&capacity)? {
@@ -79,6 +79,9 @@ impl Trace<'_> {
                         return None;
                     }
                 };
+                if let Some(snapshot) = snapshot {
+                    self.extent_values.insert(snapshot, capacity.clone());
+                }
                 if self.loop_tokens.is_some() {
                     self.loop_allocations.push((
                         span.clone(),

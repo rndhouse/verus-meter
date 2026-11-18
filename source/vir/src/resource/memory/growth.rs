@@ -53,9 +53,15 @@ pub(super) struct Growth {
     pub(super) retained_worker_families: std::collections::BTreeSet<super::workers::WorkerId>,
     /// Full frozen identity of a constructed or collected allocation from a repeated site.
     pub(super) shared_occurrences: std::collections::BTreeMap<super::shared::RootId, Expr>,
-    /// Families whose indexed handle transports the complete backing of a private occurrence.
-    pub(super) carried_shared:
+    /// Canonical allocation site captured by each retained occurrence family.
+    pub(super) occurrence_roots:
         std::collections::BTreeMap<super::workers::WorkerId, super::shared::RootId>,
+    /// Reservations for peers that share a visit's backing with its carrying handle.
+    pub(super) occurrence_peers:
+        std::collections::BTreeMap<super::shared::RootId, super::workers::Peers>,
+    /// Outstanding reservations transferred from a worker into a named result.
+    pub(super) peer_results:
+        std::collections::BTreeMap<super::shared::RootId, super::workers::PeerResult>,
     /// Actual back-edge ordinals for active source loops. Occurrence identities
     /// use these observations rather than the number of compiler visits.
     pub(super) loop_occurrences: std::collections::BTreeMap<crate::messages::AstId, Expr>,

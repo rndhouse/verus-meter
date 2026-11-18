@@ -520,12 +520,15 @@ pub proof fn successive_prefix_pops(memory: Seq<Record>)
     requires
         well_formed(memory),
     ensures
-        forall|length: int, path: Seq<int>| path == seq![length - 1] ==> #[trigger]
-            without(take_children(memory, length), path) == take_children(memory, length - 1),
+        forall|length: int, path: Seq<int>|
+            path == seq![length - 1] ==> #[trigger] without(take_children(memory, length), path)
+                == take_children(memory, length - 1),
         take_children(memory, 0) == Seq::<Record>::empty(),
 {
-    assert forall|length: int, path: Seq<int>| path == seq![length - 1] implies #[trigger]
-        without(take_children(memory, length), path) == take_children(memory, length - 1) by {
+    assert forall|length: int, path: Seq<int>| path == seq![length - 1] implies #[trigger] without(
+        take_children(memory, length),
+        path,
+    ) == take_children(memory, length - 1) by {
         take_children_pop(memory, length);
     }
     take_children_facts(memory, 0);

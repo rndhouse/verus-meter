@@ -1,23 +1,27 @@
-//! Transport one allocation occurrence when all of its strong references move
-//! into the same retained worker. Its charged bytes follow the handle until join.
+//! Charge an allocation occurrence once in its carrying handle. Restore that extent
+//! at join and keep its full identity available for reconciling independently retained peers.
 use super::*;
 
 impl Analysis<'_> {
-    pub(super) fn transfer_occurrence_backing(
-        &mut self,
-        span: &Span,
-        backing: &Owner,
-    ) -> Result<Expr, VirErr> {
-        use crate::resource::memory::{elements::References, footprint::MemoryKind};
+    pub(super) fn check_occurrence_payload(span: &Span, backing: &Owner) -> Result<(), VirErr> {
         if !backing.complete()
             || !backing.inputs().is_empty()
-            || backing.references() != References::None
+            || backing.references() != crate::resource::memory::elements::References::None
         {
             return Err(unsupported(
                 span,
                 "indexed Arc payload with incoming storage or nested reference lifetimes",
             ));
         }
+        Ok(())
+    }
+
+    pub(super) fn transfer_occurrence_backing(
+        &mut self,
+        span: &Span,
+        backing: &Owner,
+    ) -> Result<Expr, VirErr> {
+        use crate::resource::memory::footprint::MemoryKind;
         let charges = self.owner_charges(span, backing);
         let upper = self.owner_upper(span, backing);
         let kind = MemoryKind::host_heap();
@@ -50,6 +54,7 @@ impl Analysis<'_> {
         span: &Span,
         owner: &Owner,
         memory: Expr,
+        role: Option<PeerResult>,
     ) -> Result<Owner, VirErr> {
         let id = owner.dynamic.ok_or_else(|| {
             unsupported(span, "a collected shared allocation without its charged handle")
@@ -72,6 +77,30 @@ impl Analysis<'_> {
             expr::sequence_type(crate::ast_util::int_typ()),
         );
         let identity = self.freeze_shared_identity(span, identity, false);
+        let bytes = if let Some(peer) = &role {
+            // Each peer slot has only its completion tag. Exactly one slot
+            // represents the backing, even when both families return Arc<T>.
+            let zero = expr::integer(span, 0);
+            self.growth.before.entry(span.id).or_default().push(expr::check(
+                span,
+                crate::ast_util::disjoin(
+                    span,
+                    &vec![
+                        crate::ast_util::mk_eq(span, &peer.borrowed, &zero),
+                        crate::ast_util::mk_eq(span, &bytes, &zero),
+                    ],
+                ),
+                "cannot separate a peer handle from the shared backing charge",
+            ));
+            self.growth.before.entry(span.id).or_default().push(expr::assign(
+                span,
+                &peer.bytes,
+                bytes,
+            ));
+            peer.bytes.clone()
+        } else {
+            bytes
+        };
         let allocation = Accounting::fresh_allocation();
         self.storage.set_allocation(allocation, owner.kind.clone(), bytes.clone());
         let handle = self.heap.shared.insert(Owner {
@@ -79,7 +108,11 @@ impl Analysis<'_> {
             extent: Some(bytes),
             ..Default::default()
         });
-        self.growth.shared_occurrences.insert(handle.shared.unwrap().known().unwrap(), identity);
+        let root = handle.shared.unwrap().known().unwrap();
+        if let Some(role) = role {
+            self.growth.peer_results.insert(root, role);
+        }
+        self.growth.shared_occurrences.insert(root, identity);
         Ok(handle)
     }
 }

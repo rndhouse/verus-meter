@@ -111,7 +111,12 @@ pub(in super::super) enum Operation {
     /// A checked array borrow coerced to a shared slice with a fixed length.
     ArraySlice { source: Expr, length: Expr },
     /// Allocate a buffer using the checked capacity and inline element size.
-    Vector { capacity: Expr, element: u64 },
+    Vector {
+        capacity: Expr,
+        element: u64,
+        /// Erased constructor observation used if the source capacity can change.
+        snapshot: Option<VarIdent>,
+    },
     /// Allocate a fixed payload; an owning payload is nested under Contents.
     Box { payload: Expr, bytes: u64 },
     /// A body-local canonical allocation. Its identity may be used to prove
@@ -272,6 +277,19 @@ impl Checked {
         self.operations
             .values()
             .any(|op| matches!(op, Operation::StrongNew { root: owned, coordinates, .. } if *owned == root && coordinates.is_empty()))
+    }
+
+    /// Executable constructor at which the per-visit publication count resets.
+    pub(in super::super) fn shared_constructor(
+        &self,
+        root: super::super::shared::RootId,
+    ) -> Option<(u64, &[(u64, Expr)])> {
+        self.operations.iter().find_map(|(site, op)| match op {
+            Operation::StrongNew { root: owned, coordinates, .. } if *owned == root => {
+                Some((*site, coordinates.as_slice()))
+            }
+            _ => None,
+        })
     }
 
     /// The input backing can be reused only while all changes to its indexed

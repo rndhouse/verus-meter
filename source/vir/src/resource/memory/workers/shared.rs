@@ -3,7 +3,11 @@
 //! backing, including when a completed worker keeps the handle in its result.
 
 mod occurrences;
+mod peers;
+mod population;
+use population::Population;
 mod slots;
+pub(in super::super) use peers::{PeerResult, Peers};
 
 use super::super::{
     accounting::{Accounting, SharedBackingCharges},
@@ -23,39 +27,15 @@ use std::collections::{BTreeMap, BTreeSet};
 /// coordinator join. An outstanding claim keeps the backing charged once even
 /// if the worker may already have run its last destructor.
 pub(in super::super) struct Claims {
-    /// Unreconciled entry aliases plus the reservation of each live mixed-root result.
-    pub(in super::super) pending: Expr,
+    /// Pending reservations and their multiplicity for each publication family.
+    pub(in super::super) population: Population,
     /// The same ownership tree moves between fixed and conditional accounting.
     pub(in super::super) backing: Owner,
     /// Fixed and symbolic charges reached by this immutable payload.
     charges: SharedBackingCharges,
-    /// Number of handles actually moved into one occurrence of this family.
-    weights: BTreeMap<WorkerId, u64>,
 }
 
 impl Claims {
-    /// Check conservation both for a hypothetical worker phase and for a source join.
-    pub(in super::super) fn after_release(
-        &self,
-        span: &Span,
-        count: Expr,
-        message: &str,
-        proofs: &mut Vec<Stmt>,
-    ) -> Expr {
-        let remaining = contracts::subtract(span, self.pending.clone(), count);
-        proofs.push(expr::check(
-            span,
-            crate::ast_util::mk_ineq(span, &expr::integer(span, 0), &remaining, InequalityOp::Le),
-            message,
-        ));
-        remaining
-    }
-
-    fn release(&self, span: &Span, count: Expr, message: &str, proofs: &mut Vec<Stmt>) {
-        let remaining = self.after_release(span, count, message, proofs);
-        proofs.push(expr::assign(span, &self.pending, remaining));
-    }
-
     /// A final directly tracked drop can make the backing conditional only if
     /// this accounting domain still has every charge of the payload.
     pub(in super::super) fn defer_backing(
@@ -64,7 +44,7 @@ impl Claims {
         span: &Span,
         proofs: &mut Vec<Stmt>,
     ) {
-        let empty = crate::ast_util::mk_eq(span, &self.pending, &expr::integer(span, 0));
+        let empty = crate::ast_util::mk_eq(span, &self.population.pending, &expr::integer(span, 0));
         if !self.charges.defer(storage, empty, span) {
             proofs.push(expr::check(
                 span,
@@ -72,65 +52,6 @@ impl Claims {
                 "cannot locate the shared payload's live backing charges",
             ));
         }
-    }
-
-    /// A collection length describes strong claims only if all of its possible
-    /// publications capture the same multiplicity of this particular root.
-    fn uniform_weight<'a>(&self, families: impl Iterator<Item = &'a WorkerId>) -> Option<u64> {
-        let mut weights = families.map(|id| self.weights.get(id).copied().unwrap_or(0));
-        let first = weights.next()?;
-        weights.all(|w| w == first).then_some(first)
-    }
-
-    /// Sum this root's entry aliases over the actual occupied handle slots.
-    /// The common uniform case needs only the checked vector length.
-    pub(in super::super) fn collection_count<'a>(
-        &self,
-        span: &Span,
-        families: impl Iterator<Item = &'a WorkerId> + Clone,
-        records: &Expr,
-        length: &Expr,
-    ) -> Option<(Expr, bool)> {
-        if let Some(weight) = self.uniform_weight(families.clone()) {
-            return (weight != 0).then(|| {
-                (contracts::multiply(span, contracts::literal(span, weight), length.clone()), false)
-            });
-        }
-        let count = families
-            .filter_map(|id| {
-                let weight = *self.weights.get(id)?;
-                let count = expr::operation(
-                    span,
-                    "worker_family_count",
-                    vec![records.clone(), length.clone(), expr::path(span, id.descriptor())],
-                    std::sync::Arc::new(TypX::Int(IntRange::Nat)),
-                );
-                Some(contracts::multiply(span, contracts::literal(span, weight), count))
-            })
-            .reduce(|a, b| contracts::add(span, a, b))?;
-        Some((count, true))
-    }
-
-    /// Use the selected publication identity for mixed families. A uniform
-    /// weight already follows from the checked membership of the occurrence.
-    fn selected_weight(&self, span: &Span, occurrence: &Occurrence) -> Option<Expr> {
-        if let Some(weight) = self.uniform_weight(occurrence.templates.iter()) {
-            return (weight != 0).then(|| contracts::literal(span, weight));
-        }
-        let weight = occurrence
-            .templates
-            .iter()
-            .filter_map(|id| Some((id, self.weights.get(id)?)))
-            .fold(expr::integer(span, 0), |others, (id, count)| {
-                let matched = expr::operation(
-                    span,
-                    "worker_matches",
-                    vec![occurrence.record.clone(), expr::path(span, id.descriptor())],
-                    crate::ast_util::bool_typ(),
-                );
-                select(span, matched, contracts::literal(span, *count), others)
-            });
-        Some(weight)
     }
 }
 
@@ -145,7 +66,7 @@ impl Analysis<'_> {
     /// An accounting domain may return a collected Arc, but every indexed
     /// entry claim must have a matching source join on each normal exit.
     pub(in super::super) fn check_indexed_exits(&mut self, body: &Span) {
-        if self.growth.indexed_shared.is_empty() {
+        if self.growth.indexed_shared.is_empty() && self.growth.occurrence_peers.is_empty() {
             return;
         }
         let exits = self
@@ -155,7 +76,13 @@ impl Analysis<'_> {
             .map(|edge| &edge.span)
             .chain(self.flow.reachable.then_some(body));
         for span in exits {
-            for claims in self.growth.indexed_shared.values() {
+            for claims in self
+                .growth
+                .indexed_shared
+                .values()
+                .map(|claims| &claims.population)
+                .chain(self.growth.occurrence_peers.values().map(|peers| &peers.population))
+            {
                 self.growth.after.entry(span.id).or_default().push(expr::check(
                     span,
                     crate::ast_util::mk_eq(span, &claims.pending, &expr::integer(span, 0)),
@@ -169,6 +96,7 @@ impl Analysis<'_> {
         &mut self,
         actor: WorkerId,
         span: &Span,
+        forest: &Expr,
     ) -> Result<Option<Expr>, VirErr> {
         let worker = &self.heap.workers.records[&actor];
         let execution = worker.execution.as_ref().unwrap();
@@ -187,35 +115,59 @@ impl Analysis<'_> {
         let single = imports.len() == 1;
         for (root, count, backing) in imports {
             if !self.transitions.owns_fixed_root(root) {
-                if !single
-                    || self.heap.shared.has_strong(root)
-                    || !self.growth.shared_occurrences.contains_key(&root)
-                {
+                if !single || !self.growth.shared_occurrences.contains_key(&root) {
                     return Err(unsupported(
                         span,
                         "indexed aliases of a repeated allocation with outstanding owners in another domain",
                     ));
                 }
+                Self::check_occurrence_payload(span, &backing)?;
+                let peer = self.heap.shared.has_strong(root);
+                let registered = self.growth.occurrence_peers.get(&root);
+                if let Some(previous) = self.growth.occurrence_roots.get(&actor) {
+                    if *previous != root
+                        || peer
+                            != registered.is_some_and(|p| p.population.weights.contains_key(&actor))
+                    {
+                        return Err(unsupported(
+                            span,
+                            "a worker family with inconsistent shared backing ownership",
+                        ));
+                    }
+                } else if peer
+                    && registered.is_none()
+                    && self.growth.occurrence_roots.values().any(|site| *site == root)
+                {
+                    return Err(unsupported(
+                        span,
+                        "a peer outside its allocation's checked publication group",
+                    ));
+                }
+                self.growth.occurrence_roots.insert(actor, root);
+                if peer {
+                    let ExprX::Var(destination) = &forest.x else {
+                        return Err(unsupported(
+                            span,
+                            "a peer publication without a named ownership forest",
+                        ));
+                    };
+                    self.register_peer(span, actor, root, destination);
+                    continue;
+                }
+                self.check_peer_limit(span, actor, root);
                 carried = Some(self.transfer_occurrence_backing(span, &backing)?);
-                self.growth.carried_shared.insert(actor, root);
                 continue;
             }
             let claims = match self.growth.indexed_shared.entry(root) {
                 std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
                 std::collections::btree_map::Entry::Vacant(entry) => {
                     let charges = SharedBackingCharges::new(&backing, &self.growth.elements, span)?;
-                    let zero = expr::integer(span, 0);
-                    let (pending, decl) =
-                        expr::local(span, "outstanding_strong", zero.typ.clone(), zero, Mode::Spec);
-                    self.growth.declarations.push(decl);
-                    entry.insert(Claims { pending, backing, charges, weights: BTreeMap::new() })
+                    let population = Population::new(span, &mut self.growth.declarations);
+                    entry.insert(Claims { population, backing, charges })
                 }
             };
-            claims.weights.insert(actor, count);
-            let next =
-                contracts::add(span, claims.pending.clone(), contracts::literal(span, count));
             let proofs = self.growth.after.entry(span.id).or_default();
-            proofs.push(expr::assign(span, &claims.pending, next));
+            claims.population.publish(actor, count, span, proofs);
             if !self.heap.shared.has_strong(root) {
                 claims.defer_backing(&mut self.storage, span, proofs);
             }
@@ -249,7 +201,7 @@ impl Analysis<'_> {
                     self.growth
                         .indexed_shared
                         .get(root)
-                        .is_some_and(|claims| claims.weights.contains_key(actor))
+                        .is_some_and(|claims| claims.population.weights.contains_key(actor))
                 })
                 .ok_or_else(|| {
                     unsupported(span, "an indexed Arc result outside its canonical domain")
@@ -324,6 +276,14 @@ impl Analysis<'_> {
         owner: &mut Owner,
     ) -> Result<(), VirErr> {
         use super::SelectedWorker;
+        if let Some(root) = owner.shared.and_then(StrongLink::known)
+            && self.growth.peer_results.contains_key(&root)
+        {
+            return Err(unsupported(
+                span,
+                "forwarding a returned Arc with indexed peer reservations to another actor",
+            ));
+        }
         if let Some(SelectedWorker::Recorded(occurrence)) = &mut owner.selected_worker {
             if occurrence.result_reservation.is_some() {
                 return Err(unsupported(span, "forwarding an outstanding delegated join"));
@@ -384,7 +344,7 @@ impl Analysis<'_> {
         proofs: &mut Vec<Stmt>,
     ) {
         for root in &alias.roots {
-            self.growth.indexed_shared[root].release(
+            self.growth.indexed_shared[root].population.release(
                 span,
                 alias.reservation(span, *root),
                 "cannot reconcile the selected Arc's backing reservation",
@@ -399,6 +359,23 @@ impl Analysis<'_> {
         occurrence: &Occurrence,
         returned: Option<(&Owner, &BTreeMap<WorkerId, RootId>)>,
     ) -> Result<(), VirErr> {
+        let returned_peer = occurrence
+            .templates
+            .iter()
+            .all(|actor| self.growth.worker_executions[actor].returned_arc_root().is_some());
+        for peers in self.growth.occurrence_peers.values() {
+            if !returned_peer
+                && let Some(weight) = peers.population.selected_weight(span, occurrence)
+            {
+                self.require_indexed_claim_owner(span)?;
+                peers.population.release(
+                    span,
+                    weight,
+                    "cannot reconcile the selected allocation peer",
+                    self.growth.after.entry(span.id).or_default(),
+                );
+            }
+        }
         let selection = returned.and_then(|(owner, roots)| match owner.shared {
             Some(StrongLink::Selected(id)) => Some((self.heap.shared.selection(id), roots)),
             _ => None,
@@ -411,7 +388,7 @@ impl Analysis<'_> {
                 && alias.roots.contains(root)
             {
                 let unchanged = returned_roots.iter().all(|(actor, result_root)| {
-                    claims.weights.get(actor).copied().unwrap_or(0)
+                    claims.population.weights.get(actor).copied().unwrap_or(0)
                         == u64::from(result_root == root)
                 });
                 if unchanged {
@@ -419,13 +396,15 @@ impl Analysis<'_> {
                 }
                 retained = Some(alias.reservation(span, *root));
             }
-            let Some(captured) = claims.selected_weight(span, occurrence) else { continue };
+            let Some(captured) = claims.population.selected_weight(span, occurrence) else {
+                continue;
+            };
             let weight = match retained {
                 Some(count) => contracts::subtract(span, captured, count),
                 None => captured,
             };
             self.require_indexed_claim_owner(span)?;
-            claims.release(
+            claims.population.release(
                 span,
                 weight,
                 "cannot reconcile the selected worker's outstanding strong references",

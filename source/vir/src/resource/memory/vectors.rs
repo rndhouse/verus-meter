@@ -95,6 +95,10 @@ impl Analysis<'_> {
         // the counter's next value after the iteration advances.
         let capacity =
             if changing { self.allocation_snapshot(&expr.span, capacity) } else { capacity };
+        let snapshot = match &capacity.x {
+            ExprX::Var(name) if changing => Some(name.clone()),
+            _ => None,
+        };
         let cost = contracts::multiply(
             &expr.span,
             contracts::literal(&expr.span, self.layouts.vector_element(&expr.typ, &expr.span)?),
@@ -149,6 +153,7 @@ impl Analysis<'_> {
             &expr.span,
             super::transfer::checked::Operation::Vector {
                 capacity: checked_capacity,
+                snapshot,
                 element: self.layouts.vector_element(&expr.typ, &expr.span)?,
             },
         );

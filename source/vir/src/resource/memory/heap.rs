@@ -630,6 +630,7 @@ impl Analysis<'_> {
         span: &Span,
         proofs: &mut Vec<Stmt>,
     ) {
+        self.peer_release_checks(root, &backing, span, proofs);
         if let Some(claims) = self.growth.indexed_shared.get(&root) {
             claims.defer_backing(&mut self.storage, span, proofs);
         } else {

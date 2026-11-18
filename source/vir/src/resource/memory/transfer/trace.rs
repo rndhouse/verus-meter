@@ -138,6 +138,8 @@ struct Trace<'a> {
     publications: HashMap<VarIdent, Expr>,
     /// Convert immutable symbolic inputs back into body-proof observations.
     proof_values: HashMap<VarIdent, Expr>,
+    /// Constructor observations bound to their values on this symbolic visit.
+    extent_values: HashMap<VarIdent, Expr>,
 }
 
 /// Export a template only after checking transition coverage and closing its symbols.
@@ -182,6 +184,7 @@ pub(super) fn summarize(
         loop_growth: HashMap::new(),
         publications: HashMap::new(),
         proof_values: HashMap::new(),
+        extent_values: HashMap::new(),
     };
     for (index, parameter) in function.x.params.iter().enumerate() {
         if parameter.x.mode != Mode::Exec {

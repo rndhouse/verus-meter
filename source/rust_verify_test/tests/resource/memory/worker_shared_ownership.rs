@@ -384,6 +384,7 @@ fn indexed_arc_keeps_its_vector_buffer_through_the_final_join() {
                 handles.push(worker);
                 i += 1;
             }
+            if n == 0 && b == 19 { assert(current(memory) <= 97); }
             drop(root);
             if n == 2 && b == 19 { assert(current(memory) <= 107); }
             if n == 0 {
@@ -407,7 +408,11 @@ fn indexed_arc_keeps_its_vector_buffer_through_the_final_join() {
 
     // At b = 19 the shared allocation contributes 16 control + 24 inline + 19
     // buffer bytes. Two pending workers and the final joined alias each retain it.
-    for (name, exact, short) in [("pending", "<= 107", "<= 106"), ("joined", "<= 73", "<= 72")] {
+    for (name, exact, short) in [
+        ("publisher_only", "<= 97", "<= 96"),
+        ("pending", "<= 107", "<= 106"),
+        ("joined", "<= 73", "<= 72"),
+    ] {
         let error = crate::verify_one_file(name, code.replace(exact, short), &[]).unwrap_err();
         crate::common::assert_vir_error_msgs(
             error,

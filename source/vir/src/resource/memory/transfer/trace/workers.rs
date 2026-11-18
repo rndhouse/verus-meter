@@ -21,6 +21,7 @@ impl Trace<'_> {
                     None
                 }
             })
+            .chain(self.extent_values.iter().map(|(name, amount)| (name.clone(), amount.clone())))
             .collect();
         substitute(value, &indices)
     }

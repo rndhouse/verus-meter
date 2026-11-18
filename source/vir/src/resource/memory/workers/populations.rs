@@ -72,12 +72,12 @@ impl Analysis<'_> {
         let first = self.growth.before.get(&source.span.id).map_or(0, Vec::len);
         let delegated = occurrence.result_reservation;
         let carries =
-            occurrence.templates.iter().any(|id| self.growth.carried_shared.contains_key(id));
+            occurrence.templates.iter().any(|id| self.growth.occurrence_roots.contains_key(id));
         let carried_arc = carries && matches!(&*payload, TypX::Decorate(TypDecoration::Arc, _, _));
         if carried_arc
             && (delegated.is_some()
                 || !occurrence.templates.iter().all(|id| {
-                    self.growth.carried_shared.get(id).is_some_and(|root| {
+                    self.growth.occurrence_roots.get(id).is_some_and(|root| {
                         self.growth.worker_executions[id].returned_arc_root() == Some(*root)
                     })
                 }))
@@ -98,8 +98,14 @@ impl Analysis<'_> {
         } else {
             None
         };
+        let peer = self.selected_peer(&source.span, &occurrence)?;
+        if !carried_arc && let Some(role) = &peer {
+            let mut proofs = vec![];
+            self.check_joined_carrier(&source.span, role, &mut proofs);
+            self.growth.before.entry(source.span.id).or_default().extend(proofs);
+        }
         let result_owner = if carried_arc {
-            Some(self.receive_carried_arc(&source.span, &owner, memory)?)
+            Some(self.receive_carried_arc(&source.span, &owner, memory, peer)?)
         } else if let Some(id) = delegated {
             if !self.heap.workers.delegated.remove(&id) {
                 return Err(unsupported(
@@ -202,7 +208,7 @@ impl Analysis<'_> {
             return Err(unsupported(span, "a worker selection without a checked body family"));
         }
         if (zero_charge || view != super::super::metadata::View::Complete)
-            && templates.iter().any(|actor| self.growth.carried_shared.contains_key(actor))
+            && templates.iter().any(|actor| self.growth.occurrence_roots.contains_key(actor))
         {
             return Err(unsupported(
                 span,
@@ -395,9 +401,10 @@ impl Analysis<'_> {
         &mut self,
         owner: &mut Owner,
         span: &Span,
+        forest: &Expr,
     ) -> Result<Option<Expr>, VirErr> {
         for child in owner.children.values_mut() {
-            if self.retain_worker_in_forest(child, span)?.is_some() {
+            if self.retain_worker_in_forest(child, span, forest)?.is_some() {
                 return Err(unsupported(
                     span,
                     "transporting shared backing inside an aggregate worker slot",
@@ -419,7 +426,7 @@ impl Analysis<'_> {
         {
             return Err(unsupported(span, "transport of a consumed worker occurrence"));
         }
-        let carried = self.index_worker_claims(actor, span)?;
+        let carried = self.index_worker_claims(actor, span, forest)?;
         let worker = self.heap.workers.records.remove(&actor).unwrap();
         self.storage.release_values(&[worker.completion].into());
         let tag =

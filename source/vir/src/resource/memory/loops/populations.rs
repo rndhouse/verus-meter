@@ -134,14 +134,46 @@ impl crate::resource::memory::analysis::Analysis<'_> {
         }
         let span = &record.span;
         let mut offsets = Vec::new();
+        let mut facts = Vec::new();
+        let mut live_forests = std::collections::BTreeSet::new();
+        let mut selected_handle = false;
+        for owner in self.heap.owners.values().chain(self.heap.borrowed.values()) {
+            owner.visit(&mut |node| {
+                selected_handle |= node.selected_worker.is_some();
+                if let Some(elements) = &node.elements
+                    && let ExprX::Var(name) = &elements.records.x
+                {
+                    live_forests.insert(name.clone());
+                }
+            });
+        }
         let mut needs_family_counts = false;
-        for (root, claims) in &self.growth.indexed_shared {
+        for (root, claims, peers) in self
+            .growth
+            .indexed_shared
+            .iter()
+            .map(|(id, claims)| (id, &claims.population, None))
+            .chain(
+                self.growth
+                    .occurrence_peers
+                    .iter()
+                    .map(|(id, peers)| (id, &peers.population, Some(&peers.destinations))),
+            )
+        {
             let mut current = expr::integer(span, 0);
             let mut related = false;
+            let mut covered = std::collections::BTreeSet::new();
             for charge in &record.charges {
                 let Some((typ, forest)) = record.reference_forests.get(&charge.location) else {
                     continue;
                 };
+                if let Some(destinations) = peers {
+                    let ExprX::Var(name) = &forest.x else { continue };
+                    if !destinations.contains(name) {
+                        continue;
+                    }
+                    covered.insert(name.clone());
+                }
                 let TypX::Datatype(_, types, _) = &**typ else { continue };
                 if !self.layouts.vector(typ) {
                     continue;
@@ -150,6 +182,9 @@ impl crate::resource::memory::analysis::Analysis<'_> {
                     .first()
                     .is_some_and(|typ| matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _)))
                 {
+                    if peers.is_some() {
+                        continue;
+                    }
                     let key = expr::integer(span, root.serial());
                     let count = expr::operation(
                         span,
@@ -180,6 +215,23 @@ impl crate::resource::memory::analysis::Analysis<'_> {
                     needs_family_counts |= mixed;
                 }
             }
+            // When all live destinations are in this loop, try the absolute
+            // count. A worker or returned alias held outside the forests needs
+            // the entry offset instead. Both candidates are checked by Verus.
+            let closed = peers.is_some_and(|destinations| {
+                destinations.intersection(&live_forests).all(|name| covered.contains(name))
+            }) && !selected_handle
+                && !self
+                    .growth
+                    .peer_results
+                    .iter()
+                    .any(|(id, role)| role.site == *root && self.heap.shared.has_strong(*id));
+            if closed {
+                facts.push(expr::purpose(
+                    mk_eq(span, &claims.pending, &current),
+                    "allocation peers in the live handle collections",
+                ));
+            }
             if related {
                 offsets.push((claims.pending.clone(), current));
             }
@@ -200,7 +252,6 @@ impl crate::resource::memory::analysis::Analysis<'_> {
                 self.growth.before.entry(record.body.span.id).or_default().push(activation);
             }
         }
-        let mut facts = Vec::new();
         for (pending, current) in offsets {
             let entry = self.loop_snapshot(span, &current);
             let initial = self.loop_snapshot(span, &pending);

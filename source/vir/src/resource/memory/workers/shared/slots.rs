@@ -32,9 +32,12 @@ impl Analysis<'_> {
                 vec![forest.clone(), child.clone(), path.clone(), key],
             ));
             if !last && alias.roots.contains(root) {
-                let next =
-                    contracts::add(span, claims.pending.clone(), alias.reservation(span, *root));
-                proofs.push(expr::assign(span, &claims.pending, next));
+                let next = contracts::add(
+                    span,
+                    claims.population.pending.clone(),
+                    alias.reservation(span, *root),
+                );
+                proofs.push(expr::assign(span, &claims.population.pending, next));
             }
         }
         Ok(())
@@ -86,7 +89,12 @@ impl Analysis<'_> {
                 "shared_count_nonnegative",
                 vec![forest.clone(), expr::integer(span, root.serial())],
             ));
-            claims.release(span, count, "cannot reconcile stored Arc reservations", proofs);
+            claims.population.release(
+                span,
+                count,
+                "cannot reconcile stored Arc reservations",
+                proofs,
+            );
         }
     }
 }

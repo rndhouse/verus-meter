@@ -270,6 +270,20 @@ impl SharedRoots {
         })
     }
 
+    /// A peer may take over charged bytes only within the frame that owns its result.
+    pub(super) fn owns_result_charge(
+        &self,
+        root: RootId,
+        storage: &super::accounting::Accounting,
+    ) -> bool {
+        self.roots.get(&root).is_some_and(|root| match &root.storage {
+            Backing::Owned(owner) => {
+                owner.dynamic.is_some_and(|id| storage.contains_allocation(id))
+            }
+            Backing::Imported { .. } => false,
+        })
+    }
+
     /// Separate backing transferred out of this actor, excluding imported roots.
     /// This tree is an accounting transport descriptor, never a source value.
     pub(super) fn owned_backing(&self) -> Owner {

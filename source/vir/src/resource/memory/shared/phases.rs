@@ -255,10 +255,10 @@ impl Analysis<'_> {
         let worker = self.growth.worker_executions[&actor].clone();
         for check in worker.shared_checkpoints() {
             let span = &check.site;
-            let mut counts = self
-                .heap
-                .shared
-                .at_worker_checkpoint(check, |id| self.growth.indexed_shared.contains_key(&id))?;
+            let mut counts = self.heap.shared.at_worker_checkpoint(check, |id| {
+                self.growth.indexed_shared.contains_key(&id)
+                    || self.growth.occurrence_peers.contains_key(&id)
+            })?;
             let (selected, selections) = self.heap.shared.project_selections(check)?;
             let mut imports = BTreeMap::new();
             let mut owned = Vec::new();
@@ -271,6 +271,12 @@ impl Analysis<'_> {
                     .or_insert_with(|| self.heap.shared.roots.get(id).map_or(0, |r| r.strong));
             }
             for (id, live) in counts {
+                if self.growth.peer_results.contains_key(&id) {
+                    return Err(unsupported(
+                        span,
+                        "observing a returned peer backing from another actor",
+                    ));
+                }
                 let claims = self.growth.indexed_shared.get(&id);
                 let backing = match self.heap.shared.roots.get(&id).map(|r| &r.storage) {
                     Some(Backing::Imported { entry }) => {
@@ -289,7 +295,8 @@ impl Analysis<'_> {
                             .backing
                     }
                 };
-                if live == 0 && claims.is_none() {
+                let peers = self.growth.occurrence_peers.get(&id);
+                if live == 0 && claims.is_none() && peers.is_none() {
                     continue;
                 }
                 let (mut bytes, proof) = self.checkpoint_backing(publication, backing)?;
@@ -298,13 +305,13 @@ impl Analysis<'_> {
                 let candidates = selected.get(&id);
                 if let Some(claims) = claims {
                     let remaining = match candidates.and_then(|s| s.released.clone()) {
-                        Some(debit) => claims.after_release(
+                        Some(debit) => claims.population.after_release(
                             span,
                             debit,
                             "cannot reconcile the selected Arc's checkpoint reservation",
                             proofs,
                         ),
-                        None => claims.pending.clone(),
+                        None => claims.population.pending.clone(),
                     };
                     if live == 0 {
                         let empty =
@@ -316,6 +323,21 @@ impl Analysis<'_> {
                             bytes,
                         );
                     }
+                }
+                if live == 0
+                    && let Some(peers) = peers
+                {
+                    let idle = crate::ast_util::mk_eq(
+                        span,
+                        &peers.population.pending,
+                        &contracts::literal(span, 0),
+                    );
+                    bytes = super::super::growth::select(
+                        span,
+                        idle,
+                        contracts::literal(span, 0),
+                        bytes,
+                    );
                 }
                 if !fixed.contains(&id) {
                     let matched = crate::ast_util::disjoin(span, &selected[&id].matches);

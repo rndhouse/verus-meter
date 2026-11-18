@@ -686,7 +686,7 @@ impl Analysis<'_> {
         length: Expr,
     ) -> Result<Option<Expr>, VirErr> {
         let before = self.growth.before.get(&span.id).map_or(0, Vec::len);
-        let carried = self.retain_worker_in_forest(&mut child, span)?;
+        let carried = self.retain_worker_in_forest(&mut child, span, &elements.records)?;
         self.merge_element_minima(span, elements, &child);
         let mut complete = child.inputs().is_empty();
         child.visit(&mut |node| {

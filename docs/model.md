@@ -276,8 +276,8 @@ global concurrency proof is still required.
 
 When workers capture clones of a coordinator's `Arc`, the local analysis can
 reserve one backing allocation across a symbolic number of outstanding workers.
-The allocation must originate outside repeated coordinator loops. Its charge includes
-locally owned payload storage. For example, workers sharing an `Arc<Vec<u8>>`
+A single allocation created before the publishing loop stays charged once. Its charge
+includes locally owned payload storage. For example, workers sharing an `Arc<Vec<u8>>`
 retain one control block, one inline vector and one buffer at its reserved capacity.
 Payloads containing caller-owned storage or additional strong or worker handles
 require separate lifetime accounting. If the last fixed strong handle moves into
@@ -304,6 +304,21 @@ the references in its remaining slots. Local clones may survive either event.
 A worker receiving an entire vector of handles cannot drain indexed shared
 claims owned by its publisher. That transfer needs a summary of the references
 the receiving worker consumes or returns.
+
+A fresh `Arc<Vec<u8>>` created on each loop visit keeps that visit's identity
+through capture, handle-vector storage and join. With `n` visits and capacity
+`b`, the buffers can contribute `n * b` bytes. Several workers from one visit
+share its single buffer. The analysis accounts separately for each control
+block, inline vector, handle slot and completion tag.
+
+When workers from one visit retain aliases independently, one handle carries the
+backing charge. A peer's join can transfer its reservation to a returned alias.
+Either returned alias can drop first when the charge can pass to a live result
+with the same allocation identity. The verifier also accepts evidence that the
+peer reservations have all ended. A drop that would leave the backing with an
+uncollected peer needs evidence of where the charge will remain. Forwarding a
+returned alias with these reservations to another actor requires further support.
+The global concurrent peak proof is still required.
 
 At a worker's `current(memory)` checkpoint the verifier can reconcile directly
 identified strong handles with the publisher's ownership at spawn. A worker

@@ -135,3 +135,163 @@ fn two_retained_results_release_their_own_visit() {
         );
     }
 }
+
+/// Each visit sends the same Arc to two independently retained workers.
+/// At n = 2, b = 19 there are four handles and exactly two allocated buffers.
+fn peer_program(minimum: u16, collect: &str, cleanup: &str) -> String {
+    format!(
+        r#"
+        use vstd::prelude::*;
+        verus! {{
+        {PRODUCT}
+        fn fresh(n: u16, b: u16)
+            requires n >= {minimum}, 0 <= n as int * (41 + b as int) <= 5000000000int,
+            resources peak(memory) <= n * 17 + n * (41 + b) + 256
+        {{
+            proof {{ product(n as int, 41 + b as int); }}
+            let mut handles = Vec::with_capacity(n as usize);
+            let mut peers = Vec::with_capacity(n as usize);
+            let mut i = 0u16;
+            while i < n invariant handles.len() == i, peers.len() == i, i <= n, decreases n - i, {{
+                proof {{ product(n as int, 41 + b as int); }}
+                let root = std::sync::Arc::new(Vec::<u8>::with_capacity(b as usize));
+                let alias = root.clone();
+                peers.push(std::thread::spawn(move || alias));
+                handles.push(std::thread::spawn(move || root));
+                i += 1;
+            }}
+            if n == 2 && b == 19 {{ assert(current(memory) <= 208); }}
+            {collect}
+            {cleanup}
+            assert(current(memory) <= 6);
+        }}
+        }}
+    "#
+    )
+}
+
+const DROP_VECTORS: &str = "drop(peers); drop(handles);";
+
+const PAIRED: &str = r#"
+    while handles.len() > 0 invariant handles.len() == peers.len(), handles.len() <= n,
+        decreases handles.len(),
+    {
+        proof { product(n as int, 41 + b as int); }
+        let first = handles.pop().unwrap().join().unwrap();
+        let second = peers.pop().unwrap().join().unwrap();
+        drop(first);
+        // Both vector buffers are still reserved. The final alias occupies
+        // 8 bytes and retains 59 more. Total = 6 + 48 + 32 + 8 + 59.
+        if handles.len() == 0 && n == 2 && b == 19 { assert(current(memory) <= 153); }
+        drop(second);
+    }
+"#;
+
+#[test]
+fn independently_stored_peers_charge_once_in_either_drop_order() {
+    let program = peer_program(0, PAIRED, DROP_VECTORS);
+    let reverse = PAIRED
+        .replace("let first = handles", "let second = handles")
+        .replace("let second = peers", "let first = peers");
+    for (name, source) in
+        [("paired", program.clone()), ("reverse", peer_program(0, &reverse, DROP_VECTORS))]
+    {
+        assert_vir_error_msg(crate::verify_one_file(name, source, &[]).unwrap_err(), GLOBAL);
+    }
+    for (name, bound, short) in
+        [("four_jobs", "<= 208", "<= 207"), ("final_alias", "<= 153", "<= 152")]
+    {
+        assert_vir_error_msgs(
+            crate::verify_one_file(name, program.replace(bound, short), &[]).unwrap_err(),
+            &["conditional memory budget exceeded", GLOBAL],
+        );
+    }
+}
+
+#[test]
+fn an_equal_sized_buffer_from_another_visit_cannot_take_the_charge() {
+    let collect = PAIRED
+        .replace("handles.len() > 0", "handles.len() > 2")
+        .replace("handles.len() <= n", "2 <= handles.len() <= n");
+    let final_two = r#"
+        let deferred = peers.pop().unwrap();
+        let earlier_peer = peers.pop().unwrap().join().unwrap();
+        let later = handles.pop().unwrap().join().unwrap();
+        drop(later);
+        let later_peer = deferred.join().unwrap(); drop(later_peer);
+        let earlier = handles.pop().unwrap().join().unwrap(); drop(earlier); drop(earlier_peer);
+    "#;
+    let program = peer_program(2, &format!("{collect}{final_two}"), DROP_VECTORS);
+    assert_vir_error_msgs(
+        crate::verify_one_file("wrong_visit", program, &[]).unwrap_err(),
+        &["cannot release a shared backing while an indexed peer can still own it", GLOBAL],
+    );
+}
+
+#[test]
+fn collecting_a_whole_peer_population_preserves_the_buffers() {
+    for (name, worker, receive) in [
+        (
+            "peer_returns_alias",
+            "alias",
+            "let alias = peers.pop().unwrap().join().unwrap(); drop(alias);",
+        ),
+        ("peer_consumes_alias", "{ drop(alias); }", "peers.pop().unwrap().join().unwrap();"),
+    ] {
+        let collect = format!(
+            r#"
+            while peers.len() > 0 invariant peers.len() <= n, decreases peers.len(), {{
+                proof {{ product(n as int, 41 + b as int); }}
+                {receive}
+            }}
+            drop(peers);
+            {COLLECT}
+        "#
+        );
+        let program =
+            peer_program(0, &collect, "").replace("move || alias", &format!("move || {worker}"));
+        assert_vir_error_msg(crate::verify_one_file(name, program, &[]).unwrap_err(), GLOBAL);
+    }
+}
+
+#[test]
+fn joining_restores_the_capacity_from_the_selected_visit() {
+    let program = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn collect(n: u16, observe: u16) requires 2 <= n <= 3, resources peak(memory) <= 512 {
+            let mut handles = Vec::with_capacity(n as usize);
+            let mut i = 0u16;
+            while i < n invariant 2 <= n <= 3, handles.len() == i, i <= n, decreases n - i, {
+                let root = std::sync::Arc::new(Vec::<u8>::with_capacity(i as usize + 7));
+                handles.push(std::thread::spawn(move || root));
+                i += 1;
+            }
+            while handles.len() > 2 invariant 2 <= n <= 3, 2 <= handles.len() <= n,
+                decreases handles.len(),
+            {
+                let result = handles.pop().unwrap().join().unwrap();
+                drop(result);
+            }
+            let later = handles.pop().unwrap().join().unwrap();
+            let earlier = handles.pop().unwrap().join().unwrap();
+            drop(handles);
+            if observe == 1 { assert(current(memory) <= 117); }
+            drop(later);
+            // The first visit requested 7 bytes. Its result has an 8-byte
+            // handle, a 16-byte control block and a 24-byte Vec header.
+            if observe == 1 { assert(current(memory) <= 61); }
+            drop(earlier);
+            assert(current(memory) <= 6);
+        }
+        }
+    "#;
+    assert_vir_error_msg(
+        crate::verify_one_file("vary_capacity", program.into(), &[]).unwrap_err(),
+        GLOBAL,
+    );
+    assert_vir_error_msgs(
+        crate::verify_one_file("vary_short", program.replace("<= 61", "<= 60"), &[]).unwrap_err(),
+        &["conditional memory budget exceeded", GLOBAL],
+    );
+}
