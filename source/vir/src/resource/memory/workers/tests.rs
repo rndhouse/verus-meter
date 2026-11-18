@@ -1035,6 +1035,11 @@ fn join_waits_reject_cycles_and_resume_only_the_actual_waiting_actor() {
         assert!(!workers.blocked(Some(third)));
         assert!(workers.transition_completion(first, &span(20), empty_result()).is_err());
         assert!(workers.transition_completion(second, &span(20), empty_result()).is_err());
+        // Even the actual waiter cannot collect the result or shed its handle
+        // charge while its child is still running.
+        assert!(workers.take_result(third, Some(second), &span(20)).is_err());
+        assert!(workers.blocked(Some(second)));
+        assert_eq!(analysis.storage.live(), 27);
         workers.transition_completion(third, &span(21), empty_result()).unwrap();
         assert!(workers.take_result(third, Some(first), &span(22)).is_err());
         assert_eq!(analysis.storage.live(), 27);
@@ -1056,4 +1061,27 @@ fn join_waits_reject_cycles_and_resume_only_the_actual_waiting_actor() {
         assert!(!analysis.heap.workers.blocked(None));
         analysis.heap.workers.check_closed(&span(28)).unwrap();
     });
+}
+
+#[test]
+fn completion_moves_only_the_inline_payload_to_the_heap_record() {
+    use crate::resource::memory::{
+        contracts,
+        footprint::{Footprint, MemoryKind, MemorySelection},
+    };
+    let site = span(1);
+    let local = MemoryKind::host_local();
+    let heap = MemoryKind::host_heap();
+    // The blocked caller has an 8-byte handle. A 24-byte Vec is returned
+    // with a 64-byte buffer. The existing completion tag costs one byte.
+    let live = Footprint::charge(local.clone(), contracts::literal(&site, 32))
+        .add(&site, Footprint::charge(heap.clone(), contracts::literal(&site, 65)));
+    let ready = states::completed(&site, live, 24);
+    for (selection, bytes) in [
+        (MemorySelection::kind(local), 8),
+        (MemorySelection::kind(heap), 89),
+        (MemorySelection::All, 97),
+    ] {
+        assert_eq!(contracts::constant(&ready.select(&site, &selection)), Some(bytes));
+    }
 }

@@ -94,7 +94,10 @@ impl Trace<'_> {
                 self.publish_worker(value, source, identity, inputs, populations, result)
             }
             Operation::WorkerJoin { source } => self.join_worker(value, source),
-            Operation::ParameterJoin { source } => {
+            Operation::ParameterJoin { source, phases } => {
+                if !phases.at(span) {
+                    return None;
+                }
                 let Value::Owner(_) = self.value(&source)? else { return None };
                 // Both outcomes own only their inline slots. No success tag,
                 // worker result or scalar observation has been established.

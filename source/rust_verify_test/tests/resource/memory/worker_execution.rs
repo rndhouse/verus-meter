@@ -494,3 +494,121 @@ fn siblings_retain_shared_backing_through_a_transferred_join_handle() {
     let error = crate::verify_one_file("sibling_shared_backing_short", short, &[]).unwrap_err();
     crate::common::assert_vir_error_msgs(error, &["conditional memory budget exceeded", GLOBAL]);
 }
+
+#[test]
+fn waiting_worker_keeps_its_buffer_until_the_joiner_drops_it() {
+    let program = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f() resources peak(memory) <= 146 {
+            let parent = vstd::thread::spawn(move || {
+                let child = vstd::thread::spawn(move || [0u8; 48]);
+                let buf = Vec::<u8>::with_capacity(64);
+                {
+                    let outcome = child.join();
+                }
+                buf
+            });
+            let result = parent.join().unwrap();
+            assert(current(memory) <= 88);
+            drop(result);
+            assert(current(memory) <= 0);
+        }
+        }
+    "#;
+    // 88 bytes of Vec, an 8-byte waiting handle, two 1-byte completion tags,
+    // and the child's 48-byte result coexist just before the inner join returns.
+    let valid = crate::verify_one_file("worker_wait_and_return", program.into(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+    let larger = program.replace("capacity(64)", "capacity(65)").replace("<= 88", "<= 89");
+    let error = crate::verify_one_file("worker_wait_one_byte_more", larger, &[]).unwrap_err();
+    crate::common::assert_vir_error_msgs(
+        error,
+        &["memory budget exceeded while retaining a completed worker result", GLOBAL],
+    );
+    let early = program.replace("<= 88", "<= 87");
+    let error =
+        crate::verify_one_file("worker_collected_buffer_still_live", early, &[]).unwrap_err();
+    crate::common::assert_vir_error_msgs(error, &["conditional memory budget exceeded", GLOBAL]);
+}
+
+#[test]
+fn a_worker_can_complete_before_spawn_returns() {
+    let program = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f(b: u16, start: bool)
+            requires b >= 128,
+            resources peak(memory) <= b + if start { 100 } else { 50 },
+        {
+            if start {
+                let scratch = Vec::<u8>::with_capacity(b as usize);
+                let h = vstd::thread::spawn(move || [0u8; 64]);
+                drop(scratch);
+                let result = h.join();
+            } else {
+                let scratch = Vec::<u8>::with_capacity(b as usize);
+                drop(scratch);
+            }
+        }
+        }
+    "#;
+    // The caller can still hold its b-byte buffer when the child has produced
+    // all 64 bytes. The false branch never publishes a completion record.
+    let valid = crate::verify_one_file("publication_overlap", program.into(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+    let short = program.replace("{ 100 }", "{ 99 }");
+    let error = crate::verify_one_file("publication_overlap_short", short, &[]).unwrap_err();
+    crate::common::assert_vir_error_msgs(
+        error,
+        &["memory budget exceeded before spawn returns", GLOBAL],
+    );
+    // Returning unit makes the 64 bytes transient. They still overlap the
+    // publishing frame while the child executes this straight-line body.
+    let temporary = program.replace("move || [0u8; 64]", "move || { let _buf = [0u8; 64]; () }");
+    let valid =
+        crate::verify_one_file("publication_running_worker", temporary.clone(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+    let error = crate::verify_one_file(
+        "publication_running_short",
+        temporary.replace("{ 100 }", "{ 99 }"),
+        &[],
+    )
+    .unwrap_err();
+    crate::common::assert_vir_error_msgs(
+        error,
+        &["memory budget exceeded before spawn returns", GLOBAL],
+    );
+    let zero = program.replace("b >= 128,", "b >= 128, !start,").replace("{ 100 }", "{ 50 }");
+    let valid = crate::verify_one_file("publication_zero_workers", zero, &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+}
+
+#[test]
+fn publication_uses_the_completed_buffers_actual_symbolic_capacity() {
+    let code = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f(b: u16) requires b >= 128,
+            resources peak(memory) <= 2 * b + 59,
+        {
+            let scratch = Vec::<u8>::with_capacity(b as usize);
+            let h = vstd::thread::spawn(move || Vec::<u8>::with_capacity(b as usize));
+            drop(scratch);
+            let result = h.join();
+        }
+        }
+    "#;
+    let valid = crate::verify_one_file("published_buffer_capacity", code.into(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+    let error = crate::verify_one_file(
+        "published_buffer_capacity_short",
+        code.replace("+ 59", "+ 58"),
+        &[],
+    )
+    .unwrap_err();
+    crate::common::assert_vir_error_msgs(
+        error,
+        &["memory budget exceeded before spawn returns", GLOBAL],
+    );
+}

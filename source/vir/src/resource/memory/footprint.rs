@@ -117,6 +117,18 @@ impl Footprint {
             node: Arc::new(Node::Remove(self.clone(), kind, amount)),
         }
     }
+    /// Move live bytes to another kind while preserving the aggregate formula.
+    pub(super) fn reclassify(
+        &self,
+        span: &Span,
+        from: MemoryKind,
+        to: MemoryKind,
+        bytes: Expr,
+    ) -> Self {
+        let projected = self.remove(span, from, bytes.clone()).add(span, Self::charge(to, bytes));
+        Self { total: self.total(), node: projected.node }
+    }
+
     pub(super) fn maximum(&self, span: &Span, other: Self) -> Self {
         Self {
             total: contracts::maximum(span, self.total(), other.total()),

@@ -17,6 +17,7 @@ pub(super) enum CheckKind {
     Section,
     Checkpoint,
     CurrentCheckpoint,
+    WorkerState(&'static str),
 }
 
 #[derive(Clone)]

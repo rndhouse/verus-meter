@@ -169,6 +169,23 @@ the body-derived result; join transfers it once while retaining the waiting fram
 Shared links keep their canonical backing identity. Implicit capture cleanup is
 recorded as an unordered group at each source exit.
 
+Each publication records the caller's live storage before and after the capture
+transfer. The child may enter, run or complete while the caller is still inside
+`spawn`. For an independent body using reviewed local operations, the local
+analysis checks early completion against the caller's live frame. For straight-line
+independent bodies it also checks fixed-size temporaries before they drop. It uses
+the checked result descriptor when its owned bytes can be expressed at the
+publication site. For other bodies the worker's execution graph retains the
+conditional overlap for the interference proof.
+
+A join records the waiting caller's footprint, the point where its handle and
+the completed result coexist, and the footprint after it receives the result.
+The completion record holds the inline payload and its tag. Owned buffers keep
+their allocation identities across the transfer. Each observation belongs to
+the executing actor and its source operation in the synchronization graph.
+A helper receiving an input handle keeps the same wait phases with its formal
+operand. Its result can still take either outcome.
+
 A worker can spawn and join children or receive an existing join handle in its
 captures. Handle transfer moves responsibility for the target's completion record
 and imported shared references; it executes neither a join nor a strong destructor.

@@ -129,7 +129,10 @@ pub(in super::super) enum Operation {
     /// Collect exactly the runtime handle consumed by the source operation.
     WorkerJoin { source: Expr },
     /// Consume a helper input handle without inferring its completion outcome.
-    ParameterJoin { source: Expr },
+    ParameterJoin {
+        source: Expr,
+        phases: std::sync::Arc<super::super::workers::states::JoinPhases>,
+    },
     /// Initialize checked child slots. The tag distinguishes optional payloads.
     Aggregate { fields: Vec<(Expr, Option<OwnerSlot>)>, tag: u64 },
     /// Append one value, retaining its complete forest beneath the next index.

@@ -48,8 +48,6 @@ pub(super) struct Growth {
         std::collections::BTreeMap<super::shared::RootId, super::workers::Claims>,
     /// Body templates actually transported into runtime ownership forests.
     pub(super) retained_worker_families: std::collections::BTreeSet<super::workers::WorkerId>,
-    /// Actual selected identities at joins, distinct from their shared body template.
-    pub(super) worker_join_occurrences: std::collections::BTreeMap<crate::messages::AstId, Expr>,
     /// Actual back-edge ordinals for active source loops. Occurrence identities
     /// use these observations rather than the number of compiler visits.
     pub(super) loop_occurrences: std::collections::BTreeMap<crate::messages::AstId, Expr>,
@@ -57,10 +55,8 @@ pub(super) struct Growth {
     /// Static WorkerId keys name templates; these expressions name runtime visits.
     pub(super) worker_occurrences:
         std::collections::BTreeMap<super::workers::WorkerId, Vec<(crate::messages::AstId, Expr)>>,
-    /// Every possible checked body at an exact native join. Runtime selection
-    /// additionally retains its exact descriptor in worker_join_occurrences.
-    pub(super) worker_joins:
-        std::collections::BTreeMap<u64, std::collections::BTreeSet<super::workers::WorkerId>>,
+    /// Each visit template has its own caller, selected handle and byte states.
+    pub(super) worker_joins: std::collections::BTreeMap<u64, Vec<super::workers::states::Join>>,
     /// Checked independent actor graphs remain available after their handles
     /// are collected. These are effects, not a count of outstanding workers.
     pub(super) worker_executions: std::collections::BTreeMap<

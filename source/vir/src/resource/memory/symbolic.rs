@@ -92,18 +92,20 @@ pub(super) fn function_bound(
     })
 }
 
-fn obligation(check: &Obligation) -> Option<Stmt> {
+pub(super) fn obligation(check: &Obligation) -> Option<Stmt> {
     let Obligation { span, cost, bound, kind } = check;
     let cost = cost.select(span, &bound.selection);
     let bound = &bound.amount;
     let message = match (super::contracts::constant(&cost), super::contracts::constant(bound)) {
         (Some(cost), Some(bound)) if cost <= bound => return None,
         (Some(cost), Some(bound)) => match kind {
+            CheckKind::WorkerState(phase) => format!("memory budget exceeded {phase}: {cost} bytes exceeds budget {bound} bytes"),
             CheckKind::Function => format!("memory budget exceeded: peak {cost} bytes exceeds budget {bound} bytes"),
             CheckKind::Section => format!("section memory budget exceeded: peak {cost} bytes exceeds budget {bound} bytes"),
             CheckKind::CurrentCheckpoint => format!("current(memory) assertion failed: live {cost} bytes exceeds bound {bound} bytes"),
             CheckKind::Checkpoint => format!("peak(memory) assertion failed: peak {cost} bytes exceeds bound {bound} bytes"),
         },
+        _ if let CheckKind::WorkerState(phase) = kind => format!("conditional memory budget exceeded {phase}: cannot prove the live storage fits the declared bound"),
         _ => "conditional memory budget exceeded: cannot prove the required model bytes fit the declared bound".into(),
     };
     let assertion = SpannedTyped::new(

@@ -18,6 +18,7 @@ mod parameters;
 mod populations;
 mod results;
 mod shared;
+pub(super) mod states;
 mod waits;
 
 pub(super) use identity::{Families, WorkerId};
@@ -529,6 +530,7 @@ impl Analysis<'_> {
             .worker
             .ok_or_else(|| unsupported(&argument.span, "joining without worker provenance"))?;
         let id = handle.actor;
+        let waiting = self.storage.live_expression(&expr.span);
         self.heap.workers.wait(id, self.current_worker, &expr.span, value)?;
         let execution = self.heap.workers.records[&id].execution.clone().ok_or_else(|| {
             unsupported(&expr.span, "join without checked executable worker effects")
@@ -581,18 +583,32 @@ impl Analysis<'_> {
         if !proofs.is_empty() {
             self.growth.before.entry(expr.span.id).or_default().extend(proofs);
         }
+        let ready = states::completed(
+            &expr.span,
+            self.storage.live_expression(&expr.span),
+            execution.result.value.bytes,
+        );
         let mut result = self.collect_worker_result(id, &expr.span)?;
         result.owner = result_owner;
-        self.pack_worker_result(expr, [id].into(), result).map(Some)
+        let actors = [id].into();
+        let packed = self.pack_worker_result(expr, &actors, result)?;
+        let record = handle.publication.map(|forest| {
+            super::metadata::expr::lookup(
+                &expr.span,
+                forest,
+                super::metadata::expr::path(&expr.span, []),
+            )
+        });
+        self.record_join(&expr.span, actors, record, waiting, ready)?;
+        Ok(Some(packed))
     }
 
     pub(super) fn pack_worker_result(
         &mut self,
         expr: &Expr,
-        actors: std::collections::BTreeSet<WorkerId>,
+        actors: &std::collections::BTreeSet<WorkerId>,
         result: Storage,
     ) -> Result<super::lifetime::Value, VirErr> {
-        self.growth.worker_joins.insert(expr.span.id, actors.clone());
         let bytes = self.layouts.size(&expr.typ, &expr.span)?;
         let extra = bytes
             .checked_sub(result.value.bytes)
@@ -608,7 +624,7 @@ impl Analysis<'_> {
         let mut origins = result.value.origins;
         origins.insert(packed);
         self.result_owner = Some(Owner {
-            joined: Some(actors),
+            joined: Some(actors.clone()),
             children: result
                 .owner
                 .into_iter()

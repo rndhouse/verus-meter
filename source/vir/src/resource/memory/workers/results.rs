@@ -29,12 +29,18 @@ pub(in super::super) fn resolve_join(
     growth: &Growth,
     fresh_span: &dyn Fn(&Span) -> Span,
 ) -> Result<Expr, VirErr> {
-    let Some(actors) = growth.worker_joins.get(&source.span.id) else { return Ok(call) };
+    let Some(joins) = growth.worker_joins.get(&source.span.id) else { return Ok(call) };
     // A conditional occurrence is safe only if every alternative retains its
     // checked body dependencies. An empty set cannot justify join success.
-    if actors.is_empty()
-        || actors.iter().any(|actor| {
-            growth.worker_executions.get(actor).is_none_or(|execution| execution.actor != *actor)
+    if joins.is_empty()
+        || joins.iter().any(|join| {
+            join.families.is_empty()
+                || join.families.iter().any(|actor| {
+                    growth
+                        .worker_executions
+                        .get(actor)
+                        .is_none_or(|execution| execution.actor != *actor)
+                })
         })
         || !matches!(&source.x,
         ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), .. }

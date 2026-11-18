@@ -35,6 +35,7 @@ pub(in super::super) struct Execution {
     /// Full entry descriptor, including construction epoch, original allocation
     /// identities and source/compiler capture paths. It survives collection.
     pub(super) entry: super::body::Entry,
+    pub(super) publication: super::states::Publication,
     /// Immutable charge observations at publication, before body mutations.
     pub(super) initial: Accounting,
     /// Capture-to-source substitutions and immutable construction observations.
@@ -135,16 +136,8 @@ impl Analysis<'_> {
         for worker in self.growth.worker_executions.values() {
             self.obligations.extend(worker.obligations.iter().cloned());
             self.checks.extend(worker.checks.iter().cloned());
-            self.obligations.extend(worker.report.cost_points.iter().map(|(span, cost)| {
-                super::super::accounting::Obligation {
-                    span: span.clone(),
-                    cost: cost.clone(),
-                    bound: super::super::footprint::MemoryBudget::total(self.bound.clone()),
-                    kind: super::super::accounting::CheckKind::Function,
-                }
-            }));
         }
-        Ok(())
+        self.state_obligations()
     }
 
     pub(super) fn analyze_worker(&mut self, actor: WorkerId, span: &Span) -> Result<(), VirErr> {
@@ -169,6 +162,7 @@ impl Analysis<'_> {
         let signature =
             inputs::signature(&definition, body.clone(), &inputs, closure, self.functions)?;
         super::super::control::validate(&body, &self.var_modes)?;
+        let at_fork = self.storage.live_expression(span);
         let mut storage = self.storage.take_storage(&entry.storage, &self.growth, span)?;
         let (body_workers, tags) =
             self.heap.workers.body_scope(actor, entry.storage.owner.as_ref(), span)?;
@@ -190,6 +184,7 @@ impl Analysis<'_> {
                 span,
             )?;
         }
+        let publication = self.publication_state(span, actor, at_fork)?;
         let initial = storage.clone();
         let declarations = self.growth.declarations.len();
         // Enclosing loop coordinates belong to the actor's identity, not its
@@ -404,6 +399,7 @@ impl Analysis<'_> {
             definition: *id,
             inputs,
             entry: entry_descriptor,
+            publication,
             initial,
             effects: Arc::new(BodyEffects {
                 body,

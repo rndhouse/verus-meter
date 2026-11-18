@@ -62,6 +62,7 @@ impl Analysis<'_> {
         {
             return Err(unsupported(&source.span, "population join with a foreign result type"));
         }
+        let waiting = self.storage.live_expression(&source.span);
         let memory = expr::operation(
             &source.span,
             "worker_result",
@@ -130,18 +131,30 @@ impl Analysis<'_> {
             origins: [id].into(),
             ..super::super::lifetime::Value::unit()
         };
+        let ready = super::states::completed(
+            &source.span,
+            self.storage.live_expression(&source.span),
+            bytes,
+        );
         self.release_owner(owner, &source.span);
         self.release_value(handle, &source.span);
-        self.growth.worker_join_occurrences.insert(source.span.id, occurrence.record);
         self.transitions.operation(
             &source.span,
             super::super::transfer::checked::Operation::WorkerJoin { source: argument.clone() },
         );
-        self.pack_worker_result(
+        let packed = self.pack_worker_result(
             source,
-            occurrence.templates,
+            &occurrence.templates,
             super::super::lifetime::Storage { typ: payload, value, owner: result_owner },
-        )
+        )?;
+        self.record_join(
+            &source.span,
+            occurrence.templates,
+            Some(occurrence.record),
+            waiting,
+            ready,
+        )?;
+        Ok(packed)
     }
 
     pub(in super::super) fn retained_families<'a>(
@@ -234,6 +247,7 @@ impl Analysis<'_> {
     ) -> Result<Option<Expr>, VirErr> {
         let execution = self.growth.worker_executions[&actor].clone();
         if execution.transfer.is_none() {
+            self.check_publication_result(&execution, None);
             return Ok(None);
         }
         let span = &source.span;
@@ -242,7 +256,7 @@ impl Analysis<'_> {
             span,
             super::super::transfer::checked::Operation::WorkerPublish {
                 source: args[0].clone(),
-                identity: self.worker_identity(span, actor),
+                identity: execution.publication.occurrence.clone(),
                 inputs: execution
                     .inputs
                     .iter()
@@ -333,13 +347,19 @@ impl Analysis<'_> {
         let record = expr::operation(
             span,
             "worker_observation",
-            vec![expr::path(span, []), self.worker_identity(span, actor), inputs, result],
+            vec![
+                expr::path(span, []),
+                execution.publication.occurrence.clone(),
+                inputs,
+                result.clone(),
+            ],
             expr::record_type(),
         );
         let memory = expr::push(span, expr::empty(span, expr::record_type()), record);
         let memory = self.metadata_local(span, "worker_observation", memory);
         let statements = self.growth.before.entry(span.id).or_default().split_off(first);
         self.growth.after.entry(span.id).or_default().extend(statements);
+        self.check_publication_result(&execution, Some(&result));
         Ok(Some(memory))
     }
 
