@@ -10,7 +10,7 @@ use super::super::{
     heap::Owner,
     metadata::expr,
     model::unsupported,
-    shared::{SelectedAlias, StrongLink},
+    shared::{RootId, SelectedAlias, StrongLink},
 };
 use super::{WorkerId, populations::Occurrence};
 use crate::{ast::*, messages::Span};
@@ -86,7 +86,7 @@ impl Claims {
 impl SelectedAlias {
     /// Each mixed result keeps one claim on its observed root. Clones share
     /// this reservation until their last executable drop in the coordinator.
-    fn reservation(&self, span: &Span, root: super::super::shared::RootId) -> Expr {
+    fn reservation(&self, span: &Span, root: RootId) -> Expr {
         select(
             span,
             crate::ast_util::mk_eq(span, &self.identity, &expr::integer(span, root.serial())),
@@ -167,39 +167,47 @@ impl Analysis<'_> {
         Ok(())
     }
 
-    pub(super) fn receive_indexed_alias(
-        &mut self,
+    /// Resolve each possible worker's returned Arc against its capture claims.
+    /// Both the identity proof and the join debit use this same mapping.
+    pub(super) fn indexed_result_roots(
+        &self,
         span: &Span,
         occurrence: &Occurrence,
-        result: Expr,
-    ) -> Result<Owner, VirErr> {
+    ) -> Result<BTreeMap<WorkerId, RootId>, VirErr> {
         if self.current_worker.is_some() {
             return Err(unsupported(
                 span,
                 "collection of indexed shared claims outside their publishing coordinator",
             ));
         }
-        let roots = occurrence
-            .templates
-            .iter()
-            .map(|id| {
-                self.growth.worker_executions[id]
-                    .result
-                    .owner
-                    .as_ref()
-                    .and_then(|owner| owner.shared)
-                    .and_then(StrongLink::known)
-                    .filter(|root| {
-                        self.growth
-                            .indexed_shared
-                            .get(root)
-                            .is_some_and(|claims| claims.weights.contains_key(id))
-                    })
-                    .ok_or_else(|| {
-                        unsupported(span, "an indexed Arc result outside its canonical domain")
-                    })
-            })
-            .collect::<Result<BTreeSet<_>, _>>()?;
+        let mut roots = BTreeMap::new();
+        for actor in &occurrence.templates {
+            let root = self.growth.worker_executions[actor]
+                .result
+                .owner
+                .as_ref()
+                .and_then(|owner| owner.shared?.known())
+                .filter(|root| {
+                    self.growth
+                        .indexed_shared
+                        .get(root)
+                        .is_some_and(|claims| claims.weights.contains_key(actor))
+                })
+                .ok_or_else(|| {
+                    unsupported(span, "an indexed Arc result outside its canonical domain")
+                })?;
+            roots.insert(*actor, root);
+        }
+        Ok(roots)
+    }
+
+    pub(super) fn receive_indexed_alias(
+        &mut self,
+        span: &Span,
+        returned: &BTreeMap<WorkerId, RootId>,
+        result: Expr,
+    ) -> Result<Owner, VirErr> {
+        let roots: BTreeSet<_> = returned.values().copied().collect();
         let root = *roots
             .first()
             .ok_or_else(|| unsupported(span, "an indexed Arc result without a publication"))?;
@@ -272,27 +280,22 @@ impl Analysis<'_> {
         &mut self,
         span: &Span,
         occurrence: &Occurrence,
-        result: Option<&Owner>,
+        returned: Option<(&Owner, &BTreeMap<WorkerId, RootId>)>,
     ) -> Result<(), VirErr> {
-        let selection = match result.and_then(|owner| owner.shared) {
-            Some(StrongLink::Selected(id)) => Some(self.heap.shared.selection(id)),
+        let selection = returned.and_then(|(owner, roots)| match owner.shared {
+            Some(StrongLink::Selected(id)) => Some((self.heap.shared.selection(id), roots)),
             _ => None,
-        };
+        });
         for (root, claims) in &self.growth.indexed_shared {
             // A mixed result keeps one of the selected worker's entry claims.
             // Its last local alias reconciles that claim at destruction.
             let mut retained = None;
-            if let Some(alias) = selection
+            if let Some((alias, returned_roots)) = selection
                 && alias.roots.contains(root)
             {
-                let unchanged = occurrence.templates.iter().all(|actor| {
-                    let result_root = self.growth.worker_executions[actor]
-                        .result
-                        .owner
-                        .as_ref()
-                        .and_then(|owner| owner.shared?.known());
+                let unchanged = returned_roots.iter().all(|(actor, result_root)| {
                     claims.weights.get(actor).copied().unwrap_or(0)
-                        == u64::from(result_root == Some(*root))
+                        == u64::from(result_root == root)
                 });
                 if unchanged {
                     continue;

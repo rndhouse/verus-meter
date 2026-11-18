@@ -66,8 +66,13 @@ impl Analysis<'_> {
             expr::memory_type(),
         );
         let first = self.growth.before.get(&source.span.id).map_or(0, Vec::len);
-        let result_owner = if matches!(&*payload, TypX::Decorate(TypDecoration::Arc, _, _)) {
-            Some(self.receive_indexed_alias(&source.span, &occurrence, memory)?)
+        let arc_roots = if matches!(&*payload, TypX::Decorate(TypDecoration::Arc, _, _)) {
+            Some(self.indexed_result_roots(&source.span, &occurrence)?)
+        } else {
+            None
+        };
+        let result_owner = if let Some(roots) = &arc_roots {
+            Some(self.receive_indexed_alias(&source.span, roots, memory)?)
         } else if self.layouts.owner(&payload) {
             Some(self.owner_from_metadata(
                 &source.span,
@@ -79,7 +84,11 @@ impl Analysis<'_> {
         } else {
             None
         };
-        self.collect_indexed_claims(&source.span, &occurrence, result_owner.as_ref())?;
+        self.collect_indexed_claims(
+            &source.span,
+            &occurrence,
+            result_owner.as_ref().zip(arc_roots.as_ref()),
+        )?;
         // An inline pop establishes the selected record while evaluating the
         // receiver. Result-description proofs must follow that evaluation,
         // before join consumes it; they cannot read the previous visit's record.
