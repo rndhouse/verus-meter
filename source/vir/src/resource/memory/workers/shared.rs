@@ -4,7 +4,7 @@
 
 use super::super::{
     accounting::Accounting, analysis::Analysis, contracts, growth::select, heap::Owner,
-    metadata::expr, model::unsupported, shared::RootId,
+    metadata::expr, model::unsupported,
 };
 use super::{WorkerId, populations::Occurrence};
 use crate::{ast::*, messages::Span};
@@ -25,6 +25,19 @@ pub(in super::super) struct Claims {
 }
 
 impl Claims {
+    /// Keep one charge for the backing while any indexed claim is pending.
+    pub(in super::super) fn defer_backing(
+        &self,
+        storage: &mut Accounting,
+        backing: &Owner,
+        span: &Span,
+    ) {
+        let zero = expr::integer(span, 0);
+        let empty = crate::ast_util::mk_eq(span, &self.pending, &zero);
+        let bytes = select(span, empty, zero, contracts::literal(span, backing.bytes));
+        storage.defer_shared_backing(self.charge, backing, bytes);
+    }
+
     /// A collection length describes strong claims only if all of its possible
     /// publications capture the same multiplicity of this particular root.
     pub(in super::super) fn uniform_weight<'a>(
@@ -158,23 +171,6 @@ impl Analysis<'_> {
             self.storage.receive_shared_backing(span, claims.charge, &claims.backing)?;
         }
         self.heap.shared.receive_indexed(root, &claims.backing, span)
-    }
-
-    /// After the last fixed handle ends, charge the one flat allocation while
-    /// any indexed worker can still use it. A join establishes that a worker's
-    /// checked cleanup ran; the join itself is not an Arc destructor.
-    pub(in super::super) fn retain_indexed_backing(
-        &mut self,
-        root: RootId,
-        backing: &Owner,
-        span: &Span,
-    ) -> bool {
-        let Some(claims) = self.growth.indexed_shared.get(&root) else { return false };
-        let zero = expr::integer(span, 0);
-        let empty = crate::ast_util::mk_eq(span, &claims.pending, &zero);
-        let bytes = select(span, empty, zero, contracts::literal(span, backing.bytes));
-        self.storage.defer_shared_backing(claims.charge, backing, bytes);
-        true
     }
 
     pub(super) fn collect_indexed_claims(

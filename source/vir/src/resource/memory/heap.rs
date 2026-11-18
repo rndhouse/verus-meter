@@ -617,6 +617,23 @@ impl Analysis<'_> {
         Ok(())
     }
 
+    /// After the last fixed handle ends, indexed workers may still own this
+    /// allocation. At final destruction its input regions need their own scan
+    /// because the shared target lies outside the handle's enclosing tree.
+    pub(super) fn release_shared_backing(
+        &mut self,
+        root: super::shared::RootId,
+        backing: Owner,
+        span: &Span,
+        proofs: &mut Vec<Stmt>,
+    ) {
+        if let Some(claims) = self.growth.indexed_shared.get(&root) {
+            claims.defer_backing(&mut self.storage, &backing, span);
+        } else {
+            self.destroy_owner(backing, span, true, proofs);
+        }
+    }
+
     fn destroy_owner(&mut self, owner: Owner, span: &Span, inputs: bool, proofs: &mut Vec<Stmt>) {
         if owner.selected_worker.is_some() {
             self.heap.workers.detach_occurrence(span);
@@ -645,13 +662,7 @@ impl Analysis<'_> {
                     && owner.input.is_none()
             );
             if let Some(backing) = self.heap.shared.release(root) {
-                if self.retain_indexed_backing(root, &backing, span) {
-                    return;
-                }
-                // A shared target is outside its enclosing unique-owner tree.
-                // Even if that parent's inputs were scanned already, the final
-                // strong release must retire this target's own incoming regions.
-                self.destroy_owner(backing, span, true, proofs);
+                self.release_shared_backing(root, backing, span, proofs);
             }
             return;
         }

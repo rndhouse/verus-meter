@@ -247,11 +247,8 @@ impl SharedRoots {
                         .ok_or_else(|| {
                             unsupported(span, "inconsistent worker strong-reference transfer")
                         })?;
-                    if target.strong == 0 && matches!(target.storage, Backing::Owned(_)) {
-                        let Backing::Owned(backing) = next.roots.remove(id).unwrap().storage else {
-                            unreachable!()
-                        };
-                        released.push((*id, *backing));
+                    if let Some(backing) = next.take_backing_without_fixed_handles(*id) {
+                        released.push((*id, backing));
                     }
                 }
             }
@@ -345,12 +342,17 @@ impl SharedRoots {
         Ok(Owner { shared: Some(id), ..Default::default() })
     }
 
-    /// Detach backing when its last finite handle ends. The caller transfers
-    /// it to any outstanding indexed claims before deciding reclamation. An
-    /// imported root leaves that decision to its enclosing domain.
+    /// Apply one executable strong-handle drop in this domain.
     pub(super) fn release(&mut self, id: RootId) -> Option<Owner> {
         let root = self.roots.get_mut(&id).expect("live strong handle retains its shared root");
         root.strong = root.strong.checked_sub(1).expect("positive strong ownership");
+        self.take_backing_without_fixed_handles(id)
+    }
+
+    /// Detach owned backing when the last finite handle ends. Imported roots
+    /// leave reclamation to their enclosing domain.
+    fn take_backing_without_fixed_handles(&mut self, id: RootId) -> Option<Owner> {
+        let root = &self.roots[&id];
         if root.strong == 0 && matches!(root.storage, Backing::Owned(_)) {
             let Backing::Owned(storage) = self.roots.remove(&id).unwrap().storage else {
                 unreachable!()

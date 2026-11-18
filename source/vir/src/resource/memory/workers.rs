@@ -549,10 +549,12 @@ impl Analysis<'_> {
             self.rebind_worker_output(owner, &mut retained, &execution, &expr.span, None)
         })?;
         self.storage.receive_storage(retained, &expr.span)?;
+        let mut proofs = Vec::new();
         for (root, backing) in self.heap.shared.receive_worker(&shared, &expr.span)? {
-            if !self.retain_indexed_backing(root, &backing, &expr.span) {
-                self.release_owner(backing, &expr.span);
-            }
+            self.release_shared_backing(root, backing, &expr.span, &mut proofs);
+        }
+        if !proofs.is_empty() {
+            self.growth.before.entry(expr.span.id).or_default().extend(proofs);
         }
         let mut result = self.collect_worker_result(id, &expr.span)?;
         result.owner = result_owner;
