@@ -12,7 +12,7 @@ use super::super::{
     model::unsupported,
     shared::{RootId, SelectedAlias, StrongLink},
 };
-use super::{WorkerId, populations::Occurrence};
+use super::{WorkerId, execution::Execution, populations::Occurrence};
 use crate::{ast::*, messages::Span};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -109,6 +109,13 @@ impl Claims {
     }
 }
 
+impl Execution {
+    /// The known allocation returned directly by this checked worker body.
+    pub(super) fn returned_arc_root(&self) -> Option<RootId> {
+        self.result.owner.as_ref()?.shared?.known()
+    }
+}
+
 impl SelectedAlias {
     /// Each mixed result keeps one claim on its observed root. Clones share
     /// this reservation until their last executable drop in the coordinator.
@@ -153,7 +160,7 @@ impl Analysis<'_> {
     ) -> Result<(), VirErr> {
         let worker = &self.heap.workers.records[&actor];
         let execution = worker.execution.as_ref().unwrap();
-        let returned = execution.result.owner.as_ref().and_then(|owner| owner.shared?.known());
+        let returned = execution.returned_arc_root();
         if (!execution.shared.is_empty()
             && !returned.is_some_and(|id| worker.entry_shared.has_strong(id)))
             || (self.current_worker.is_some() && !worker.entry_shared.is_empty())
@@ -193,6 +200,17 @@ impl Analysis<'_> {
         Ok(())
     }
 
+    /// Indexed backing and outstanding claims still belong to the publisher.
+    pub(super) fn require_indexed_claim_owner(&self, span: &Span) -> Result<(), VirErr> {
+        if self.current_worker.is_some() {
+            return Err(unsupported(
+                span,
+                "collection of indexed shared claims outside their publishing coordinator",
+            ));
+        }
+        Ok(())
+    }
+
     /// Resolve each possible worker's returned Arc against its capture claims.
     /// Both the identity proof and the join debit use this same mapping.
     pub(super) fn indexed_result_roots(
@@ -200,19 +218,10 @@ impl Analysis<'_> {
         span: &Span,
         occurrence: &Occurrence,
     ) -> Result<BTreeMap<WorkerId, RootId>, VirErr> {
-        if self.current_worker.is_some() {
-            return Err(unsupported(
-                span,
-                "collection of indexed shared claims outside their publishing coordinator",
-            ));
-        }
         let mut roots = BTreeMap::new();
         for actor in &occurrence.templates {
             let root = self.growth.worker_executions[actor]
-                .result
-                .owner
-                .as_ref()
-                .and_then(|owner| owner.shared?.known())
+                .returned_arc_root()
                 .filter(|root| {
                     self.growth
                         .indexed_shared
@@ -333,12 +342,7 @@ impl Analysis<'_> {
                 Some(count) => contracts::subtract(span, captured, count),
                 None => captured,
             };
-            if self.current_worker.is_some() {
-                return Err(unsupported(
-                    span,
-                    "collection of indexed shared claims outside their publishing coordinator",
-                ));
-            }
+            self.require_indexed_claim_owner(span)?;
             let next = contracts::subtract(span, claims.pending.clone(), weight);
             let statements = self.growth.after.entry(span.id).or_default();
             statements.push(expr::check(

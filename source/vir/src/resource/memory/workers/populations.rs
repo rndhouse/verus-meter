@@ -67,6 +67,9 @@ impl Analysis<'_> {
         );
         let first = self.growth.before.get(&source.span.id).map_or(0, Vec::len);
         let arc_roots = if matches!(&*payload, TypX::Decorate(TypDecoration::Arc, _, _)) {
+            // Receiving a returned alias can reserve backing even when the join
+            // leaves the outstanding claim count unchanged.
+            self.require_indexed_claim_owner(&source.span)?;
             Some(self.indexed_result_roots(&source.span, &occurrence)?)
         } else {
             None
@@ -154,9 +157,7 @@ impl Analysis<'_> {
         // results so a projection need not unfold earlier publication loops.
         let roots: BTreeSet<_> = templates
             .iter()
-            .filter_map(|actor| {
-                self.growth.worker_executions[actor].result.owner.as_ref()?.shared?.known()
-            })
+            .filter_map(|actor| self.growth.worker_executions[actor].returned_arc_root())
             .collect();
         for root in roots {
             self.growth.before.entry(span.id).or_default().push(expr::lemma(

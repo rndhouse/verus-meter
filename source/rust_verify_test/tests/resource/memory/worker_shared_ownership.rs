@@ -285,6 +285,29 @@ const FULL_DRAIN: &str = r#"
 "#;
 
 #[test]
+fn receiving_a_mixed_arc_result_requires_its_publishers_claim() {
+    // Each family returns its only captured alias. The join keeps its claim
+    // live in the result even when there is no net debit to either allocation.
+    let collection = format!(
+        "let collector = std::thread::spawn(move || {{
+            let mut handles = handles;
+            {FULL_DRAIN}
+        }});
+        collector.join().unwrap();"
+    );
+    let error = crate::verify_one_file(
+        "mixed_arc_receiving_worker",
+        mixed_arc_program("", DISJOINT_CAPTURES, &collection),
+        &[],
+    )
+    .unwrap_err();
+    crate::common::assert_vir_error_msg(
+        error,
+        "collection of indexed shared claims outside their publishing coordinator",
+    );
+}
+
+#[test]
 fn mixed_arc_workers_reconcile_a_symbolic_number_of_results() {
     let multiple = DISJOINT_CAPTURES.replace(
         "let worker = std::thread::spawn(move || a);",
