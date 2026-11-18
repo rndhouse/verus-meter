@@ -58,5 +58,6 @@ mod vectors;
 mod worker_execution;
 mod worker_helpers;
 mod worker_populations;
+mod worker_shared_ownership;
 
 mod support;
