@@ -39,6 +39,10 @@ impl Analysis<'_> {
         {
             return Err(unsupported(&expr.span, "this call signature"));
         }
+        let summary = self
+            .summaries
+            .get(target)
+            .ok_or_else(|| unsupported(&expr.span, "a call without a checked function summary"))?;
         let call_scalars = self.allocation_scalars();
         let transfer = self.prepare_transfer_call(expr, callee, args)?;
         self.check_vector_call(expr, callee, args)?;
@@ -123,10 +127,6 @@ impl Analysis<'_> {
                 external_inputs.extend(owner.inputs());
             }
         }
-        let summary = self
-            .summaries
-            .get(target)
-            .ok_or_else(|| unsupported(&expr.span, "a call without a checked function summary"))?;
         let forwarded = summary.return_parameter.and_then(|i| values[i].clone());
         for value in values.into_iter().flatten() {
             self.release_value(value, c);

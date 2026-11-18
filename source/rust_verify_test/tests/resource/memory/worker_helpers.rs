@@ -160,3 +160,22 @@ fn native_helper_forwards_the_selected_worker_with_its_owned_result() {
         &["memory budget exceeded", HELPER, GLOBAL],
     );
 }
+
+#[test]
+fn a_caller_requires_a_completed_callee_summary() {
+    let program = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn consume(v: Vec<u8>) resources peak(memory) <= 512 {
+            let child = std::thread::spawn(move || v);
+            let result = child.join().unwrap();
+            drop(result);
+        }
+        fn caller() resources peak(memory) <= 1024 {
+            consume(Vec::<u8>::with_capacity(32));
+        }
+        }
+    "#;
+    let error = verify_one_file("unavailable_summary", program.into(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(error, "a call without a checked function summary");
+}
