@@ -59,7 +59,6 @@ impl Analysis<'_> {
         {
             return Err(unsupported(&source.span, "population join with a foreign result type"));
         }
-        self.collect_indexed_claims(&source.span, &occurrence)?;
         let memory = expr::operation(
             &source.span,
             "worker_result",
@@ -80,6 +79,7 @@ impl Analysis<'_> {
         } else {
             None
         };
+        self.collect_indexed_claims(&source.span, &occurrence, result_owner.as_ref())?;
         // An inline pop establishes the selected record while evaluating the
         // receiver. Result-description proofs must follow that evaluation,
         // before join consumes it; they cannot read the previous visit's record.
@@ -212,7 +212,7 @@ impl Analysis<'_> {
         // Equal byte costs cannot distinguish two different shared allocations.
         if let Some(owner) = &execution.result.owner {
             owner.visit_paths(&mut vec![], &mut |slots, node| {
-                if let Some(root) = node.shared {
+                if let Some(root) = node.shared.and_then(super::super::shared::StrongLink::known) {
                     let leaf = slots.iter().fold(result.clone(), |forest, slot| {
                         expr::subtree(
                             span,

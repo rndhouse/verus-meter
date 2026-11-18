@@ -189,6 +189,12 @@ impl Analysis<'_> {
         self.growth.carried_scalars.extend(
             record.scalar_steps.keys().filter(|name| self.slots.contains_key(*name)).cloned(),
         );
+        if !self.heap.shared.compatible_selections(&head.heap.shared) {
+            return Err(super::super::model::unsupported(
+                &expr.span,
+                "selected Arc handles carried across a back edge without a checked identity relation",
+            ));
+        }
         if !self.heap.workers.compatible(&head.heap.workers) {
             return Err(super::super::model::unsupported(
                 &expr.span,

@@ -190,6 +190,19 @@ pub(in super::super) fn field(span: &Span, value: Expr, name: &str, typ: Typ) ->
     SpannedTyped::new(span, &typ, ExprX::UnaryOpr(UnaryOpr::Field(op), value))
 }
 
+/// The allocation identity of a directly represented strong root has one
+/// coordinate. Callers must prove both the record shape and its provenance.
+pub(in super::super) fn shared_identity(span: &Span, record: Expr) -> Expr {
+    let identity = field(span, record, "reference_identity", sequence_type(int_typ()));
+    call(
+        span,
+        crate::fun!(CrateId::Vstd => "seq", "Seq"; "index"),
+        vec![int_typ()],
+        vec![identity, integer(span, 0)],
+        int_typ(),
+    )
+}
+
 pub(in super::super) fn record_field(span: &Span, value: Expr, name: &str) -> Expr {
     field(span, value, name, int_typ())
 }

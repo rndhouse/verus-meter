@@ -41,7 +41,7 @@ impl Analysis<'_> {
         let record = if let Some(occurrence) = occurrence {
             occurrence.record.clone()
         } else if let Some(root) = owner.shared {
-            root.record(span, expr::path(span, []))
+            self.heap.shared.link_record(span, root)
         } else if let Some(handle) = &owner.worker {
             if let Some(publication) = &handle.publication {
                 expr::lookup(span, publication.clone(), expr::path(span, []))

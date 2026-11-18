@@ -852,15 +852,15 @@ fn shared_capture_and_completed_result_retain_one_canonical_payload() {
             .unwrap();
         let owner = analysis.result_owner.take().unwrap();
         let identity = owner.shared;
-        assert!(identity.is_some());
-        assert_reference(analysis, &owner, "shared_reference", &[identity.unwrap().serial()]);
+        let root_id = identity.unwrap().known().unwrap();
+        assert_reference(analysis, &owner, "shared_reference", &[root_id.serial()]);
         // This local view has zero charged bytes but still carries a strong
         // reference. Completing its source geometry must preserve that link.
         let mut local_view = owner.clone();
         local_view.view = crate::resource::memory::metadata::View::Local;
         local_view.source =
             Some((typ.clone(), SpannedTyped::new(&site, &typ, ExprX::Var(root.clone()))));
-        assert_reference(analysis, &local_view, "shared_reference", &[identity.unwrap().serial()]);
+        assert_reference(analysis, &local_view, "shared_reference", &[root_id.serial()]);
         let records = analysis.owner_metadata(&site, &owner, &mut vec![]);
         // A forest consumer without the population interface must reject, even
         // though the linked owner itself has no charged bytes.
@@ -890,7 +890,7 @@ fn shared_capture_and_completed_result_retain_one_canonical_payload() {
             .unwrap();
         let owner = analysis.result_owner.take().unwrap();
         assert_eq!(owner.shared, identity);
-        assert_reference(analysis, &owner, "shared_reference", &[identity.unwrap().serial()]);
+        assert_reference(analysis, &owner, "shared_reference", &[root_id.serial()]);
         analysis.var_modes.insert(copy.clone(), Mode::Exec);
         analysis.slots.insert(copy.clone(), value);
         analysis.heap.owners.insert(copy.clone(), owner);
@@ -906,7 +906,7 @@ fn shared_capture_and_completed_result_retain_one_canonical_payload() {
         // An alternative body-analysis snapshot can release its imported
         // handle without changing this entry or freeing caller-owned backing.
         let mut alternative = entry.shared.clone();
-        assert!(alternative.release(identity.unwrap()).is_none());
+        assert!(alternative.release(root_id).is_none());
         assert!(alternative.is_empty());
         assert!(!entry.shared.is_empty());
         assert_eq!(analysis.storage.live(), 105);

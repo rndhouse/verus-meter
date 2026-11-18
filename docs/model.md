@@ -217,12 +217,14 @@ retain one control block, one inline vector and one buffer at its reserved capac
 Payloads containing caller-owned storage or additional strong or worker handles
 require separate lifetime accounting. Another fixed strong handle must exist when
 each worker handle enters the collection. The coordinator may then drop its own
-handle before joining. Each join reconciles the
-aliases captured by that worker. A directly returned `Arc` keeps its backing live
-in the caller when the worker families selectable at that join share a proven
-root identity. The coordinator reserves backing until collection if it cannot
-observe when a worker ran its destructor. This upper bound does not determine
-the instant of reclamation in an arbitrary interleaving.
+handle before joining. Each join reconciles the aliases captured by that worker.
+If workers can return different roots, the coordinator checks the selected
+result's allocation identity at the join. Moves and local clones preserve that
+identity, and the last local drop releases the result's claim on the backing.
+Passing such a selected alias to another actor requires an ownership summary
+that carries its reservation across the transfer. The coordinator can keep the
+backing charged until collection when the worker may already have dropped its
+last handle. Reclamation at the actual destructor requires a proof across threads.
 
 The proof boundary separates construction, transport and byte accounting.
 Generated builders establish worker-description properties; verified one-step

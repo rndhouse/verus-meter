@@ -10,16 +10,17 @@ use super::super::{
     heap::Owner,
     metadata::expr,
     model::unsupported,
+    shared::{SelectedAlias, StrongLink},
 };
 use super::{WorkerId, populations::Occurrence};
 use crate::{ast::*, messages::Span};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Strong aliases published in retained workers and not yet reconciled by a
 /// coordinator join. An outstanding claim keeps the backing charged once even
 /// if the worker may already have run its last destructor.
 pub(in super::super) struct Claims {
-    /// Sum of unreconciled entry aliases, independent of which workers have finished.
+    /// Unreconciled entry aliases plus the reservation of each live mixed-root result.
     pub(in super::super) pending: Expr,
     /// The same ownership tree moves between fixed and conditional accounting.
     pub(in super::super) backing: Owner,
@@ -82,6 +83,19 @@ impl Claims {
     }
 }
 
+impl SelectedAlias {
+    /// Each mixed result keeps one claim on its observed root. Clones share
+    /// this reservation until their last executable drop in the coordinator.
+    fn reservation(&self, span: &Span, root: super::super::shared::RootId) -> Expr {
+        select(
+            span,
+            crate::ast_util::mk_eq(span, &self.identity, &expr::integer(span, root.serial())),
+            expr::integer(span, 1),
+            expr::integer(span, 0),
+        )
+    }
+}
+
 impl Analysis<'_> {
     /// An accounting domain may return a collected Arc, but every indexed
     /// entry claim must have a matching source join on each normal exit.
@@ -113,7 +127,7 @@ impl Analysis<'_> {
     ) -> Result<(), VirErr> {
         let worker = &self.heap.workers.records[&actor];
         let execution = worker.execution.as_ref().unwrap();
-        let returned = execution.result.owner.as_ref().and_then(|owner| owner.shared);
+        let returned = execution.result.owner.as_ref().and_then(|owner| owner.shared?.known());
         if (!execution.shared.is_empty()
             && !returned.is_some_and(|id| worker.entry_shared.has_strong(id)))
             || (self.current_worker.is_some() && !worker.entry_shared.is_empty())
@@ -159,13 +173,66 @@ impl Analysis<'_> {
         occurrence: &Occurrence,
         result: Expr,
     ) -> Result<Owner, VirErr> {
-        let mut roots = occurrence.templates.iter().map(|id| {
-            self.growth.worker_executions[id].result.owner.as_ref().and_then(|owner| owner.shared)
-        });
-        let root =
-            roots.next().flatten().filter(|id| roots.all(|r| r == Some(*id))).ok_or_else(|| {
-                unsupported(span, "an indexed Arc result without a common proven backing identity")
-            })?;
+        if self.current_worker.is_some() {
+            return Err(unsupported(
+                span,
+                "collection of indexed shared claims outside their publishing coordinator",
+            ));
+        }
+        let roots = occurrence
+            .templates
+            .iter()
+            .map(|id| {
+                self.growth.worker_executions[id]
+                    .result
+                    .owner
+                    .as_ref()
+                    .and_then(|owner| owner.shared)
+                    .and_then(StrongLink::known)
+                    .filter(|root| {
+                        self.growth
+                            .indexed_shared
+                            .get(root)
+                            .is_some_and(|claims| claims.weights.contains_key(id))
+                    })
+                    .ok_or_else(|| {
+                        unsupported(span, "an indexed Arc result outside its canonical domain")
+                    })
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        let root = *roots
+            .first()
+            .ok_or_else(|| unsupported(span, "an indexed Arc result without a publication"))?;
+        if roots.len() > 1 {
+            let actual = expr::lookup(span, result, expr::path(span, []));
+            // Check the full descriptor here. Later byte and drop obligations
+            // need only the frozen identity, even after another pop.
+            let identity = self.metadata_local(
+                span,
+                "joined_shared",
+                expr::shared_identity(span, actual.clone()),
+            );
+            let expected = super::super::shared::selected_record(span, identity.clone());
+            let member = crate::ast_util::disjoin(
+                span,
+                &roots
+                    .iter()
+                    .map(|root| {
+                        crate::ast_util::mk_eq(span, &identity, &expr::integer(span, root.serial()))
+                    })
+                    .collect(),
+            );
+            let proof = crate::ast_util::conjoin(
+                span,
+                &vec![member, crate::ast_util::mk_eq(span, &actual, &expected)],
+            );
+            self.growth.before.entry(span.id).or_default().push(expr::check(
+                span,
+                proof,
+                "cannot establish the selected result's canonical shared allocation",
+            ));
+            return Ok(self.heap.shared.select_alias(identity, roots));
+        }
         let claims = self.growth.indexed_shared.get(&root).ok_or_else(|| {
             unsupported(span, "an indexed Arc result outside its canonical domain")
         })?;
@@ -182,13 +249,61 @@ impl Analysis<'_> {
         self.heap.shared.receive_indexed(root, &claims.backing, span)
     }
 
+    pub(in super::super) fn release_selected_alias(
+        &self,
+        span: &Span,
+        alias: SelectedAlias,
+        proofs: &mut Vec<Stmt>,
+    ) {
+        for root in &alias.roots {
+            let pending = &self.growth.indexed_shared[root].pending;
+            let count = alias.reservation(span, *root);
+            let next = contracts::subtract(span, pending.clone(), count);
+            proofs.push(expr::check(
+                span,
+                crate::ast_util::mk_ineq(span, &expr::integer(span, 0), &next, InequalityOp::Le),
+                "cannot reconcile the selected Arc's backing reservation",
+            ));
+            proofs.push(expr::assign(span, pending, next));
+        }
+    }
+
     pub(super) fn collect_indexed_claims(
         &mut self,
         span: &Span,
         occurrence: &Occurrence,
+        result: Option<&Owner>,
     ) -> Result<(), VirErr> {
-        for claims in self.growth.indexed_shared.values() {
-            let Some(weight) = claims.selected_weight(span, occurrence) else { continue };
+        let selection = match result.and_then(|owner| owner.shared) {
+            Some(StrongLink::Selected(id)) => Some(self.heap.shared.selection(id)),
+            _ => None,
+        };
+        for (root, claims) in &self.growth.indexed_shared {
+            // A mixed result keeps one of the selected worker's entry claims.
+            // Its last local alias reconciles that claim at destruction.
+            let mut retained = None;
+            if let Some(alias) = selection
+                && alias.roots.contains(root)
+            {
+                let unchanged = occurrence.templates.iter().all(|actor| {
+                    let result_root = self.growth.worker_executions[actor]
+                        .result
+                        .owner
+                        .as_ref()
+                        .and_then(|owner| owner.shared?.known());
+                    claims.weights.get(actor).copied().unwrap_or(0)
+                        == u64::from(result_root == Some(*root))
+                });
+                if unchanged {
+                    continue;
+                }
+                retained = Some(alias.reservation(span, *root));
+            }
+            let Some(captured) = claims.selected_weight(span, occurrence) else { continue };
+            let weight = match retained {
+                Some(count) => contracts::subtract(span, captured, count),
+                None => captured,
+            };
             if self.current_worker.is_some() {
                 return Err(unsupported(
                     span,

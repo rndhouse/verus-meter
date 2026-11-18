@@ -13,7 +13,7 @@ use super::{
     model::unsupported,
 };
 use crate::{ast::*, messages::Span};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Allocation identity, independent of source bindings and synchronization IDs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -35,6 +35,43 @@ impl RootId {
     pub(super) fn serial(self) -> i128 {
         i128::from(self.0)
     }
+}
+
+/// A strong handle either names a canonical allocation directly or carries the
+/// choice observed at a particular join. A choice never names a new allocation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum StrongLink {
+    Known(RootId),
+    Selected(u64),
+}
+
+impl StrongLink {
+    pub(super) fn known(self) -> Option<RootId> {
+        match self {
+            Self::Known(id) => Some(id),
+            Self::Selected(_) => None,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct SelectedAlias {
+    /// Frozen canonical allocation identity of this executable join result.
+    pub(super) identity: Expr,
+    /// Every possible backing, independently checked against the record.
+    pub(super) roots: BTreeSet<RootId>,
+    /// Local clones share the selected result's single backing reservation.
+    handles: u64,
+}
+
+pub(super) fn selected_record(span: &Span, identity: Expr) -> Expr {
+    use super::metadata::expr;
+    expr::operation(
+        span,
+        "shared_reference",
+        vec![expr::path(span, []), expr::push(span, expr::path(span, []), identity)],
+        expr::record_type(),
+    )
 }
 
 #[derive(Clone)]
@@ -66,6 +103,7 @@ pub(super) struct SharedRoots {
     // Keep root traversal deterministic and avoid consuming a randomized hash
     // seed in sequential functions that never create a shared allocation.
     roots: BTreeMap<RootId, Root>,
+    selections: BTreeMap<u64, SelectedAlias>,
 }
 
 /// Enumerate strong handles stored directly in this finite ownership tree.
@@ -86,13 +124,55 @@ fn visit_strong_handles(
                 "imported reference populations without checked occurrence descriptors",
             ));
         } else if let Some(id) = node.shared {
-            result = visit(id);
+            result = id
+                .known()
+                .ok_or_else(|| {
+                    unsupported(
+                        span,
+                        "transferring a selected Arc across actors without its backing reservation",
+                    )
+                })
+                .and_then(&mut visit);
         }
     });
     result
 }
 
 impl SharedRoots {
+    pub(super) fn select_alias(&mut self, identity: Expr, roots: BTreeSet<RootId>) -> Owner {
+        let id = super::accounting::Accounting::fresh_allocation();
+        self.selections.insert(id, SelectedAlias { identity, roots, handles: 1 });
+        Owner { shared: Some(StrongLink::Selected(id)), ..Default::default() }
+    }
+
+    pub(super) fn link_record(&self, span: &Span, link: StrongLink) -> Expr {
+        match link {
+            StrongLink::Known(root) => root.record(span, super::metadata::expr::path(span, [])),
+            StrongLink::Selected(id) => {
+                selected_record(span, self.selections[&id].identity.clone())
+            }
+        }
+    }
+
+    /// A new execution of the same join site may overwrite its proof local
+    /// only after the previous visit's selected handles have been retired.
+    pub(super) fn compatible_selections(&self, other: &Self) -> bool {
+        self.selections.len() == other.selections.len()
+            && self.selections.iter().all(|(id, selection)| {
+                other.selections.get(id).is_some_and(|s| selection.handles == s.handles)
+            })
+    }
+
+    pub(super) fn selection(&self, id: u64) -> &SelectedAlias {
+        &self.selections[&id]
+    }
+
+    pub(super) fn release_selection(&mut self, id: u64) -> Option<SelectedAlias> {
+        let selection = self.selections.get_mut(&id).expect("live selected Arc");
+        selection.handles = selection.handles.checked_sub(1).expect("positive strong ownership");
+        if selection.handles == 0 { self.selections.remove(&id) } else { None }
+    }
+
     /// A transferred join handle also transfers responsibility for its target's
     /// imported aliases. They remain reserved in the enclosing domain until the
     /// receiving worker returns its checked entry-to-exit relation.
@@ -189,6 +269,12 @@ impl SharedRoots {
         supported: References,
         span: &Span,
     ) -> Result<(), VirErr> {
+        if !self.selections.is_empty() {
+            return Err(unsupported(
+                span,
+                "selected Arc handles surviving their accounting domain",
+            ));
+        }
         let mut remaining: BTreeMap<_, _> =
             self.roots.iter().map(|(id, root)| (*id, root.strong)).collect();
         let mut pending: Vec<_> = result.into_iter().map(|owner| (owner, supported)).collect();
@@ -313,11 +399,11 @@ impl SharedRoots {
             self.roots
                 .insert(id, Root { strong: 1, storage: Backing::Owned(Box::new(backing.clone())) });
         }
-        Ok(Owner { shared: Some(id), ..Default::default() })
+        Ok(Owner { shared: Some(StrongLink::Known(id)), ..Default::default() })
     }
 
     pub(super) fn is_empty(&self) -> bool {
-        self.roots.values().all(|root| root.strong == 0)
+        self.selections.is_empty() && self.roots.values().all(|root| root.strong == 0)
     }
 
     fn insert(&mut self, storage: Owner) -> Owner {
@@ -327,10 +413,23 @@ impl SharedRoots {
                 .insert(id, Root { strong: 1, storage: Backing::Owned(Box::new(storage)) })
                 .is_none()
         );
-        Owner { shared: Some(id), ..Default::default() }
+        Owner { shared: Some(StrongLink::Known(id)), ..Default::default() }
     }
 
-    fn clone_strong(&mut self, id: RootId, span: &Span) -> Result<Owner, VirErr> {
+    fn clone_strong(&mut self, link: StrongLink, span: &Span) -> Result<Owner, VirErr> {
+        let id = match link {
+            StrongLink::Known(id) => id,
+            StrongLink::Selected(id) => {
+                let selection = self.selections.get_mut(&id).ok_or_else(|| {
+                    unsupported(span, "cloning an Arc outside its selected lifetime")
+                })?;
+                selection.handles = selection
+                    .handles
+                    .checked_add(1)
+                    .ok_or_else(|| unsupported(span, "strong handle counts exceeding u64"))?;
+                return Ok(Owner { shared: Some(link), ..Default::default() });
+            }
+        };
         let root = self.roots.get_mut(&id).ok_or_else(|| {
             unsupported(span, "cloning a shared root without live ownership provenance")
         })?;
@@ -344,7 +443,7 @@ impl SharedRoots {
             .strong
             .checked_add(1)
             .ok_or_else(|| unsupported(span, "strong handle counts exceeding u64"))?;
-        Ok(Owner { shared: Some(id), ..Default::default() })
+        Ok(Owner { shared: Some(StrongLink::Known(id)), ..Default::default() })
     }
 
     /// Apply one executable strong-handle drop in this domain.
@@ -392,14 +491,15 @@ impl SharedRoots {
             }
             roots.insert(id, Root { strong: count, storage: Backing::Imported { entry: count } });
         }
-        Ok(Self { roots })
+        Ok(Self { roots, selections: BTreeMap::new() })
     }
 
     /// A control-flow merge cannot silently discard a surviving root or adopt
     /// one branch's reference count. Symbolic population joins need their own
     /// inductive relationship, supplied by worker/collection effects.
     pub(super) fn compatible(&self, other: &Self) -> bool {
-        self.roots.len() == other.roots.len()
+        self.compatible_selections(other)
+            && self.roots.len() == other.roots.len()
             && self.roots.iter().all(|(id, root)| {
                 other.roots.get(id).is_some_and(|other| {
                     root.strong == other.strong
@@ -524,7 +624,7 @@ impl Analysis<'_> {
                     &expr.span,
                     super::transfer::checked::Operation::StrongNew {
                         payload: argument.clone(),
-                        root: handle.shared.expect("new strong owner"),
+                        root: handle.shared.and_then(StrongLink::known).expect("new strong owner"),
                     },
                 );
             }
@@ -631,7 +731,7 @@ mod tests {
     fn balanced_cycles_cannot_be_exported_as_owned_backing() {
         let mut roots = SharedRoots::default();
         let first = roots.insert(Owner::default());
-        let id = first.shared.unwrap();
+        let id = first.shared.unwrap().known().unwrap();
         let second = roots.insert(first);
         let Backing::Owned(payload) = &mut roots.roots.get_mut(&id).unwrap().storage else {
             unreachable!()
@@ -639,7 +739,7 @@ mod tests {
         **payload = second;
         assert!(roots.check_result(None, References::None, &span()).is_err());
         // Even an additional actual result handle cannot discharge the cycle.
-        let returned = roots.clone_strong(id, &span()).unwrap();
+        let returned = roots.clone_strong(StrongLink::Known(id), &span()).unwrap();
         assert!(roots.check_result(Some(&returned), References::None, &span()).is_err());
     }
 
@@ -658,8 +758,8 @@ mod tests {
     fn captured_views_do_not_reclaim_the_enclosing_domains_backing() {
         let mut enclosing = SharedRoots::default();
         let first = enclosing.insert(Owner { bytes: 64, ..Default::default() });
-        let id = first.shared.unwrap();
-        let second = enclosing.clone_strong(id, &span()).unwrap();
+        let id = first.shared.unwrap().known().unwrap();
+        let second = enclosing.clone_strong(StrongLink::Known(id), &span()).unwrap();
         let captures = Owner {
             children: [(OwnerSlot::Capture(0), first), (OwnerSlot::Capture(1), second)].into(),
             ..Default::default()
@@ -667,7 +767,7 @@ mod tests {
         let mut body = enclosing.captured_view(Some(&captures), &span()).unwrap();
         assert_eq!(body.roots[&id].strong, 2);
         assert!(matches!(body.roots[&id].storage, Backing::Imported { entry: 2 }));
-        body.clone_strong(id, &span()).unwrap();
+        body.clone_strong(StrongLink::Known(id), &span()).unwrap();
         assert_eq!(enclosing.roots[&id].strong, 2);
         assert_eq!(body.clone().roots[&id].strong, 3);
         for _ in 0..3 {
@@ -675,7 +775,7 @@ mod tests {
         }
         assert!(body.is_empty());
         assert!(matches!(body.roots[&id].storage, Backing::Imported { entry: 2 }));
-        assert!(body.clone_strong(id, &span()).is_err());
+        assert!(body.clone_strong(StrongLink::Known(id), &span()).is_err());
         assert!(body.captured_view(Some(&captures), &span()).is_err());
         assert!(enclosing.release(id).is_none());
         assert_eq!(enclosing.release(id).unwrap().bytes, 64);
@@ -712,12 +812,12 @@ mod tests {
         let mut payload = Owner { bytes: 48, ..Default::default() };
         payload.children.insert(OwnerSlot::Contents, Owner { bytes: 128, ..Default::default() });
         let first = roots.insert(payload);
-        let id = first.shared.unwrap();
-        let second = roots.clone_strong(id, &span()).unwrap();
+        let id = first.shared.unwrap().known().unwrap();
+        let second = roots.clone_strong(StrongLink::Known(id), &span()).unwrap();
         assert_eq!(first.shared, second.shared);
         assert_eq!(roots.roots.len(), 1);
         assert!(roots.release(id).is_none());
-        let payload = roots.release(second.shared.unwrap()).unwrap();
+        let payload = roots.release(second.shared.unwrap().known().unwrap()).unwrap();
         assert_eq!(payload.bytes, 48);
         assert_eq!(payload.children[&OwnerSlot::Contents].bytes, 128);
         assert!(roots.is_empty());
@@ -729,9 +829,9 @@ mod tests {
         let handle = roots.insert(Owner { bytes: 24, ..Default::default() });
         let mut branch = roots.clone();
         assert!(roots.compatible(&branch));
-        assert!(roots.release(handle.shared.unwrap()).is_some());
+        assert!(roots.release(handle.shared.unwrap().known().unwrap()).is_some());
         assert!(!roots.compatible(&branch));
-        assert!(branch.release(handle.shared.unwrap()).is_some());
+        assert!(branch.release(handle.shared.unwrap().known().unwrap()).is_some());
     }
 
     #[test]

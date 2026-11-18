@@ -991,6 +991,101 @@ fn indexed_arc_keeps_its_vector_buffer_through_the_final_join() {
 }
 
 #[test]
+fn mixed_arc_joins_keep_the_allocation_selected_by_each_pop() {
+    let code = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f() resources peak(memory) <= 1024 {
+            let small = std::sync::Arc::new(Vec::<u8>::with_capacity(7));
+            let large = std::sync::Arc::new(Vec::<u8>::with_capacity(19));
+            let mut handles = Vec::with_capacity(3);
+            let a = small.clone();
+            let worker = std::thread::spawn(move || a);
+            handles.push(worker);
+            let b = large.clone();
+            let worker = std::thread::spawn(move || b);
+            handles.push(worker);
+            let other = small.clone();
+            let worker = std::thread::spawn(move || other);
+            handles.push(worker);
+            drop(small);
+            drop(large);
+            let first = handles.pop().unwrap().join().unwrap();
+            let middle = handles.pop().unwrap().join().unwrap();
+            let last = handles.pop().unwrap().join().unwrap();
+            let survivor = last.clone();
+            drop(last);
+            drop(handles);
+            drop(middle);
+            assert(current(memory) <= 63);
+            drop(first);
+            assert(current(memory) <= 55);
+            drop(survivor);
+            assert(current(memory) <= 0);
+        }
+        }
+    "#;
+    let valid = crate::verify_one_file("mixed_arc_clone", code.to_string(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+
+    // Two independent joins can return the same 47-byte backing. With two
+    // handles it occupies 63 bytes, then 55 with one. The middle worker
+    // returns the distinct 19-byte buffer.
+    for (name, changed) in [
+        ("mixed_arc_short", code.replace("<= 55", "<= 54")),
+        ("mixed_arc_swapped", code.replace("survivor = last.clone()", "survivor = middle.clone()")),
+    ] {
+        let error = crate::verify_one_file(name, changed, &[]).unwrap_err();
+        crate::common::assert_vir_error_msgs(
+            error,
+            &["conditional memory budget exceeded", GLOBAL],
+        );
+    }
+    let escaped = code.replace(
+        "drop(survivor);",
+        "let child = std::thread::spawn(move || drop(survivor)); child.join().unwrap();",
+    );
+    let error = crate::verify_one_file("mixed_arc_escape", escaped, &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(error, "transferring a selected Arc across actors");
+}
+
+#[test]
+fn mixed_arc_workers_reconcile_a_symbolic_number_of_results() {
+    // Each worker captures both roots, drops one and returns the other. Verus
+    // checks the per-root net change at each join and on every loop back edge.
+    let code = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f(n: u16) resources peak(memory) <= n * 18 + 320 {
+            let small = std::sync::Arc::new(Vec::<u8>::with_capacity(7));
+            let large = std::sync::Arc::new(Vec::<u8>::with_capacity(19));
+            let mut handles = Vec::with_capacity(2 * n as usize);
+            let mut i = 0u16;
+            while i < n invariant i <= n, handles.len() == 2 * i, decreases n - i, {
+                let a = small.clone(); let b = large.clone();
+                let worker = std::thread::spawn(move || { drop(b); a });
+                handles.push(worker);
+                let c = large.clone(); let d = small.clone();
+                let worker = std::thread::spawn(move || { drop(d); c });
+                handles.push(worker);
+                i += 1;
+            }
+            drop(small); drop(large);
+            while handles.len() > 0 invariant handles.len() <= 2 * n, decreases handles.len(), {
+                let h = handles.pop().unwrap();
+                let link = h.join().unwrap();
+                drop(link);
+            }
+            drop(handles);
+            assert(current(memory) <= 4);
+        }
+        }
+    "#;
+    let error = crate::verify_one_file("mixed_arc_drain", code.into(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(error, GLOBAL);
+}
+
+#[test]
 fn worker_result_fields_preserve_distinct_shared_roots() {
     let code = r#"
         use vstd::prelude::*;

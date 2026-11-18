@@ -63,7 +63,7 @@ pub(super) struct Owner {
     /// Concrete closure definition; its owned fields occupy Capture child slots.
     pub(super) closure: Option<usize>,
     /// A strong handle links to canonical backing instead of owning a copy of it.
-    pub(super) shared: Option<super::shared::RootId>,
+    pub(super) shared: Option<super::shared::StrongLink>,
     /// Whether descriptors include incoming allocations or only this frame's charges.
     pub(super) view: super::metadata::View,
     /// Current logical value, used to serialize collection geometry before a call.
@@ -661,8 +661,17 @@ impl Analysis<'_> {
                     && owner.elements.is_none()
                     && owner.input.is_none()
             );
-            if let Some(backing) = self.heap.shared.release(root) {
-                self.release_shared_backing(root, backing, span, proofs);
+            match root {
+                super::shared::StrongLink::Known(id) => {
+                    if let Some(backing) = self.heap.shared.release(id) {
+                        self.release_shared_backing(id, backing, span, proofs);
+                    }
+                }
+                super::shared::StrongLink::Selected(id) => {
+                    if let Some(selection) = self.heap.shared.release_selection(id) {
+                        self.release_selected_alias(span, selection, proofs);
+                    }
+                }
             }
             return;
         }
