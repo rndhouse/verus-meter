@@ -68,8 +68,9 @@ impl Trace<'_> {
             return;
         }
         let effects = self.effects.split_off(start);
+        let decision = Arc::new(path.clone());
         self.effects.extend(effects.into_iter().map(|effect| Effect::Guarded {
-            condition: path.clone(),
+            decision: decision.clone(),
             selected: true,
             effect: Box::new(effect),
         }));

@@ -51,13 +51,39 @@ impl Claims {
 
     /// A collection length describes strong claims only if all of its possible
     /// publications capture the same multiplicity of this particular root.
-    pub(in super::super) fn uniform_weight<'a>(
-        &self,
-        families: impl Iterator<Item = &'a WorkerId>,
-    ) -> Option<u64> {
+    fn uniform_weight<'a>(&self, families: impl Iterator<Item = &'a WorkerId>) -> Option<u64> {
         let mut weights = families.map(|id| self.weights.get(id).copied().unwrap_or(0));
         let first = weights.next()?;
         weights.all(|w| w == first).then_some(first)
+    }
+
+    /// Sum this root's entry aliases over the actual occupied handle slots.
+    /// The common uniform case needs only the checked vector length.
+    pub(in super::super) fn collection_count<'a>(
+        &self,
+        span: &Span,
+        families: impl Iterator<Item = &'a WorkerId> + Clone,
+        records: &Expr,
+        length: &Expr,
+    ) -> Option<(Expr, bool)> {
+        if let Some(weight) = self.uniform_weight(families.clone()) {
+            return (weight != 0).then(|| {
+                (contracts::multiply(span, contracts::literal(span, weight), length.clone()), false)
+            });
+        }
+        let count = families
+            .filter_map(|id| {
+                let weight = *self.weights.get(id)?;
+                let count = expr::operation(
+                    span,
+                    "worker_family_count",
+                    vec![records.clone(), length.clone(), expr::path(span, id.descriptor())],
+                    std::sync::Arc::new(TypX::Int(IntRange::Nat)),
+                );
+                Some(contracts::multiply(span, contracts::literal(span, weight), count))
+            })
+            .reduce(|a, b| contracts::add(span, a, b))?;
+        Some((count, true))
     }
 
     /// Use the selected publication identity for mixed families. A uniform

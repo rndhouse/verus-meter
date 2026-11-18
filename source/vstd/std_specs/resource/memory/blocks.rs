@@ -765,4 +765,34 @@ pub proof fn generate_children_views(
     }
 }
 
+/// Project the next occupied slot after a partial drain directly from its
+/// construction block, without unfolding the preceding visits.
+pub proof fn generated_prefix_last(
+    builder: spec_fn(int) -> Seq<Record>,
+    width: int,
+    count: int,
+    start: int,
+    keep: int,
+)
+    requires
+        width >= 0,
+        count >= 0,
+        start >= 0,
+        well_formed(generate_children(builder, width, count, start)),
+        forall|k: int| 0 <= k < count ==> block_bounds(#[trigger] builder(k), width),
+    ensures
+        width > 0 && start <= keep - 1 < start + width * count ==> subtree(
+            runtime(
+                super::ranges::take_children(generate_children(builder, width, count, start), keep),
+            ),
+            seq![keep - 1],
+        ) == subtree(builder((keep - 1 - start) / width), seq![(keep - 1 - start) % width]),
+{
+    let memory = generate_children(builder, width, count, start);
+    let index = keep - 1;
+    generate_children_views(builder, width, count, start);
+    super::views::request_path(memory, seq![index]);
+    super::ranges::take_children_facts(memory, keep);
+}
+
 } // verus!

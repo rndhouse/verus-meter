@@ -35,7 +35,27 @@ pub(super) fn prove_loop_prefix(
     memory: &Expr,
     statements: &mut Vec<Stmt>,
 ) -> Result<(), VirErr> {
-    proofs::prefix(span, memory, statements)
+    proofs::prefix(span, memory, statements, true)
+}
+
+/// A completed collection needs indexed views; the constructor's induction
+/// step has already been checked on every executable back edge.
+pub(super) fn prove_prefix_exit(
+    span: &Span,
+    memory: &Expr,
+    statements: &mut Vec<Stmt>,
+) -> Result<(), VirErr> {
+    proofs::prefix(span, memory, statements, false)
+}
+
+/// Specialize the indexed view of a retained construction block at the loop exit.
+pub(super) fn retained_last(span: &Span, expected: &Expr) -> Option<Stmt> {
+    let runtime = simplify::inspect::call(expected, "runtime").map_or(expected, |args| &args[0]);
+    let take = simplify::inspect::call(runtime, "take_children")?;
+    let block = simplify::inspect::call(&take[0], "generate_children")?;
+    let mut args = block.as_ref().clone();
+    args.push(take[1].clone());
+    Some(expr::lemma(span, "generated_prefix_last", args))
 }
 
 /// Disjoint original regions at fixed output paths. `None` names the result;

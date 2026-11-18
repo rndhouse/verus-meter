@@ -28,6 +28,7 @@ fn module(name: &str) -> Option<&'static str> {
         | "generate_children_outside"
         | "generate_children_step"
         | "generate_children_views"
+        | "generated_prefix_last"
         | "generated_cost"
         | "generated_cost_affine"
         | "tile_children"
@@ -72,9 +73,19 @@ fn module(name: &str) -> Option<&'static str> {
         "group_metadata_algebra" | "group_metadata_loop_algebra" | "group_runtime_shape" => {
             "groups"
         }
-        "shared_reference" | "worker_reference" | "worker_observation" | "scalar_observation"
-        | "worker_inputs" | "worker_result" | "worker_matches" | "workers_empty"
-        | "scalar_value" => "references",
+        "shared_reference"
+        | "worker_reference"
+        | "worker_observation"
+        | "scalar_observation"
+        | "worker_inputs"
+        | "worker_result"
+        | "worker_matches"
+        | "workers_empty"
+        | "scalar_value"
+        | "worker_family_count"
+        | "worker_family_count_empty"
+        | "worker_family_count_push"
+        | "worker_family_count_pop" => "references",
         "iterate"
         | "iterate_closed"
         | "iterate_closed_facts"

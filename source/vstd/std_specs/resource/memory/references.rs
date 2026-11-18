@@ -80,10 +80,163 @@ pub open spec fn worker_result(record: Record) -> Seq<Record> {
     (record.worker)(true)
 }
 
+/// Classify an existing link by its publication identity independently of
+/// proving that its conditional result is well formed.
+pub open spec fn worker_in_family(record: Record, family: Seq<int>) -> bool {
+    record.kind == -2 && family.len() == 2 && record.reference_identity.len() >= 2
+        && record.reference_identity[0] == family[0] && record.reference_identity[1] == family[1]
+}
+
 /// This predicate describes an existing link; it cannot create an occurrence.
 pub open spec fn worker_matches(record: Record, family: Seq<int>) -> bool {
-    record.kind == -2 && family.is_prefix_of(record.reference_identity)
-        && super::forest::well_formed(worker_result(record))
+    (if family.len() == 2 {
+        worker_in_family(record, family)
+    } else {
+        record.kind == -2 && family.is_prefix_of(record.reference_identity)
+    }) && super::forest::well_formed(worker_result(record))
+}
+
+/// Count matching publications in the occupied slots of a handle vector. A
+/// popped handle is accounted for by its new owner outside this prefix.
+#[verifier::opaque]
+pub open spec fn worker_family_count(memory: Seq<Record>, length: int, family: Seq<int>) -> nat
+    decreases length,
+{
+    if length <= 0 {
+        0
+    } else {
+        worker_family_count(memory, length - 1, family) + if worker_in_family(
+            super::forest::lookup(memory, seq![length - 1]),
+            family,
+        ) {
+            1nat
+        } else {
+            0nat
+        }
+    }
+}
+
+/// A vector with no occupied slots contributes no workers.
+pub broadcast proof fn worker_family_count_empty(memory: Seq<Record>, length: int, family: Seq<int>)
+    requires
+        length <= 0,
+    ensures
+        #[trigger] worker_family_count(memory, length, family) == 0,
+{
+    reveal(worker_family_count);
+}
+
+/// Two forests with identical records at each occupied slot
+/// contribute the same count, regardless of their backing or other records.
+proof fn worker_family_count_agrees(
+    left: Seq<Record>,
+    right: Seq<Record>,
+    length: int,
+    family: Seq<int>,
+)
+    requires
+        forall|i: int|
+            0 <= i < length ==> #[trigger] super::forest::lookup(left, seq![i])
+                == super::forest::lookup(right, seq![i]),
+    ensures
+        worker_family_count(left, length, family) == worker_family_count(right, length, family),
+    decreases length,
+{
+    reveal_with_fuel(worker_family_count, 2);
+    if length > 0 {
+        worker_family_count_agrees(left, right, length - 1, family);
+    }
+}
+
+/// A join handle recovered by lookup came from an occupied ownership path.
+proof fn worker_lookup_present(memory: Seq<Record>, path: Seq<int>)
+    ensures
+        super::forest::lookup(memory, path).kind == -2 ==> super::forest::contains(memory, path),
+    decreases memory.len(),
+{
+    reveal_with_fuel(super::forest::lookup, 2);
+    reveal_with_fuel(super::forest::contains, 2);
+    if memory.len() > 0 {
+        worker_lookup_present(memory.drop_last(), path);
+    }
+}
+
+/// Appending a handle adds one to its publication family’s count.
+pub broadcast proof fn worker_family_count_push(
+    left: Seq<Record>,
+    child: Seq<Record>,
+    path: Seq<int>,
+    length: int,
+    family: Seq<int>,
+)
+    requires
+        length > 0,
+        path == seq![length - 1],
+        super::forest::lookup(child, Seq::empty()).kind == -2,
+    ensures
+        #[trigger] worker_family_count(left + prefix(child, path), length, family)
+            == worker_family_count(left, length - 1, family) + if worker_in_family(
+            super::forest::lookup(child, Seq::empty()),
+            family,
+        ) {
+            1int
+        } else {
+            0int
+        },
+{
+    use super::selection::{lookup_add, contains_prefix, lookup_prefix};
+    let next = left + prefix(child, path);
+    assert forall|i: int| 0 <= i < length - 1 implies #[trigger] super::forest::lookup(
+        next,
+        seq![i],
+    ) == super::forest::lookup(left, seq![i]) by {
+        assert(!path.is_prefix_of(seq![i])) by {
+            assert(path[0] != seq![i][0]);
+        }
+        lookup_add(left, prefix(child, path), seq![i]);
+        contains_prefix(child, path, seq![i]);
+    }
+    worker_family_count_agrees(next, left, length - 1, family);
+    worker_lookup_present(child, Seq::empty());
+    lookup_add(left, prefix(child, path), path);
+    contains_prefix(child, path, path);
+    lookup_prefix(child, path, path);
+    assert(path.skip(path.len() as int) =~= Seq::<int>::empty());
+    reveal(worker_family_count);
+}
+
+/// Removing the last slot subtracts exactly the family of the extracted handle.
+pub broadcast proof fn worker_family_count_pop(
+    memory: Seq<Record>,
+    path: Seq<int>,
+    length: int,
+    family: Seq<int>,
+)
+    requires
+        length >= 0,
+        path == seq![length],
+    ensures
+        #[trigger] worker_family_count(without(memory, path), length, family) + if worker_in_family(
+            super::forest::lookup(subtree(memory, path), Seq::empty()),
+            family,
+        ) {
+            1int
+        } else {
+            0int
+        } == worker_family_count(memory, length + 1, family),
+{
+    let next = without(memory, path);
+    assert forall|i: int| 0 <= i < length implies #[trigger] super::forest::lookup(next, seq![i])
+        == super::forest::lookup(memory, seq![i]) by {
+        assert(!path.is_prefix_of(seq![i])) by {
+            assert(path[0] != seq![i][0]);
+        }
+        super::selection::lookup_without(memory, path, seq![i]);
+    }
+    worker_family_count_agrees(next, memory, length, family);
+    super::selection::lookup_subtree(memory, path, Seq::empty());
+    assert(path + Seq::empty() =~= path);
+    reveal(worker_family_count);
 }
 
 /// Scope exit must not discard a handle hidden in a runtime ownership forest.

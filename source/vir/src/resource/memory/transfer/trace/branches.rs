@@ -53,9 +53,10 @@ impl Trace<'_> {
             self.path = yes_path;
         }
         self.reachable |= yes_reachable;
+        let decision = Arc::new(condition.clone());
         for (selected, effects) in [(true, yes_effects), (false, no_effects)] {
             self.effects.extend(effects.into_iter().map(|effect| Effect::Guarded {
-                condition: condition.clone(),
+                decision: decision.clone(),
                 selected,
                 effect: Box::new(effect),
             }));

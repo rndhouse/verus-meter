@@ -64,8 +64,13 @@ impl PopulationPrefix {
         growth.after.entry(self.body.id).or_default().push(proof.clone());
         // Loop-body facts do not escape an isolated query. Instantiate the
         // same transport laws at exit before any subsequent join or drop.
-        growth.after.entry(span.id).or_default().push(proof);
-        let invariants = growth.loops.entry(span.id).or_default();
+        let mut exit_proofs = Vec::new();
+        transfer::prove_prefix_exit(span, &expected, &mut exit_proofs)?;
+        growth.after.entry(span.id).or_default().extend(exit_proofs);
+        if let Some(last) = transfer::retained_last(span, &expected) {
+            growth.after.entry(span.id).or_default().push(last);
+        }
+        let mut invariants = Vec::new();
         invariants.push(expr::purpose(
             mk_eq(span, &self.forest.0, &expected),
             "memory worker collection membership",
@@ -82,6 +87,7 @@ impl PopulationPrefix {
                 "memory collection backing-storage bound",
             ));
         }
+        growth.loops.entry(span.id).or_default().extend(invariants);
         Ok(())
     }
 }
@@ -128,12 +134,12 @@ impl crate::resource::memory::analysis::Analysis<'_> {
         }
         let span = &record.span;
         let mut offsets = Vec::new();
+        let mut needs_family_counts = false;
         for claims in self.growth.indexed_shared.values() {
             let mut current = expr::integer(span, 0);
-            let mut entry = current.clone();
             let mut related = false;
             for charge in &record.charges {
-                let Some((typ, _)) = record.reference_forests.get(&charge.location) else {
+                let Some((typ, forest)) = record.reference_forests.get(&charge.location) else {
                     continue;
                 };
                 let TypX::Datatype(_, types, _) = &**typ else { continue };
@@ -146,28 +152,37 @@ impl crate::resource::memory::analysis::Analysis<'_> {
                     continue;
                 };
                 let families = self.retained_families(payload);
-                let Some(weight) = claims.uniform_weight(families) else { continue };
-                if weight > 0 {
-                    let weight = contracts::literal(span, weight);
-                    current = contracts::add(
-                        span,
-                        current,
-                        contracts::multiply(span, weight.clone(), charge.length.0.clone()),
-                    );
-                    entry = contracts::add(
-                        span,
-                        entry,
-                        contracts::multiply(span, weight, charge.length.1.clone()),
-                    );
+                if let Some((count, mixed)) =
+                    claims.collection_count(span, families, forest, &charge.length.0)
+                {
+                    current = contracts::add(span, current, count);
                     related = true;
+                    needs_family_counts |= mixed;
                 }
             }
             if related {
-                offsets.push((claims.pending.clone(), current, entry));
+                offsets.push((claims.pending.clone(), current));
+            }
+        }
+        if needs_family_counts {
+            for law in
+                ["worker_family_count_empty", "worker_family_count_push", "worker_family_count_pop"]
+            {
+                let activation = crate::def::Spanned::new(
+                    span.clone(),
+                    StmtX::Expr(SpannedTyped::new(
+                        span,
+                        &crate::ast_util::unit_typ(),
+                        ExprX::Fuel(expr::function(law), 1, true),
+                    )),
+                );
+                self.growth.before_loop_proof(span, activation.clone());
+                self.growth.before.entry(record.body.span.id).or_default().push(activation);
             }
         }
         let mut facts = Vec::new();
-        for (pending, current, entry) in offsets {
+        for (pending, current) in offsets {
+            let entry = self.loop_snapshot(span, &current);
             let initial = self.loop_snapshot(span, &pending);
             facts.push(expr::purpose(
                 mk_ineq(span, &current, &pending, InequalityOp::Le),

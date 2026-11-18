@@ -15,8 +15,9 @@ pub(in super::super) type Location = (VarIdent, Vec<OwnerSlot>, Vec<Expr>);
 pub(in super::super) enum Effect {
     /// Execute an effect only on the selected checked branch.
     Guarded {
-        /// Scalar decision observed at the checked branch.
-        condition: Expr,
+        /// One evaluation shared by its arms. The outer Arc distinguishes
+        /// separate observations of the same expression, including helper calls.
+        decision: Arc<Expr>,
         /// True for its then arm, false for its else arm.
         selected: bool,
         /// One ordered ownership operation on that path.
@@ -144,8 +145,8 @@ impl Effect {
     /// Visit forest expressions, scalar observations and reservation floors.
     pub(super) fn expressions(&self, visit: &mut impl FnMut(&Expr)) {
         let minima = match self {
-            Self::Guarded { condition, effect, .. } => {
-                visit(condition);
+            Self::Guarded { decision, effect, .. } => {
+                visit(decision);
                 effect.expressions(visit);
                 None
             }
@@ -188,14 +189,14 @@ impl Effect {
         prefix: &Location,
         values: &HashMap<VarIdent, Expr>,
         arguments: &HashMap<usize, Value>,
-        guards: &mut HashMap<usize, Expr>,
+        guards: &mut HashMap<usize, Arc<Expr>>,
     ) -> Self {
         let mut result = self.clone();
         let location = match &mut result {
-            Self::Guarded { condition, effect, .. } => {
-                *condition = guards
-                    .entry(Arc::as_ptr(condition) as usize)
-                    .or_insert_with(|| substitute(condition, values))
+            Self::Guarded { decision, effect, .. } => {
+                *decision = guards
+                    .entry(Arc::as_ptr(decision) as usize)
+                    .or_insert_with(|| Arc::new(substitute(decision, values)))
                     .clone();
                 **effect = effect.instantiate(prefix, values, arguments, guards);
                 return result;

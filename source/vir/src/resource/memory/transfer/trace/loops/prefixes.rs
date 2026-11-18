@@ -87,6 +87,24 @@ impl Trace<'_> {
             let backing = closed(&backing).then_some(backing);
             let expected = expr::operation(span, "runtime", vec![node.memory], expr::memory_type());
             let expected = substitute(&expected, &self.proof_values);
+            // A pop retains exactly the occupied prefix. Name the cut with
+            // the running vector length so a later pop queries the same slot
+            // even after a partial drain. The resulting equality is checked
+            // on the actual entry and back edges.
+            let expected = if let Some(runtime) = simplify::inspect::call(&expected, "runtime")
+                && let Some(take) = simplify::inspect::call(&runtime[0], "take_children")
+                && let Some(actual_length) = record.current_length(role)
+            {
+                let cut = expr::operation(
+                    span,
+                    "take_children",
+                    vec![take[0].clone(), actual_length],
+                    expr::memory_type(),
+                );
+                expr::operation(span, "runtime", vec![cut], expr::memory_type())
+            } else {
+                expected
+            };
             if !closed(&expected) {
                 return None;
             }

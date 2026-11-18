@@ -112,7 +112,18 @@ impl Trace<'_> {
         self.branch_depth = depth;
         let (count, stride) = self.finish_progress(record, &progress)?;
         let effects = self.effects.split_off(effect_start);
-        self.record_progress(record, &progress, stride, &effects);
+        let persistent: Vec<_> = effects
+            .iter()
+            .filter(|effect| before.values.contains_key(effect.root()))
+            .cloned()
+            .collect();
+        let drain = guards::common_pops(&persistent);
+        self.record_progress(
+            record,
+            &progress,
+            stride,
+            drain.as_ref().map_or(&effects[..], |(_, pops)| pops.as_slice()),
+        );
         // A condition length with a checked induction relation may itself
         // change. Its entry observation still determines the count, including
         // reversed consuming comparisons such as `0 < source.len()`.
@@ -128,16 +139,12 @@ impl Trace<'_> {
         let control = record.control.as_ref()?;
         let left_progress = length_progress(&control.start);
         let right_progress = length_progress(&control.end);
-        let persistent: Vec<_> = effects
-            .into_iter()
-            .filter(|effect| before.values.contains_key(effect.root()))
-            .collect();
         // A read of an unchanged owner (for example cloning a handle to a
         // loop-invariant Arc) supplies an input, not a collection update.
         // Preserve the dependency for enclosing loops, which may change it.
-        let (stable_reads, persistent): (Vec<_>, Vec<_>) = persistent.iter().cloned().partition(|effect| {
+        let (stable_reads, persistent): (Vec<_>, Vec<_>) = drain.unwrap_or_else(|| persistent.iter().cloned().partition(|effect| {
             matches!(effect, Effect::Read(name) if !persistent.iter().any(|other| touches(other, &(name.clone(), vec![]))))
-        });
+        }));
         let programs = guards::partition(
             span,
             &persistent,
@@ -300,12 +307,13 @@ impl Trace<'_> {
                 )?;
                 let condition = program.condition;
                 let effects = self.effects.split_off(first_effect);
+                let decision = Arc::new(condition.clone());
                 completed.extend(effects.into_iter().map(|effect| {
                     if matches!(condition.x, ExprX::Const(Constant::Bool(true))) {
                         effect
                     } else {
                         Effect::Guarded {
-                            condition: condition.clone(),
+                            decision: decision.clone(),
                             selected: true,
                             effect: Box::new(effect),
                         }

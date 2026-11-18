@@ -377,8 +377,8 @@ impl Trace<'_> {
             }
             fn valid(effect: &Effect, closed: &impl Fn(&Expr) -> bool) -> bool {
                 match effect {
-                    Effect::Guarded { condition, effect, .. } => {
-                        closed(condition) && valid(effect, closed)
+                    Effect::Guarded { decision, effect, .. } => {
+                        closed(decision) && valid(effect, closed)
                     }
                     Effect::Append {
                         child: Value::Owner(Node { origin: Some(_), .. }), ..

@@ -218,6 +218,12 @@ Payloads containing caller-owned storage or additional strong or worker handles
 require separate lifetime accounting. Another fixed strong handle must exist when
 each worker handle enters the collection. The coordinator may then drop its own
 handle before joining. Each join reconciles the aliases captured by that worker.
+When capture counts differ within one vector, each allocation's count is the
+sum over the occupied slots of the references captured by that slot's worker
+family. A pop transfers a handle out of the vector. Joining its worker and
+dropping the returned alias are separate accounting events. A drain can stop
+with a live handle or branch on the remaining length when both paths consume
+the same ordered slots.
 If workers can return different roots, the coordinator checks the selected
 result's allocation identity at the join. Moves and local clones preserve that
 identity, and the last local drop releases the result's claim on the backing.

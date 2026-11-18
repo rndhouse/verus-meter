@@ -27,7 +27,7 @@ pub(super) fn partition(
     stable: &HashMap<VarIdent, Expr>,
 ) -> Option<Vec<Vec<Program>>> {
     let mut guards = Vec::new();
-    collect(effects, &mut guards);
+    collect(effects, &mut guards, same_predicate);
     // An unconditional program already has its complete count. Preserve its
     // original expressions and avoid introducing redundant interval joins.
     if guards.is_empty() {
@@ -97,7 +97,7 @@ pub(super) fn partition(
             {
                 continue;
             }
-            let effects = select(effects, &guards, selection);
+            let effects = select(effects, &guards, selection, same_predicate);
             interval.push(Program {
                 effects,
                 count: width.clone(),
@@ -111,27 +111,86 @@ pub(super) fn partition(
     Some(programs)
 }
 
-fn collect(effects: &[Effect], guards: &mut Vec<Expr>) {
-    for effect in effects {
-        if let Effect::Guarded { condition, effect, .. } = effect {
-            if !guards.iter().any(|old| simplify::inspect::same_expression(old, condition)) {
-                guards.push(condition.clone());
+/// If every branch consumes the same ordered suffixes, membership after the
+/// visit is independent of the decision. Keep reads as dependencies for an
+/// enclosing loop. Appends, transfers, indexed places or unequal removals
+/// require the full guarded program.
+pub(super) fn common_pops(effects: &[Effect]) -> Option<(Vec<Effect>, Vec<Effect>)> {
+    let mut guards = Vec::new();
+    collect(effects, &mut guards, Arc::ptr_eq);
+    if guards.len() > 6 {
+        return None;
+    }
+    let mut reads = std::collections::BTreeSet::new();
+    let mut common: Option<Vec<(Location, Typ)>> = None;
+    for choice in 0..1 << guards.len() {
+        let mut pops = Vec::new();
+        for effect in select(effects, &guards, choice, Arc::ptr_eq) {
+            match effect {
+                Effect::Read(name) => {
+                    reads.insert(name);
+                }
+                Effect::Pop { location, typ, .. }
+                    if !location.1.iter().any(|slot| matches!(slot, OwnerSlot::Element(_))) =>
+                {
+                    // There are no persistent transfers in this program.
+                    pops.push((location, typ));
+                }
+                _ => return None,
             }
-            collect(std::slice::from_ref(effect), guards);
+        }
+        if let Some(prior) = &common {
+            if prior.len() != pops.len()
+                || prior.iter().zip(&pops).any(|((a, _), (b, _))| a.0 != b.0 || a.1 != b.1)
+            {
+                return None;
+            }
+        } else {
+            common = Some(pops);
+        }
+    }
+    let pops = common?;
+    (!pops.is_empty() && (!reads.is_empty() || !guards.is_empty())).then(|| {
+        (
+            reads.into_iter().map(Effect::Read).collect(),
+            pops.into_iter()
+                .map(|(location, typ)| Effect::Pop { location, typ, token: None })
+                .collect(),
+        )
+    })
+}
+
+// Stable interval predicates are comparable by value. For a changing
+// collection, only arms of the very same evaluation are complementary.
+type CompareDecisions = fn(&Arc<Expr>, &Arc<Expr>) -> bool;
+
+fn same_predicate(a: &Arc<Expr>, b: &Arc<Expr>) -> bool {
+    simplify::inspect::same_expression(a, b)
+}
+
+fn collect(effects: &[Effect], guards: &mut Vec<Arc<Expr>>, same: CompareDecisions) {
+    for effect in effects {
+        if let Effect::Guarded { decision, effect, .. } = effect {
+            if !guards.iter().any(|old| same(old, decision)) {
+                guards.push(decision.clone());
+            }
+            collect(std::slice::from_ref(effect), guards, same);
         }
     }
 }
 
-fn select(effects: &[Effect], guards: &[Expr], selection: usize) -> Vec<Effect> {
+fn select(
+    effects: &[Effect],
+    guards: &[Arc<Expr>],
+    selection: usize,
+    same: CompareDecisions,
+) -> Vec<Effect> {
     let mut result = Vec::new();
     for effect in effects {
-        if let Effect::Guarded { condition, selected, effect } = effect {
-            let index = guards
-                .iter()
-                .position(|old| simplify::inspect::same_expression(old, condition))
-                .unwrap();
+        if let Effect::Guarded { decision, selected, effect } = effect {
+            let index = guards.iter().position(|old| same(old, decision)).unwrap();
             if (selection & (1 << index) != 0) == *selected {
-                result.extend(select(std::slice::from_ref(effect), guards, selection));
+                result.extend(select(std::slice::from_ref(effect), guards, selection, same));
             }
         } else {
             result.push(effect.clone());
@@ -248,6 +307,31 @@ fn boundaries(
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_common_pop_requires_complementary_arms_of_one_decision() {
+        let span = Span {
+            raw_span: Arc::new(()),
+            id: 1,
+            data: Arc::new([]),
+            as_string: "decisions".into(),
+        };
+        let name = VarIdent(Arc::new("handles".into()), VarIdentDisambiguate::VirTemp(1));
+        let predicate = crate::ast_util::mk_bool(&span, true);
+        let first = Arc::new(predicate.clone());
+        let second = Arc::new(predicate);
+        let pop = |decision, selected| Effect::Guarded {
+            decision,
+            selected,
+            effect: Box::new(Effect::Pop {
+                location: (name.clone(), Vec::new(), Vec::new()),
+                typ: crate::ast_util::int_typ(),
+                token: None,
+            }),
+        };
+        assert!(common_pops(&[pop(first.clone(), true), pop(first.clone(), false)]).is_some());
+        assert!(common_pops(&[pop(first, true), pop(second, false)]).is_none());
+    }
+
     /// Compare the compact interval program with direct execution for each
     /// comparison direction, including empty, singleton and clipped intervals.
     #[test]
@@ -288,14 +372,15 @@ mod tests {
                         };
                         let condition =
                             SpannedTyped::new(&span, &bool_typ(), ExprX::Binary(op, a, b));
+                        let decision = Arc::new(condition);
                         let effects = vec![
                             Effect::Guarded {
-                                condition: condition.clone(),
+                                decision: decision.clone(),
                                 selected: true,
                                 effect: Box::new(Effect::Mutation(yes.clone())),
                             },
                             Effect::Guarded {
-                                condition: condition.clone(),
+                                decision: decision.clone(),
                                 selected: false,
                                 effect: Box::new(Effect::Mutation(no.clone())),
                             },

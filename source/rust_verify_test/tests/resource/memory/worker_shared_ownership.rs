@@ -231,40 +231,149 @@ fn mixed_arc_joins_keep_the_allocation_selected_by_each_pop() {
     crate::common::assert_vir_error_msg(error, "transferring a selected Arc across actors");
 }
 
-#[test]
-fn mixed_arc_workers_reconcile_a_symbolic_number_of_results() {
-    // Each worker captures both roots, drops one and returns the other. Verus
-    // checks the per-root net change at each join and on every loop back edge.
-    let code = r#"
+// Each visit publishes two handles in this order. A complete drain covers
+// n == 0. A partial drain requires a worker to remain for the final join.
+fn mixed_arc_program(requirement: &str, captures: &str, collection: &str) -> String {
+    r#"
         use vstd::prelude::*;
         verus! {
-        fn f(n: u16) resources peak(memory) <= n * 18 + 320 {
+        fn f(n: u16) REQUIREMENT resources peak(memory) <= n * 18 + 320 {
             let small = std::sync::Arc::new(Vec::<u8>::with_capacity(7));
             let large = std::sync::Arc::new(Vec::<u8>::with_capacity(19));
             let mut handles = Vec::with_capacity(2 * n as usize);
             let mut i = 0u16;
             while i < n invariant i <= n, handles.len() == 2 * i, decreases n - i, {
-                let a = small.clone(); let b = large.clone();
-                let worker = std::thread::spawn(move || { drop(b); a });
-                handles.push(worker);
-                let c = large.clone(); let d = small.clone();
-                let worker = std::thread::spawn(move || { drop(d); c });
-                handles.push(worker);
+                CAPTURES
                 i += 1;
             }
             drop(small); drop(large);
-            while handles.len() > 0 invariant handles.len() <= 2 * n, decreases handles.len(), {
-                let h = handles.pop().unwrap();
-                let link = h.join().unwrap();
-                drop(link);
-            }
-            drop(handles);
+            COLLECTION
             assert(current(memory) <= 4);
         }
         }
+    "#
+    .replace("REQUIREMENT", requirement)
+    .replace("CAPTURES", captures)
+    .replace("COLLECTION", collection)
+}
+
+const BOTH_CAPTURES: &str = r#"
+    let a = small.clone(); let b = large.clone();
+    let worker = std::thread::spawn(move || { drop(b); a });
+    handles.push(worker);
+    let c = large.clone(); let d = small.clone();
+    let worker = std::thread::spawn(move || { drop(d); c });
+    handles.push(worker);
+"#;
+
+const DISJOINT_CAPTURES: &str = r#"
+    let a = small.clone();
+    let worker = std::thread::spawn(move || a);
+    handles.push(worker);
+    let c = large.clone();
+    let worker = std::thread::spawn(move || c);
+    handles.push(worker);
+"#;
+
+const FULL_DRAIN: &str = r#"
+    while handles.len() > 0 invariant handles.len() <= 2 * n, decreases handles.len(), {
+        let h = handles.pop().unwrap();
+        let link = h.join().unwrap();
+        drop(link);
+    }
+    drop(handles);
+"#;
+
+#[test]
+fn mixed_arc_workers_reconcile_a_symbolic_number_of_results() {
+    let multiple = DISJOINT_CAPTURES.replace(
+        "let worker = std::thread::spawn(move || a);",
+        "let extra = small.clone(); let worker = std::thread::spawn(move || { drop(extra); a });",
+    );
+    for (name, captures) in [
+        ("mixed_arc_drain", BOTH_CAPTURES),
+        ("mixed_arc_disjoint_drain", DISJOINT_CAPTURES),
+        ("mixed_arc_weighted_drain", multiple.as_str()),
+    ] {
+        let error = crate::verify_one_file(name, mixed_arc_program("", captures, FULL_DRAIN), &[])
+            .unwrap_err();
+        crate::common::assert_vir_error_msg(error, GLOBAL);
+    }
+}
+
+#[test]
+fn mixed_arc_drain_can_branch_on_the_remaining_length() {
+    // Both paths consume one slot. The last path creates an extra local alias.
+    let drain = r#"
+        while handles.len() > 0 invariant handles.len() <= 2 * n, decreases handles.len(), {
+            if handles.len() == 1 {
+                let h = handles.pop().unwrap();
+                let link = h.join().unwrap();
+                let alias = link.clone(); drop(link); drop(alias);
+            } else {
+                let h = handles.pop().unwrap();
+                let link = h.join().unwrap(); drop(link);
+            }
+        }
+        drop(handles);
     "#;
-    let error = crate::verify_one_file("mixed_arc_drain", code.into(), &[]).unwrap_err();
+    let error = crate::verify_one_file(
+        "mixed_arc_branch",
+        mixed_arc_program("", DISJOINT_CAPTURES, drain),
+        &[],
+    )
+    .unwrap_err();
     crate::common::assert_vir_error_msg(error, GLOBAL);
+}
+
+#[test]
+fn mixed_arc_partial_drain_preserves_the_final_handle() {
+    let drain = r#"
+        while handles.len() > 1 invariant 1 <= handles.len() <= 2 * n, decreases handles.len(), {
+            let h = handles.pop().unwrap();
+            let link = h.join().unwrap(); drop(link);
+        }
+        let last = handles.pop().unwrap().join().unwrap();
+        drop(handles);
+        assert(current(memory) <= 59);
+        drop(last);
+    "#;
+    let program = mixed_arc_program("requires n > 0,", BOTH_CAPTURES, drain);
+    let error = crate::verify_one_file("mixed_arc_partial", program.clone(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(error, GLOBAL);
+
+    // The first publication is the final join. Returning its larger buffer
+    // breaks the 59-byte checkpoint while preserving every spawn and join.
+    let swapped = program.replace("drop(b); a", "drop(a); b").replace("drop(d); c", "drop(c); d");
+    let error = crate::verify_one_file("mixed_arc_partial_wrong_buffer", swapped, &[]).unwrap_err();
+    crate::common::assert_vir_error_msgs(error, &["conditional memory budget exceeded", GLOBAL]);
+}
+
+#[test]
+fn mixed_arc_drain_rejects_a_fictitious_worker() {
+    let invented = format!("assert(handles.len() == 2 * n + 1); {FULL_DRAIN}");
+    let error = crate::verify_one_file(
+        "mixed_arc_invented",
+        mixed_arc_program("", DISJOINT_CAPTURES, &invented),
+        &[],
+    )
+    .unwrap_err();
+    crate::common::assert_vir_error_msgs(error, &["assertion failed", GLOBAL]);
+
+    let again = FULL_DRAIN.replace(
+        "drop(handles);",
+        "let absent = handles.pop().unwrap(); absent.join().unwrap(); drop(handles);",
+    );
+    let error = crate::verify_one_file(
+        "mixed_arc_extra_join",
+        mixed_arc_program("", DISJOINT_CAPTURES, &again),
+        &[],
+    )
+    .unwrap_err();
+    crate::common::assert_vir_error_msgs(
+        error,
+        &["cannot establish the selected worker's family and result description", GLOBAL],
+    );
 }
 
 #[test]

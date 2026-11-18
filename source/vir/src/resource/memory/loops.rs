@@ -161,6 +161,14 @@ impl Loop {
         self.charges.iter().map(|charge| &charge.location)
     }
 
+    /// Occupied slots in the runtime collection at the current loop head.
+    pub(super) fn current_length(&self, path: &LocalPath) -> Option<Expr> {
+        self.charges
+            .iter()
+            .find(|charge| &charge.location == path)
+            .map(|charge| charge.length.0.clone())
+    }
+
     /// Immutable proof observation for a role's length at this loop invocation.
     pub(super) fn entry_length(&self, path: &LocalPath) -> Option<Expr> {
         self.charges

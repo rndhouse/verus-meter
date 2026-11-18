@@ -125,7 +125,7 @@ impl Analysis<'_> {
     pub(in super::super) fn retained_families<'a>(
         &'a self,
         payload: &'a Typ,
-    ) -> impl Iterator<Item = &'a WorkerId> {
+    ) -> impl Iterator<Item = &'a WorkerId> + Clone {
         self.growth.retained_worker_families.iter().filter(|id| {
             crate::ast_util::types_equal(&self.growth.worker_executions[id].result.typ, payload)
         })
@@ -149,6 +149,22 @@ impl Analysis<'_> {
         }
         let memory = self.metadata_local(span, "selected_worker", memory);
         let record = expr::lookup(span, memory.clone(), expr::path(span, []));
+        // Family membership includes validity of the checked result forest.
+        // Materialize the one-record construction facts for the possible Arc
+        // results so a projection need not unfold earlier publication loops.
+        let roots: BTreeSet<_> = templates
+            .iter()
+            .filter_map(|actor| {
+                self.growth.worker_executions[actor].result.owner.as_ref()?.shared?.known()
+            })
+            .collect();
+        for root in roots {
+            self.growth.before.entry(span.id).or_default().push(expr::lemma(
+                span,
+                "well_formed_record",
+                vec![root.record(span, expr::path(span, []))],
+            ));
+        }
         self.growth.before.entry(span.id).or_default().push(expr::check(
             span,
             crate::ast_util::disjoin(

@@ -12,6 +12,7 @@ pub(in super::super) fn prefix(
     span: &Span,
     value: &Expr,
     proofs: &mut Vec<Stmt>,
+    back_edge: bool,
 ) -> Result<(), VirErr> {
     let mut emitter = ForestProofs::new();
     emitter.forest(span, value, proofs)?;
@@ -43,7 +44,7 @@ pub(in super::super) fn prefix(
             {
                 return VisitorControlFlow::Return;
             }
-            if let Some(args) = simplify::inspect::call(value, "generate_children") {
+            if back_edge && let Some(args) = simplify::inspect::call(value, "generate_children") {
                 emitter.lemma(span, "generate_children_step", args.as_ref().clone(), proofs);
                 last_block(span, args, proofs);
             }
