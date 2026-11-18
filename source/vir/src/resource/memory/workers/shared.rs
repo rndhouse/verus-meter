@@ -33,14 +33,25 @@ pub(in super::super) struct Claims {
 }
 
 impl Claims {
-    /// Prove the outstanding claims cover this release before updating their count.
-    fn release(&self, span: &Span, count: Expr, message: &str, proofs: &mut Vec<Stmt>) {
+    /// Check conservation both for a hypothetical worker phase and for a source join.
+    pub(in super::super) fn after_release(
+        &self,
+        span: &Span,
+        count: Expr,
+        message: &str,
+        proofs: &mut Vec<Stmt>,
+    ) -> Expr {
         let remaining = contracts::subtract(span, self.pending.clone(), count);
         proofs.push(expr::check(
             span,
             crate::ast_util::mk_ineq(span, &expr::integer(span, 0), &remaining, InequalityOp::Le),
             message,
         ));
+        remaining
+    }
+
+    fn release(&self, span: &Span, count: Expr, message: &str, proofs: &mut Vec<Stmt>) {
+        let remaining = self.after_release(span, count, message, proofs);
         proofs.push(expr::assign(span, &self.pending, remaining));
     }
 
@@ -126,19 +137,6 @@ impl Execution {
     /// The known allocation returned directly by this checked worker body.
     pub(super) fn returned_arc_root(&self) -> Option<RootId> {
         self.result.owner.as_ref()?.shared?.known()
-    }
-}
-
-impl SelectedAlias {
-    /// Each mixed result keeps one claim on its observed root. Clones share
-    /// this reservation until their last executable drop in the coordinator.
-    fn reservation(&self, span: &Span, root: RootId) -> Expr {
-        select(
-            span,
-            crate::ast_util::mk_eq(span, &self.identity, &expr::integer(span, root.serial())),
-            expr::integer(span, 1),
-            expr::integer(span, 0),
-        )
     }
 }
 

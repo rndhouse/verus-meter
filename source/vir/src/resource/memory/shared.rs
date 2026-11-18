@@ -68,6 +68,26 @@ pub(super) struct SelectedAlias {
     imported: Option<u64>,
 }
 
+impl SelectedAlias {
+    fn matches(&self, span: &Span, root: RootId) -> Expr {
+        crate::ast_util::mk_eq(
+            span,
+            &self.identity,
+            &super::metadata::expr::integer(span, root.serial()),
+        )
+    }
+
+    /// All clones of one mixed result reserve its observed root exactly once.
+    pub(super) fn reservation(&self, span: &Span, root: RootId) -> Expr {
+        super::growth::select(
+            span,
+            self.matches(span, root),
+            super::contracts::literal(span, 1),
+            super::contracts::literal(span, 0),
+        )
+    }
+}
+
 /// Last releases established by collecting a fixed worker.
 #[derive(Default)]
 pub(super) struct WorkerReleases {

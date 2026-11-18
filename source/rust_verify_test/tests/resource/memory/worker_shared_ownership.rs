@@ -73,6 +73,43 @@ fn last_strong_drop_in_a_worker_releases_the_backing_before_its_join() {
 }
 
 #[test]
+fn repeated_coordinator_visits_release_the_current_visits_shared_buffer() {
+    let program = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f(n: u16) resources peak(memory) <= 256 {
+            let mut i = 0u16;
+            while i < n invariant i <= n, decreases n - i, {
+                let root = std::sync::Arc::new(Vec::<u8>::with_capacity(12));
+                let second = root.clone();
+                let first = vstd::thread::spawn(move || { drop(root); });
+                let last = vstd::thread::spawn(move || {
+                    first.join().unwrap();
+                    assert(current(memory) <= 68);
+                    drop(second);
+                    assert(current(memory) <= 16);
+                });
+                last.join().unwrap();
+                i += 1;
+            }
+            assert(current(memory) <= 4);
+        }
+        }
+    "#;
+    // Every iteration constructs fresh backing and settles both workers
+    // before the next visit. With zero visits, only the two u16 slots remain.
+    let valid = crate::verify_one_file("fresh_shared_each_visit", program.into(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+    let short = crate::verify_one_file(
+        "fresh_shared_one_byte_short",
+        program.replace("<= 68", "<= 67"),
+        &[],
+    )
+    .unwrap_err();
+    crate::common::assert_vir_error_msgs(short, &["68 bytes exceeds budget 67 bytes", GLOBAL]);
+}
+
+#[test]
 fn symbolic_shared_checkpoint_uses_the_workers_captured_condition() {
     let code = r#"
         use vstd::prelude::*;
@@ -103,6 +140,84 @@ fn symbolic_shared_checkpoint_uses_the_workers_captured_condition() {
         crate::common::assert_vir_error_msgs(
             error,
             &["conditional memory budget exceeded at a worker checkpoint", GLOBAL],
+        );
+    }
+}
+
+#[test]
+fn worker_checkpoint_follows_the_identity_of_a_selected_join_result() {
+    let program = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f() resources peak(memory) <= 1024 {
+            let small = std::sync::Arc::new(Vec::<u8>::with_capacity(7));
+            let large = std::sync::Arc::new(Vec::<u8>::with_capacity(19));
+            let mut jobs = Vec::with_capacity(2);
+            let a = std::thread::spawn(move || small);
+            jobs.push(a);
+            let b = std::thread::spawn(move || large);
+            jobs.push(b);
+            let other = jobs.pop().unwrap().join().unwrap();
+            drop(other);
+            let selected = jobs.pop().unwrap().join().unwrap();
+            drop(jobs);
+            let child = std::thread::spawn(move || {
+                assert(current(memory) <= 55);
+                drop(selected);
+                assert(current(memory) <= 8);
+            });
+            child.join().unwrap();
+        }
+        }
+    "#;
+    // After the first result is dropped, the second points to the 7-byte buffer.
+    // Swapping their capacities makes that result carry a 19-byte buffer.
+    let reversed = program.replace("capacity(7)", "capacity(19)").replacen(
+        "let large = std::sync::Arc::new(Vec::<u8>::with_capacity(19))",
+        "let large = std::sync::Arc::new(Vec::<u8>::with_capacity(7))",
+        1,
+    );
+    let retain_other = program
+        .replace("drop(other);", "")
+        .replace("child.join().unwrap();", "child.join().unwrap(); drop(other);");
+    for (name, code) in [
+        ("selected_small", program.to_string()),
+        ("unrelated_result_stays_live", retain_other.clone()),
+        ("selected_large", reversed.replace("<= 55", "<= 67")),
+    ] {
+        let error = crate::verify_one_file(name, code, &[]).unwrap_err();
+        crate::common::assert_vir_error_msg(error, GLOBAL);
+    }
+    for (name, code) in [
+        // The first two collected results now refer to different allocations,
+        // but the third worker returned an independent alias of the small one.
+        (
+            "other_reservation_keeps_small",
+            retain_other
+                .replace("Vec::with_capacity(2)", "Vec::with_capacity(3)")
+                .replace("let a =", "let alias = small.clone(); let a =")
+                .replace(
+                    "let other =",
+                    "let c = std::thread::spawn(move || alias); jobs.push(c); let other =",
+                )
+                .replace(
+                    "let selected =",
+                    "let discarded = jobs.pop().unwrap().join().unwrap(); drop(discarded); let selected =",
+                ),
+        ),
+        ("small_short", program.replace("<= 55", "<= 54")),
+        ("large_short", reversed.replace("<= 55", "<= 66")),
+        (
+            "selected_external_clone",
+            program
+                .replace("drop(jobs);", "drop(jobs); let keep = selected.clone();")
+                .replace("child.join().unwrap();", "child.join().unwrap(); drop(keep);"),
+        ),
+    ] {
+        let error = crate::verify_one_file(name, code, &[]).unwrap_err();
+        crate::common::assert_vir_error_msgs(
+            error,
+            &["at a worker checkpoint with shared backing", GLOBAL],
         );
     }
 }

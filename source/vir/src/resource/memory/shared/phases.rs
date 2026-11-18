@@ -2,6 +2,8 @@
 //! source checkpoint. This is a view of a possible worker phase. Observing it
 //! never runs the worker or releases storage on the publisher's continuation.
 
+mod selections;
+
 use super::{Backing, RootId, SharedRoots, StrongLink};
 use crate::{
     ast::*,
@@ -37,6 +39,7 @@ impl Handles {
 pub(in super::super) struct Checkpoint {
     site: Span,
     handles: BTreeMap<RootId, Handles>,
+    selections: BTreeMap<u64, Handles>,
     /// Frame cost belongs to the checkpoint; backing costs belong to the
     /// publications where their canonical owners are in scope.
     frame: Expr,
@@ -191,10 +194,20 @@ impl Analysis<'_> {
             return;
         }
         let handles = self.heap.shared.imports_at_checkpoint();
-        if !handles.is_empty() {
+        let selections: BTreeMap<_, _> = self
+            .heap
+            .shared
+            .selections
+            .iter()
+            .filter_map(|(id, alias)| {
+                Some((*id, Handles { entry: alias.imported?, live: alias.handles }))
+            })
+            .collect();
+        if !handles.is_empty() || !selections.is_empty() {
             self.transitions.shared_checkpoints.push(Checkpoint {
                 site: span.clone(),
                 handles,
+                selections,
                 frame: frame.total(),
                 backing: Vec::new(),
                 publisher_guard: None,
@@ -242,45 +255,82 @@ impl Analysis<'_> {
         let worker = self.growth.worker_executions[&actor].clone();
         for check in worker.shared_checkpoints() {
             let span = &check.site;
-            let counts = self
+            let mut counts = self
                 .heap
                 .shared
                 .at_worker_checkpoint(check, |id| self.growth.indexed_shared.contains_key(&id))?;
+            let (selected, selections) = self.heap.shared.project_selections(check)?;
             let mut imports = BTreeMap::new();
             let mut owned = Vec::new();
+            // A candidate already reached through a fixed handle is observed
+            // regardless of the selected result's identity.
+            let fixed: std::collections::BTreeSet<_> = counts.keys().copied().collect();
+            for id in selected.keys() {
+                counts
+                    .entry(*id)
+                    .or_insert_with(|| self.heap.shared.roots.get(id).map_or(0, |r| r.strong));
+            }
             for (id, live) in counts {
-                match &self.heap.shared.roots[&id].storage {
-                    Backing::Imported { entry } => {
+                let claims = self.growth.indexed_shared.get(&id);
+                let backing = match self.heap.shared.roots.get(&id).map(|r| &r.storage) {
+                    Some(Backing::Imported { entry }) => {
                         imports.insert(id, Handles { entry: *entry, live });
+                        continue;
                     }
-                    Backing::Owned(backing) => {
-                        let pending = self.growth.indexed_shared.get(&id);
-                        if live > 0 || pending.is_some() {
-                            let (bytes, proof) = self.checkpoint_backing(publication, backing)?;
-                            if let Some(proof) = proof {
-                                self.growth.after.entry(publication.id).or_default().push(proof);
-                            }
-                            owned.push(if live == 0 {
-                                let empty = crate::ast_util::mk_eq(
+                    Some(Backing::Owned(backing)) => backing,
+                    None => {
+                        &claims
+                            .ok_or_else(|| {
+                                unsupported(
                                     span,
-                                    &pending.unwrap().pending,
-                                    &contracts::literal(span, 0),
-                                );
-                                super::super::growth::select(
-                                    span,
-                                    empty,
-                                    contracts::literal(span, 0),
-                                    bytes,
+                                    "a selected checkpoint without its canonical backing",
                                 )
-                            } else {
-                                bytes
-                            });
-                        }
+                            })?
+                            .backing
+                    }
+                };
+                if live == 0 && claims.is_none() {
+                    continue;
+                }
+                let (mut bytes, proof) = self.checkpoint_backing(publication, backing)?;
+                let proofs = self.growth.after.entry(publication.id).or_default();
+                proofs.extend(proof);
+                let candidates = selected.get(&id);
+                if let Some(claims) = claims {
+                    let remaining = match candidates.and_then(|s| s.released.clone()) {
+                        Some(debit) => claims.after_release(
+                            span,
+                            debit,
+                            "cannot reconcile the selected Arc's checkpoint reservation",
+                            proofs,
+                        ),
+                        None => claims.pending.clone(),
+                    };
+                    if live == 0 {
+                        let empty =
+                            crate::ast_util::mk_eq(span, &remaining, &contracts::literal(span, 0));
+                        bytes = super::super::growth::select(
+                            span,
+                            empty,
+                            contracts::literal(span, 0),
+                            bytes,
+                        );
                     }
                 }
+                if !fixed.contains(&id) {
+                    let matched = crate::ast_util::disjoin(span, &selected[&id].matches);
+                    bytes = super::super::growth::select(
+                        span,
+                        matched,
+                        bytes,
+                        contracts::literal(span, 0),
+                    );
+                }
+                owned.push(bytes);
             }
             let mut projected = check.clone();
             projected.handles = imports;
+            projected.selections = selections;
             let guard = projected.publisher_guard.take();
             if !owned.is_empty() {
                 let bytes = owned
@@ -292,7 +342,7 @@ impl Analysis<'_> {
                     guard,
                 });
             }
-            if projected.handles.is_empty() {
+            if projected.handles.is_empty() && projected.selections.is_empty() {
                 projected.emit(self)?;
             } else {
                 self.transitions.shared_checkpoints.push(projected);

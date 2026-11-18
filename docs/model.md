@@ -311,7 +311,11 @@ survived. When the last handle drops, fixed fields in the shared payload release
 their handles in turn. Multiple paths to the same allocation pay for it once.
 A publisher or sibling that can still hold an alias keeps the backing live in
 this check. The publisher's own continuation can still keep the backing charged
-until collection.
+until collection. If a captured handle came from a collection of workers that
+return different allocations, the check uses the identity frozen at that join.
+Dropping its last clone in the child releases exactly the selected reservation
+in the checkpoint view. Any other result or slot naming that allocation still
+retains its backing.
 
 The publisher checks backing sizes against its allocation state. A constant
 allowance proved there can be used at the worker's source checkpoint. Symbolic
