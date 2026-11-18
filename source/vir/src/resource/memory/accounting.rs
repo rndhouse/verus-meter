@@ -123,6 +123,24 @@ pub(super) struct Live {
     pub(super) inputs: HashSet<usize>,
 }
 
+impl Live {
+    fn add_fixed(&mut self, span: &Span, kind: &MemoryKind, bytes: u64) -> Result<(), VirErr> {
+        let amount = self.fixed.entry(kind.clone()).or_default();
+        *amount = amount
+            .checked_add(bytes)
+            .ok_or_else(|| unsupported(span, "storage totals exceeding u64"))?;
+        Ok(())
+    }
+
+    fn remove_fixed(&mut self, kind: &MemoryKind, bytes: u64) {
+        let amount = self.fixed.get_mut(kind).expect("matching memory kind");
+        *amount = amount.checked_sub(bytes).expect("balanced resource events");
+        if *amount == 0 {
+            self.fixed.remove(kind);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct Point {
     pub(super) cost: Footprint,
@@ -400,10 +418,7 @@ impl Accounting {
             return Ok(());
         }
         for path in &mut self.paths {
-            let amount = path.fixed.entry(kind.clone()).or_default();
-            *amount = amount
-                .checked_add(bytes)
-                .ok_or_else(|| unsupported(span, "storage totals exceeding u64"))?;
+            path.add_fixed(span, &kind, bytes)?;
         }
         self.record_live(span)?;
         self.event(span, format!("reserve {bytes} bytes for {reason}"));
@@ -543,11 +558,7 @@ impl Accounting {
             return;
         }
         for path in &mut self.paths {
-            let amount = path.fixed.get_mut(&kind).expect("matching memory kind");
-            *amount = amount.checked_sub(bytes).expect("balanced resource events");
-            if *amount == 0 {
-                path.fixed.remove(&kind);
-            }
+            path.remove_fixed(&kind, bytes);
         }
         self.event(span, format!("release {bytes} bytes for {reason}"));
     }

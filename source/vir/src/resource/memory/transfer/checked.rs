@@ -110,6 +110,12 @@ pub(in super::super) enum Operation {
     Vector { capacity: Expr, element: u64 },
     /// Allocate a fixed payload; an owning payload is nested under Contents.
     Box { payload: Expr, bytes: u64 },
+    /// A body-local canonical allocation. Its identity may be used to prove
+    /// internal observations but cannot escape as a caller-relative input.
+    StrongNew { payload: Expr, root: super::super::shared::RootId },
+    /// Clone one strong link from a checked borrowed place. The backing stays
+    /// in its canonical root and the receiver retains its own handle.
+    StrongClone { receiver: Place },
     /// Capture transport happens at construction; it does not execute the body.
     Closure { captures: Vec<(super::super::concurrency::CaptureMode, Place)> },
     /// Publish a checked body with a snapshot of its concrete capture values.
@@ -250,6 +256,13 @@ pub(in super::super) struct Checked {
 }
 
 impl Checked {
+    /// Local construction outside the actor's repeatable loops.
+    pub(in super::super) fn owns_fixed_root(&self, root: super::super::shared::RootId) -> bool {
+        self.operations
+            .values()
+            .any(|op| matches!(op, Operation::StrongNew { root: owned, .. } if *owned == root))
+    }
+
     /// The input backing can be reused only while all changes to its indexed
     /// contents are checked removals. Local moves preserve the storage identity.
     pub(in super::super) fn forwards_worker_vector(&self, helper: impl Fn(&Fun) -> bool) -> bool {

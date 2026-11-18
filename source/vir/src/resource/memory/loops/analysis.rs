@@ -272,6 +272,7 @@ impl Analysis<'_> {
             ));
             self.growth.loop_ensures.entry(expr.span.id).or_default().extend(exits);
         }
+        invariants.extend(self.loop_shared_claims(&record));
         invariants.extend(forest_bounds);
         invariants.extend(frame_invariants);
         invariants.extend(entry_facts);

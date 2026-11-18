@@ -85,3 +85,72 @@ impl PopulationPrefix {
         Ok(())
     }
 }
+
+impl crate::resource::memory::analysis::Analysis<'_> {
+    /// Keep claims outside the loop's handle vectors as the entry offset.
+    /// Verus checks this equality on the actual entry and back edges; lengths
+    /// cannot stand in for membership when the possible worker weights differ.
+    pub(super) fn loop_shared_claims(&mut self, record: &super::Loop) -> Vec<Expr> {
+        use crate::resource::memory::contracts;
+        if self.current_worker.is_some() {
+            return Vec::new();
+        }
+        let span = &record.span;
+        let mut offsets = Vec::new();
+        for claims in self.growth.indexed_shared.values() {
+            let mut current = expr::integer(span, 0);
+            let mut entry = current.clone();
+            let mut related = false;
+            for charge in &record.charges {
+                let Some((typ, _)) = record.reference_forests.get(&charge.location) else {
+                    continue;
+                };
+                let TypX::Datatype(_, types, _) = &**typ else { continue };
+                if !self.layouts.vector(typ) {
+                    continue;
+                }
+                let Some((payload, _)) =
+                    types.first().and_then(|element| self.layouts.join_handle(element))
+                else {
+                    continue;
+                };
+                let families = self.retained_families(payload);
+                let Some(weight) = claims.uniform_weight(families) else { continue };
+                if weight > 0 {
+                    let weight = contracts::literal(span, weight);
+                    current = contracts::add(
+                        span,
+                        current,
+                        contracts::multiply(span, weight.clone(), charge.length.0.clone()),
+                    );
+                    entry = contracts::add(
+                        span,
+                        entry,
+                        contracts::multiply(span, weight, charge.length.1.clone()),
+                    );
+                    related = true;
+                }
+            }
+            if related {
+                offsets.push((claims.pending.clone(), current, entry));
+            }
+        }
+        let mut facts = Vec::new();
+        for (pending, current, entry) in offsets {
+            let initial = self.loop_snapshot(span, &pending);
+            facts.push(expr::purpose(
+                mk_ineq(span, &current, &pending, InequalityOp::Le),
+                "worker collections cannot contain more claims than were published",
+            ));
+            facts.push(expr::purpose(
+                mk_eq(
+                    span,
+                    &contracts::add(span, pending, entry),
+                    &contracts::add(span, initial, current),
+                ),
+                "outstanding shared references in the loop's worker collections",
+            ));
+        }
+        facts
+    }
+}

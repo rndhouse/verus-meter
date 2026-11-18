@@ -59,6 +59,7 @@ impl Analysis<'_> {
         {
             return Err(unsupported(&source.span, "population join with a foreign result type"));
         }
+        self.collect_indexed_claims(&source.span, &occurrence)?;
         let memory = expr::operation(
             &source.span,
             "worker_result",
@@ -66,7 +67,9 @@ impl Analysis<'_> {
             expr::memory_type(),
         );
         let first = self.growth.before.get(&source.span.id).map_or(0, Vec::len);
-        let result_owner = if self.layouts.owner(&payload) {
+        let result_owner = if matches!(&*payload, TypX::Decorate(TypDecoration::Arc, _, _)) {
+            Some(self.receive_indexed_alias(&source.span, &occurrence, memory)?)
+        } else if self.layouts.owner(&payload) {
             Some(self.owner_from_metadata(
                 &source.span,
                 &payload,
@@ -110,6 +113,15 @@ impl Analysis<'_> {
         )
     }
 
+    pub(in super::super) fn retained_families<'a>(
+        &'a self,
+        payload: &'a Typ,
+    ) -> impl Iterator<Item = &'a WorkerId> {
+        self.growth.retained_worker_families.iter().filter(|id| {
+            crate::ast_util::types_equal(&self.growth.worker_executions[id].result.typ, payload)
+        })
+    }
+
     /// Restore the source-selected occurrence. Prove membership in the checked
     /// body alternatives while retaining this record's inputs and result; no
     /// representative body's result may stand in for a different publication.
@@ -122,15 +134,7 @@ impl Analysis<'_> {
         zero_charge: bool,
     ) -> Result<Owner, VirErr> {
         let (result, _) = self.layouts.join_handle(typ).unwrap();
-        let templates: BTreeSet<_> = self
-            .growth
-            .retained_worker_families
-            .iter()
-            .filter(|id| {
-                crate::ast_util::types_equal(&self.growth.worker_executions[id].result.typ, result)
-            })
-            .copied()
-            .collect();
+        let templates: BTreeSet<_> = self.retained_families(result).copied().collect();
         if templates.is_empty() {
             return Err(unsupported(span, "a worker selection without a checked body family"));
         }
@@ -203,6 +207,36 @@ impl Analysis<'_> {
         let result = self
             .worker_result_memory(&execution, span)?
             .unwrap_or_else(|| expr::empty(span, expr::record_type()));
+        // The transfer template is relative to the captures. Check its actual
+        // substitution against the independently tracked strong owners at exit.
+        // Equal byte costs cannot distinguish two different shared allocations.
+        if let Some(owner) = &execution.result.owner {
+            owner.visit_paths(&mut vec![], &mut |slots, node| {
+                if let Some(root) = node.shared {
+                    let leaf = slots.iter().fold(result.clone(), |forest, slot| {
+                        expr::subtree(
+                            span,
+                            forest,
+                            expr::path(span, [self.layouts.metadata_slot(slot)]),
+                        )
+                    });
+                    let actual = super::super::transfer::simplify::simplify(&expr::lookup(
+                        span,
+                        leaf,
+                        expr::path(span, []),
+                    ));
+                    self.growth.before.entry(span.id).or_default().push(expr::check(
+                        span,
+                        crate::ast_util::mk_eq(
+                            span,
+                            &actual,
+                            &root.record(span, expr::path(span, [])),
+                        ),
+                        "cannot establish the shared allocation identity of the worker result",
+                    ));
+                }
+            });
+        }
         let mut inputs = expr::empty(span, expr::record_type());
         for input in &execution.inputs {
             let path = expr::path(span, [self.layouts.metadata_slot(&input.slot)]);
@@ -286,13 +320,7 @@ impl Analysis<'_> {
         {
             return Err(unsupported(span, "transport of a consumed worker occurrence"));
         }
-        if !worker.entry_shared.is_empty() || !worker.execution.as_ref().unwrap().shared.is_empty()
-        {
-            return Err(unsupported(
-                span,
-                "retained worker shared-reference populations without their conservation relation",
-            ));
-        }
+        self.index_worker_claims(actor, span)?;
         let worker = self.heap.workers.records.remove(&actor).unwrap();
         self.storage.release_values(&[worker.completion].into());
         let tag =

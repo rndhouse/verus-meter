@@ -642,7 +642,7 @@ fn a_worker_returns_the_selected_buffer_from_a_captured_collection() {
 }
 
 #[test]
-fn retaining_a_worker_with_a_strong_capture_requires_shared_conservation() {
+fn a_receiving_actor_cannot_discharge_its_publishers_indexed_shared_claims() {
     rejects(
         "worker_population_strong_capture",
         r#"
@@ -660,7 +660,7 @@ fn retaining_a_worker_with_a_strong_capture_requires_shared_conservation() {
             drop(backing);
         }
         "#,
-        "retained worker shared-reference populations without their conservation relation",
+        "collection of indexed shared claims outside their publishing coordinator",
     );
 }
 
@@ -843,6 +843,126 @@ fn return_operand_collects_workers_before_lexical_cleanup() {
         "#,
         GLOBAL,
     );
+}
+
+#[test]
+fn a_symbolic_worker_population_reserves_each_shared_backing_once() {
+    let code = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f(n: u16) resources peak(memory) <= n * 9 + 160 {
+            let root = std::sync::Arc::new(17u64);
+            let mut handles = Vec::with_capacity(n as usize);
+            let mut i = 0u16;
+            while i < n invariant i <= n, handles.len() == i, decreases n - i, {
+                let a = root.clone();
+                let b = root.clone();
+                let worker = std::thread::spawn(move || { drop(a); drop(b); 17u64 });
+                handles.push(worker);
+                i += 1;
+            }
+            drop(root);
+            if n == 0 { assert(current(memory) <= 28); }
+            if n == 2 { assert(current(memory) <= 70); }
+            while handles.len() > 0 invariant handles.len() <= n, decreases handles.len(), {
+                let h = handles.pop().unwrap();
+                let _v = h.join().unwrap();
+            }
+            drop(handles);
+            assert(current(memory) <= 4);
+        }
+        }
+    "#;
+    // 28 coordinator bytes, two 8-byte handle slots, two completion tags,
+    // and a single 24-byte backing even with four captured strong handles.
+    let valid =
+        crate::verify_one_file("indexed_shared_backing", code.to_string(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+    let short =
+        crate::verify_one_file("indexed_shared_backing_short", code.replace("<= 70", "<= 69"), &[])
+            .unwrap_err();
+    crate::common::assert_vir_error_msgs(short, &["conditional memory budget exceeded", GLOBAL]);
+    // A different allocation with the same payload type needs its own backing.
+    let distinct = code
+        .replace("let mut handles", "let other = std::sync::Arc::new(17u64); let mut handles")
+        .replace("let b = root.clone()", "let b = other.clone()")
+        .replace("drop(root);", "drop(root); drop(other);");
+    let error = crate::verify_one_file("indexed_distinct_backings", distinct, &[]).unwrap_err();
+    crate::common::assert_vir_error_msgs(error, &["conditional memory budget exceeded", GLOBAL]);
+}
+
+#[test]
+fn the_final_indexed_result_keeps_its_arc_after_all_joins() {
+    let code = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f(n: u16) requires n > 0, resources peak(memory) <= n * 9 + 160 {
+            let root = std::sync::Arc::new(17u64);
+            let mut handles = Vec::with_capacity(n as usize);
+            let mut i = 0u16;
+            while i < n invariant i <= n, handles.len() == i, decreases n - i, {
+                let alias = root.clone();
+                let worker = std::thread::spawn(move || alias);
+                handles.push(worker);
+                i += 1;
+            }
+            drop(root);
+            while handles.len() > 1 invariant 1 <= handles.len() <= n, decreases handles.len(), {
+                let h = handles.pop().unwrap();
+                let alias = h.join().unwrap(); drop(alias);
+            }
+            let last = handles.pop().unwrap().join().unwrap();
+            drop(handles);
+            assert(current(memory) <= 36);
+            drop(last);
+            assert(current(memory) <= 4);
+        }
+        }
+    "#;
+    let valid = crate::verify_one_file("last_indexed_alias", code.to_string(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+    let short =
+        crate::verify_one_file("last_indexed_alias_short", code.replace("<= 36", "<= 35"), &[])
+            .unwrap_err();
+    crate::common::assert_vir_error_msgs(short, &["live 36 bytes exceeds bound 35 bytes", GLOBAL]);
+}
+
+#[test]
+fn worker_result_fields_preserve_distinct_shared_roots() {
+    let code = r#"
+        use vstd::prelude::*;
+        verus! {
+        struct Links { first: std::sync::Arc<Vec<u8>>, second: std::sync::Arc<Vec<u8>> }
+        fn f(n: u16) resources peak(memory) <= n * 8 + 2048 {
+            let small = std::sync::Arc::new(Vec::<u8>::with_capacity(7));
+            let large = std::sync::Arc::new(Vec::<u8>::with_capacity(19));
+            let jobs: Vec<Box<u64>> = Vec::with_capacity(n as usize);
+            let worker = std::thread::spawn(move || {
+                drop(jobs);
+                let alias = small.clone(); drop(small);
+                Links { first: large, second: alias }
+            });
+            let survivor = {
+                let links = worker.join().unwrap();
+                let kept = links.second;
+                drop(links.first);
+                kept
+            };
+            assert(current(memory) <= 57);
+            drop(survivor);
+            assert(current(memory) <= 2);
+        }
+        }
+    "#;
+    // The captured owning vector requires a checked transfer template.
+    // Only n (2), one handle (8), control (16), Vec (24), and 7 bytes remain.
+    let valid =
+        crate::verify_one_file("worker_shared_result_paths", code.to_string(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+    let swapped = code.replace("first: large, second: alias", "first: alias, second: large");
+    let error =
+        crate::verify_one_file("worker_shared_result_paths_swapped", swapped, &[]).unwrap_err();
+    crate::common::assert_vir_error_msgs(error, &["conditional memory budget exceeded", GLOBAL]);
 }
 
 #[test]

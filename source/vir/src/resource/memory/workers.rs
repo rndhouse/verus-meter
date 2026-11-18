@@ -17,6 +17,7 @@ mod outputs;
 mod parameters;
 mod populations;
 mod results;
+mod shared;
 mod waits;
 
 pub(super) use identity::{Families, WorkerId};
@@ -26,6 +27,7 @@ pub(super) use parameters::parameter_domain_error;
 pub(super) use populations::SelectedWorker;
 pub(crate) use results::generated_join_move;
 pub(super) use results::resolve_join;
+pub(super) use shared::Claims;
 
 /// One owned handle to a fixed worker in the outstanding-worker registry.
 #[derive(Clone)]
@@ -530,10 +532,7 @@ impl Analysis<'_> {
         }
         // The trace projects the result from the actual handle operand. Its
         // publication description follows ownership into a receiving closure.
-        if handle.publication.is_some()
-            && worker.entry_shared.is_empty()
-            && execution.shared.is_empty()
-        {
+        if handle.publication.is_some() {
             self.transitions.operation(
                 &expr.span,
                 super::transfer::checked::Operation::WorkerJoin { source: argument.clone() },
@@ -550,8 +549,10 @@ impl Analysis<'_> {
             self.rebind_worker_output(owner, &mut retained, &execution, &expr.span, None)
         })?;
         self.storage.receive_storage(retained, &expr.span)?;
-        for backing in self.heap.shared.receive_worker(&shared, &expr.span)? {
-            self.release_owner(backing, &expr.span);
+        for (root, backing) in self.heap.shared.receive_worker(&shared, &expr.span)? {
+            if !self.retain_indexed_backing(root, &backing, &expr.span) {
+                self.release_owner(backing, &expr.span);
+            }
         }
         let mut result = self.collect_worker_result(id, &expr.span)?;
         result.owner = result_owner;

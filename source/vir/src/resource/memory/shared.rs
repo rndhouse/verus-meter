@@ -20,6 +20,17 @@ use std::collections::BTreeMap;
 pub(super) struct RootId(u64);
 
 impl RootId {
+    /// A link at a fixed ownership path. Only the canonical backing owns bytes.
+    pub(super) fn record(self, span: &Span, path: Expr) -> Expr {
+        use super::metadata::expr;
+        expr::operation(
+            span,
+            "shared_reference",
+            vec![path, expr::path(span, [self.serial()])],
+            expr::record_type(),
+        )
+    }
+
     /// Stable identity encoded in an ownership descriptor, not an allocation cost.
     pub(super) fn serial(self) -> i128 {
         i128::from(self.0)
@@ -212,7 +223,7 @@ impl SharedRoots {
         &mut self,
         outgoing: &Self,
         span: &Span,
-    ) -> Result<Vec<Owner>, VirErr> {
+    ) -> Result<Vec<(RootId, Owner)>, VirErr> {
         let mut next = self.clone();
         let mut released = Vec::new();
         for (id, root) in &outgoing.roots {
@@ -240,13 +251,67 @@ impl SharedRoots {
                         let Backing::Owned(backing) = next.roots.remove(id).unwrap().storage else {
                             unreachable!()
                         };
-                        released.push(*backing);
+                        released.push((*id, *backing));
                     }
                 }
             }
         }
         *self = next;
         Ok(released)
+    }
+
+    /// Move a worker's entry claim into its indexed publication. A remaining
+    /// fixed handle keeps the canonical root addressable while publishing.
+    pub(super) fn index_imports(
+        &mut self,
+        entry: &Self,
+        span: &Span,
+    ) -> Result<Vec<(RootId, u64, Owner)>, VirErr> {
+        let mut claims = Vec::new();
+        for (id, imported) in &entry.roots {
+            let supported = self.roots.get(id).is_some_and(|root| {
+                root.strong > imported.strong
+                    && matches!(imported.storage, Backing::Imported { entry } if entry == imported.strong)
+                    && matches!(&root.storage, Backing::Owned(owner) if owner.children.is_empty())
+            });
+            if !supported {
+                return Err(unsupported(
+                    span,
+                    "indexed worker aliases without a remaining owner of flat shared backing",
+                ));
+            }
+            let Backing::Owned(backing) = &self.roots[id].storage else { unreachable!() };
+            claims.push((*id, imported.strong, (**backing).clone()));
+        }
+        for (id, count, _) in &claims {
+            self.roots.get_mut(id).unwrap().strong -= count;
+        }
+        Ok(claims)
+    }
+
+    pub(super) fn has_strong(&self, id: RootId) -> bool {
+        self.roots.get(&id).is_some_and(|root| root.strong > 0)
+    }
+
+    /// Transfer one checked result link back to the finite owner tree. When
+    /// the parent previously dropped its last handle, that same backing was
+    /// charged conditionally to indexed workers, and now becomes fixed again.
+    pub(super) fn receive_indexed(
+        &mut self,
+        id: RootId,
+        backing: &Owner,
+        span: &Span,
+    ) -> Result<Owner, VirErr> {
+        if let Some(root) = self.roots.get_mut(&id) {
+            root.strong = root
+                .strong
+                .checked_add(1)
+                .ok_or_else(|| unsupported(span, "strong handle counts exceeding u64"))?;
+        } else {
+            self.roots
+                .insert(id, Root { strong: 1, storage: Backing::Owned(Box::new(backing.clone())) });
+        }
+        Ok(Owner { shared: Some(id), ..Default::default() })
     }
 
     pub(super) fn is_empty(&self) -> bool {
@@ -280,9 +345,9 @@ impl SharedRoots {
         Ok(Owner { shared: Some(id), ..Default::default() })
     }
 
-    /// Return an owned allocation tree exactly once at final destruction in
-    /// this closed domain. An imported root exports its local release instead;
-    /// the enclosing composition must establish global reclamation separately.
+    /// Detach backing when its last finite handle ends. The caller transfers
+    /// it to any outstanding indexed claims before deciding reclamation. An
+    /// imported root leaves that decision to its enclosing domain.
     pub(super) fn release(&mut self, id: RootId) -> Option<Owner> {
         let root = self.roots.get_mut(&id).expect("live strong handle retains its shared root");
         root.strong = root.strong.checked_sub(1).expect("positive strong ownership");
@@ -444,7 +509,19 @@ impl Analysis<'_> {
                     })?,
                 );
             }
-            return Ok(Some(self.heap.shared.insert(storage)));
+            let handle = self.heap.shared.insert(storage);
+            // Repeated allocations at this site need an occurrence coordinate
+            // before a transfer template can give their handles an identity.
+            if self.growth.loop_depth == 0 {
+                self.transitions.operation(
+                    &expr.span,
+                    super::transfer::checked::Operation::StrongNew {
+                        payload: argument.clone(),
+                        root: handle.shared.expect("new strong owner"),
+                    },
+                );
+            }
+            return Ok(Some(handle));
         }
         let Some((name, path)) = super::paths::expr(argument, &expr.typ) else {
             let receiver = match &argument.x {
@@ -498,7 +575,18 @@ impl Analysis<'_> {
         } else {
             self.discard(argument)?;
         }
-        Ok(Some(self.heap.shared.clone_strong(root, &expr.span)?))
+        let cloned = self.heap.shared.clone_strong(root, &expr.span)?;
+        self.transitions.operation(
+            &expr.span,
+            super::transfer::checked::Operation::StrongClone {
+                receiver: super::transfer::checked::Place {
+                    source: argument.clone(),
+                    typ: expr.typ.clone(),
+                    location: (name, path),
+                },
+            },
+        );
+        Ok(Some(cloned))
     }
 }
 

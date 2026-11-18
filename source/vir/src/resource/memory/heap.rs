@@ -645,6 +645,9 @@ impl Analysis<'_> {
                     && owner.input.is_none()
             );
             if let Some(backing) = self.heap.shared.release(root) {
+                if self.retain_indexed_backing(root, &backing, span) {
+                    return;
+                }
                 // A shared target is outside its enclosing unique-owner tree.
                 // Even if that parent's inputs were scanned already, the final
                 // strong release must retire this target's own incoming regions.

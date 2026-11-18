@@ -25,9 +25,11 @@ impl Trace<'_> {
             self.proof_values.insert(name.clone(), actual.clone());
             return Some(forest.clone());
         }
-        // A captured handle carries the selected worker observation. Rebuilding
-        // it from allocation fields would erase its identity and result.
-        if self.layouts.join_handle(typ).is_some() {
+        // Both handles carry identity in their input record. Rebuilding it
+        // from byte fields would erase the worker observation or the Arc link.
+        if self.layouts.join_handle(typ).is_some()
+            || matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _))
+        {
             return Some(path.iter().fold(forest.clone(), |memory, slot| {
                 expr::subtree(span, memory, expr::path(span, [self.layouts.metadata_slot(slot)]))
             }));

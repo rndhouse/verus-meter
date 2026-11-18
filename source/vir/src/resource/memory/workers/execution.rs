@@ -377,9 +377,9 @@ impl Analysis<'_> {
         }
         let result =
             Storage { typ: result_type.clone(), value: result, owner: worker.result_owner.take() };
-        // A retained occurrence has already excluded shared entry and exit aliases.
-        // Its join obligation moves with the result. The outer domain still rejects
-        // an escaping population when checking its own result.
+        // A retained occurrence carries its own join obligation in the result.
+        // Indexed shared claims must be reconciled in their publishing domain.
+        // Finite output links still have to account for this body's aliases.
         worker.heap.shared.check_result(
             result.owner.as_ref(),
             References::WorkerOccurrences,

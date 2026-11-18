@@ -43,6 +43,9 @@ pub(super) struct VectorState {
 
 #[derive(Default)]
 pub(super) struct Growth {
+    /// Source-derived outstanding strong claims on coordinator-owned backing.
+    pub(super) indexed_shared:
+        std::collections::BTreeMap<super::shared::RootId, super::workers::Claims>,
     /// Body templates actually transported into runtime ownership forests.
     pub(super) retained_worker_families: std::collections::BTreeSet<super::workers::WorkerId>,
     /// Actual selected identities at joins, distinct from their shared body template.

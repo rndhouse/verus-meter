@@ -749,6 +749,7 @@ pub(super) fn check(
     })?;
 
     let result = analysis.produce(body)?;
+    analysis.check_indexed_exits(&body.span);
     let result = analysis.finish_returns(&function.span, result)?;
     if !analysis.heap.temporaries.is_empty() || !analysis.evaluations.is_empty() {
         return Err(unsupported(&function.span, "unclosed compiler receiver-temporary scopes"));

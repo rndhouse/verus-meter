@@ -1,12 +1,44 @@
 //! Move charged storage between actors without executing a destructor or adding
 //! their histories together. Publication and collection use the same operation.
 
-use super::{Accounting, Live};
-use crate::resource::memory::{growth::Growth, lifetime::Storage, model::unsupported};
-use crate::{ast::VirErr, messages::Span};
+use super::{Accounting, Charge, Live};
+use crate::resource::memory::{growth::Growth, heap::Owner, lifetime::Storage, model::unsupported};
+use crate::{
+    ast::{Expr, VirErr},
+    messages::Span,
+};
 use std::collections::{BTreeMap, HashSet};
 
 impl Accounting {
+    /// Transfer the existing flat backing charge when the last finite handle
+    /// goes away. Its conditional replacement describes the same allocation.
+    pub(in super::super) fn defer_shared_backing(&mut self, id: u64, owner: &Owner, cost: Expr) {
+        for path in &mut self.paths {
+            path.remove_fixed(&owner.kind, owner.bytes);
+            path.dynamic.insert(id, Charge { kind: owner.kind.clone(), amount: cost.clone() });
+        }
+    }
+
+    /// A checked result has brought a strong handle back into the fixed tree.
+    /// Require its existing conditional charge on every incoming path.
+    pub(in super::super) fn receive_shared_backing(
+        &mut self,
+        span: &Span,
+        id: u64,
+        owner: &Owner,
+    ) -> Result<(), VirErr> {
+        for path in &mut self.paths {
+            if path.dynamic.remove(&id).is_none() {
+                return Err(unsupported(
+                    span,
+                    "an indexed Arc result without its retained backing charge",
+                ));
+            }
+            path.add_fixed(span, &owner.kind, owner.bytes)?;
+        }
+        self.record_live(span)
+    }
+
     /// A completed body must have transferred or released every charge. A
     /// missing descriptor cannot silently turn live storage into zero bytes.
     pub(in super::super) fn check_transferred(&self, span: &Span) -> Result<(), VirErr> {

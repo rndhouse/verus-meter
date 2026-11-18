@@ -141,6 +141,42 @@ impl Trace<'_> {
                 }
                 Some(Value::Owner(Node { origin: None, typ: value.typ.clone(), memory, minima }))
             }
+            Operation::StrongNew { payload, root } => {
+                self.value(&payload)?;
+                // This is a private identity, not a parameter or a constant
+                // reusable across calls. The usual template-closure check rejects
+                // it if it escapes through a returned forest or original region.
+                let name = VarIdent(
+                    Arc::new("$memory_private_strong_root".into()),
+                    VarIdentDisambiguate::VirTemp(
+                        crate::resource::memory::accounting::Accounting::fresh_allocation(),
+                    ),
+                );
+                let actual = expr::path(span, [root.serial()]);
+                let identity = SpannedTyped::new(span, &actual.typ, ExprX::Var(name.clone()));
+                self.proof_values.insert(name, actual);
+                let record = expr::operation(
+                    span,
+                    "shared_reference",
+                    vec![expr::path(span, []), identity],
+                    expr::record_type(),
+                );
+                Some(Value::Owner(Node {
+                    origin: None,
+                    typ: value.typ.clone(),
+                    memory: expr::push(span, expr::empty(span, expr::record_type()), record),
+                    minima: Minima::new(),
+                }))
+            }
+            Operation::StrongClone { receiver } => {
+                let location = self.checked_location(&receiver)?;
+                let mut alias = self.get(span, &location, &receiver.typ)?;
+                self.effects.push(Effect::Read(location.0));
+                // Same root descriptor, separate handle. A clone is never a
+                // transfer of the source parameter's original ownership region.
+                alias.origin = None;
+                Some(Value::Owner(alias))
+            }
             Operation::Length { receiver } => {
                 let location = self.checked_location(&receiver)?;
                 let node = self.get(span, &location, &receiver.typ)?;

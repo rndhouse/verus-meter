@@ -41,12 +41,7 @@ impl Analysis<'_> {
         let record = if let Some(occurrence) = occurrence {
             occurrence.record.clone()
         } else if let Some(root) = owner.shared {
-            expr::operation(
-                span,
-                "shared_reference",
-                vec![expr::path(span, []), expr::path(span, [root.serial()])],
-                expr::record_type(),
-            )
+            root.record(span, expr::path(span, []))
         } else if let Some(handle) = &owner.worker {
             if let Some(publication) = &handle.publication {
                 expr::lookup(span, publication.clone(), expr::path(span, []))

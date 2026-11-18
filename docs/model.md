@@ -209,6 +209,17 @@ pass through a helper intact. The handle type alone supplies no proof that an
 incoming worker succeeded. These are local ownership and byte checks. The
 global concurrency proof is still required.
 
+When workers capture clones of a coordinator's `Arc`, the local analysis can
+reserve one backing allocation across a symbolic number of outstanding workers.
+It supports flat payloads allocated outside repeated coordinator loops. Another
+fixed strong handle must still exist when each worker handle enters the collection.
+The parent may then drop its last handle before joining. Each join reconciles the
+aliases captured by that worker. A directly returned `Arc` keeps its backing live
+in the caller when the worker families selectable at that join share a proven
+root identity. The coordinator reserves backing until collection if it cannot
+observe when a worker ran its destructor. This upper bound does not determine
+the instant of reclamation in an arbitrary interleaving.
+
 The proof boundary separates construction, transport and byte accounting.
 Generated builders establish worker-description properties; verified one-step
 collection laws preserve those descriptions without reopening them. Loop exits
@@ -238,8 +249,8 @@ cloning, readonly payload access and explicit/implicit destruction. Backing and
 owned payload storage remain charged until the last strong release. Copies of
 analysis state do not create handles. Nested clone receivers retain their owned
 temporary storage through rustc's destruction scope, including later operands;
-unresolved scopes reject. Imported aliases, retained reference populations and
-outgoing shared descriptors still require the remaining concurrent interfaces.
+unresolved scopes reject. General imported populations and outgoing shared
+owner trees still require additional concurrent interfaces.
 Executable effects require exact compiler call bindings in the correct body;
 ghost arguments and unexecuted closure bodies do not create memory events.
 

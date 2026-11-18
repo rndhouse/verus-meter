@@ -132,6 +132,12 @@ impl Trace<'_> {
             .into_iter()
             .filter(|effect| before.values.contains_key(effect.root()))
             .collect();
+        // A read of an unchanged owner (for example cloning a handle to a
+        // loop-invariant Arc) supplies an input, not a collection update.
+        // Preserve the dependency for enclosing loops, which may change it.
+        let (stable_reads, persistent): (Vec<_>, Vec<_>) = persistent.iter().cloned().partition(|effect| {
+            matches!(effect, Effect::Read(name) if !persistent.iter().any(|other| touches(other, &(name.clone(), vec![]))))
+        });
         let programs = guards::partition(
             span,
             &persistent,
@@ -235,6 +241,7 @@ impl Trace<'_> {
         self.complete_progress(record, &progress, &count);
         // A containing iteration must see observations used by this loop's
         // count; it cannot repeat a count that depends on another changing role.
+        self.effects.extend(stable_reads);
         self.effects.extend(progress.reads);
         Some(Value::Unit)
     }
