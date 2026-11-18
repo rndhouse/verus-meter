@@ -133,7 +133,7 @@ produced. A native join error has a sixteen-byte opaque handle, so
 not provide an allocation bound for arbitrary panic payloads. Executable closure
 storage is the sum of its captures after proof erasure, excluding separately
 owned descendants. These rules follow the
-[concurrent storage policy](concurrent-model.md#library-trust-and-source-storage-policy).
+[concurrent storage policy](verus-meter/concurrent-model.md#library-trust-and-source-storage-policy).
 
 Resource-contracted code supports constructing and dropping concrete `move`
 closures with supported executable capture layouts. Moved captures retain their
@@ -299,7 +299,7 @@ actual guard cleanup. Runtime synchronization values still reject in
 resource-contracted code until concurrent allocation coverage and bound checking
 are connected. Native functional specifications assume neither acquisition
 success nor a protected payload invariant. The
-[concurrent TODOs](todo/concurrent/README.md) track the remaining requirements.
+[concurrent TODOs](verus-meter/todo/concurrent/README.md) track the remaining requirements.
 Worker-local obligations are checked, but a required global diagnostic still
 rejects every concurrent memory contract and prevents exporting it. These local
 checks are necessary inequalities, not a sum of thread peaks or a simultaneous
@@ -310,8 +310,8 @@ Detaching a worker is rejected.
 
 ## Concurrent extension specification
 
-The [concurrent semantics](concurrent-model.md) define the required core scope,
+The [concurrent semantics](verus-meter/concurrent-model.md) define the required core scope,
 synchronization effects, ownership rules and proof interfaces for the planned
 extension. They include standard primitive contracts and custom Verus protocols.
 This specification does not enable concurrent memory checking; implementation
-progress is tracked in the [numbered TODOs](todo/concurrent/README.md).
+progress is tracked in the [numbered TODOs](verus-meter/todo/concurrent/README.md).
