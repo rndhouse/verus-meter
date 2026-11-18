@@ -357,7 +357,8 @@ pub(super) fn compatible(a: &Owner, b: &Owner) -> bool {
                 true
             }
             (Some(SelectedWorker::Recorded(a)), Some(SelectedWorker::Recorded(b))) => {
-                a.templates == b.templates
+                a.result_reservation == b.result_reservation
+                    && a.templates == b.templates
                     && super::transfer::simplify::inspect::same_expression(&a.record, &b.record)
             }
             _ => false,

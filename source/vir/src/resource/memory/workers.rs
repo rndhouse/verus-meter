@@ -83,6 +83,8 @@ struct Worker {
 pub(super) struct Workers {
     /// Losing a selected runtime handle cannot erase its outstanding worker.
     detached_occurrence: Option<Span>,
+    /// Outstanding individually transferred handles that must be joined here.
+    delegated: std::collections::BTreeSet<u64>,
     /// Executing actor of an isolated body frame. Its own completion record
     /// remains in the publishing frame; it is not an outstanding child here.
     active: Option<WorkerId>,
@@ -111,6 +113,15 @@ impl Workers {
             return Err(unsupported(span, "worker capture outside its outstanding actor domain"));
         }
         let mut scope = Self { active: Some(actor), ..Default::default() };
+        if let Some(captures) = captures {
+            captures.visit(&mut |owner| {
+                if let Some(SelectedWorker::Recorded(occurrence)) = &owner.selected_worker
+                    && let Some(id) = occurrence.result_reservation
+                {
+                    scope.delegated.insert(id);
+                }
+            });
+        }
         let mut tags = Vec::new();
         for id in ids {
             let worker = self.records.remove(&id).unwrap();
@@ -251,6 +262,9 @@ impl Workers {
         if let Some(span) = &self.detached_occurrence {
             return Err(unsupported(span, "detached workers in a memory accounting scope"));
         }
+        if !self.delegated.is_empty() {
+            return Err(unsupported(span, "an outstanding delegated worker at scope exit"));
+        }
         if let Some(worker) = self.records.values().next() {
             return Err(unsupported(
                 worker.detached.as_ref().unwrap_or(span),
@@ -268,6 +282,7 @@ impl Workers {
     pub(super) fn compatible(&self, other: &Self) -> bool {
         self.detached_occurrence.as_ref().map(|span| span.id)
             == other.detached_occurrence.as_ref().map(|span| span.id)
+            && self.delegated == other.delegated
             && self.active == other.active
             && self.records.len() == other.records.len()
             && self.records.iter().all(|(id, a)| {
@@ -390,7 +405,10 @@ impl Analysis<'_> {
             self.functions.values().filter_map(|function| function.x.body.as_ref()),
         )?;
         let mut value = self.produce(closure)?;
-        let owner = self.result_owner.take();
+        let mut owner = self.result_owner.take();
+        if let Some(environment) = &mut owner {
+            self.delegate_captured_handles(&expr.span, environment)?;
+        }
         let local_occurrences = self
             .growth
             .loop_regions
@@ -550,7 +568,14 @@ impl Analysis<'_> {
         })?;
         self.storage.receive_storage(retained, &expr.span)?;
         let mut proofs = Vec::new();
-        for (root, backing) in self.heap.shared.receive_worker(&shared, &expr.span)? {
+        if let Some(input) = &execution.entry.storage.owner {
+            self.collect_delegated_handles(&expr.span, input)?;
+        }
+        let released = self.heap.shared.receive_worker(&shared, &expr.span)?;
+        for selection in released.selections {
+            self.release_selected_alias(&expr.span, selection, &mut proofs);
+        }
+        for (root, backing) in released.backing {
             self.release_shared_backing(root, backing, &expr.span, &mut proofs);
         }
         if !proofs.is_empty() {

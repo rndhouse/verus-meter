@@ -247,34 +247,7 @@ impl Analysis<'_> {
             .first()
             .ok_or_else(|| unsupported(span, "an indexed Arc result without a publication"))?;
         if roots.len() > 1 {
-            let actual = expr::lookup(span, result, expr::path(span, []));
-            // Check the full descriptor here. Later byte and drop obligations
-            // need only the frozen identity, even after another pop.
-            let identity = self.metadata_local(
-                span,
-                "joined_shared",
-                expr::shared_identity(span, actual.clone()),
-            );
-            let expected = super::super::shared::selected_record(span, identity.clone());
-            let member = crate::ast_util::disjoin(
-                span,
-                &roots
-                    .iter()
-                    .map(|root| {
-                        crate::ast_util::mk_eq(span, &identity, &expr::integer(span, root.serial()))
-                    })
-                    .collect(),
-            );
-            let proof = crate::ast_util::conjoin(
-                span,
-                &vec![member, crate::ast_util::mk_eq(span, &actual, &expected)],
-            );
-            self.growth.before.entry(span.id).or_default().push(expr::check(
-                span,
-                proof,
-                "cannot establish the selected result's canonical shared allocation",
-            ));
-            return Ok(self.heap.shared.select_alias(identity, roots));
+            return Ok(self.reserve_arc_result(span, result, roots));
         }
         let claims = self.growth.indexed_shared.get(&root).ok_or_else(|| {
             unsupported(span, "an indexed Arc result outside its canonical domain")
@@ -290,6 +263,95 @@ impl Analysis<'_> {
             claims.charges.receive(&mut self.storage, span)?;
         }
         self.heap.shared.receive_indexed(root, &claims.backing, span)
+    }
+
+    fn reserve_arc_result(&mut self, span: &Span, result: Expr, roots: BTreeSet<RootId>) -> Owner {
+        let actual = expr::lookup(span, result, expr::path(span, []));
+        // Check the full descriptor here. Later byte and drop obligations
+        // need only the frozen identity, even after another pop.
+        let identity =
+            self.metadata_local(span, "joined_shared", expr::shared_identity(span, actual.clone()));
+        let expected = super::super::shared::selected_record(span, identity.clone());
+        let member = crate::ast_util::disjoin(
+            span,
+            &roots
+                .iter()
+                .map(|root| {
+                    crate::ast_util::mk_eq(span, &identity, &expr::integer(span, root.serial()))
+                })
+                .collect(),
+        );
+        let proof = crate::ast_util::conjoin(
+            span,
+            &vec![member, crate::ast_util::mk_eq(span, &actual, &expected)],
+        );
+        self.growth.before.entry(span.id).or_default().push(expr::check(
+            span,
+            proof,
+            "cannot establish the selected result's canonical shared allocation",
+        ));
+        self.heap.shared.select_alias(identity, roots)
+    }
+
+    /// A fixed receiver can consume the original handle once. Keep the
+    /// publication's entry claims charged until the receiver itself is joined.
+    pub(super) fn delegate_captured_handles(
+        &mut self,
+        span: &Span,
+        owner: &mut Owner,
+    ) -> Result<(), VirErr> {
+        use super::SelectedWorker;
+        if let Some(SelectedWorker::Recorded(occurrence)) = &mut owner.selected_worker {
+            if occurrence.result_reservation.is_some() {
+                return Err(unsupported(span, "forwarding an outstanding delegated join"));
+            }
+            if self.current_worker.is_none()
+                && occurrence.templates.iter().all(|actor| {
+                    matches!(
+                        &*self.growth.worker_executions[actor].result.typ,
+                        TypX::Decorate(TypDecoration::Arc, _, _)
+                    )
+                })
+            {
+                let returned = self.indexed_result_roots(span, occurrence)?;
+                let result = expr::operation(
+                    span,
+                    "worker_result",
+                    vec![occurrence.record.clone()],
+                    expr::memory_type(),
+                );
+                let reservation =
+                    self.reserve_arc_result(span, result, returned.into_values().collect());
+                let Some(StrongLink::Selected(id)) = reservation.shared else { unreachable!() };
+                occurrence.result_reservation = Some(id);
+            }
+        }
+        for child in owner.children.values_mut() {
+            self.delegate_captured_handles(span, child)?;
+        }
+        Ok(())
+    }
+
+    /// The checked receiver consumed every delegated handle on every exit.
+    /// Reconcile its captures once, leaving the returned alias's reservation
+    /// for the ordinary worker entry-to-exit strong-reference accounting.
+    pub(super) fn collect_delegated_handles(
+        &mut self,
+        span: &Span,
+        owner: &Owner,
+    ) -> Result<(), VirErr> {
+        if let Some(super::SelectedWorker::Recorded(occurrence)) = &owner.selected_worker
+            && let Some(id) = occurrence.result_reservation
+        {
+            self.require_indexed_claim_owner(span)?;
+            let roots = self.indexed_result_roots(span, occurrence)?;
+            let alias = Owner { shared: Some(StrongLink::Selected(id)), ..Default::default() };
+            self.collect_indexed_claims(span, occurrence, Some((&alias, &roots)))?;
+        }
+        for child in owner.children.values() {
+            self.collect_delegated_handles(span, child)?;
+        }
+        Ok(())
     }
 
     pub(in super::super) fn release_selected_alias(

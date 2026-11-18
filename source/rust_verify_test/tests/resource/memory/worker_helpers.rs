@@ -60,7 +60,13 @@ fn nested_helpers_transfer_the_remaining_symbolic_population() {
             }
         }
     "#;
-    check("nested_population_helpers", &format!("{COLLECT}{caller}"), &[HELPER, HELPER, GLOBAL]);
+    let source = format!("{COLLECT}{caller}");
+    check("nested_population_helpers", &source, &[HELPER, HELPER, GLOBAL]);
+    check(
+        "nested_population_lost",
+        &source.replace("rest.len() > 0", "rest.len() > 1"),
+        &["cannot discard outstanding worker handles", HELPER, HELPER, GLOBAL],
+    );
 }
 
 #[test]

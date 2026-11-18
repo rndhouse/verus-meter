@@ -227,8 +227,10 @@ the same ordered slots.
 If workers can return different roots, the coordinator checks the selected
 result's allocation identity at the join. Moves and local clones preserve that
 identity, and the last local drop releases the result's claim on the backing.
-Passing such a selected alias to another actor requires an ownership summary
-that carries its reservation across the transfer. The coordinator can keep the
+A fixed worker can receive that alias, or an individual popped handle whose
+worker returns a captured `Arc`. It may move, clone, drop or return the alias.
+The publisher retains the backing through the transfer and reconciles the
+receiver's checked entry and exit references when it joins the receiver. The coordinator can keep the
 backing charged until collection when the worker may already have dropped its
 last handle. Reclamation at the actual destructor requires a proof across threads.
 

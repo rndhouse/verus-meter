@@ -39,7 +39,7 @@ impl RootId {
 
 /// A strong handle either names a canonical allocation directly or carries the
 /// choice observed at a particular join. A choice never names a new allocation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum StrongLink {
     Known(RootId),
     Selected(u64),
@@ -62,6 +62,17 @@ pub(super) struct SelectedAlias {
     pub(super) roots: BTreeSet<RootId>,
     /// Local clones share the selected result's single backing reservation.
     handles: u64,
+    /// Number lent to this worker. The publisher holds the reservation until join.
+    imported: Option<u64>,
+}
+
+/// Last releases established by collecting a fixed worker.
+#[derive(Default)]
+pub(super) struct WorkerReleases {
+    /// Canonical allocation trees no longer held by a fixed handle.
+    pub(super) backing: Vec<(RootId, Owner)>,
+    /// Conditional backing reservations released by the last selected alias.
+    pub(super) selections: Vec<SelectedAlias>,
 }
 
 pub(super) fn selected_record(span: &Span, identity: Expr) -> Expr {
@@ -111,7 +122,7 @@ fn visit_strong_handles(
     owner: &Owner,
     span: &Span,
     supported: References,
-    mut visit: impl FnMut(RootId) -> Result<(), VirErr>,
+    mut visit: impl FnMut(StrongLink) -> Result<(), VirErr>,
 ) -> Result<(), VirErr> {
     let mut result = Ok(());
     owner.visit(&mut |node| {
@@ -124,15 +135,7 @@ fn visit_strong_handles(
                 "imported reference populations without checked occurrence descriptors",
             ));
         } else if let Some(id) = node.shared {
-            result = id
-                .known()
-                .ok_or_else(|| {
-                    unsupported(
-                        span,
-                        "transferring a selected Arc across actors without its backing reservation",
-                    )
-                })
-                .and_then(&mut visit);
+            result = visit(id);
         }
     });
     result
@@ -141,7 +144,7 @@ fn visit_strong_handles(
 impl SharedRoots {
     pub(super) fn select_alias(&mut self, identity: Expr, roots: BTreeSet<RootId>) -> Owner {
         let id = super::accounting::Accounting::fresh_allocation();
-        self.selections.insert(id, SelectedAlias { identity, roots, handles: 1 });
+        self.selections.insert(id, SelectedAlias { identity, roots, handles: 1, imported: None });
         Owner { shared: Some(StrongLink::Selected(id)), ..Default::default() }
     }
 
@@ -170,7 +173,11 @@ impl SharedRoots {
     pub(super) fn release_selection(&mut self, id: u64) -> Option<SelectedAlias> {
         let selection = self.selections.get_mut(&id).expect("live selected Arc");
         selection.handles = selection.handles.checked_sub(1).expect("positive strong ownership");
-        if selection.handles == 0 { self.selections.remove(&id) } else { None }
+        if selection.handles == 0 && selection.imported.is_none() {
+            self.selections.remove(&id)
+        } else {
+            None
+        }
     }
 
     /// A transferred join handle also transfers responsibility for its target's
@@ -189,20 +196,16 @@ impl SharedRoots {
                     "captured worker without its original shared entry view",
                 ));
             }
-            let count = self
-                .roots
-                .get(id)
-                .map_or(0, |root| root.strong)
-                .checked_add(input.strong)
-                .ok_or_else(|| unsupported(span, "captured strong counts exceeding u64"))?;
-            if enclosing.roots.get(id).is_none_or(|root| root.strong < count) {
+            self.import_handles(StrongLink::Known(*id), input.strong, enclosing, span)?;
+        }
+        for (id, input) in &captured.selections {
+            if input.imported != Some(input.handles) {
                 return Err(unsupported(
                     span,
-                    "captured worker aliases outside their shared domain",
+                    "captured worker without its original selected aliases",
                 ));
             }
-            self.roots
-                .insert(*id, Root { strong: count, storage: Backing::Imported { entry: count } });
+            self.import_handles(StrongLink::Selected(*id), input.handles, enclosing, span)?;
         }
         Ok(())
     }
@@ -269,14 +272,22 @@ impl SharedRoots {
         supported: References,
         span: &Span,
     ) -> Result<(), VirErr> {
-        if !self.selections.is_empty() {
+        if self.selections.values().any(|s| s.imported.is_none()) {
             return Err(unsupported(
                 span,
                 "selected Arc handles surviving their accounting domain",
             ));
         }
-        let mut remaining: BTreeMap<_, _> =
-            self.roots.iter().map(|(id, root)| (*id, root.strong)).collect();
+        let mut remaining: BTreeMap<_, _> = self
+            .roots
+            .iter()
+            .map(|(id, root)| (StrongLink::Known(*id), root.strong))
+            .chain(
+                self.selections
+                    .iter()
+                    .map(|(id, selection)| (StrongLink::Selected(*id), selection.handles)),
+            )
+            .collect();
         let mut pending: Vec<_> = result.into_iter().map(|owner| (owner, supported)).collect();
         while let Some((owner, supported)) = pending.pop() {
             visit_strong_handles(owner, span, supported, |id| {
@@ -293,6 +304,7 @@ impl SharedRoots {
                         )
                     })?;
                 if count == 0
+                    && let StrongLink::Known(id) = id
                     && let Backing::Owned(backing) = &self.roots[&id].storage
                 {
                     // Only the actual worker result receives an occurrence descriptor.
@@ -314,9 +326,9 @@ impl SharedRoots {
         &mut self,
         outgoing: &Self,
         span: &Span,
-    ) -> Result<Vec<(RootId, Owner)>, VirErr> {
+    ) -> Result<WorkerReleases, VirErr> {
         let mut next = self.clone();
-        let mut released = Vec::new();
+        let mut released = WorkerReleases::default();
         for (id, root) in &outgoing.roots {
             match &root.storage {
                 Backing::Owned(_) => {
@@ -339,9 +351,25 @@ impl SharedRoots {
                             unsupported(span, "inconsistent worker strong-reference transfer")
                         })?;
                     if let Some(backing) = next.take_backing_without_fixed_handles(*id) {
-                        released.push((*id, backing));
+                        released.backing.push((*id, backing));
                     }
                 }
+            }
+        }
+        for (id, output) in &outgoing.selections {
+            let count = output
+                .imported
+                .ok_or_else(|| unsupported(span, "worker result without a selected Arc import"))?;
+            let selection = next.selections.get_mut(id).ok_or_else(|| {
+                unsupported(span, "worker result outside its selected Arc lifetime")
+            })?;
+            selection.handles = selection
+                .handles
+                .checked_sub(count)
+                .and_then(|n| n.checked_add(output.handles))
+                .ok_or_else(|| unsupported(span, "inconsistent selected Arc transfer"))?;
+            if selection.handles == 0 && selection.imported.is_none() {
+                released.selections.push(next.selections.remove(id).unwrap());
             }
         }
         *self = next;
@@ -355,6 +383,12 @@ impl SharedRoots {
         entry: &Self,
         span: &Span,
     ) -> Result<Vec<(RootId, u64, Owner)>, VirErr> {
+        if !entry.selections.is_empty() {
+            return Err(unsupported(
+                span,
+                "indexed publications with selected Arc capture reservations",
+            ));
+        }
         let mut claims = Vec::new();
         for (id, imported) in &entry.roots {
             let supported = self.roots.get(id).is_some_and(|root| {
@@ -423,6 +457,12 @@ impl SharedRoots {
                 let selection = self.selections.get_mut(&id).ok_or_else(|| {
                     unsupported(span, "cloning an Arc outside its selected lifetime")
                 })?;
+                if selection.handles == 0 {
+                    return Err(unsupported(
+                        span,
+                        "cloning a selected Arc after its last local handle ended",
+                    ));
+                }
                 selection.handles = selection
                     .handles
                     .checked_add(1)
@@ -471,27 +511,64 @@ impl SharedRoots {
     /// This lends no backing charge and executes no clone/destructor. References
     /// inside an opaque runtime population require a checked population view.
     pub(super) fn captured_view(&self, owner: Option<&Owner>, span: &Span) -> Result<Self, VirErr> {
-        let mut references = BTreeMap::<RootId, u64>::new();
+        let mut captured = Self::default();
         if let Some(owner) = owner {
-            visit_strong_handles(owner, span, References::WorkerOccurrences, |id| {
-                let count = references.entry(id).or_default();
-                *count = count
-                    .checked_add(1)
-                    .ok_or_else(|| unsupported(span, "captured strong counts exceeding u64"))?;
-                Ok(())
+            visit_strong_handles(owner, span, References::WorkerOccurrences, |link| {
+                captured.import_handles(link, 1, self, span)
             })?;
+            let mut reserved = Ok(());
+            owner.visit(&mut |node| {
+                if reserved.is_ok()
+                    && let Some(super::workers::SelectedWorker::Recorded(occurrence)) =
+                        &node.selected_worker
+                    && let Some(id) = occurrence.result_reservation
+                {
+                    reserved = captured.import_handles(StrongLink::Selected(id), 1, self, span);
+                }
+            });
+            reserved?;
         }
-        let mut roots = BTreeMap::new();
-        for (id, count) in references {
-            if self.roots.get(&id).is_none_or(|root| root.strong < count) {
-                return Err(unsupported(
-                    span,
-                    "worker captures outside their live shared-root domain",
-                ));
+        Ok(captured)
+    }
+
+    /// Combine transfers of actual handles into one worker's entry view.
+    fn import_handles(
+        &mut self,
+        link: StrongLink,
+        count: u64,
+        enclosing: &Self,
+        span: &Span,
+    ) -> Result<(), VirErr> {
+        let total = |previous: u64, available: Option<u64>| {
+            previous
+                .checked_add(count)
+                .filter(|n| available.is_some_and(|limit| *n <= limit))
+                .ok_or_else(|| {
+                    unsupported(span, "worker captures outside their live shared-root domain")
+                })
+        };
+        match link {
+            StrongLink::Known(id) => {
+                let strong = total(
+                    self.roots.get(&id).map_or(0, |r| r.strong),
+                    enclosing.roots.get(&id).map(|r| r.strong),
+                )?;
+                self.roots
+                    .insert(id, Root { strong, storage: Backing::Imported { entry: strong } });
             }
-            roots.insert(id, Root { strong: count, storage: Backing::Imported { entry: count } });
+            StrongLink::Selected(id) => {
+                let source = enclosing.selections.get(&id).ok_or_else(|| {
+                    unsupported(span, "worker capture outside its selected Arc lifetime")
+                })?;
+                let count =
+                    total(self.selections.get(&id).map_or(0, |s| s.handles), Some(source.handles))?;
+                self.selections.insert(
+                    id,
+                    SelectedAlias { handles: count, imported: Some(count), ..source.clone() },
+                );
+            }
         }
-        Ok(Self { roots, selections: BTreeMap::new() })
+        Ok(())
     }
 
     /// A control-flow merge cannot silently discard a surviving root or adopt

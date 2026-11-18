@@ -223,12 +223,31 @@ fn mixed_arc_joins_keep_the_allocation_selected_by_each_pop() {
             &["conditional memory budget exceeded", GLOBAL],
         );
     }
-    let escaped = code.replace(
+    let transferred = code.replace(
         "drop(survivor);",
-        "let child = std::thread::spawn(move || drop(survivor)); child.join().unwrap();",
+        "let child = std::thread::spawn(move || { let r = survivor.clone(); drop(survivor); r });
+         let r = child.join().unwrap(); assert(current(memory) <= 55); drop(r);",
     );
-    let error = crate::verify_one_file("mixed_arc_escape", escaped, &[]).unwrap_err();
-    crate::common::assert_vir_error_msg(error, "transferring a selected Arc across actors");
+    let error =
+        crate::verify_one_file("mixed_arc_transferred_alias", transferred, &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(error, GLOBAL);
+
+    // The receiver owns the popped handle. The publisher still has two live
+    // results while the receiver joins its worker and returns a cloned alias.
+    let delegated = code.replace(
+        "let last = handles.pop().unwrap().join().unwrap();",
+        "let h = handles.pop().unwrap();
+         let collector = std::thread::spawn(move || {
+             let r = h.join().unwrap(); let alias = r.clone(); drop(r); alias
+         });
+         let last = collector.join().unwrap();",
+    );
+    let error =
+        crate::verify_one_file("mixed_arc_delegated_join", delegated.clone(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(error, GLOBAL);
+    let swapped = delegated.replace("survivor = last.clone()", "survivor = middle.clone()");
+    let error = crate::verify_one_file("mixed_arc_delegated_wrong_root", swapped, &[]).unwrap_err();
+    crate::common::assert_vir_error_msgs(error, &["conditional memory budget exceeded", GLOBAL]);
 }
 
 // Each visit publishes two handles in this order. A complete drain covers

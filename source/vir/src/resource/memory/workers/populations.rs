@@ -25,6 +25,9 @@ pub(in super::super) struct Occurrence {
     pub(in super::super) templates: BTreeSet<WorkerId>,
     /// Selected immutable descriptor, including identity and construction inputs.
     pub(in super::super) record: Expr,
+    /// Publisher's reservation for the conditional Arc result when this
+    /// particular handle is moved into another fixed worker.
+    pub(in super::super) result_reservation: Option<u64>,
 }
 
 impl super::Workers {
@@ -66,7 +69,10 @@ impl Analysis<'_> {
             expr::memory_type(),
         );
         let first = self.growth.before.get(&source.span.id).map_or(0, Vec::len);
-        let arc_roots = if matches!(&*payload, TypX::Decorate(TypDecoration::Arc, _, _)) {
+        let delegated = occurrence.result_reservation;
+        let arc_roots = if delegated.is_none()
+            && matches!(&*payload, TypX::Decorate(TypDecoration::Arc, _, _))
+        {
             // Receiving a returned alias can reserve backing even when the join
             // leaves the outstanding claim count unchanged.
             self.require_indexed_claim_owner(&source.span)?;
@@ -74,7 +80,18 @@ impl Analysis<'_> {
         } else {
             None
         };
-        let result_owner = if let Some(roots) = &arc_roots {
+        let result_owner = if let Some(id) = delegated {
+            if !self.heap.workers.delegated.remove(&id) {
+                return Err(unsupported(
+                    &source.span,
+                    "join outside the captured worker occurrence",
+                ));
+            }
+            Some(Owner {
+                shared: Some(super::super::shared::StrongLink::Selected(id)),
+                ..Default::default()
+            })
+        } else if let Some(roots) = &arc_roots {
             Some(self.receive_indexed_alias(&source.span, roots, memory)?)
         } else if self.layouts.owner(&payload) {
             Some(self.owner_from_metadata(
@@ -87,11 +104,13 @@ impl Analysis<'_> {
         } else {
             None
         };
-        self.collect_indexed_claims(
-            &source.span,
-            &occurrence,
-            result_owner.as_ref().zip(arc_roots.as_ref()),
-        )?;
+        if delegated.is_none() {
+            self.collect_indexed_claims(
+                &source.span,
+                &occurrence,
+                result_owner.as_ref().zip(arc_roots.as_ref()),
+            )?;
+        }
         // An inline pop establishes the selected record while evaluating the
         // receiver. Result-description proofs must follow that evaluation,
         // before join consumes it; they cannot read the previous visit's record.
@@ -193,7 +212,11 @@ impl Analysis<'_> {
             bytes.clone(),
         );
         Ok(Owner {
-            selected_worker: Some(SelectedWorker::Recorded(Occurrence { templates, record })),
+            selected_worker: Some(SelectedWorker::Recorded(Occurrence {
+                templates,
+                record,
+                result_reservation: None,
+            })),
             view,
             dynamic: Some(allocation),
             extent: Some(bytes),
@@ -356,6 +379,7 @@ impl Analysis<'_> {
         owner.dynamic = Some(worker.completion);
         owner.extent = Some(tag);
         owner.selected_worker = Some(SelectedWorker::Recorded(Occurrence {
+            result_reservation: None,
             templates: [actor].into(),
             record: expr::lookup(span, memory, expr::path(span, [])),
         }));
