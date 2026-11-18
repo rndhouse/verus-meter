@@ -81,18 +81,12 @@ impl Analysis<'_> {
                 vec![forest.clone(), expr::integer(span, root.serial())],
                 crate::ast_util::int_typ(),
             );
-            let next = contracts::subtract(span, claims.pending.clone(), count);
             proofs.push(expr::lemma(
                 span,
                 "shared_count_nonnegative",
                 vec![forest.clone(), expr::integer(span, root.serial())],
             ));
-            proofs.push(expr::check(
-                span,
-                crate::ast_util::mk_ineq(span, &expr::integer(span, 0), &next, InequalityOp::Le),
-                "cannot reconcile stored Arc reservations",
-            ));
-            proofs.push(expr::assign(span, &claims.pending, next));
+            claims.release(span, count, "cannot reconcile stored Arc reservations", proofs);
         }
     }
 }

@@ -33,6 +33,17 @@ pub(in super::super) struct Claims {
 }
 
 impl Claims {
+    /// Prove the outstanding claims cover this release before updating their count.
+    fn release(&self, span: &Span, count: Expr, message: &str, proofs: &mut Vec<Stmt>) {
+        let remaining = contracts::subtract(span, self.pending.clone(), count);
+        proofs.push(expr::check(
+            span,
+            crate::ast_util::mk_ineq(span, &expr::integer(span, 0), &remaining, InequalityOp::Le),
+            message,
+        ));
+        proofs.push(expr::assign(span, &self.pending, remaining));
+    }
+
     /// A final directly tracked drop can make the backing conditional only if
     /// this accounting domain still has every charge of the payload.
     pub(in super::super) fn defer_backing(
@@ -363,15 +374,12 @@ impl Analysis<'_> {
         proofs: &mut Vec<Stmt>,
     ) {
         for root in &alias.roots {
-            let pending = &self.growth.indexed_shared[root].pending;
-            let count = alias.reservation(span, *root);
-            let next = contracts::subtract(span, pending.clone(), count);
-            proofs.push(expr::check(
+            self.growth.indexed_shared[root].release(
                 span,
-                crate::ast_util::mk_ineq(span, &expr::integer(span, 0), &next, InequalityOp::Le),
+                alias.reservation(span, *root),
                 "cannot reconcile the selected Arc's backing reservation",
-            ));
-            proofs.push(expr::assign(span, pending, next));
+                proofs,
+            );
         }
     }
 
@@ -407,14 +415,12 @@ impl Analysis<'_> {
                 None => captured,
             };
             self.require_indexed_claim_owner(span)?;
-            let next = contracts::subtract(span, claims.pending.clone(), weight);
-            let statements = self.growth.after.entry(span.id).or_default();
-            statements.push(expr::check(
+            claims.release(
                 span,
-                crate::ast_util::mk_ineq(span, &expr::integer(span, 0), &next, InequalityOp::Le),
+                weight,
                 "cannot reconcile the selected worker's outstanding strong references",
-            ));
-            statements.push(expr::assign(span, &claims.pending, next));
+                self.growth.after.entry(span.id).or_default(),
+            );
         }
         Ok(())
     }
