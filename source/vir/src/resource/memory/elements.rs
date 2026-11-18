@@ -427,7 +427,10 @@ impl Analysis<'_> {
         retained: &mut Accounting,
         span: &Span,
     ) -> Result<Elements, VirErr> {
-        if old.references != References::None {
+        if old.references == References::Unclassified
+            || (old.references == References::WorkerOccurrences
+                && (!old.precise || records.is_none()))
+        {
             return Err(unsupported(
                 span,
                 "worker reference populations without an outgoing occurrence descriptor",

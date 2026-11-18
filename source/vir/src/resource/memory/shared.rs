@@ -8,6 +8,7 @@
 
 use super::{
     analysis::Analysis,
+    elements::References,
     heap::{Owner, OwnerSlot},
     model::unsupported,
 };
@@ -60,7 +61,7 @@ pub(super) struct SharedRoots {
 fn visit_strong_handles(
     owner: &Owner,
     span: &Span,
-    supported: super::elements::References,
+    supported: References,
     mut visit: impl FnMut(RootId) -> Result<(), VirErr>,
 ) -> Result<(), VirErr> {
     let mut result = Ok(());
@@ -166,12 +167,17 @@ impl SharedRoots {
     /// once. Imported roots stop at the domain boundary. A cycle leaves counts
     /// outstanding even if counting every stored payload would balance them.
     /// This checks the graph without executing a destructor or releasing bytes.
-    pub(super) fn check_result(&self, result: Option<&Owner>, span: &Span) -> Result<(), VirErr> {
+    pub(super) fn check_result(
+        &self,
+        result: Option<&Owner>,
+        supported: References,
+        span: &Span,
+    ) -> Result<(), VirErr> {
         let mut remaining: BTreeMap<_, _> =
             self.roots.iter().map(|(id, root)| (*id, root.strong)).collect();
-        let mut pending: Vec<_> = result.into_iter().collect();
-        while let Some(owner) = pending.pop() {
-            visit_strong_handles(owner, span, super::elements::References::None, |id| {
+        let mut pending: Vec<_> = result.into_iter().map(|owner| (owner, supported)).collect();
+        while let Some((owner, supported)) = pending.pop() {
+            visit_strong_handles(owner, span, supported, |id| {
                 let count = remaining
                     .get_mut(&id)
                     .and_then(|count| {
@@ -187,7 +193,8 @@ impl SharedRoots {
                 if count == 0
                     && let Backing::Owned(backing) = &self.roots[&id].storage
                 {
-                    pending.push(backing.as_ref());
+                    // Only the actual worker result receives an occurrence descriptor.
+                    pending.push((backing.as_ref(), References::None));
                 }
                 Ok(())
             })?;
@@ -295,18 +302,13 @@ impl SharedRoots {
     pub(super) fn captured_view(&self, owner: Option<&Owner>, span: &Span) -> Result<Self, VirErr> {
         let mut references = BTreeMap::<RootId, u64>::new();
         if let Some(owner) = owner {
-            visit_strong_handles(
-                owner,
-                span,
-                super::elements::References::WorkerOccurrences,
-                |id| {
-                    let count = references.entry(id).or_default();
-                    *count = count
-                        .checked_add(1)
-                        .ok_or_else(|| unsupported(span, "captured strong counts exceeding u64"))?;
-                    Ok(())
-                },
-            )?;
+            visit_strong_handles(owner, span, References::WorkerOccurrences, |id| {
+                let count = references.entry(id).or_default();
+                *count = count
+                    .checked_add(1)
+                    .ok_or_else(|| unsupported(span, "captured strong counts exceeding u64"))?;
+                Ok(())
+            })?;
         }
         let mut roots = BTreeMap::new();
         for (id, count) in references {
@@ -522,12 +524,12 @@ mod tests {
             .into(),
             ..Default::default()
         };
-        roots.check_result(Some(&result), &span()).unwrap();
+        roots.check_result(Some(&result), References::None, &span()).unwrap();
         let mut missing = result.clone();
         missing.children.remove(&OwnerSlot::Capture(0));
-        assert!(roots.check_result(Some(&missing), &span()).is_err());
+        assert!(roots.check_result(Some(&missing), References::None, &span()).is_err());
         // Checking an output must preserve its actual counts and storage.
-        roots.check_result(Some(&result), &span()).unwrap();
+        roots.check_result(Some(&result), References::None, &span()).unwrap();
     }
 
     #[test]
@@ -540,10 +542,10 @@ mod tests {
             unreachable!()
         };
         **payload = second;
-        assert!(roots.check_result(None, &span()).is_err());
+        assert!(roots.check_result(None, References::None, &span()).is_err());
         // Even an additional actual result handle cannot discharge the cycle.
         let returned = roots.clone_strong(id, &span()).unwrap();
-        assert!(roots.check_result(Some(&returned), &span()).is_err());
+        assert!(roots.check_result(Some(&returned), References::None, &span()).is_err());
     }
 
     #[test]

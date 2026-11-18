@@ -5,6 +5,7 @@
 use super::super::{
     accounting::Accounting,
     analysis::Analysis,
+    elements::References,
     lifetime::{Storage, Value},
     model::unsupported,
     summary::BodyEffects,
@@ -78,7 +79,7 @@ impl Analysis<'_> {
         // Its imported reference relation has therefore been composed back into
         // the coordinator. Remaining aliases must belong to the actual result
         // or to canonically retained payloads, never to a discarded body view.
-        self.heap.shared.check_result(self.result_owner.as_ref(), span)?;
+        self.heap.shared.check_result(self.result_owner.as_ref(), References::None, span)?;
         for (actor, execution) in &self.growth.worker_executions {
             if *actor != execution.actor {
                 return Err(unsupported(
@@ -271,9 +272,7 @@ impl Analysis<'_> {
                     .and_then(|owner| owner.children.remove(&input.slot))
                     .ok_or_else(|| unsupported(span, "worker entry missing a captured owner"))?;
                 worker.enter_worker_owner(&mut owner, &body.span)?;
-                if owner.references() == super::super::elements::References::WorkerOccurrences
-                    && owner.elements.is_some()
-                {
+                if owner.references() == References::WorkerOccurrences && owner.elements.is_some() {
                     let memory = worker.snapshot_owner_metadata(&body.span, &owner);
                     worker.transitions.captured_populations.insert(index, memory);
                 }
@@ -360,7 +359,14 @@ impl Analysis<'_> {
         }
         let result =
             Storage { typ: result_type.clone(), value: result, owner: worker.result_owner.take() };
-        worker.heap.shared.check_result(result.owner.as_ref(), span)?;
+        // A retained occurrence has already excluded shared entry and exit aliases.
+        // Its join obligation moves with the result. The outer domain still rejects
+        // an escaping population when checking its own result.
+        worker.heap.shared.check_result(
+            result.owner.as_ref(),
+            References::WorkerOccurrences,
+            span,
+        )?;
         let mut retained = worker.storage.take_storage(&result, &worker.growth, span)?;
         let backing = Storage {
             typ: crate::ast_util::unit_typ(),

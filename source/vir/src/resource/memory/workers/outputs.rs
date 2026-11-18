@@ -4,7 +4,13 @@
 //! body's proved local bound, as ordinary ownership summaries do.
 
 use super::super::{
-    accounting::Accounting, analysis::Analysis, contracts, footprint::Charge, heap::Owner,
+    accounting::Accounting,
+    analysis::Analysis,
+    contracts,
+    elements::References,
+    footprint::Charge,
+    heap::Owner,
+    metadata::{expr, runtime_shape_proof},
     model::unsupported,
 };
 use super::{execution::Execution, inputs::Input};
@@ -92,6 +98,23 @@ impl Analysis<'_> {
                     let captured = owner(*index)?;
                     let current = std::mem::replace(&mut self.storage, execution.initial.clone());
                     let mut proofs = Vec::new();
+                    if let Some(elements) = &captured.elements
+                        && elements.references == References::WorkerOccurrences
+                    {
+                        // Indexed handle records cannot shadow the vector's root
+                        // descriptor when the template reads its length and backing.
+                        proofs.push(runtime_shape_proof(span, elements.records.clone()));
+                        proofs.push(expr::lemma(
+                            span,
+                            "cost_runtime_partition",
+                            vec![elements.records.clone(), expr::integer(span, 0)],
+                        ));
+                        proofs.push(expr::lemma(
+                            span,
+                            "runtime_class",
+                            vec![elements.records.clone()],
+                        ));
+                    }
                     let memory = self.call_metadata(span, captured, &mut proofs);
                     self.storage = current;
                     self.growth.before.entry(span.id).or_default().extend(proofs);
@@ -192,7 +215,12 @@ impl Analysis<'_> {
             }
         }
         let mut needs_template = false;
+        let mut population = false;
         owner.visit(&mut |node| {
+            population |= node
+                .elements
+                .as_ref()
+                .is_some_and(|elements| elements.references == References::WorkerOccurrences);
             if !result || execution.transfer.is_none() || needs_template {
                 return;
             }
@@ -208,8 +236,30 @@ impl Analysis<'_> {
                 .as_ref()
                 .is_some_and(|elements| !elements.zero_charge(&self.growth));
         });
-        let memory =
-            if needs_template { self.worker_result_memory(execution, span)? } else { None };
+        let memory = if result && population {
+            // Publication freezes the checked transformation of the actual captures.
+            // Reading the worker's exit locals or mutable input names at join would
+            // select another frame's records.
+            let observation = self
+                .growth
+                .worker_observations
+                .get(&execution.actor)
+                .filter(|_| {
+                    self.heap.workers.records[&execution.actor].parent == self.current_worker
+                })
+                .ok_or_else(|| {
+                    unsupported(
+                        span,
+                        "a worker population result without its local publication observation",
+                    )
+                })?;
+            let record = expr::lookup(span, observation.clone(), expr::path(span, []));
+            Some(expr::operation(span, "worker_result", vec![record], expr::memory_type()))
+        } else if needs_template {
+            self.worker_result_memory(execution, span)?
+        } else {
+            None
+        };
         self.rebind_worker_node(owner, retained, execution, span, &allowed, memory)
     }
 

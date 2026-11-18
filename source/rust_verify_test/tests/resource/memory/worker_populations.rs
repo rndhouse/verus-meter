@@ -442,6 +442,112 @@ fn a_worker_receives_and_drains_an_entire_symbolic_collection() {
 }
 
 #[test]
+fn a_worker_returns_the_unjoined_prefix_to_its_caller() {
+    let code = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f(n: u16, keep: u16)
+            requires keep <= n,
+            resources peak(memory) <= n * 128 + 131072
+        {
+            let mut handles = Vec::with_capacity(n as usize);
+            let mut i = 0u16;
+            while i < n invariant i <= n, handles.len() == i, decreases n - i, {
+                let child = std::thread::spawn(move || Vec::<u8>::with_capacity(i as usize + 64));
+                handles.push(child);
+                i += 1;
+            }
+            let worker = std::thread::spawn(move || -> (result: Vec<std::thread::JoinHandle<Vec<u8>>>)
+                ensures result.len() == keep
+            {
+                let mut batch = handles;
+                while batch.len() > keep as usize
+                    invariant keep <= batch.len() <= n,
+                    decreases batch.len(),
+                {
+                    let completed = batch.pop().unwrap().join().unwrap();
+                    drop(completed);
+                }
+                batch
+            });
+            let mut pending = worker.join().unwrap();
+            while pending.len() > 0 decreases pending.len(), {
+                let completed = pending.pop().unwrap().join().unwrap();
+                drop(completed);
+            }
+        }
+        }
+    "#;
+    let drained =
+        crate::verify_one_file("worker_returns_unjoined_prefix", code.into(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(drained, GLOBAL);
+    let leak = code.replace("while pending.len() > 0", "while pending.len() > 1");
+    let error = crate::verify_one_file("caller_leaves_returned_handle", leak, &[]).unwrap_err();
+    crate::common::assert_vir_error_msgs(
+        error,
+        &["cannot discard outstanding worker handles", GLOBAL],
+    );
+}
+
+#[test]
+fn returned_workers_cannot_escape_the_outer_accounting_domain() {
+    rejects(
+        "pending_worker_result_escapes",
+        r#"
+        fn f() -> Vec<std::thread::JoinHandle<u8>> resources peak(memory) <= 1024 {
+            let mut pending = Vec::with_capacity(1);
+            let child = std::thread::spawn(move || 7u8);
+            pending.push(child);
+            let worker = std::thread::spawn(move || pending);
+            worker.join().unwrap()
+        }
+        "#,
+        "imported reference populations without checked occurrence descriptors",
+    );
+}
+
+#[test]
+fn a_returned_handle_keeps_its_own_worker_result() {
+    let code = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f() resources peak(memory) <= 4096 {
+            let mut handles = Vec::with_capacity(2);
+            let small = std::thread::spawn(move || Vec::<u8>::with_capacity(64));
+            let large = std::thread::spawn(move || Vec::<u8>::with_capacity(1024));
+            handles.push(small);
+            handles.push(large);
+            let worker = std::thread::spawn(move || -> (result: Vec<std::thread::JoinHandle<Vec<u8>>>)
+                ensures result.len() == 1
+            {
+                let mut pending = handles;
+                let completed = pending.pop().unwrap().join().unwrap();
+                drop(completed);
+                pending
+            });
+            let mut rest = worker.join().unwrap();
+            let buffer = rest.pop().unwrap().join().unwrap();
+            drop(rest);
+            assert(current(memory) <= 88);
+            drop(buffer);
+            assert(current(memory) <= 0);
+        }
+        }
+    "#;
+    let valid =
+        crate::verify_one_file("returned_handle_keeps_small_buffer", code.into(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+    // Same count, allocations and joins. Change which worker the caller receives.
+    let swapped = code.replace(
+        "handles.push(small);\n            handles.push(large);",
+        "handles.push(large); handles.push(small);",
+    );
+    let error =
+        crate::verify_one_file("returned_handle_keeps_large_buffer", swapped, &[]).unwrap_err();
+    crate::common::assert_vir_error_msgs(error, &["conditional memory budget exceeded", GLOBAL]);
+}
+
+#[test]
 fn a_worker_returns_the_selected_buffer_from_a_captured_collection() {
     let code = r#"
         use vstd::prelude::*;
