@@ -248,6 +248,87 @@ fn mixed_arc_joins_keep_the_allocation_selected_by_each_pop() {
     let swapped = delegated.replace("survivor = last.clone()", "survivor = middle.clone()");
     let error = crate::verify_one_file("mixed_arc_delegated_wrong_root", swapped, &[]).unwrap_err();
     crate::common::assert_vir_error_msgs(error, &["conditional memory budget exceeded", GLOBAL]);
+    let foreign = delegated
+        .replace("let collector =", "let foreign = middle.clone(); let collector =")
+        .replace("let alias = r.clone(); drop(r); alias", "drop(r); foreign");
+    let error = crate::verify_one_file("mixed_arc_foreign_result", foreign, &[]).unwrap_err();
+    crate::common::assert_vir_error_msgs(error, &["conditional memory budget exceeded", GLOBAL]);
+
+    let lost = delegated.replace(
+        "let r = h.join().unwrap(); let alias = r.clone(); drop(r); alias",
+        "drop(h); std::sync::Arc::new(Vec::<u8>::with_capacity(7))",
+    );
+    let error = crate::verify_one_file("mixed_arc_lost_join", lost, &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(error, "detached workers in a memory accounting scope");
+
+    let forwarded = delegated
+        .replace(
+            "fn f()",
+            "fn relay(v: Vec<std::thread::JoinHandle<std::sync::Arc<Vec<u8>>>>)
+            -> (rest: Vec<std::thread::JoinHandle<std::sync::Arc<Vec<u8>>>>)
+            ensures rest == v,
+            resources peak(memory) <= 100
+        { v }
+        fn f()",
+        )
+        .replace("drop(large);", "drop(large); let mut handles = relay(handles);");
+    let error = crate::verify_one_file("mixed_arc_helper_transfer", forwarded, &[]).unwrap_err();
+    crate::common::assert_vir_error_msgs(
+        error,
+        &["worker population helpers before global lifetime and interference proofs", GLOBAL],
+    );
+}
+
+#[test]
+fn surviving_results_from_one_join_site_keep_their_own_backings() {
+    let code = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f() resources peak(memory) <= 1024 {
+            let small = std::sync::Arc::new(Vec::<u8>::with_capacity(7));
+            let large = std::sync::Arc::new(Vec::<u8>::with_capacity(19));
+            let mut handles = Vec::with_capacity(2);
+            CAPTURES
+            drop(small); drop(large);
+            let mut results = Vec::with_capacity(2);
+            while handles.len() > 0
+                invariant handles.len() + results.len() == 2,
+                decreases handles.len(),
+            {
+                let h = handles.pop().unwrap();
+                let link = h.join().unwrap();
+                results.push(link);
+            }
+            drop(handles);
+            let small = results.pop().unwrap();
+            let large = results.pop().unwrap();
+            let survivor = small.clone();
+            drop(small); drop(large); drop(results);
+            assert(current(memory) <= 55);
+            drop(survivor);
+            assert(current(memory) <= 0);
+        }
+        }
+    "#
+    .replace("CAPTURES", DISJOINT_CAPTURES);
+    let bulk = code
+        .replace("let large = results.pop().unwrap();", "")
+        .replace("drop(large); drop(results);", "drop(results);");
+    let cloned = code.replace(
+        "results.push(link);",
+        "let other = link.clone(); results.push(other); drop(link);",
+    );
+    for (name, program) in [
+        ("join_site_move", code.clone()),
+        ("join_site_bulk_drop", bulk),
+        ("join_site_store_clone", cloned),
+    ] {
+        let error = crate::verify_one_file(name, program, &[]).unwrap_err();
+        crate::common::assert_vir_error_msg(error, GLOBAL);
+    }
+    let swapped = code.replace("survivor = small.clone()", "survivor = large.clone()");
+    let error = crate::verify_one_file("join_site_wrong_survivor", swapped, &[]).unwrap_err();
+    crate::common::assert_vir_error_msgs(error, &["conditional memory budget exceeded", GLOBAL]);
 }
 
 // Each visit publishes two handles in this order. A complete drain covers

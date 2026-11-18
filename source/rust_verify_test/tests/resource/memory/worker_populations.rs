@@ -902,6 +902,43 @@ fn transferring_a_handle_cannot_hide_detach_in_its_receiver() {
 }
 
 #[test]
+fn a_captured_collection_uses_its_enclosing_publication() {
+    // The first visit returns a 7-byte buffer. Each later visit constructs a
+    // different collection whose worker carries the larger scalar snapshot.
+    let code = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f(n: u16) resources peak(memory) <= 131072 {
+            let mut i = 0u16;
+            while i < n invariant i <= n, decreases n-i, {
+                let size = if i == 0 { 7u16 } else { 201u16 };
+                let mut handles = Vec::with_capacity(1);
+                let job = std::thread::spawn(move || size);
+                handles.push(job);
+                let collector = std::thread::spawn(move || {
+                    let mut pending = handles;
+                    let amount = pending.pop().unwrap().join().unwrap();
+                    drop(pending);
+                    Vec::<u8>::with_capacity(amount as usize)
+                });
+                let buffer = collector.join().unwrap();
+                if i == 0 { assert(current(memory) <= 64); }
+                drop(buffer);
+                i += 1;
+            }
+        }
+        }
+    "#;
+    let valid =
+        crate::verify_one_file("nested_collection_capture", code.to_string(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+    // Reusing the first capture for the second visit would prove this false bound.
+    let stale = code.replace("if i == 0 { assert", "if i == 1 { assert");
+    let error = crate::verify_one_file("nested_collection_wrong_visit", stale, &[]).unwrap_err();
+    crate::common::assert_vir_error_msgs(error, &["conditional memory budget exceeded", GLOBAL]);
+}
+
+#[test]
 fn nested_worker_loop_contexts_are_independent() {
     rejects(
         "nested_worker_loops",

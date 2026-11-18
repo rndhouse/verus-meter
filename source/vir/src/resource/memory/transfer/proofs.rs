@@ -91,7 +91,12 @@ impl ForestProofs {
                 // Moving a worker record preserves opaque observations. Their
                 // validity belongs to the checked body and to result selection,
                 // not to the collection that transports the handle.
-                if expr::is_operation(function, "worker_observation") {
+                // A shared link's identity may itself be a projection from a
+                // worker's conditional result. Its value has no bearing on
+                // the shape or zero-byte charge of this record.
+                if expr::is_operation(function, "worker_observation")
+                    || expr::is_operation(function, "shared_reference")
+                {
                     return Ok(());
                 }
                 for arg in args.iter() {

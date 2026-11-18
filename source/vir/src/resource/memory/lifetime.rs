@@ -358,7 +358,7 @@ impl Analysis<'_> {
                     {
                         elements.precise &= node.elements.as_ref().is_some_and(|old| old.precise);
                         if let Some(old) = &node.elements {
-                            elements.references = elements.references.max(old.references);
+                            elements.references = elements.references.combine(old.references);
                             super::metadata::reservations::join_minima(
                                 &old.records.span,
                                 &mut elements.minima,

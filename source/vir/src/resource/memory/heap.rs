@@ -135,7 +135,7 @@ impl Owner {
             .values()
             .map(Self::references)
             .chain(self.elements.iter().map(|elements| elements.references))
-            .fold(own, References::max)
+            .fold(own, References::combine)
     }
 
     /// A fresh fixed wrapper does not make its incoming children fully charged.
@@ -684,7 +684,9 @@ impl Analysis<'_> {
             self.destroy_owner(child, span, false, proofs);
         }
         if let Some(elements) = owner.elements {
-            if elements.references != super::elements::References::None {
+            if elements.references == super::elements::References::IndexedAliases {
+                self.release_selected_slots(span, &elements.records, proofs);
+            } else if elements.references != super::elements::References::None {
                 proofs.push(super::metadata::expr::check(
                     span,
                     super::metadata::expr::operation(

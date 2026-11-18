@@ -19,14 +19,30 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 /// Conservative classification of identity records reachable in a collection.
-/// Only publications with checked, empty shared entry and exit views can be
-/// serialized as worker occurrences. Other identities still need a separate
-/// strong-root import relation. Combining collections keeps the weaker evidence.
+/// Recorded workers carry join obligations. Stored Arc results carry one
+/// reservation per slot. Only a forest certified to contain exclusively the
+/// latter can be released by counting identities without checking for workers.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum References {
     None,
     WorkerOccurrences,
+    /// Each direct Arc slot holds one reservation in the publishing domain.
+    IndexedAliases,
     Unclassified,
+}
+
+impl References {
+    /// Preserve the distinction between forests of just aliases and forests
+    /// that can also contain an outstanding join obligation.
+    pub(super) fn combine(self, other: Self) -> Self {
+        use References::*;
+        match (self, other) {
+            (None, kind) | (kind, None) => kind,
+            (WorkerOccurrences, WorkerOccurrences) => WorkerOccurrences,
+            (IndexedAliases, IndexedAliases) => IndexedAliases,
+            _ => Unclassified,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -206,7 +222,7 @@ impl Analysis<'_> {
             state.extent = None;
         }
         old.precise = true;
-        old.references = old.references.max(new.references);
+        old.references = old.references.combine(new.references);
         old.view = new.view;
         old.minima = new.minima.clone();
     }
@@ -266,7 +282,7 @@ impl Analysis<'_> {
             return Ok(());
         }
         let uncharged = self.growth.owner_zero_charge(&child);
-        elements.references = elements.references.max(child.references());
+        elements.references = elements.references.combine(child.references());
         self.merge_element_minima(span, elements, &child);
         let mut proofs = Vec::new();
         let child_records = self.owner_metadata(span, &child, &mut proofs);
@@ -427,7 +443,7 @@ impl Analysis<'_> {
         retained: &mut Accounting,
         span: &Span,
     ) -> Result<Elements, VirErr> {
-        if old.references == References::Unclassified
+        if matches!(old.references, References::IndexedAliases | References::Unclassified)
             || (old.references == References::WorkerOccurrences
                 && (!old.precise || records.is_none()))
         {
@@ -676,7 +692,13 @@ impl Analysis<'_> {
             complete &= node.geometry_known || node.source.is_some();
         });
         elements.precise &= complete;
-        elements.references = elements.references.max(child.references());
+        let selection = child.shared.and_then(|link| match link {
+            super::shared::StrongLink::Selected(id) if self.current_worker.is_none() => Some(id),
+            _ => None,
+        });
+        let references =
+            if selection.is_some() { References::IndexedAliases } else { child.references() };
+        elements.references = elements.references.combine(references);
         if elements.references != References::None && !elements.precise {
             return Err(unsupported(
                 span,
@@ -686,6 +708,10 @@ impl Analysis<'_> {
         if elements.precise {
             let records = self.snapshot_owner_metadata(span, &child);
             let path = self.metadata_path(span, length.clone())?;
+            if let Some(id) = selection {
+                self.store_selected_slot(span, id, &elements.records, &records, &path)?;
+                child.shared = None;
+            }
             let nested = super::metadata::expr::prefix(span, records.clone(), path.clone());
             self.growth.before.entry(span.id).or_default().extend([
                 super::metadata::expr::lemma(

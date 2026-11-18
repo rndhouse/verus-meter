@@ -135,7 +135,7 @@ impl crate::resource::memory::analysis::Analysis<'_> {
         let span = &record.span;
         let mut offsets = Vec::new();
         let mut needs_family_counts = false;
-        for claims in self.growth.indexed_shared.values() {
+        for (root, claims) in &self.growth.indexed_shared {
             let mut current = expr::integer(span, 0);
             let mut related = false;
             for charge in &record.charges {
@@ -144,6 +144,26 @@ impl crate::resource::memory::analysis::Analysis<'_> {
                 };
                 let TypX::Datatype(_, types, _) = &**typ else { continue };
                 if !self.layouts.vector(typ) {
+                    continue;
+                }
+                if types
+                    .first()
+                    .is_some_and(|typ| matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _)))
+                {
+                    let key = expr::integer(span, root.serial());
+                    let count = expr::operation(
+                        span,
+                        "shared_count",
+                        vec![forest.clone(), key.clone()],
+                        crate::ast_util::int_typ(),
+                    );
+                    current = contracts::add(span, current, count);
+                    self.growth.before.entry(span.id).or_default().push(expr::lemma(
+                        span,
+                        "shared_count_empty",
+                        vec![key],
+                    ));
+                    related = true;
                     continue;
                 }
                 let Some((payload, _)) =
@@ -184,6 +204,13 @@ impl crate::resource::memory::analysis::Analysis<'_> {
         for (pending, current) in offsets {
             let entry = self.loop_snapshot(span, &current);
             let initial = self.loop_snapshot(span, &pending);
+            // A slot count is an opaque integer. A clone stored during this
+            // iteration can create and release a reservation before the next
+            // back edge. Give both operations the checked lower bound.
+            facts.push(expr::purpose(
+                mk_ineq(span, &expr::integer(span, 0), &pending, InequalityOp::Le),
+                "outstanding shared references are nonnegative",
+            ));
             facts.push(expr::purpose(
                 mk_ineq(span, &current, &pending, InequalityOp::Le),
                 "worker collections cannot contain more claims than were published",

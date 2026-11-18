@@ -230,9 +230,17 @@ identity, and the last local drop releases the result's claim on the backing.
 A fixed worker can receive that alias, or an individual popped handle whose
 worker returns a captured `Arc`. It may move, clone, drop or return the alias.
 The publisher retains the backing through the transfer and reconciles the
-receiver's checked entry and exit references when it joins the receiver. The coordinator can keep the
-backing charged until collection when the worker may already have dropped its
-last handle. Reclamation at the actual destructor requires a proof across threads.
+receiver's checked entry and exit references when it joins the receiver.
+The publisher can store results of successive visits to the same join in a
+vector. Each occupied slot retains the allocation selected on its own visit.
+Popping the slot transfers that reference, and dropping the vector releases
+the references in its remaining slots. Local clones may survive either event.
+A worker receiving an entire vector of handles cannot drain indexed shared
+claims owned by its publisher. That transfer needs a summary of the references
+the receiving worker consumes or returns.
+
+The coordinator can keep the backing charged until collection when the worker
+may already have dropped its last handle. Reclamation at the actual destructor requires a proof across threads.
 
 The proof boundary separates construction, transport and byte accounting.
 Generated builders establish worker-description properties; verified one-step

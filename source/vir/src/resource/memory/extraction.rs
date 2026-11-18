@@ -168,6 +168,21 @@ impl Analysis<'_> {
                 let partition = removal.partition(&source.span, elements.records.clone());
                 let selected =
                     self.metadata_local(&source.span, "extracted_element", partition.selected);
+                if elements.references == super::elements::References::IndexedAliases && optional {
+                    // Partition the pre-pop forest before committing the removal.
+                    let proofs = self.growth.before.entry(source.span.id).or_default();
+                    for root in self.growth.indexed_shared.keys() {
+                        proofs.push(metadata::lemma(
+                            &source.span,
+                            "shared_count_pop",
+                            vec![
+                                elements.records.clone(),
+                                removal.path(&source.span),
+                                metadata::integer(&source.span, root.serial()),
+                            ],
+                        ));
+                    }
+                }
                 self.metadata_partition(
                     &source.span,
                     elements.records.clone(),
@@ -187,7 +202,7 @@ impl Analysis<'_> {
                     self.growth.before.entry(source.span.id).or_default().push(metadata::lemma(
                         &source.span,
                         "remove_index_views",
-                        vec![elements.records.clone(), removal.index],
+                        vec![elements.records.clone(), removal.index.clone()],
                     ));
                 }
                 self.growth.before.entry(source.span.id).or_default().push(metadata::assign(
@@ -209,6 +224,16 @@ impl Analysis<'_> {
                     .is_some_and(|(_, vector)| vector == state)
                 {
                     Owner { selected_worker: Some(SelectedWorker::Parameter), ..Default::default() }
+                } else if matches!(&*payload, TypX::Decorate(TypDecoration::Arc, _, _))
+                    && elements.references == super::elements::References::IndexedAliases
+                {
+                    if !optional {
+                        return Err(unsupported(
+                            &source.span,
+                            "reindexing stored Arc reservations",
+                        ));
+                    }
+                    self.take_selected_slot(&source.span, selected)?
                 } else {
                     self.owner_from_metadata(
                         &source.span,

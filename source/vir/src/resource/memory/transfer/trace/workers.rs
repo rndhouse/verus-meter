@@ -168,6 +168,22 @@ impl Trace<'_> {
         let span = &value.span;
         let record = expr::lookup(span, handle.memory, expr::path(span, []));
         let result = expr::operation(span, "worker_result", vec![record], expr::memory_type());
+        // An Arc's inline owner contains exactly one identity link; its
+        // allocation and payload stay in the canonical backing.
+        let result = if self
+            .layouts
+            .result_payloads(&value.typ)
+            .is_some_and(|(typ, _)| matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _)))
+        {
+            let link = expr::lookup(span, result, expr::path(span, []));
+            let record = crate::resource::memory::shared::selected_record(
+                span,
+                expr::shared_identity(span, link),
+            );
+            expr::push(span, expr::empty(span, expr::record_type()), record)
+        } else {
+            result
+        };
         let result = expr::prefix(
             span,
             result,

@@ -183,7 +183,7 @@ impl Layouts {
             return Err(unsupported(span, "this Option type"));
         }
         if matches!(&*args[0], TypX::MutRef(_))
-            || matches!(&*args[0], TypX::Decorate(d, _, _) if *d != TypDecoration::Box)
+            || matches!(&*args[0], TypX::Decorate(d, _, _) if !matches!(d, TypDecoration::Box | TypDecoration::Arc))
         {
             return Err(unsupported(span, "reference-valued Option payloads"));
         }

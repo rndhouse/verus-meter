@@ -325,6 +325,72 @@ pub proof fn reference_count_partition(memory: Seq<Record>, path: Seq<int>, refe
     }
 }
 
+/// Each stored Arc owns one reservation on its observed allocation.
+pub open spec fn shared_count(memory: Seq<Record>, root: int) -> int {
+    reference_count(memory, Reference::Shared(seq![root]))
+}
+
+/// Dropping stored handles can only consume existing reservations.
+pub proof fn shared_count_nonnegative(memory: Seq<Record>, root: int)
+    ensures
+        shared_count(memory, root) >= 0,
+    decreases memory.len(),
+{
+    reveal(reference_count);
+    if memory.len() > 0 {
+        shared_count_nonnegative(memory.drop_last(), root);
+    }
+}
+
+/// A newly created vector holds no references to any root.
+pub proof fn shared_count_empty(root: int)
+    ensures
+        shared_count(Seq::empty(), root) == 0,
+{
+    reveal(reference_count);
+}
+
+/// A direct Arc slot contains exactly its identity record.
+pub proof fn shared_count_slot(identity: int, root: int)
+    ensures
+        shared_count(seq![shared_reference(seq![], seq![identity])], root) == if identity == root {
+            1int
+        } else {
+            0int
+        },
+{
+    let leaf = seq![shared_reference(seq![], seq![identity])];
+    reveal_with_fuel(reference_count, 2);
+    if identity != root {
+        assert(seq![identity][0] != seq![root][0]);
+    }
+}
+
+/// Storing the child under a vector index preserves each root’s multiplicity.
+pub proof fn shared_count_insert(memory: Seq<Record>, child: Seq<Record>, path: Seq<int>, root: int)
+    ensures
+        shared_count(memory + prefix(child, path), root) == shared_count(memory, root)
+            + shared_count(child, root),
+{
+    let r = Reference::Shared(seq![root]);
+    reference_count_add(memory, prefix(child, path), r);
+    reference_count_prefix(child, path, r);
+}
+
+/// The popped slot and the remaining slots partition the old reservations.
+/// The remainder supplies the lower bound when the extracted alias is dropped.
+pub proof fn shared_count_pop(memory: Seq<Record>, path: Seq<int>, root: int)
+    ensures
+        shared_count(without(memory, path), root) >= 0,
+        shared_count(memory, root) == shared_count(subtree(memory, path), root) + shared_count(
+            without(memory, path),
+            root,
+        ),
+{
+    reference_count_partition(memory, path, Reference::Shared(seq![root]));
+    shared_count_nonnegative(without(memory, path), root);
+}
+
 /// Reindexing a collection changes neither its links nor their multiplicity.
 pub proof fn reference_count_shift(memory: Seq<Record>, base: int, reference: Reference)
     ensures

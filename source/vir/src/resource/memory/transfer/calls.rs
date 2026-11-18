@@ -417,7 +417,11 @@ impl Analysis<'_> {
             .as_ref()
             .ok_or_else(|| unsupported(span, "a worker collection without element records"))?;
         if !elements.precise
-            || elements.references == super::super::elements::References::Unclassified
+            || !matches!(
+                elements.references,
+                super::super::elements::References::None
+                    | super::super::elements::References::WorkerOccurrences
+            )
             || (!owner.complete()
                 && !self
                     .transitions

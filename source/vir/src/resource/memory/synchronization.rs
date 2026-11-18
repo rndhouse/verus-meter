@@ -479,14 +479,16 @@ fn reject_unaccounted_inner(
                     self.runtime_type_inner(inner, span, visiting)?;
                 }
                 TypX::Datatype(name, args, _) => {
-                    if self.types.get(name).is_some_and(|kind| {
-                        *kind != LibraryType::Result
-                            && !(self.worker_parameter
-                                && matches!(
-                                    kind,
-                                    LibraryType::StdJoinHandle | LibraryType::VstdJoinHandle
-                                ))
-                    }) {
+                    // A forwarding helper owns the handle, not its future
+                    // payload. Opening a handle still needs a checked join.
+                    if self.worker_parameter
+                        && self.types.get(name).is_some_and(|kind| {
+                            matches!(kind, LibraryType::StdJoinHandle | LibraryType::VstdJoinHandle)
+                        })
+                    {
+                        return Ok(());
+                    }
+                    if self.types.get(name).is_some_and(|kind| *kind != LibraryType::Result) {
                         return Err(super::model::unsupported(
                             span,
                             "runtime synchronization values before concurrent lifetime accounting is available",

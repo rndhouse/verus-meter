@@ -2,6 +2,8 @@
 //! Workers run independently. Until collection their checked entry claims reserve
 //! backing, including when a completed worker keeps the handle in its result.
 
+mod slots;
+
 use super::super::{
     accounting::{Accounting, SharedBackingCharges},
     analysis::Analysis,
