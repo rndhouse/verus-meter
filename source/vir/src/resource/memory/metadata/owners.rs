@@ -47,13 +47,17 @@ impl Analysis<'_> {
                 vec![expr::path(span, []), expr::path(span, [root.serial()])],
                 expr::record_type(),
             )
-        } else if let Some(worker) = owner.worker {
-            expr::operation(
-                span,
-                "worker_reference",
-                vec![expr::path(span, []), self.worker_identity(span, worker)],
-                expr::record_type(),
-            )
+        } else if let Some(handle) = &owner.worker {
+            if let Some(publication) = &handle.publication {
+                expr::lookup(span, publication.clone(), expr::path(span, []))
+            } else {
+                expr::operation(
+                    span,
+                    "worker_reference",
+                    vec![expr::path(span, []), self.worker_identity(span, handle.actor)],
+                    expr::record_type(),
+                )
+            }
         } else {
             expr::operation(
                 span,

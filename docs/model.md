@@ -194,7 +194,11 @@ collecting worker's summary. A worker can also take ownership of the whole
 vector and drain it. In supported loops the publishing worker supplies the
 description of the captured collection, and the receiving worker proves its
 remaining length and membership after each pop. Dropping a collection with an
-outstanding handle fails the local proof.
+outstanding handle fails the local proof. A worker may return the remaining
+vector to another thread that owns its join handle. The receiving thread
+uses the snapshot taken when that worker was spawned, including which
+workers its result contains. Its local checks cover the returned vector's
+backing, the remaining joins, and the selected workers' result storage.
 
 An ordinary helper can take one handle vector by value and return the same
 backing. Its caller keeps the identities and join obligations of the surviving

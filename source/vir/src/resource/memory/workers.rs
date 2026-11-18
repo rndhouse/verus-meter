@@ -27,6 +27,16 @@ pub(super) use populations::SelectedWorker;
 pub(crate) use results::generated_join_move;
 pub(super) use results::resolve_join;
 
+/// One owned handle to a fixed worker in the outstanding-worker registry.
+#[derive(Clone)]
+pub(super) struct FixedHandle {
+    /// The registry checks completion, waiting and unique ownership for this actor.
+    pub(super) actor: WorkerId,
+    /// Immutable description produced at this particular spawn. The source move
+    /// captures this proof value with the handle, including across worker frames.
+    pub(super) publication: Option<Expr>,
+}
+
 #[derive(Clone)]
 enum Stage {
     /// Captures remain live even if the worker has not been scheduled.
@@ -112,8 +122,8 @@ impl Workers {
         let mut ids = Vec::new();
         if let Some(captures) = captures {
             captures.visit(&mut |owner| {
-                if let Some(id) = owner.worker {
-                    ids.push(id);
+                if let Some(handle) = &owner.worker {
+                    ids.push(handle.actor);
                 }
             });
         }
@@ -323,9 +333,10 @@ impl Analysis<'_> {
     /// Publication transfers an existing closure value, retaining its storage.
     /// The child may run before this call returns; no body peak is added here.
     pub(super) fn spawn_owner(&mut self, expr: &Expr) -> Result<Option<Owner>, VirErr> {
-        let Some(owner) = self.publish_owner(expr)? else { return Ok(None) };
-        self.analyze_worker(owner.worker.expect("published actor"), &expr.span)?;
-        self.observe_worker_publication(owner.worker.unwrap(), expr)?;
+        let Some(mut owner) = self.publish_owner(expr)? else { return Ok(None) };
+        let handle = owner.worker.as_mut().expect("published actor");
+        self.analyze_worker(handle.actor, &expr.span)?;
+        handle.publication = self.observe_worker_publication(handle.actor, expr)?;
         Ok(Some(owner))
     }
 
@@ -453,7 +464,10 @@ impl Analysis<'_> {
                 .check_worker_imports(siblings.chain(std::iter::once(&entry.shared)), &expr.span)?;
         }
         self.heap.workers.publish(id, &expr.span, self.current_worker, completion, entry)?;
-        Ok(Some(Owner { worker: Some(id), ..Default::default() }))
+        Ok(Some(Owner {
+            worker: Some(FixedHandle { actor: id, publication: None }),
+            ..Default::default()
+        }))
     }
 
     /// A native join is a waiting boundary. Its source handle moves into the
@@ -491,9 +505,10 @@ impl Analysis<'_> {
             }
             .map(Some);
         }
-        let id = owner
+        let handle = owner
             .worker
             .ok_or_else(|| unsupported(&argument.span, "joining without worker provenance"))?;
+        let id = handle.actor;
         self.heap.workers.wait(id, self.current_worker, &expr.span, value)?;
         let execution = self.heap.workers.records[&id].execution.clone().ok_or_else(|| {
             unsupported(&expr.span, "join without checked executable worker effects")
@@ -513,12 +528,9 @@ impl Analysis<'_> {
         {
             return Err(unsupported(&expr.span, "inconsistent primitive join result payloads"));
         }
-        // A locally published handle can use its own checked publication in
-        // the enclosing transfer trace, including when the body joined a
-        // handle selected from another population. Imported fixed handles
-        // require a caller-supplied publication description.
-        if worker.parent == self.current_worker
-            && self.growth.worker_observations.contains_key(&id)
+        // The trace projects the result from the actual handle operand. Its
+        // publication description follows ownership into a receiving closure.
+        if handle.publication.is_some()
             && worker.entry_shared.is_empty()
             && execution.shared.is_empty()
         {
@@ -531,11 +543,11 @@ impl Analysis<'_> {
         let mut retained = execution.retained.clone();
         let mut result_owner = execution.result.owner.clone();
         if let Some(owner) = &mut result_owner {
-            self.rebind_worker_output(owner, &mut retained, &execution, &expr.span, true)?;
+            self.rebind_worker_output(owner, &mut retained, &execution, &expr.span, Some(&handle))?;
         }
         let mut shared = execution.shared.clone();
         shared.map_owned(|owner| {
-            self.rebind_worker_output(owner, &mut retained, &execution, &expr.span, false)
+            self.rebind_worker_output(owner, &mut retained, &execution, &expr.span, None)
         })?;
         self.storage.receive_storage(retained, &expr.span)?;
         for backing in self.heap.shared.receive_worker(&shared, &expr.span)? {

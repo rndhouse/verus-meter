@@ -43,10 +43,6 @@ pub(super) struct VectorState {
 
 #[derive(Default)]
 pub(super) struct Growth {
-    /// Publication observations survive collection moves and repeated visits.
-    /// Each expression is assigned at its executable publication, then copied
-    /// into the owning forest before a later visit can overwrite it.
-    pub(super) worker_observations: std::collections::BTreeMap<super::workers::WorkerId, Expr>,
     /// Body templates actually transported into runtime ownership forests.
     pub(super) retained_worker_families: std::collections::BTreeSet<super::workers::WorkerId>,
     /// Actual selected identities at joins, distinct from their shared body template.

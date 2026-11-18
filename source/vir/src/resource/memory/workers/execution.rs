@@ -275,6 +275,24 @@ impl Analysis<'_> {
                 if owner.references() == References::WorkerOccurrences && owner.elements.is_some() {
                     let memory = worker.snapshot_owner_metadata(&body.span, &owner);
                     worker.transitions.captured_populations.insert(index, memory);
+                } else if let Some(handle) = &mut owner.worker
+                    && let Some(publication) = &handle.publication
+                    && worker.growth.worker_executions[&handle.actor]
+                        .result
+                        .owner
+                        .as_ref()
+                        .is_some_and(|result| result.references() == References::WorkerOccurrences)
+                {
+                    // The captured handle's checked publication describes the population
+                    // obtained by joining it. Keep an entry value for loop induction;
+                    // the publishing trace can specialize it to the actual operand.
+                    let snapshot = worker.metadata_local(
+                        &body.span,
+                        "captured_publication",
+                        publication.clone(),
+                    );
+                    handle.publication = Some(snapshot.clone());
+                    worker.transitions.captured_populations.insert(index, snapshot);
                 }
                 worker.heap.owners.insert(input.name.clone(), owner);
             }

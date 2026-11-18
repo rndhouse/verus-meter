@@ -59,7 +59,7 @@ pub(super) struct Owner {
     /// normal-domain proofs. Ordinary Result values cannot invent this witness.
     pub(super) joined: Option<std::collections::BTreeSet<super::workers::WorkerId>>,
     /// A join handle names storage kept in the domain's worker registry.
-    pub(super) worker: Option<super::workers::WorkerId>,
+    pub(super) worker: Option<super::workers::FixedHandle>,
     /// Concrete closure definition; its owned fields occupy Capture child slots.
     pub(super) closure: Option<usize>,
     /// A strong handle links to canonical backing instead of owning a copy of it.
@@ -631,7 +631,7 @@ impl Analysis<'_> {
                     && owner.closure.is_none()
                     && owner.input.is_none()
             );
-            self.heap.workers.detach(worker, span);
+            self.heap.workers.detach(worker.actor, span);
             return;
         }
         if let Some(root) = owner.shared {

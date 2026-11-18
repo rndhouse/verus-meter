@@ -178,10 +178,10 @@ impl Analysis<'_> {
         &mut self,
         actor: WorkerId,
         source: &Expr,
-    ) -> Result<(), VirErr> {
+    ) -> Result<Option<Expr>, VirErr> {
         let execution = self.growth.worker_executions[&actor].clone();
         if execution.transfer.is_none() {
-            return Ok(());
+            return Ok(None);
         }
         let span = &source.span;
         let ExprX::Call { args, .. } = &source.x else { unreachable!() };
@@ -257,8 +257,7 @@ impl Analysis<'_> {
         let memory = self.metadata_local(span, "worker_observation", memory);
         let statements = self.growth.before.entry(span.id).or_default().split_off(first);
         self.growth.after.entry(span.id).or_default().extend(statements);
-        self.growth.worker_observations.insert(actor, memory);
-        Ok(())
+        Ok(Some(memory))
     }
 
     /// Move responsibility for a completion tag into its collection's byte
@@ -272,8 +271,9 @@ impl Analysis<'_> {
         for child in owner.children.values_mut() {
             self.retain_worker_in_forest(child, span)?;
         }
-        let Some(actor) = owner.worker else { return Ok(()) };
-        let memory = self.growth.worker_observations.get(&actor).cloned().ok_or_else(|| {
+        let Some(handle) = &owner.worker else { return Ok(()) };
+        let actor = handle.actor;
+        let memory = handle.publication.clone().ok_or_else(|| {
             unsupported(span, "a retained worker without its checked occurrence description")
         })?;
         let worker =

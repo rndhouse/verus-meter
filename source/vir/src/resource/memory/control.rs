@@ -362,7 +362,11 @@ pub(super) fn compatible(a: &Owner, b: &Owner) -> bool {
             }
             _ => false,
         }
-        && a.worker == b.worker
+        && match (&a.worker, &b.worker) {
+            (Some(a), Some(b)) => a.actor == b.actor && expression(&a.publication, &b.publication),
+            (None, None) => true,
+            _ => false,
+        }
         && a.closure == b.closure
         && a.shared == b.shared
         && a.bytes == b.bytes

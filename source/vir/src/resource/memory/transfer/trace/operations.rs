@@ -12,6 +12,9 @@ impl Trace<'_> {
         typ: &Typ,
         observed_scalar: bool,
     ) -> Option<Value> {
+        if super::super::super::model::unit(typ) {
+            return Some(Value::Unit);
+        }
         let memory = expr::subtree(
             span,
             node.memory,

@@ -204,7 +204,7 @@ impl Analysis<'_> {
         retained: &mut Accounting,
         execution: &Execution,
         span: &Span,
-        result: bool,
+        result: Option<&super::FixedHandle>,
     ) -> Result<(), VirErr> {
         let mut allowed = self.stable_scalars.clone();
         for declaration in &self.growth.declarations {
@@ -221,7 +221,7 @@ impl Analysis<'_> {
                 .elements
                 .as_ref()
                 .is_some_and(|elements| elements.references == References::WorkerOccurrences);
-            if !result || execution.transfer.is_none() || needs_template {
+            if result.is_none() || execution.transfer.is_none() || needs_template {
                 return;
             }
             // A selected worker result can have unchanged backing whose size
@@ -236,23 +236,15 @@ impl Analysis<'_> {
                 .as_ref()
                 .is_some_and(|elements| !elements.zero_charge(&self.growth));
         });
-        let memory = if result && population {
-            // Publication freezes the checked transformation of the actual captures.
-            // Reading the worker's exit locals or mutable input names at join would
-            // select another frame's records.
-            let observation = self
-                .growth
-                .worker_observations
-                .get(&execution.actor)
-                .filter(|_| {
-                    self.heap.workers.records[&execution.actor].parent == self.current_worker
-                })
-                .ok_or_else(|| {
-                    unsupported(
-                        span,
-                        "a worker population result without its local publication observation",
-                    )
-                })?;
+        let memory = if let Some(handle) = result
+            && population
+        {
+            let observation = handle.publication.as_ref().ok_or_else(|| {
+                unsupported(
+                    span,
+                    "a worker population result without its handle's checked publication",
+                )
+            })?;
             let record = expr::lookup(span, observation.clone(), expr::path(span, []));
             Some(expr::operation(span, "worker_result", vec![record], expr::memory_type()))
         } else if needs_template {

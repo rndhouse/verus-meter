@@ -442,7 +442,7 @@ fn a_worker_receives_and_drains_an_entire_symbolic_collection() {
 }
 
 #[test]
-fn a_worker_returns_the_unjoined_prefix_to_its_caller() {
+fn a_returned_population_is_drained_by_the_thread_that_joins_its_producer() {
     let code = r#"
         use vstd::prelude::*;
         verus! {
@@ -470,23 +470,34 @@ fn a_worker_returns_the_unjoined_prefix_to_its_caller() {
                 }
                 batch
             });
+            DRAIN
+        }
+        }
+    "#;
+    let drain = r#"
             let mut pending = worker.join().unwrap();
             while pending.len() > 0 decreases pending.len(), {
                 let completed = pending.pop().unwrap().join().unwrap();
                 drop(completed);
             }
-        }
-        }
     "#;
-    let drained =
-        crate::verify_one_file("worker_returns_unjoined_prefix", code.into(), &[]).unwrap_err();
-    crate::common::assert_vir_error_msg(drained, GLOBAL);
-    let leak = code.replace("while pending.len() > 0", "while pending.len() > 1");
-    let error = crate::verify_one_file("caller_leaves_returned_handle", leak, &[]).unwrap_err();
-    crate::common::assert_vir_error_msgs(
-        error,
-        &["cannot discard outstanding worker handles", GLOBAL],
+    let transferred = format!(
+        "let receiver = std::thread::spawn(move || {{ {drain} }}); let done = receiver.join().unwrap();"
     );
+    for (name, body) in [("parent", drain), ("receiver", transferred.as_str())] {
+        let source = code.replace("DRAIN", body);
+        let verified =
+            crate::verify_one_file(&format!("returned_population_{name}"), source.clone(), &[])
+                .unwrap_err();
+        crate::common::assert_vir_error_msg(verified, GLOBAL);
+        let leak = source.replace("while pending.len() > 0", "while pending.len() > 1");
+        let error = crate::verify_one_file(&format!("returned_population_{name}_lost"), leak, &[])
+            .unwrap_err();
+        crate::common::assert_vir_error_msgs(
+            error,
+            &["cannot discard outstanding worker handles", GLOBAL],
+        );
+    }
 }
 
 #[test]
@@ -545,6 +556,53 @@ fn a_returned_handle_keeps_its_own_worker_result() {
     let error =
         crate::verify_one_file("returned_handle_keeps_large_buffer", swapped, &[]).unwrap_err();
     crate::common::assert_vir_error_msgs(error, &["conditional memory budget exceeded", GLOBAL]);
+}
+
+#[test]
+fn transferring_two_producer_handles_preserves_each_publication() {
+    let code = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f() resources peak(memory) <= 8192 {
+            let mut small = Vec::with_capacity(1);
+            let child = std::thread::spawn(move || Vec::<u8>::with_capacity(64));
+            small.push(child);
+            let mut large = Vec::with_capacity(1);
+            let child = std::thread::spawn(move || Vec::<u8>::with_capacity(1024));
+            large.push(child);
+            let a = std::thread::spawn(move || -> (v: Vec<std::thread::JoinHandle<Vec<u8>>>)
+                ensures v.len() == 1
+            { small });
+            let b = std::thread::spawn(move || -> (v: Vec<std::thread::JoinHandle<Vec<u8>>>)
+                ensures v.len() == 1
+            { large });
+
+            let receiver = std::thread::spawn(move || {
+                let mut discarded = FIRST.join().unwrap();
+                let first = discarded.pop().unwrap().join().unwrap();
+                drop(first);
+                drop(discarded);
+                let mut retained = SECOND.join().unwrap();
+                let second = retained.pop().unwrap().join().unwrap();
+                drop(retained);
+                second
+            });
+            let buffer = receiver.join().unwrap();
+            assert(current(memory) <= 88);
+            drop(buffer);
+            assert(current(memory) <= 0);
+        }
+        }
+    "#;
+    for (first, second, expected) in
+        [("b", "a", vec![GLOBAL]), ("a", "b", vec!["conditional memory budget exceeded", GLOBAL])]
+    {
+        let source = code.replace("FIRST", first).replace("SECOND", second);
+        let error =
+            crate::verify_one_file(&format!("receive_population_from_{second}"), source, &[])
+                .unwrap_err();
+        crate::common::assert_vir_error_msgs(error, &expected);
+    }
 }
 
 #[test]

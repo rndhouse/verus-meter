@@ -110,7 +110,12 @@ fn executable_handle_drop_retains_the_worker_and_its_capture_allocation() {
         );
         let value = analysis.fresh_value(&spawn.span, &spawn.typ).unwrap();
         let owner = analysis.publish_owner(&spawn).unwrap().unwrap();
-        assert_reference(analysis, &owner, "worker_reference", &owner.worker.unwrap().descriptor());
+        assert_reference(
+            analysis,
+            &owner,
+            "worker_reference",
+            &owner.worker.as_ref().unwrap().actor.descriptor(),
+        );
         let name = VarIdent(Arc::new("handle".into()), VarIdentDisambiguate::RustcId(2));
         analysis.var_modes.insert(name.clone(), Mode::Exec);
         analysis.slots.insert(name.clone(), value);
@@ -658,7 +663,7 @@ fn spawn(
     );
     let value = analysis.fresh_value(&expression.span, &expression.typ).unwrap();
     let owner = analysis.publish_owner(&expression).unwrap().unwrap();
-    (owner.worker.unwrap(), value)
+    (owner.worker.unwrap().actor, value)
 }
 
 fn finish_join(analysis: &mut Analysis<'_>, id: WorkerId, value: Value) -> Storage {
@@ -950,7 +955,13 @@ fn detaching_and_waiting_do_not_release_running_storage() {
         assert!(analysis.heap.workers.take_result(id, None, &site).is_err());
         assert_eq!(analysis.storage.live(), 81);
         let snapshot = analysis.heap.workers.clone();
-        analysis.release_owner(Owner { worker: Some(id), ..Default::default() }, &span(12));
+        analysis.release_owner(
+            Owner {
+                worker: Some(super::FixedHandle { actor: id, publication: None }),
+                ..Default::default()
+            },
+            &span(12),
+        );
         assert_eq!(analysis.storage.live(), 81);
         assert!(!analysis.heap.workers.compatible(&snapshot));
         assert!(analysis.heap.workers.check_closed(&site).is_err());
