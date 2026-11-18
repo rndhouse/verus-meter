@@ -680,6 +680,7 @@ impl Analysis<'_> {
     pub(super) fn insert_child(
         &mut self,
         span: &Span,
+        operand: &Span,
         elements: &mut Elements,
         mut child: Owner,
         length: Expr,
@@ -706,6 +707,7 @@ impl Analysis<'_> {
             ));
         }
         if elements.precise {
+            let before = self.growth.before.get(&span.id).map_or(0, Vec::len);
             let records = self.snapshot_owner_metadata(span, &child);
             let path = self.metadata_path(span, length.clone())?;
             if let Some(id) = selection {
@@ -735,11 +737,21 @@ impl Analysis<'_> {
                     vec![elements.records.clone(), nested.clone(), contracts::literal(span, 0)],
                 ),
             ]);
-            self.growth.updates.entry(span.id).or_default().push(super::metadata::expr::assign(
+            let next = super::metadata::expr::assign(
                 span,
                 &elements.next_records,
                 super::metadata::expr::add(span, elements.records.clone(), nested),
-            ));
+            );
+            if references == References::None {
+                self.growth.updates.entry(span.id).or_default().push(next);
+            } else {
+                // An inline spawn, join or pop first produces the identity
+                // that this slot will contain. Observe it after that operand,
+                // before push commits the slot. Byte transitions stay at push.
+                let observations = self.growth.operand_observations.entry(operand.id).or_default();
+                observations.extend(self.growth.before.get_mut(&span.id).unwrap().drain(before..));
+                observations.push(next);
+            }
             self.growth.after.entry(span.id).or_default().push(super::metadata::expr::assign(
                 span,
                 &elements.records,

@@ -231,10 +231,8 @@ fn indexed_workers_can_own_every_alias_of_the_backing() {
             let root = std::sync::Arc::new(Vec::<u8>::with_capacity(19));
             let alias = root.clone();
             let mut handles = Vec::with_capacity(2);
-            let first = std::thread::spawn(move || alias);
-            handles.push(first);
-            let second = std::thread::spawn(move || root);
-            handles.push(second);
+            handles.push(std::thread::spawn(move || alias));
+            handles.push(std::thread::spawn(move || root));
             assert(current(memory) <= 101);
             let first = handles.pop().unwrap().join().unwrap();
             drop(first);

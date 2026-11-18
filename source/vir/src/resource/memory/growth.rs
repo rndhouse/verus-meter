@@ -138,6 +138,9 @@ pub(super) struct Growth {
     pub(super) before: HashMap<u64, Vec<Stmt>>,
     /// Snapshot the next state after checks, before executing the operation.
     pub(super) updates: HashMap<u64, Vec<Stmt>>,
+    /// Consumer observations that depend on a value just produced by this
+    /// operand. Run after its own commits and include them in argument effect checks.
+    pub(super) operand_observations: HashMap<u64, Vec<Stmt>>,
     /// Commit snapshots after the operation and its argument evaluation.
     pub(super) after: HashMap<u64, Vec<Stmt>>,
     /// Inductive resource invariants generated for each loop.
@@ -345,6 +348,7 @@ impl Growth {
         self.before
             .values()
             .chain(self.updates.values())
+            .chain(self.operand_observations.values())
             .flatten()
             .filter(|statement| {
                 if self.loop_proof_statements.contains_key(&(Arc::as_ptr(statement) as usize)) {

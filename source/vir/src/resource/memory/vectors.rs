@@ -350,7 +350,7 @@ impl Analysis<'_> {
                     .and_then(|owner| owner.at_mut(&path))
                     .and_then(|owner| owner.elements.take())
                     .ok_or_else(|| unsupported(&expr.span, "a collection without child state"))?;
-                self.insert_child(&expr.span, &mut elements, child, element_length)?;
+                self.insert_child(&expr.span, &args[1].span, &mut elements, child, element_length)?;
                 self.heap.root_mut(&name).unwrap().at_mut(&path).unwrap().elements = Some(elements);
                 self.record_element_updates(&expr.span)?;
             }

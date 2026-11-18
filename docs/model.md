@@ -282,7 +282,8 @@ retain one control block, one inline vector and one buffer at its reserved capac
 Payloads containing caller-owned storage or additional strong or worker handles
 require separate lifetime accounting. If the last fixed strong handle moves into
 a worker whose handle enters a collection, the outstanding workers retain the
-backing. Each join reconciles the aliases captured by that worker.
+backing. When a push evaluates a spawn directly, the slot records the handle
+produced by that spawn. Each join reconciles the aliases captured by that worker.
 When capture counts differ within one vector, each allocation's count is the
 sum over the occupied slots of the references captured by that slot's worker
 family. A pop transfers a handle out of the vector. Joining its worker and

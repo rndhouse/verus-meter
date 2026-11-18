@@ -248,9 +248,11 @@ pub(super) fn instrument(
                 return Ok(expr.clone());
             }
             let scheduled = growth.worker_joins.contains_key(&expr.span.id)
-                || [&growth.before, &growth.updates, &growth.after].iter().any(|schedule| {
-                    schedule.get(&expr.span.id).is_some_and(|actions| !actions.is_empty())
-                });
+                || [&growth.before, &growth.updates, &growth.after, &growth.operand_observations]
+                    .iter()
+                    .any(|schedule| {
+                        schedule.get(&expr.span.id).is_some_and(|actions| !actions.is_empty())
+                    });
             let repeated = !seen.expressions.insert(expr.span.id);
             let entry_snapshot = parameter_spans.contains(&expr.span.id)
                 && growth.before.get(&expr.span.id).is_some_and(|actions| !actions.is_empty());
@@ -358,9 +360,14 @@ pub(super) fn instrument(
             if let Some(updates) = growth.updates.get(&expr.span.id) {
                 checks.extend(updates.clone());
             }
-            if let Some(after) = growth.after.get(&expr.span.id) {
-                let statements = after
-                    .iter()
+            let observations = growth.operand_observations.get(&expr.span.id);
+            if growth.after.contains_key(&expr.span.id) || observations.is_some() {
+                let statements = growth
+                    .after
+                    .get(&expr.span.id)
+                    .into_iter()
+                    .flatten()
+                    .chain(observations.into_iter().flatten())
                     .map(|s| crate::ast_visitor::map_stmt_spans(s, &mut |span| fresh_span(span)))
                     .collect();
                 let effects = mk_block(&fresh_span(&expr.span), statements, None);
@@ -440,6 +447,7 @@ pub(super) fn instrument(
         ("snapshot", &growth.before, true),
         ("transition", &growth.updates, false),
         ("commit", &growth.after, false),
+        ("operand observation", &growth.operand_observations, false),
     ] {
         for (id, actions) in schedule {
             if let Some(action) = actions.first() {
@@ -614,7 +622,9 @@ mod tests {
     fn unmatched_proof_state_sites_are_rejected() {
         // These schedules were previously ignored when no AST site matched.
         // A future lowering mismatch must stop before publishing a proof body.
-        for phase in ["before", "updates", "after", "invariants", "ensures", "single", "exits"] {
+        for phase in
+            ["before", "updates", "after", "operand", "invariants", "ensures", "single", "exits"]
+        {
             let function = function(mk_block(&span(2), vec![], None));
             let mut growth = super::super::growth::Growth::default();
             let action = Spanned::new(
@@ -638,6 +648,9 @@ mod tests {
                 }
                 "after" => {
                     growth.after.insert(99, vec![action]);
+                }
+                "operand" => {
+                    growth.operand_observations.insert(99, vec![action]);
                 }
                 "invariants" => {
                     growth.loops.insert(99, vec![mk_bool(&span(99), false)]);
@@ -680,6 +693,7 @@ mod tests {
         growth.before.insert(3, vec![marker(10, 4)]);
         growth.updates.insert(3, vec![marker(20, 5)]);
         growth.after.insert(3, vec![marker(40, 6)]);
+        growth.operand_observations.insert(3, vec![marker(50, 7)]);
         let next_id = std::cell::Cell::new(100);
         let updated = instrument(
             &function,
@@ -699,13 +713,13 @@ mod tests {
         crate::ast_visitor::expr_visitor_check(updated.x.body.as_ref().unwrap(), &mut |_, expr| {
             if matches!(expr.x, ExprX::AssertAssume { is_assume: false, .. }) {
                 events.push("check".to_string());
-            } else if let Some(value @ (10 | 20 | 30 | 40)) = contracts::constant(expr) {
+            } else if let Some(value @ (10 | 20 | 30 | 40 | 50)) = contracts::constant(expr) {
                 events.push(value.to_string());
             }
             Ok::<(), VirErr>(())
         })
         .unwrap();
-        assert_eq!(events, ["10", "check", "20", "30", "40"]);
+        assert_eq!(events, ["10", "check", "20", "30", "40", "50"]);
     }
 
     #[test]
