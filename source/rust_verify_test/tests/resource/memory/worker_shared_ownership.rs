@@ -5,6 +5,109 @@ use super::support::rejects;
 const GLOBAL: &str = "checked worker effects still require global lifetime and interference proofs";
 
 #[test]
+fn a_strong_drop_cannot_discharge_an_outstanding_job_inside_the_payload() {
+    rejects(
+        "job_in_shared_payload",
+        r#"
+        fn f() resources peak(memory) <= 600 {
+            let job = vstd::thread::spawn(move || 3u64);
+            let root = std::sync::Arc::new(job);
+            let worker = vstd::thread::spawn(move || { drop(root); });
+            worker.join().unwrap();
+        }
+        "#,
+        "detached workers in a memory accounting scope",
+    );
+}
+
+#[test]
+fn last_strong_drop_in_a_worker_releases_the_backing_before_its_join() {
+    let program = r#"
+        use vstd::prelude::*;
+        verus! {
+        struct Pair { left: std::sync::Arc<Vec<u8>>, right: std::sync::Arc<Vec<u8>> }
+        fn f() resources peak(memory) <= 1024 {
+            let buf = std::sync::Arc::new(Vec::<u8>::with_capacity(64));
+            let alias = buf.clone();
+            let root = std::sync::Arc::new(Pair { left: buf, right: alias });
+            let peer = root.clone();
+            let first = vstd::thread::spawn(move || { drop(peer); });
+            let last = vstd::thread::spawn(move || {
+                first.join().unwrap();
+                if false { assert(current(memory) <= 0); }
+                assert(current(memory) <= 152);
+                drop(root);
+                assert(current(memory) <= 16);
+            });
+            last.join().unwrap();
+            assert(current(memory) <= 0);
+        }
+        }
+    "#;
+    // The receiving worker's 16-byte environment retains the 32-byte outer
+    // backing and one 104-byte inner backing through both fields. Its own
+    // joiner need not run for the source destructor to release both.
+    let valid = crate::verify_one_file("pre_join_final_drop", program.into(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+    let extra = program
+        .replace("let alias = buf.clone();", "let keep = buf.clone(); let alias = buf.clone();")
+        .replace("last.join().unwrap();", "last.join().unwrap(); drop(keep);");
+    for (name, code) in [
+        ("pre_join_one_byte_short", program.replace("<= 152", "<= 151")),
+        ("inner_alias_still_live", extra),
+        (
+            "peer_returns_alias",
+            program
+                .replace("move || { drop(peer); }", "move || peer")
+                .replace("first.join().unwrap();", "let keep = first.join().unwrap();")
+                .replace("<= 152", "<= 160")
+                .replace("<= 16);", "<= 24); drop(keep);"),
+        ),
+    ] {
+        let error = crate::verify_one_file(name, code, &[]).unwrap_err();
+        crate::common::assert_vir_error_msgs(
+            error,
+            &["at a worker checkpoint with shared backing", GLOBAL],
+        );
+    }
+}
+
+#[test]
+fn symbolic_shared_checkpoint_uses_the_workers_captured_condition() {
+    let code = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f(n: u16, small: bool) requires n <= 64, small ==> n <= 7,
+            resources peak(memory) <= n + 128,
+        {
+            let root = std::sync::Arc::new(Vec::<u8>::with_capacity(n as usize));
+            let h = vstd::thread::spawn(move || {
+                if small {
+                    assert(current(memory) <= 56);
+                } else {
+                    assert(current(memory) <= 113);
+                }
+                drop(root);
+                assert(current(memory) <= 9);
+            });
+            h.join().unwrap();
+        }
+        }
+    "#;
+    // The immutable flag, Arc handle, control block and Vec contribute 49
+    // bytes. At publication the path condition selects the applicable limit.
+    let valid = crate::verify_one_file("conditional_backing", code.into(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+    for (name, budget, short) in [("small", "<= 56", "<= 55"), ("large", "<= 113", "<= 112")] {
+        let error = crate::verify_one_file(name, code.replace(budget, short), &[]).unwrap_err();
+        crate::common::assert_vir_error_msgs(
+            error,
+            &["conditional memory budget exceeded at a worker checkpoint", GLOBAL],
+        );
+    }
+}
+
+#[test]
 fn indexed_workers_can_own_every_alias_of_the_backing() {
     let code = r#"
         use vstd::prelude::*;

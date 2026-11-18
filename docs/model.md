@@ -304,8 +304,22 @@ A worker receiving an entire vector of handles cannot drain indexed shared
 claims owned by its publisher. That transfer needs a summary of the references
 the receiving worker consumes or returns.
 
-The coordinator can keep the backing charged until collection when the worker
-may already have dropped its last handle. Reclamation at the actual destructor requires a proof across threads.
+At a worker's `current(memory)` checkpoint the verifier can reconcile directly
+identified strong handles with the publisher's ownership at spawn. A worker
+that joins a peer can use the peer's actual result to establish how many handles
+survived. When the last handle drops, fixed fields in the shared payload release
+their handles in turn. Multiple paths to the same allocation pay for it once.
+A publisher or sibling that can still hold an alias keeps the backing live in
+this check. The publisher's own continuation can still keep the backing charged
+until collection.
+
+The publisher checks backing sizes against its allocation state. A constant
+allowance proved there can be used at the worker's source checkpoint. Symbolic
+components from a single proof scope are checked where their variables are in
+scope. Publisher-side checks preserve branch conditions over immutable scalar
+captures. Other conditions can conservatively include a worker phase. General
+combinations of independently symbolic frames and backing costs need a
+relation between their scopes.
 
 The proof boundary separates construction, transport and byte accounting.
 Generated builders establish worker-description properties; verified one-step

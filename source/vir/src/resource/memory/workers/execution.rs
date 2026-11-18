@@ -65,6 +65,14 @@ pub(in super::super) struct Execution {
     pub(super) shared: super::super::shared::SharedRoots,
 }
 
+impl Execution {
+    pub(in super::super) fn shared_checkpoints(
+        &self,
+    ) -> &[super::super::shared::phases::Checkpoint] {
+        &self.effects.ownership.shared_checkpoints
+    }
+}
+
 impl Analysis<'_> {
     /// Keep the missing global proof explicit after checking actual source
     /// effects. Structurally valid local executions do not establish an envelope

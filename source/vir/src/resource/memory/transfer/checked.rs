@@ -222,6 +222,8 @@ pub(in super::super) enum Kind {
 
 #[derive(Default)]
 pub(in super::super) struct Checked {
+    /// Worker checkpoints whose incoming shared backing belongs to an enclosing actor.
+    pub(in super::super) shared_checkpoints: Vec<super::super::shared::phases::Checkpoint>,
     /// Retained workers require a complete occurrence transformation even when
     /// the enclosing function returns no owned value.
     pub(in super::super) retained_workers: bool,

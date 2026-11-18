@@ -355,6 +355,7 @@ impl Analysis<'_> {
         let handle = owner.worker.as_mut().expect("published actor");
         self.analyze_worker(handle.actor, &expr.span)?;
         handle.publication = self.observe_worker_publication(handle.actor, expr)?;
+        self.compose_shared_checkpoints(handle.actor, &expr.span)?;
         Ok(Some(owner))
     }
 

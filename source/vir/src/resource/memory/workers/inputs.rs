@@ -91,6 +91,20 @@ pub(in super::super) struct Input {
 }
 
 impl super::super::analysis::Analysis<'_> {
+    /// Express a worker path condition at publication using immutable scalar observations.
+    pub(in super::super) fn captured_checkpoint_guard(&self, condition: &Expr) -> Option<Expr> {
+        let snapshots: std::collections::HashMap<_, _> = self
+            .worker_inputs
+            .iter()
+            .filter(|input| self.stable_scalars.contains(&input.name))
+            .filter_map(|input| Some((input.name.clone(), input.scalar.clone()?)))
+            .collect();
+        let condition =
+            super::super::contracts::predicate(condition, &snapshots.keys().cloned().collect())
+                .ok()?;
+        Some(super::super::transfer::simplify::specialize(&condition, &snapshots))
+    }
+
     /// Compiler capture places use lexical source names. Nested construction
     /// must read the executing parent's views, never its caller's old slots.
     pub(in super::super) fn worker_capture_place(&self, place: Place) -> Result<Place, VirErr> {

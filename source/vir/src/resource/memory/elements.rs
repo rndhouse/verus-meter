@@ -588,7 +588,7 @@ impl Analysis<'_> {
         charges
     }
 
-    fn owner_upper(&self, span: &Span, owner: &Owner) -> BTreeMap<MemoryKind, Expr> {
+    pub(super) fn owner_upper(&self, span: &Span, owner: &Owner) -> BTreeMap<MemoryKind, Expr> {
         let mut charges = BTreeMap::new();
         owner.visit(&mut |node| {
             let amount = if let Some(id) = node.vector {

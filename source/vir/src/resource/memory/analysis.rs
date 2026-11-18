@@ -403,9 +403,11 @@ impl Analysis<'_> {
                 )?;
                 // Snapshot live charges here. Earlier peaks and later loop iterations
                 // must not inflate a query about this execution point.
+                let cost = self.storage.live_expression(&expr.span);
+                self.observe_shared_checkpoint(&expr.span, &cost, budget);
                 self.obligations.push(Obligation {
                     span: expr.span.clone(),
-                    cost: self.storage.live_expression(&expr.span),
+                    cost,
                     bound: super::footprint::MemoryBudget::total(super::contracts::literal(
                         &expr.span, budget,
                     )),

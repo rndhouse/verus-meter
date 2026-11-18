@@ -475,12 +475,14 @@ impl Analysis<'_> {
         self.discard(cond)?;
         let protection = self.heap.protect_branch(self.growth.loop_depth > 0);
         let entry = self.branch_state();
+        let first_checkpoint = self.transitions.shared_checkpoints.len();
         let mut result = if new_value {
             Some(self.produce(yes)?)
         } else {
             self.initialize_expr(yes)?;
             None
         };
+        let else_checkpoint = self.transitions.shared_checkpoints.len();
         let mut yes_state = self.branch_state();
         if !yes_state.reachable {
             result = None;
@@ -500,6 +502,7 @@ impl Analysis<'_> {
                 self.initialize_expr(no)?;
             }
         }
+        self.guard_shared_checkpoints(cond, first_checkpoint, else_checkpoint);
         if yes_state.reachable && self.flow.reachable {
             self.join_conditional_inputs(&expr.span, &mut yes_state)?;
             self.join_branch(&expr.span, &yes_state)?;

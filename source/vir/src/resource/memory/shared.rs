@@ -6,6 +6,8 @@
 //! count their captured handles while backing stays in the enclosing domain;
 //! their local final release cannot establish global reclamation.
 
+pub(super) mod phases;
+
 use super::{
     analysis::Analysis,
     elements::References,
@@ -343,10 +345,8 @@ impl SharedRoots {
                     let target = next.roots.get_mut(id).ok_or_else(|| {
                         unsupported(span, "worker result outside its original shared-root domain")
                     })?;
-                    target.strong = target
-                        .strong
-                        .checked_sub(*entry)
-                        .and_then(|remaining| remaining.checked_add(root.strong))
+                    target.strong = phases::Handles { entry: *entry, live: root.strong }
+                        .in_domain(target.strong)
                         .ok_or_else(|| {
                             unsupported(span, "inconsistent worker strong-reference transfer")
                         })?;
@@ -363,10 +363,8 @@ impl SharedRoots {
             let selection = next.selections.get_mut(id).ok_or_else(|| {
                 unsupported(span, "worker result outside its selected Arc lifetime")
             })?;
-            selection.handles = selection
-                .handles
-                .checked_sub(count)
-                .and_then(|n| n.checked_add(output.handles))
+            selection.handles = phases::Handles { entry: count, live: output.handles }
+                .in_domain(selection.handles)
                 .ok_or_else(|| unsupported(span, "inconsistent selected Arc transfer"))?;
             if selection.handles == 0 && selection.imported.is_none() {
                 released.selections.push(next.selections.remove(id).unwrap());
