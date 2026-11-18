@@ -1,5 +1,7 @@
 //! Shared allocation identity and lifetime across worker captures, joins and drops.
 
+mod occurrences;
+
 use super::support::rejects;
 
 const GLOBAL: &str = "checked worker effects still require global lifetime and interference proofs";

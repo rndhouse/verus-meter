@@ -166,7 +166,7 @@ impl Trace<'_> {
                 }
                 Some(Value::Owner(Node { origin: None, typ: value.typ.clone(), memory, minima }))
             }
-            Operation::StrongNew { payload, root } => {
+            Operation::StrongNew { payload, root, coordinates } => {
                 self.value(&payload)?;
                 // This is a private identity, not a parameter or a constant
                 // reusable across calls. The usual template-closure check rejects
@@ -180,6 +180,11 @@ impl Trace<'_> {
                 let actual = expr::path(span, [root.serial()]);
                 let identity = SpannedTyped::new(span, &actual.typ, ExprX::Var(name.clone()));
                 self.proof_values.insert(name, actual);
+                let mut identity = identity;
+                for (site, ordinal) in coordinates {
+                    identity = expr::push(span, identity, expr::integer(span, i128::from(site)));
+                    identity = expr::push(span, identity, self.occurrence_value(span, &ordinal));
+                }
                 let record = expr::operation(
                     span,
                     "shared_reference",
@@ -208,11 +213,34 @@ impl Trace<'_> {
                 self.effects.push(Effect::Read(location.0));
                 Some(Value::Scalar(property(span, node.memory, "length")))
             }
-            Operation::Push { receiver, child, element, grow, allocation, input } => {
+            Operation::Push {
+                receiver,
+                child,
+                carried_shared,
+                element,
+                grow,
+                allocation,
+                input,
+            } => {
                 let location = self.checked_location(&receiver)?;
                 let mut node = self.get(span, &location, &receiver.typ)?;
                 node.origin = None;
-                let child = self.value(&child)?;
+                let mut child = self.value(&child)?;
+                if let Some(bytes) = carried_shared.as_ref() {
+                    let Value::Owner(child) = &mut child else { return None };
+                    if self.layouts.join_handle(&child.typ).is_none() {
+                        return None;
+                    }
+                    let record = expr::lookup(span, child.memory.clone(), expr::path(span, []));
+                    let memory = expr::push(span, expr::empty(span, expr::record_type()), record);
+                    let bytes = contracts::add(
+                        span,
+                        self.occurrence_value(span, bytes),
+                        contracts::literal(span, verus_meter_model::completion_bytes(0)?),
+                    );
+                    let tag = expr::worker_charge(span, bytes);
+                    child.memory = expr::push(span, memory, tag);
+                }
                 if self.loop_tokens.is_some()
                     && self.loop_roots.as_ref().is_some_and(|roots| !roots.contains(&location.0))
                 {

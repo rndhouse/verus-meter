@@ -33,6 +33,16 @@ impl RootId {
         )
     }
 
+    fn occurrence(self, span: &Span, coordinates: &[(u64, Expr)]) -> Expr {
+        use super::metadata::expr;
+        let mut identity = expr::path(span, [self.serial()]);
+        for (site, ordinal) in coordinates {
+            identity = expr::push(span, identity, expr::integer(span, i128::from(*site)));
+            identity = expr::push(span, identity, ordinal.clone());
+        }
+        identity
+    }
+
     /// Stable identity encoded in an ownership descriptor, not an allocation cost.
     pub(super) fn serial(self) -> i128 {
         i128::from(self.0)
@@ -168,15 +178,6 @@ impl SharedRoots {
         let id = super::accounting::Accounting::fresh_allocation();
         self.selections.insert(id, SelectedAlias { identity, roots, handles: 1, imported: None });
         Owner { shared: Some(StrongLink::Selected(id)), ..Default::default() }
-    }
-
-    pub(super) fn link_record(&self, span: &Span, link: StrongLink) -> Expr {
-        match link {
-            StrongLink::Known(root) => root.record(span, super::metadata::expr::path(span, [])),
-            StrongLink::Selected(id) => {
-                selected_record(span, self.selections[&id].identity.clone())
-            }
-        }
     }
 
     /// A new execution of the same join site may overwrite its proof local
@@ -459,7 +460,7 @@ impl SharedRoots {
         self.selections.is_empty() && self.roots.values().all(|root| root.strong == 0)
     }
 
-    fn insert(&mut self, storage: Owner) -> Owner {
+    pub(super) fn insert(&mut self, storage: Owner) -> Owner {
         let id = RootId(super::accounting::Accounting::fresh_allocation());
         assert!(
             self.roots
@@ -614,6 +615,48 @@ impl SharedRoots {
 }
 
 impl Analysis<'_> {
+    pub(super) fn link_record(&self, span: &Span, link: StrongLink) -> Expr {
+        match link {
+            StrongLink::Known(root) => self.root_record(span, root),
+            StrongLink::Selected(id) => {
+                selected_record(span, self.heap.shared.selection(id).identity.clone())
+            }
+        }
+    }
+
+    pub(super) fn freeze_shared_identity(
+        &mut self,
+        span: &Span,
+        identity: Expr,
+        after: bool,
+    ) -> Expr {
+        use super::metadata::expr;
+        let (frozen, decl) = expr::local(
+            span,
+            "shared_visit",
+            identity.typ.clone(),
+            expr::path(span, []),
+            Mode::Spec,
+        );
+        self.growth.declarations.push(decl);
+        let schedule = if after { &mut self.growth.after } else { &mut self.growth.before };
+        schedule.entry(span.id).or_default().push(expr::assign(span, &frozen, identity));
+        frozen
+    }
+
+    pub(super) fn root_record(&self, span: &Span, root: RootId) -> Expr {
+        let path = super::metadata::expr::path(span, []);
+        let Some(identity) = self.growth.shared_occurrences.get(&root) else {
+            return root.record(span, path);
+        };
+        super::metadata::expr::operation(
+            span,
+            "shared_reference",
+            vec![path, identity.clone()],
+            super::metadata::expr::record_type(),
+        )
+    }
+
     /// A reviewed native dereference returns a view of existing backing. It
     /// neither clones a strong handle nor allocates or transfers the payload.
     pub(super) fn shared_borrow(&mut self, expr: &Expr) -> Result<bool, VirErr> {
@@ -713,17 +756,26 @@ impl Analysis<'_> {
                 );
             }
             let handle = self.heap.shared.insert(storage);
-            // Repeated allocations at this site need an occurrence coordinate
-            // before a transfer template can give their handles an identity.
-            if self.growth.loop_depth == 0 {
-                self.transitions.operation(
-                    &expr.span,
-                    super::transfer::checked::Operation::StrongNew {
-                        payload: argument.clone(),
-                        root: handle.shared.and_then(StrongLink::known).expect("new strong owner"),
-                    },
-                );
+            let root = handle.shared.and_then(StrongLink::known).expect("new strong owner");
+            let mut coordinates = self
+                .current_worker
+                .and_then(|actor| self.growth.worker_occurrences.get(&actor))
+                .cloned()
+                .unwrap_or_default();
+            coordinates.extend(self.local_occurrences(&expr.span)?);
+            if !coordinates.is_empty() {
+                let identity = root.occurrence(&expr.span, &coordinates);
+                let identity = self.freeze_shared_identity(&expr.span, identity, true);
+                self.growth.shared_occurrences.insert(root, identity);
             }
+            self.transitions.operation(
+                &expr.span,
+                super::transfer::checked::Operation::StrongNew {
+                    payload: argument.clone(),
+                    root,
+                    coordinates,
+                },
+            );
             return Ok(Some(handle));
         }
         let Some((name, path)) = super::paths::expr(argument, &expr.typ) else {

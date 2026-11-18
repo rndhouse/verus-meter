@@ -5,6 +5,26 @@ use super::*;
 use crate::resource::memory::concurrency::CaptureMode;
 
 impl Trace<'_> {
+    pub(super) fn occurrence_value(&self, span: &Span, value: &Expr) -> Expr {
+        // Progress inference already relates each erased ordinal to the bound
+        // visit index. Reuse that relation; a compiler visit is not a count.
+        let indices = self
+            .proof_values
+            .iter()
+            .filter_map(|(name, observation)| {
+                if let ExprX::Var(observed) = &observation.x {
+                    Some((
+                        observed.clone(),
+                        SpannedTyped::new(span, &observation.typ, ExprX::Var(name.clone())),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        substitute(value, &indices)
+    }
+
     pub(super) fn closure(
         &mut self,
         value: &Expr,
@@ -119,23 +139,7 @@ impl Trace<'_> {
         }
         let result = worker_description(span, result)
             .map_or_else(|| expr::empty(span, expr::record_type()), |node| node.memory);
-        // Progress inference already relates each erased ordinal to the bound
-        // visit index. Reuse that relation; a compiler visit is not a count.
-        let indices = self
-            .proof_values
-            .iter()
-            .filter_map(|(name, observation)| {
-                if let ExprX::Var(observed) = &observation.x {
-                    Some((
-                        observed.clone(),
-                        SpannedTyped::new(span, &observation.typ, ExprX::Var(name.clone())),
-                    ))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        let identity = substitute(&identity, &indices);
+        let identity = self.occurrence_value(span, &identity);
         let record = expr::operation(
             span,
             "worker_observation",
@@ -143,17 +147,9 @@ impl Trace<'_> {
             expr::record_type(),
         );
         let memory = expr::push(span, expr::empty(span, expr::record_type()), record);
-        let tag = expr::operation(
+        let tag = expr::worker_charge(
             span,
-            "allocated",
-            vec![
-                expr::path(span, [-1]),
-                expr::integer(span, 0),
-                contracts::literal(span, verus_meter_model::completion_bytes(0)?),
-                expr::integer(span, 0),
-                expr::integer(span, 0),
-            ],
-            expr::record_type(),
+            contracts::literal(span, verus_meter_model::completion_bytes(0)?),
         );
         let memory = expr::push(span, memory, tag);
         Some(Value::Owner(Node {
@@ -177,9 +173,13 @@ impl Trace<'_> {
             .is_some_and(|(typ, _)| matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _)))
         {
             let link = expr::lookup(span, result, expr::path(span, []));
-            let record = crate::resource::memory::shared::selected_record(
+            let identity =
+                expr::field(span, link, "reference_identity", expr::sequence_type(int_typ()));
+            let record = expr::operation(
                 span,
-                expr::shared_identity(span, link),
+                "shared_reference",
+                vec![expr::path(span, []), identity],
+                expr::record_type(),
             );
             expr::push(span, expr::empty(span, expr::record_type()), record)
         } else {

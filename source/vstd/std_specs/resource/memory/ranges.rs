@@ -514,6 +514,23 @@ pub proof fn take_children_facts(memory: Seq<Record>, length: int)
     }
 }
 
+/// Any sequence of source pops from a checked prefix preserves the same
+/// original forest. At length zero no worker or allocation record survives.
+pub proof fn successive_prefix_pops(memory: Seq<Record>)
+    requires
+        well_formed(memory),
+    ensures
+        forall|length: int, path: Seq<int>| path == seq![length - 1] ==> #[trigger]
+            without(take_children(memory, length), path) == take_children(memory, length - 1),
+        take_children(memory, 0) == Seq::<Record>::empty(),
+{
+    assert forall|length: int, path: Seq<int>| path == seq![length - 1] implies #[trigger]
+        without(take_children(memory, length), path) == take_children(memory, length - 1) by {
+        take_children_pop(memory, length);
+    }
+    take_children_facts(memory, 0);
+}
+
 /// Retaining a prefix of an empty forest yields no allocation descriptors.
 pub broadcast proof fn take_children_empty(length: int)
     ensures

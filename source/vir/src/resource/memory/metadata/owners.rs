@@ -41,7 +41,7 @@ impl Analysis<'_> {
         let record = if let Some(occurrence) = occurrence {
             occurrence.record.clone()
         } else if let Some(root) = owner.shared {
-            self.heap.shared.link_record(span, root)
+            self.link_record(span, root)
         } else if let Some(handle) = &owner.worker {
             if let Some(publication) = &handle.publication {
                 expr::lookup(span, publication.clone(), expr::path(span, []))
@@ -76,18 +76,7 @@ impl Analysis<'_> {
             vec![empty.clone(), record.clone(), expr::integer(span, 0)],
         ));
         if occurrence.is_some() {
-            let tag = expr::operation(
-                span,
-                "allocated",
-                vec![
-                    expr::path(span, [-1]),
-                    expr::integer(span, 0),
-                    bytes,
-                    expr::integer(span, 0),
-                    expr::integer(span, 0),
-                ],
-                expr::record_type(),
-            );
+            let tag = expr::worker_charge(span, bytes);
             proofs.push(expr::lemma(
                 span,
                 "cost_push",

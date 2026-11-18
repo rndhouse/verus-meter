@@ -310,6 +310,24 @@ impl Workers {
 }
 
 impl Analysis<'_> {
+    /// Coordinates shared by allocations and publications executed on this loop visit.
+    pub(super) fn local_occurrences(&self, span: &Span) -> Result<Vec<(u64, Expr)>, VirErr> {
+        self.growth
+            .loop_regions
+            .iter()
+            .map(|site| {
+                self.growth
+                    .loop_occurrences
+                    .get(site)
+                    .cloned()
+                    .map(|ordinal| (*site, ordinal))
+                    .ok_or_else(|| {
+                        unsupported(span, "an occurrence without a checked loop occurrence")
+                    })
+            })
+            .collect()
+    }
+
     /// Source-site identity plus actual enclosing iteration coordinates. A
     /// template's compiler key alone is never a dynamic publication count.
     pub(super) fn worker_identity(&self, span: &Span, actor: WorkerId) -> Expr {
@@ -411,24 +429,7 @@ impl Analysis<'_> {
         if let Some(environment) = &mut owner {
             self.delegate_captured_handles(&expr.span, environment)?;
         }
-        let local_occurrences = self
-            .growth
-            .loop_regions
-            .iter()
-            .map(|site| {
-                self.growth
-                    .loop_occurrences
-                    .get(site)
-                    .cloned()
-                    .map(|ordinal| (*site, ordinal))
-                    .ok_or_else(|| {
-                        unsupported(
-                            &expr.span,
-                            "worker publication without a checked loop occurrence",
-                        )
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let local_occurrences = self.local_occurrences(&expr.span)?;
         if let Some(environment) = value.environment {
             value.environment = Some(self.growth.environments.bind_occurrence(
                 environment,

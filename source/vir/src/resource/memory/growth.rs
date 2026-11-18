@@ -51,6 +51,11 @@ pub(super) struct Growth {
         std::collections::BTreeMap<super::shared::RootId, super::workers::Claims>,
     /// Body templates actually transported into runtime ownership forests.
     pub(super) retained_worker_families: std::collections::BTreeSet<super::workers::WorkerId>,
+    /// Full frozen identity of a constructed or collected allocation from a repeated site.
+    pub(super) shared_occurrences: std::collections::BTreeMap<super::shared::RootId, Expr>,
+    /// Families whose indexed handle transports the complete backing of a private occurrence.
+    pub(super) carried_shared:
+        std::collections::BTreeMap<super::workers::WorkerId, super::shared::RootId>,
     /// Actual back-edge ordinals for active source loops. Occurrence identities
     /// use these observations rather than the number of compiler visits.
     pub(super) loop_occurrences: std::collections::BTreeMap<crate::messages::AstId, Expr>,

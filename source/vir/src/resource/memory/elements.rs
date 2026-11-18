@@ -684,8 +684,9 @@ impl Analysis<'_> {
         elements: &mut Elements,
         mut child: Owner,
         length: Expr,
-    ) -> Result<(), VirErr> {
-        self.retain_worker_in_forest(&mut child, span)?;
+    ) -> Result<Option<Expr>, VirErr> {
+        let before = self.growth.before.get(&span.id).map_or(0, Vec::len);
+        let carried = self.retain_worker_in_forest(&mut child, span)?;
         self.merge_element_minima(span, elements, &child);
         let mut complete = child.inputs().is_empty();
         child.visit(&mut |node| {
@@ -707,7 +708,6 @@ impl Analysis<'_> {
             ));
         }
         if elements.precise {
-            let before = self.growth.before.get(&span.id).map_or(0, Vec::len);
             let records = self.snapshot_owner_metadata(span, &child);
             let path = self.metadata_path(span, length.clone())?;
             if let Some(id) = selection {
@@ -763,7 +763,8 @@ impl Analysis<'_> {
         elements.inputs.extend(child.inputs());
         self.release_owner_storage(child, span, false)?;
         self.add_element_bytes(span, elements, charges, &upper, Some(length))?;
-        self.assert_element_minima(span, elements, true)
+        self.assert_element_minima(span, elements, true)?;
+        Ok(carried)
     }
 
     /// Check the complete post-operation charge using pre-operation expressions,

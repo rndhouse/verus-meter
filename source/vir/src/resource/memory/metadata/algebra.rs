@@ -115,6 +115,7 @@ fn module(name: &str) -> Option<&'static str> {
         | "take_children_empty"
         | "take_children_facts"
         | "take_children_prefix"
+        | "successive_prefix_pops"
         | "take_children_pop"
         | "take_children_repeat"
         | "take_children_root"

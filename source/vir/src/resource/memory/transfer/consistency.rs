@@ -263,6 +263,7 @@ mod tests {
                         location: (parameter.x.name.clone(), vec![]),
                     },
                     child: expr::integer(&span, 0),
+                    carried_shared: None,
                     element: 4,
                     grow: false,
                     allocation: None,

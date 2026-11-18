@@ -30,6 +30,17 @@ pub(in super::super) fn integer(span: &Span, n: i128) -> Expr {
     SpannedTyped::new(span, &int_typ(), ExprX::Const(const_int_from_i128(n)))
 }
 
+/// A retained handle stores its completion tag and any exclusively transported
+/// backing in a charge record distinct from its immutable publication record.
+pub(in super::super) fn worker_charge(span: &Span, bytes: Expr) -> Expr {
+    operation(
+        span,
+        "allocated",
+        vec![path(span, [-1]), integer(span, 0), bytes, integer(span, 0), integer(span, 0)],
+        record_type(),
+    )
+}
+
 /// Freeze a scalar as erased observation data, without an allocation or strong
 /// link. Boolean captures use 0/1; integers retain their mathematical value.
 pub(in super::super) fn scalar_observation(span: &Span, path: Expr, value: Expr) -> Expr {

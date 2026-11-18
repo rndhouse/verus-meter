@@ -2,6 +2,7 @@
 //! Workers run independently. Until collection their checked entry claims reserve
 //! backing, including when a completed worker keeps the handle in its result.
 
+mod occurrences;
 mod slots;
 
 use super::super::{
@@ -168,7 +169,7 @@ impl Analysis<'_> {
         &mut self,
         actor: WorkerId,
         span: &Span,
-    ) -> Result<(), VirErr> {
+    ) -> Result<Option<Expr>, VirErr> {
         let worker = &self.heap.workers.records[&actor];
         let execution = worker.execution.as_ref().unwrap();
         let returned = execution.returned_arc_root();
@@ -181,12 +182,23 @@ impl Analysis<'_> {
                 "retained worker shared-reference populations without their conservation relation",
             ));
         }
-        for (root, count, backing) in self.heap.shared.index_imports(&worker.entry_shared, span)? {
+        let imports = self.heap.shared.index_imports(&worker.entry_shared, span)?;
+        let mut carried = None;
+        let single = imports.len() == 1;
+        for (root, count, backing) in imports {
             if !self.transitions.owns_fixed_root(root) {
-                return Err(unsupported(
-                    span,
-                    "indexed aliases of a repeated or imported allocation",
-                ));
+                if !single
+                    || self.heap.shared.has_strong(root)
+                    || !self.growth.shared_occurrences.contains_key(&root)
+                {
+                    return Err(unsupported(
+                        span,
+                        "indexed aliases of a repeated allocation with outstanding owners in another domain",
+                    ));
+                }
+                carried = Some(self.transfer_occurrence_backing(span, &backing)?);
+                self.growth.carried_shared.insert(actor, root);
+                continue;
             }
             let claims = match self.growth.indexed_shared.entry(root) {
                 std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
@@ -208,7 +220,7 @@ impl Analysis<'_> {
                 claims.defer_backing(&mut self.storage, span, proofs);
             }
         }
-        Ok(())
+        Ok(carried)
     }
 
     /// Indexed backing and outstanding claims still belong to the publisher.

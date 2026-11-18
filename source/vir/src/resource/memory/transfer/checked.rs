@@ -116,7 +116,7 @@ pub(in super::super) enum Operation {
     Box { payload: Expr, bytes: u64 },
     /// A body-local canonical allocation. Its identity may be used to prove
     /// internal observations but cannot escape as a caller-relative input.
-    StrongNew { payload: Expr, root: super::super::shared::RootId },
+    StrongNew { payload: Expr, root: super::super::shared::RootId, coordinates: Vec<(u64, Expr)> },
     /// Clone one strong link from a checked borrowed place. The backing stays
     /// in its canonical root and the receiver retains its own handle.
     StrongClone { receiver: Place },
@@ -143,6 +143,8 @@ pub(in super::super) enum Operation {
     Push {
         receiver: Place,
         child: Expr,
+        /// Complete shared backing transferred to this directly retained handle.
+        carried_shared: Option<Expr>,
         element: u64,
         /// False when entry reservations or section protection require spare room.
         grow: bool,
@@ -269,7 +271,7 @@ impl Checked {
     pub(in super::super) fn owns_fixed_root(&self, root: super::super::shared::RootId) -> bool {
         self.operations
             .values()
-            .any(|op| matches!(op, Operation::StrongNew { root: owned, .. } if *owned == root))
+            .any(|op| matches!(op, Operation::StrongNew { root: owned, coordinates, .. } if *owned == root && coordinates.is_empty()))
     }
 
     /// The input backing can be reused only while all changes to its indexed

@@ -71,7 +71,24 @@ impl Analysis<'_> {
         );
         let first = self.growth.before.get(&source.span.id).map_or(0, Vec::len);
         let delegated = occurrence.result_reservation;
-        let arc_roots = if delegated.is_none()
+        let carries =
+            occurrence.templates.iter().any(|id| self.growth.carried_shared.contains_key(id));
+        let carried_arc = carries && matches!(&*payload, TypX::Decorate(TypDecoration::Arc, _, _));
+        if carried_arc
+            && (delegated.is_some()
+                || !occurrence.templates.iter().all(|id| {
+                    self.growth.carried_shared.get(id).is_some_and(|root| {
+                        self.growth.worker_executions[id].returned_arc_root() == Some(*root)
+                    })
+                }))
+        {
+            return Err(unsupported(
+                &source.span,
+                "mixed worker results with different backing transport",
+            ));
+        }
+        let arc_roots = if !carried_arc
+            && delegated.is_none()
             && matches!(&*payload, TypX::Decorate(TypDecoration::Arc, _, _))
         {
             // Receiving a returned alias can reserve backing even when the join
@@ -81,7 +98,9 @@ impl Analysis<'_> {
         } else {
             None
         };
-        let result_owner = if let Some(id) = delegated {
+        let result_owner = if carried_arc {
+            Some(self.receive_carried_arc(&source.span, &owner, memory)?)
+        } else if let Some(id) = delegated {
             if !self.heap.workers.delegated.remove(&id) {
                 return Err(unsupported(
                     &source.span,
@@ -182,6 +201,14 @@ impl Analysis<'_> {
         if templates.is_empty() {
             return Err(unsupported(span, "a worker selection without a checked body family"));
         }
+        if (zero_charge || view != super::super::metadata::View::Complete)
+            && templates.iter().any(|actor| self.growth.carried_shared.contains_key(actor))
+        {
+            return Err(unsupported(
+                span,
+                "recovering transported shared backing from a partial handle view",
+            ));
+        }
         let memory = self.metadata_local(span, "selected_worker", memory);
         let record = expr::lookup(span, memory.clone(), expr::path(span, []));
         // Family membership includes validity of the checked result forest.
@@ -190,6 +217,7 @@ impl Analysis<'_> {
         let roots: BTreeSet<_> = templates
             .iter()
             .filter_map(|actor| self.growth.worker_executions[actor].returned_arc_root())
+            .filter(|root| !self.growth.shared_occurrences.contains_key(root))
             .collect();
         for root in roots {
             self.growth.before.entry(span.id).or_default().push(expr::lemma(
@@ -288,13 +316,10 @@ impl Analysis<'_> {
                         leaf,
                         expr::path(span, []),
                     ));
+                    let expected = self.root_record(span, root);
                     self.growth.before.entry(span.id).or_default().push(expr::check(
                         span,
-                        crate::ast_util::mk_eq(
-                            span,
-                            &actual,
-                            &root.record(span, expr::path(span, [])),
-                        ),
+                        crate::ast_util::mk_eq(span, &actual, &expected),
                         "cannot establish the shared allocation identity of the worker result",
                     ));
                 }
@@ -370,11 +395,16 @@ impl Analysis<'_> {
         &mut self,
         owner: &mut Owner,
         span: &Span,
-    ) -> Result<(), VirErr> {
+    ) -> Result<Option<Expr>, VirErr> {
         for child in owner.children.values_mut() {
-            self.retain_worker_in_forest(child, span)?;
+            if self.retain_worker_in_forest(child, span)?.is_some() {
+                return Err(unsupported(
+                    span,
+                    "transporting shared backing inside an aggregate worker slot",
+                ));
+            }
         }
-        let Some(handle) = &owner.worker else { return Ok(()) };
+        let Some(handle) = &owner.worker else { return Ok(None) };
         let actor = handle.actor;
         let memory = handle.publication.clone().ok_or_else(|| {
             unsupported(span, "a retained worker without its checked occurrence description")
@@ -389,11 +419,14 @@ impl Analysis<'_> {
         {
             return Err(unsupported(span, "transport of a consumed worker occurrence"));
         }
-        self.index_worker_claims(actor, span)?;
+        let carried = self.index_worker_claims(actor, span)?;
         let worker = self.heap.workers.records.remove(&actor).unwrap();
         self.storage.release_values(&[worker.completion].into());
         let tag =
             super::super::contracts::literal(span, verus_meter_model::completion_bytes(0).unwrap());
+        let tag = carried
+            .clone()
+            .map_or(tag.clone(), |bytes| super::super::contracts::add(span, tag, bytes));
         self.storage.set_allocation(worker.completion, owner.kind.clone(), tag.clone());
         owner.worker = None;
         owner.dynamic = Some(worker.completion);
@@ -408,6 +441,6 @@ impl Analysis<'_> {
         // collection, just as selections from a helper-produced forest do.
         self.growth.transferred_views = true;
         self.transitions.retained_workers = true;
-        Ok(())
+        Ok(carried)
     }
 }

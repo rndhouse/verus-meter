@@ -49,11 +49,7 @@ pub(in super::super) fn prefix(
                 last_block(span, args, proofs);
             }
             if let Some(args) = simplify::inspect::call(value, "take_children") {
-                emitter.lemma(span, "take_children_pop", args.as_ref().clone(), proofs);
-                // A source pop may consume the last remaining record after a
-                // partial drain. Expose the predecessor's empty-prefix case.
-                let previous = contracts::subtract(span, args[1].clone(), expr::integer(span, 1));
-                emitter.lemma(span, "take_children_facts", vec![args[0].clone(), previous], proofs);
+                emitter.lemma(span, "successive_prefix_pops", vec![args[0].clone()], proofs);
                 // A cut transports the original forest unchanged. Its pop law
                 // does not require expanding historical construction steps.
                 return VisitorControlFlow::Return;
