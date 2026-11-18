@@ -44,6 +44,7 @@ impl Analysis<'_> {
         let loop_scalars = self.stable_scalars.clone();
         let entry = self.storage.live();
         let ids = self.heap.vectors();
+        let shared_payloads = self.shared_payload_invariants(&expr.span);
         let metadata_facts = self.element_metadata_invariants(&expr.span);
         let precise_forests = !metadata_facts.is_empty();
         if precise_forests {
@@ -251,6 +252,7 @@ impl Analysis<'_> {
             }
         }
         let mut invariants = self.growth.invariants(&expr.span, &ids, &loop_scalars, &self.bound);
+        invariants.extend(shared_payloads);
         invariants.extend(
             self.element_metadata_invariants(&expr.span)
                 .into_iter()

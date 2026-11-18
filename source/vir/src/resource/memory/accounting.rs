@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 mod transport;
+pub(super) use transport::SharedBackingCharges;
 
 #[derive(Clone, Copy)]
 pub(super) enum CheckKind {
@@ -113,12 +114,45 @@ impl Peak {
 
 static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// A deferred allocation still has its original size on this accounting path.
+/// Only the charge visible at a memory observation depends on outstanding aliases.
+#[derive(Clone)]
+struct DynamicCharge {
+    kind: MemoryKind,
+    amount: Expr,
+    original: Option<Expr>,
+}
+
+impl DynamicCharge {
+    fn new(kind: MemoryKind, amount: Expr) -> Self {
+        Self { kind, amount, original: None }
+    }
+
+    /// A branch join must preserve what a later collection can restore, even
+    /// when two paths currently expose the same symbolic cost.
+    fn same_state(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && Arc::ptr_eq(&self.amount, &other.amount)
+            && self.original.as_ref().map(Arc::as_ptr) == other.original.as_ref().map(Arc::as_ptr)
+    }
+
+    fn defer(&mut self, span: &Span, empty: &Expr) {
+        let conditional = super::growth::select(
+            span,
+            empty.clone(),
+            contracts::literal(span, 0),
+            self.amount.clone(),
+        );
+        self.original = Some(std::mem::replace(&mut self.amount, conditional));
+    }
+}
+
 #[derive(Clone, Default)]
 pub(super) struct Live {
     fixed: std::collections::BTreeMap<MemoryKind, u64>,
     /// Allocation identity fixes symbolic addition order across verifier runs.
     /// Hash iteration changes SMT term shape and can amplify metadata matching.
-    dynamic: std::collections::BTreeMap<u64, Charge<Expr>>,
+    dynamic: std::collections::BTreeMap<u64, DynamicCharge>,
     values: HashMap<u64, Charge<u64>>,
     pub(super) inputs: HashSet<usize>,
 }
@@ -265,11 +299,9 @@ impl Accounting {
                     && p.values == path.values
                     && p.inputs == path.inputs
                     && p.dynamic.len() == path.dynamic.len()
-                    && p.dynamic.iter().all(|(id, e)| {
-                        path.dynamic
-                            .get(id)
-                            .is_some_and(|v| e.kind == v.kind && Arc::ptr_eq(&e.amount, &v.amount))
-                    })
+                    && p.dynamic
+                        .iter()
+                        .all(|(id, e)| path.dynamic.get(id).is_some_and(|v| e.same_state(v)))
             }) {
                 if self.paths.len() >= 1024 {
                     return Err(unsupported(
@@ -456,14 +488,17 @@ impl Accounting {
     /// Install a symbolic live charge without creating a new peak observation.
     pub(super) fn set_allocation(&mut self, id: u64, kind: MemoryKind, cost: Expr) {
         for path in &mut self.paths {
-            path.dynamic.insert(id, Charge { kind: kind.clone(), amount: cost.clone() });
+            path.dynamic.insert(id, DynamicCharge::new(kind.clone(), cost.clone()));
         }
     }
     pub(super) fn reserve_dynamic(&mut self, span: &Span, kind: MemoryKind, cost: Expr) {
         for path in &mut self.paths {
-            path.dynamic.insert(span.id, Charge { kind: kind.clone(), amount: cost.clone() });
+            path.dynamic.insert(span.id, DynamicCharge::new(kind.clone(), cost.clone()));
         }
         self.record_live(span).expect("dynamic reservation preserves fixed storage");
+    }
+    pub(super) fn contains_allocation(&self, id: u64) -> bool {
+        self.paths.iter().all(|path| path.dynamic.contains_key(&id))
     }
     pub(super) fn dynamic_cost(&self, span: &Span, id: u64) -> Expr {
         self.paths
@@ -620,7 +655,7 @@ mod tests {
                     VarIdentDisambiguate::VirTemp(id),
                 );
                 let (amount, _) = super::super::symbolic::integer_local(&span, name);
-                live.dynamic.insert(id, Charge { kind: MemoryKind::host_heap(), amount });
+                live.dynamic.insert(id, DynamicCharge::new(MemoryKind::host_heap(), amount));
             }
             Accounting::path_expression(&live, &span).total()
         };

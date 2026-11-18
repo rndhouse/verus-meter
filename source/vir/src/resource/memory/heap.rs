@@ -628,7 +628,7 @@ impl Analysis<'_> {
         proofs: &mut Vec<Stmt>,
     ) {
         if let Some(claims) = self.growth.indexed_shared.get(&root) {
-            claims.defer_backing(&mut self.storage, &backing, span);
+            claims.defer_backing(&mut self.storage, span, proofs);
         } else {
             self.destroy_owner(backing, span, true, proofs);
         }

@@ -87,6 +87,37 @@ impl PopulationPrefix {
 }
 
 impl crate::resource::memory::analysis::Analysis<'_> {
+    /// A payload can outlive all named vector bindings. Carry an unchanged
+    /// buffer's constructor size through isolated loop proofs while its charge
+    /// is present, including when only outstanding workers retain the root.
+    pub(super) fn shared_payload_invariants(&self, span: &Span) -> Vec<Expr> {
+        let mut vectors = std::collections::BTreeSet::new();
+        for backing in
+            self.heap.shared.owned().chain(self.growth.indexed_shared.values().map(|c| &c.backing))
+        {
+            backing.visit(&mut |node| vectors.extend(node.vector));
+        }
+        vectors
+            .into_iter()
+            .filter_map(|id| {
+                let backing = &self.growth.vectors[id].backing;
+                if backing.changed || !self.storage.contains_allocation(backing.id) {
+                    return None;
+                }
+                crate::ast_visitor::expr_visitor_check(&backing.initial_bytes, &mut |_, value| {
+                    if let ExprX::Var(name) = &value.x
+                        && !(self.stable_scalars.contains(name) && self.slots.contains_key(name))
+                    {
+                        return Err(());
+                    }
+                    Ok(())
+                })
+                .ok()?;
+                Some(mk_eq(span, &backing.bytes, &backing.initial_bytes))
+            })
+            .collect()
+    }
+
     /// Keep claims outside the loop's handle vectors as the entry offset.
     /// Verus checks this equality on the actual entry and back edges; lengths
     /// cannot stand in for membership when the possible worker weights differ.

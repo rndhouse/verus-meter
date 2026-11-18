@@ -3,8 +3,13 @@
 //! backing, including when a completed worker keeps the handle in its result.
 
 use super::super::{
-    accounting::Accounting, analysis::Analysis, contracts, growth::select, heap::Owner,
-    metadata::expr, model::unsupported,
+    accounting::{Accounting, SharedBackingCharges},
+    analysis::Analysis,
+    contracts,
+    growth::select,
+    heap::Owner,
+    metadata::expr,
+    model::unsupported,
 };
 use super::{WorkerId, populations::Occurrence};
 use crate::{ast::*, messages::Span};
@@ -16,26 +21,31 @@ use std::collections::BTreeMap;
 pub(in super::super) struct Claims {
     /// Sum of unreconciled entry aliases, independent of which workers have finished.
     pub(in super::super) pending: Expr,
-    /// The same flat allocation moves between fixed and conditional accounting.
-    backing: Owner,
-    /// Stable identity of the conditional byte charge across repeated joins.
-    charge: u64,
+    /// The same ownership tree moves between fixed and conditional accounting.
+    pub(in super::super) backing: Owner,
+    /// Fixed and symbolic charges reached by this immutable payload.
+    charges: SharedBackingCharges,
     /// Number of handles actually moved into one occurrence of this family.
     weights: BTreeMap<WorkerId, u64>,
 }
 
 impl Claims {
-    /// Keep one charge for the backing while any indexed claim is pending.
+    /// A final directly tracked drop can make the backing conditional only if
+    /// this accounting domain still has every charge of the payload.
     pub(in super::super) fn defer_backing(
         &self,
         storage: &mut Accounting,
-        backing: &Owner,
         span: &Span,
+        proofs: &mut Vec<Stmt>,
     ) {
-        let zero = expr::integer(span, 0);
-        let empty = crate::ast_util::mk_eq(span, &self.pending, &zero);
-        let bytes = select(span, empty, zero, contracts::literal(span, backing.bytes));
-        storage.defer_shared_backing(self.charge, backing, bytes);
+        let empty = crate::ast_util::mk_eq(span, &self.pending, &expr::integer(span, 0));
+        if !self.charges.defer(storage, empty, span) {
+            proofs.push(expr::check(
+                span,
+                crate::ast_util::mk_bool(span, false),
+                "cannot locate the shared payload's live backing charges",
+            ));
+        }
     }
 
     /// A collection length describes strong claims only if all of its possible
@@ -120,18 +130,17 @@ impl Analysis<'_> {
                     "indexed aliases of a repeated or imported allocation",
                 ));
             }
-            let claims = self.growth.indexed_shared.entry(root).or_insert_with(|| {
-                let zero = expr::integer(span, 0);
-                let (pending, decl) =
-                    expr::local(span, "outstanding_strong", zero.typ.clone(), zero, Mode::Spec);
-                self.growth.declarations.push(decl);
-                Claims {
-                    pending,
-                    backing,
-                    charge: Accounting::fresh_allocation(),
-                    weights: BTreeMap::new(),
+            let claims = match self.growth.indexed_shared.entry(root) {
+                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    let charges = SharedBackingCharges::new(&backing, &self.growth.elements, span)?;
+                    let zero = expr::integer(span, 0);
+                    let (pending, decl) =
+                        expr::local(span, "outstanding_strong", zero.typ.clone(), zero, Mode::Spec);
+                    self.growth.declarations.push(decl);
+                    entry.insert(Claims { pending, backing, charges, weights: BTreeMap::new() })
                 }
-            });
+            };
             claims.weights.insert(actor, count);
             let next =
                 contracts::add(span, claims.pending.clone(), contracts::literal(span, count));
@@ -168,7 +177,7 @@ impl Analysis<'_> {
             "cannot establish the selected result's canonical shared allocation",
         ));
         if !self.heap.shared.has_strong(root) {
-            self.storage.receive_shared_backing(span, claims.charge, &claims.backing)?;
+            claims.charges.receive(&mut self.storage, span)?;
         }
         self.heap.shared.receive_indexed(root, &claims.backing, span)
     }

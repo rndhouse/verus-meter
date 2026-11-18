@@ -155,17 +155,22 @@ impl SharedRoots {
         Ok(())
     }
 
+    /// Canonical payloads in this domain. Imported handles retain their shape
+    /// and byte facts in the publishing domain.
+    pub(super) fn owned(&self) -> impl Iterator<Item = &Owner> {
+        self.roots.values().filter_map(|root| match &root.storage {
+            Backing::Owned(owner) => Some(owner.as_ref()),
+            Backing::Imported { .. } => None,
+        })
+    }
+
     /// Separate backing transferred out of this actor, excluding imported roots.
     /// This tree is an accounting transport descriptor, never a source value.
     pub(super) fn owned_backing(&self) -> Owner {
         Owner {
             children: self
-                .roots
-                .values()
-                .filter_map(|root| match &root.storage {
-                    Backing::Owned(owner) => Some((**owner).clone()),
-                    Backing::Imported { .. } => None,
-                })
+                .owned()
+                .cloned()
                 .enumerate()
                 .map(|(index, owner)| (OwnerSlot::Capture(index), owner))
                 .collect(),
@@ -269,12 +274,12 @@ impl SharedRoots {
             let supported = self.roots.get(id).is_some_and(|root| {
                 root.strong > imported.strong
                     && matches!(imported.storage, Backing::Imported { entry } if entry == imported.strong)
-                    && matches!(&root.storage, Backing::Owned(owner) if owner.children.is_empty())
+                    && matches!(&root.storage, Backing::Owned(_))
             });
             if !supported {
                 return Err(unsupported(
                     span,
-                    "indexed worker aliases without a remaining owner of flat shared backing",
+                    "indexed worker aliases without a remaining owner of the canonical shared backing",
                 ));
             }
             let Backing::Owned(backing) = &self.roots[id].storage else { unreachable!() };

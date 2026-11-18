@@ -211,9 +211,13 @@ global concurrency proof is still required.
 
 When workers capture clones of a coordinator's `Arc`, the local analysis can
 reserve one backing allocation across a symbolic number of outstanding workers.
-It supports flat payloads allocated outside repeated coordinator loops. Another
-fixed strong handle must still exist when each worker handle enters the collection.
-The parent may then drop its last handle before joining. Each join reconciles the
+The allocation must originate outside repeated coordinator loops. Its charge includes
+locally owned payload storage. For example, workers sharing an `Arc<Vec<u8>>`
+retain one control block, one inline vector and one buffer at its reserved capacity.
+Payloads containing caller-owned storage or additional strong or worker handles
+require separate lifetime accounting. Another fixed strong handle must exist when
+each worker handle enters the collection. The coordinator may then drop its own
+handle before joining. Each join reconciles the
 aliases captured by that worker. A directly returned `Arc` keeps its backing live
 in the caller when the worker families selectable at that join share a proven
 root identity. The coordinator reserves backing until collection if it cannot

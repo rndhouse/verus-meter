@@ -928,6 +928,69 @@ fn the_final_indexed_result_keeps_its_arc_after_all_joins() {
 }
 
 #[test]
+fn indexed_arc_keeps_its_vector_buffer_through_the_final_join() {
+    let code = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f(n: u16, b: u16) resources peak(memory) <= n * 9 + b + 160 {
+            let root = std::sync::Arc::new(Vec::<u8>::with_capacity(b as usize));
+            let mut handles = Vec::with_capacity(n as usize);
+            let mut i = 0u16;
+            while i < n invariant i <= n, handles.len() == i, decreases n - i, {
+                let alias = root.clone();
+                let worker = std::thread::spawn(move || alias);
+                handles.push(worker);
+                i += 1;
+            }
+            drop(root);
+            if n == 2 && b == 19 { assert(current(memory) <= 107); }
+            if n == 0 {
+                assert(current(memory) <= 30);
+                return;
+            }
+            while handles.len() > 1 invariant 1 <= handles.len() <= n, decreases handles.len(), {
+                let h = handles.pop().unwrap();
+                let alias = h.join().unwrap(); drop(alias);
+            }
+            let last = handles.pop().unwrap().join().unwrap();
+            drop(handles);
+            if b == 19 { assert(current(memory) <= 73); }
+            drop(last);
+            assert(current(memory) <= 6);
+        }
+        }
+    "#;
+    let valid = crate::verify_one_file("indexed_arc_buffer", code.to_string(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+
+    // At b = 19 the shared allocation contributes 16 control + 24 inline + 19
+    // buffer bytes. Two pending workers and the final joined alias each retain it.
+    for (name, exact, short) in [("pending", "<= 107", "<= 106"), ("joined", "<= 73", "<= 72")] {
+        let error = crate::verify_one_file(name, code.replace(exact, short), &[]).unwrap_err();
+        crate::common::assert_vir_error_msgs(
+            error,
+            &["conditional memory budget exceeded", GLOBAL],
+        );
+    }
+
+    // Incoming storage and nested strong references have lifetimes of their own.
+    let buffer = "Vec::<u8>::with_capacity(b as usize)";
+    for (name, program) in [
+        ("nested_arc", code.replace(buffer, &format!("std::sync::Arc::new({buffer})"))),
+        (
+            "incoming_buffer",
+            code.replace("b: u16)", "b: u16, buf: Vec<u8>)").replace(buffer, "buf"),
+        ),
+    ] {
+        let error = crate::verify_one_file(name, program, &[]).unwrap_err();
+        crate::common::assert_vir_error_msg(
+            error,
+            "indexed Arc payload with incoming storage or nested reference lifetimes",
+        );
+    }
+}
+
+#[test]
 fn worker_result_fields_preserve_distinct_shared_roots() {
     let code = r#"
         use vstd::prelude::*;
