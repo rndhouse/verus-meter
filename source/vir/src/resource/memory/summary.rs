@@ -99,3 +99,10 @@ pub(super) struct FunctionSummary {
     /// Simultaneous costs and input/result lifetimes needed to compose a call.
     pub(super) profiles: Vec<super::lifetime::Profile>,
 }
+
+impl FunctionSummary {
+    /// The returned vector carries this parameter's outstanding handles.
+    pub(super) fn worker_parameter(&self) -> Option<usize> {
+        self.effects.as_ref()?.ownership.worker_parameter.map(|(index, _)| index)
+    }
+}

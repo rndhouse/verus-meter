@@ -386,7 +386,7 @@ pub fn needs_cleanup(
     let empty = HashMap::new();
     let modes = modes.map(|m| &m.var_modes).unwrap_or(&empty);
     super::closures::needs_evidence(function, modes)
-        || reject_unaccounted_inner(function, modes, types, datatypes, false).is_err()
+        || reject_unaccounted_inner(function, modes, types, datatypes, false, false).is_err()
 }
 
 /// Distinguish executable roots from tracked protocol witnesses and specification
@@ -413,8 +413,9 @@ pub(super) fn reject_unaccounted(
     modes: &HashMap<VarIdent, crate::ast::Mode>,
     types: &LibraryTypes,
     datatypes: &[crate::ast::Datatype],
+    worker_parameter: bool,
 ) -> Result<(), crate::ast::VirErr> {
-    reject_unaccounted_inner(function, modes, types, datatypes, true)
+    reject_unaccounted_inner(function, modes, types, datatypes, true, worker_parameter)
 }
 
 /// Evidence collection still observes supported shared operations. Their logical
@@ -426,6 +427,7 @@ fn reject_unaccounted_inner(
     types: &LibraryTypes,
     datatypes: &[crate::ast::Datatype],
     shared_accounted: bool,
+    worker_parameter: bool,
 ) -> Result<(), crate::ast::VirErr> {
     use crate::ast::*;
     use crate::ast_visitor::{AstVisitor, NoScoper, Walk};
@@ -441,6 +443,7 @@ fn reject_unaccounted_inner(
         types: &'a LibraryTypes,
         datatypes: HashMap<crate::ast::Dt, &'a crate::ast::Datatype>,
         shared: SharedCheck,
+        worker_parameter: bool,
     }
     impl Check<'_> {
         fn runtime_type(&self, typ: &Typ, span: &crate::messages::Span) -> Result<(), VirErr> {
@@ -476,7 +479,14 @@ fn reject_unaccounted_inner(
                     self.runtime_type_inner(inner, span, visiting)?;
                 }
                 TypX::Datatype(name, args, _) => {
-                    if self.types.get(name).is_some_and(|kind| *kind != LibraryType::Result) {
+                    if self.types.get(name).is_some_and(|kind| {
+                        *kind != LibraryType::Result
+                            && !(self.worker_parameter
+                                && matches!(
+                                    kind,
+                                    LibraryType::StdJoinHandle | LibraryType::VstdJoinHandle
+                                ))
+                    }) {
                         return Err(super::model::unsupported(
                             span,
                             "runtime synchronization values before concurrent lifetime accounting is available",
@@ -538,12 +548,13 @@ fn reject_unaccounted_inner(
                 && let Some(ResourceIntrinsic::Concurrency(operation)) = attrs.resource_intrinsic
             {
                 if self.shared != SharedCheck::Local
-                    || !matches!(
-                        operation,
-                        super::concurrency::Operation::ArcNew
-                            | super::concurrency::Operation::ArcClone
-                            | super::concurrency::Operation::ArcBorrow
-                    )
+                    || !(self.worker_parameter && operation.joins())
+                        && !matches!(
+                            operation,
+                            super::concurrency::Operation::ArcNew
+                                | super::concurrency::Operation::ArcClone
+                                | super::concurrency::Operation::ArcBorrow
+                        )
                 {
                     return Err(super::model::unsupported(
                         &expr.span,
@@ -573,6 +584,7 @@ fn reject_unaccounted_inner(
         modes,
         types,
         datatypes: datatypes.iter().map(|d| (d.x.name.clone(), d)).collect(),
+        worker_parameter,
         shared: if shared_accounted { SharedCheck::Input } else { SharedCheck::Evidence },
     };
     for parameter in function.x.params.iter().filter(|p| p.x.mode == Mode::Exec) {

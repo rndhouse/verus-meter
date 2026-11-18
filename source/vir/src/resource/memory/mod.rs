@@ -115,6 +115,9 @@ pub fn check_crate(
     let function_map = functions.iter().map(|f| (f.x.name.clone(), f.clone())).collect();
     let graph = call_graph::CallGraph::new(&function_map, modes, &synchronization.concurrency)?;
     let ordered = graph.order(functions)?;
+    let layouts = layout::Layouts::new(datatypes, global_allocator, vector, option)
+        .with_synchronization_types(&synchronization.types)
+        .with_closures(&synchronization.concurrency);
     for function in functions.iter().filter(|f| f.x.attrs.resource_contract.is_some()) {
         let empty = HashMap::new();
         let resolution = modes.get(&function.x.name).map(Arc::as_ref);
@@ -133,13 +136,11 @@ pub fn check_crate(
                 modes,
                 &synchronization.types,
                 datatypes,
+                layouts.worker_parameter(function).is_some(),
             )?;
         }
         concurrency::sites::validate(function, modes, functions, synchronization)?;
     }
-    let layouts = layout::Layouts::new(datatypes, global_allocator, vector, option)
-        .with_synchronization_types(&synchronization.types)
-        .with_closures(&synchronization.concurrency);
     let budgets = budget::resolve(functions, &function_map, &layouts)?;
     let mut reports = Vec::new();
     let mut summaries = HashMap::new();

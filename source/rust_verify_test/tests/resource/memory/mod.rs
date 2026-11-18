@@ -56,6 +56,7 @@ mod synchronization;
 mod transformed_loops;
 mod vectors;
 mod worker_execution;
+mod worker_helpers;
 mod worker_populations;
 
 mod support;

@@ -16,7 +16,8 @@ pub(super) struct FunctionAnalysis {
     /// Call-composition facts published only after body accounting succeeds.
     pub(super) summary: Option<super::summary::FunctionSummary>,
     /// Local obligations can be checked while a required global proof is still
-    /// unavailable. Such functions cannot publish a callable memory summary.
+    /// unavailable. A helper can expose its local ownership transformation
+    /// to checked callers while this error prevents crate verification.
     pub(super) incomplete: Option<VirErr>,
     /// Executed direct call sites cross-checked against the canonical graph.
     pub(super) calls: Vec<(Fun, Span)>,
@@ -685,6 +686,7 @@ pub(super) fn check(
         &modes.var_modes,
     )?;
     let mut input_vectors = HashMap::new();
+    let worker_parameter = layouts.worker_parameter(function);
     for (index, param) in f.params.iter().enumerate() {
         analysis.var_modes.insert(param.x.name.clone(), param.x.mode);
         if param.x.mode == Mode::Exec {
@@ -704,7 +706,12 @@ pub(super) fn check(
                     &param.x.name,
                     &mut vec![],
                     &capacities,
+                    worker_parameter == Some(index),
                 )?;
+                if worker_parameter == Some(index) {
+                    analysis.transitions.worker_parameter =
+                        Some((index, owner.vector.expect("worker vector input")));
+                }
                 owner.visit_paths(&mut vec![], &mut |path, node| {
                     if let Some(id) = node.vector {
                         input_vectors.insert((index, path.clone()), id);
@@ -747,6 +754,7 @@ pub(super) fn check(
         return Err(unsupported(&function.span, "unclosed compiler receiver-temporary scopes"));
     }
     analysis.heap.workers.check_closed(&function.span)?;
+    analysis.check_worker_parameter_result(&function.span)?;
     if let Some(incomplete) = analysis.check_worker_domain(&function.span)? {
         if analysis.transitions.retained_workers {
             // The global envelope remains unavailable, but population induction
@@ -938,7 +946,8 @@ pub(super) fn check(
     Ok(Some(FunctionAnalysis {
         report,
         summary: Some(summary),
-        incomplete: None,
+        incomplete: worker_parameter
+            .map(|_| super::workers::parameter_domain_error(&function.span)),
         calls: analysis.calls,
         symbolic_bound,
         obligations: analysis.obligations,

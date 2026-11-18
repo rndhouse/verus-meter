@@ -122,6 +122,8 @@ pub(in super::super) enum Operation {
     },
     /// Collect exactly the runtime handle consumed by the source operation.
     WorkerJoin { source: Expr },
+    /// Consume a helper input handle without inferring its completion outcome.
+    ParameterJoin { source: Expr },
     /// Initialize checked child slots. The tag distinguishes optional payloads.
     Aggregate { fields: Vec<(Expr, Option<OwnerSlot>)>, tag: u64 },
     /// Append one value, retaining its complete forest beneath the next index.
@@ -210,6 +212,9 @@ pub(in super::super) struct Checked {
     /// Retained workers require a complete occurrence transformation even when
     /// the enclosing function returns no owned value.
     pub(in super::super) retained_workers: bool,
+    /// The owned vector passed through this helper and its original backing state.
+    /// Each checked extraction splits the caller's input lifetimes.
+    pub(in super::super) worker_parameter: Option<(usize, usize)>,
     /// Exit destinations accepted by lexical lifetime accounting.
     pub(in super::super) exits: HashMap<u64, crate::resource::memory::control::Target>,
     /// Shared loop structure and boundaries, published after body accounting.
@@ -245,6 +250,23 @@ pub(in super::super) struct Checked {
 }
 
 impl Checked {
+    /// The input backing can be reused only while all changes to its indexed
+    /// contents are checked removals. Local moves preserve the storage identity.
+    pub(in super::super) fn forwards_worker_vector(&self, helper: impl Fn(&Fun) -> bool) -> bool {
+        self.assignments.values().all(|assignment| assignment.destination.location.1.is_empty())
+            && self.operations.values().all(|op| {
+                matches!(
+                    op,
+                    Operation::Length { .. }
+                        | Operation::Remove { input: Some(_), .. }
+                        | Operation::Unwrap { .. }
+                        | Operation::Drop { .. }
+                        | Operation::ParameterJoin { .. }
+                        | Operation::Evaluate { .. }
+                ) || matches!(op, Operation::Call { target, .. } if helper(target))
+            })
+    }
+
     /// Read the semantic operation already accepted by body accounting.
     pub(in super::super) fn operation_at(&self, span: &Span) -> Option<&Operation> {
         self.operations.get(&span.id)

@@ -91,6 +91,17 @@ impl Trace<'_> {
                 self.publish_worker(value, source, identity, inputs, populations, result)
             }
             Operation::WorkerJoin { source } => self.join_worker(value, source),
+            Operation::ParameterJoin { source } => {
+                let Value::Owner(_) = self.value(&source)? else { return None };
+                // Both outcomes own only their inline slots. No success tag,
+                // worker result or scalar observation has been established.
+                Some(Value::Owner(Node {
+                    origin: None,
+                    typ: value.typ.clone(),
+                    memory: expr::empty(span, expr::record_type()),
+                    minima: Minima::new(),
+                }))
+            }
             Operation::Box { payload, bytes } => {
                 let child = self.value(&payload)?;
                 if self.loop_tokens.is_some() {

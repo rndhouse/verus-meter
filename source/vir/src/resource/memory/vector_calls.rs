@@ -91,6 +91,7 @@ impl Analysis<'_> {
                 }
             }
         }
+        let worker_parameter = summary.worker_parameter();
         for (index, child) in &summary.vectors.removals.clone() {
             let (name, mut path) =
                 super::paths::expr(&args[*index], &callee.x.params[*index].x.typ).ok_or_else(
@@ -98,6 +99,10 @@ impl Analysis<'_> {
                 )?;
             path.extend(child.iter().cloned());
             self.forget_collection_length(&name, &path);
+            // The checked worker transformation installs the exact survivors.
+            if worker_parameter == Some(*index) && child.is_empty() {
+                continue;
+            }
             if let Some(elements) =
                 self.heap.root_mut(&name).unwrap().at_mut(&path).unwrap().elements.as_mut()
             {

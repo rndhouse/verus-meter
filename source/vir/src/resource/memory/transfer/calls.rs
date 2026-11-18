@@ -393,6 +393,45 @@ impl Analysis<'_> {
         }
     }
 
+    /// Keep the original backing alive across a call that returns its input vector.
+    fn take_worker_parameter(
+        &self,
+        span: &Span,
+        function: &Function,
+        transferred: &mut [Option<Owner>],
+    ) -> Result<Option<Owner>, VirErr> {
+        let summary = &self.summaries[&function.x.name];
+        let Some(index) = summary.worker_parameter() else { return Ok(None) };
+        let id = summary
+            .input_paths
+            .iter()
+            .position(|(i, path)| *i == index && path.is_empty())
+            .ok_or_else(|| {
+                unsupported(span, "a worker collection call without its original ownership region")
+            })?;
+        let owner = transferred[id].take().ok_or_else(|| {
+            unsupported(span, "a worker collection call without its input backing")
+        })?;
+        let elements = owner
+            .elements
+            .as_ref()
+            .ok_or_else(|| unsupported(span, "a worker collection without element records"))?;
+        if !elements.precise
+            || elements.references == super::super::elements::References::Unclassified
+            || (!owner.complete()
+                && !self
+                    .transitions
+                    .worker_parameter
+                    .is_some_and(|(_, id)| owner.vector == Some(id)))
+        {
+            return Err(unsupported(
+                span,
+                "a worker collection call without checked caller ownership",
+            ));
+        }
+        Ok(Some(owner))
+    }
+
     pub(in super::super) fn apply_transfer_call(
         &mut self,
         value: &Expr,
@@ -401,6 +440,7 @@ impl Analysis<'_> {
         mut prepared: Prepared,
         transferred: &mut [Option<Owner>],
     ) -> Result<Option<Owner>, VirErr> {
+        let forwarded = self.take_worker_parameter(&value.span, function, transferred)?;
         for owner in transferred.iter_mut().filter_map(Option::take) {
             self.release_owner(owner, &value.span);
         }
@@ -481,7 +521,36 @@ impl Analysis<'_> {
         let mut result = prepared
             .result
             .map(|(node, zero)| {
-                self.adopt_transfer_node(&value.span, node, prepared.view, zero, prepared.ordered)
+                if let Some(mut original) = forwarded {
+                    if node.origin.is_none() {
+                        let mut predicted = self.adopt_transfer_node(
+                            &value.span,
+                            node,
+                            prepared.view,
+                            zero,
+                            prepared.ordered,
+                        )?;
+                        let old = original.elements.as_mut().unwrap();
+                        let new = predicted.elements.as_mut().unwrap();
+                        // A removal can only retain members of the original
+                        // population. Keep its checked identity classification.
+                        new.references = old.references;
+                        self.commit_transferred_elements(&value.span, old, new);
+                        original.geometry = predicted.geometry.take();
+                        original.geometry_known = predicted.geometry_known;
+                        self.release_owner_storage(predicted, &value.span, false)?;
+                    }
+                    original.source = None;
+                    Ok(original)
+                } else {
+                    self.adopt_transfer_node(
+                        &value.span,
+                        node,
+                        prepared.view,
+                        zero,
+                        prepared.ordered,
+                    )
+                }
             })
             .transpose()?;
         if let Some(owner) = &mut result {

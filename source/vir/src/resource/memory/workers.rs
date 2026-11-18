@@ -14,6 +14,7 @@ pub(super) mod execution;
 mod identity;
 mod inputs;
 mod outputs;
+mod parameters;
 mod populations;
 mod results;
 mod waits;
@@ -21,6 +22,7 @@ mod waits;
 pub(super) use identity::{Families, WorkerId};
 pub(super) use inputs::Input;
 pub(super) use inputs::restore_proof_bindings;
+pub(super) use parameters::parameter_domain_error;
 pub(super) use populations::Occurrence;
 pub(crate) use results::generated_join_move;
 pub(super) use results::resolve_join;
@@ -478,6 +480,9 @@ impl Analysis<'_> {
             .result_owner
             .take()
             .ok_or_else(|| unsupported(&argument.span, "joining without an owned handle"))?;
+        if owner.input_worker {
+            return self.join_parameter_handle(expr, argument, value, owner).map(Some);
+        }
         if owner.worker_occurrence.is_some() {
             return self.join_occurrence(expr, argument, value, owner).map(Some);
         }

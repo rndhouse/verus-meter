@@ -252,6 +252,7 @@ impl Analysis<'_> {
                     &name,
                     &mut vec![],
                     &Default::default(),
+                    false,
                 )?;
                 // The payload is absent, so all of its logical counts and
                 // storage are zero regardless of its nested container types.

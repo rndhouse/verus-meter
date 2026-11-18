@@ -202,13 +202,19 @@ impl Analysis<'_> {
                 } else {
                     source.typ.clone()
                 };
-                let mut child = self.owner_from_metadata(
-                    &source.span,
-                    &payload,
-                    selected,
-                    elements.view,
-                    elements.zero_charge(&self.growth),
-                )?;
+                let mut child =
+                    if self.transitions.worker_parameter.is_some_and(|(_, vector)| vector == state)
+                    {
+                        Owner { input_worker: true, ..Default::default() }
+                    } else {
+                        self.owner_from_metadata(
+                            &source.span,
+                            &payload,
+                            selected,
+                            elements.view,
+                            elements.zero_charge(&self.growth),
+                        )?
+                    };
                 let input = self.split_input(
                     &source.span,
                     &(name.clone(), path.clone()),

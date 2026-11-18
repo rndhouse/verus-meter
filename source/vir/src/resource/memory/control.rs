@@ -350,7 +350,8 @@ pub(super) fn compatible(a: &Owner, b: &Owner) -> bool {
             _ => false,
         }
     }
-    a.joined == b.joined
+    a.input_worker == b.input_worker
+        && a.joined == b.joined
         && match (&a.worker_occurrence, &b.worker_occurrence) {
             (None, None) => true,
             (Some(a), Some(b)) => {

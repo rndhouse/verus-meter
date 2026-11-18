@@ -54,6 +54,9 @@ pub(super) type OwnerPath = Vec<OwnerSlot>;
 pub(super) struct Owner {
     /// One occurrence selected from a runtime forest, with immutable snapshots.
     pub(super) worker_occurrence: Option<super::workers::Occurrence>,
+    /// An individually moved handle selected from a helper parameter. Its
+    /// publication belongs to the caller, so it supplies no local body facts.
+    pub(super) input_worker: bool,
     /// Native/vstd successful join payload, conditional on every possible body's
     /// normal-domain proofs. Ordinary Result values cannot invent this witness.
     pub(super) joined: Option<std::collections::BTreeSet<super::workers::WorkerId>>,
@@ -97,6 +100,7 @@ impl Default for Owner {
     fn default() -> Self {
         Self {
             worker_occurrence: None,
+            input_worker: false,
             joined: None,
             worker: None,
             closure: None,
@@ -122,7 +126,11 @@ impl Owner {
     /// Byte-free owner nodes and forests still carry strong/worker lifetimes.
     pub(super) fn references(&self) -> super::elements::References {
         use super::elements::References;
-        if self.shared.is_some() || self.worker.is_some() || self.joined.is_some() {
+        if self.input_worker
+            || self.shared.is_some()
+            || self.worker.is_some()
+            || self.joined.is_some()
+        {
             return References::Unclassified;
         }
         let own = if self.worker_occurrence.is_some() {
@@ -388,6 +396,7 @@ impl Analysis<'_> {
         name: &VarIdent,
         path: &mut OwnerPath,
         capacities: &HashMap<super::paths::LocalPath, Expr>,
+        worker_parameter: bool,
     ) -> Result<Owner, VirErr> {
         if matches!(&**typ, TypX::AnonymousClosure(..)) {
             return Err(unsupported(span, "closure inputs without a checked capture summary"));
@@ -407,7 +416,10 @@ impl Analysis<'_> {
         if matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _)) {
             return Err(unsupported(span, "shared input roots without a checked alias descriptor"));
         }
-        if self.layouts.owning_elements(typ) && self.layouts.contains_references(typ) {
+        if !worker_parameter
+            && self.layouts.owning_elements(typ)
+            && self.layouts.contains_references(typ)
+        {
             return Err(unsupported(
                 span,
                 "incoming reference populations without a checked accounting-domain descriptor",
@@ -447,9 +459,10 @@ impl Analysis<'_> {
         }
         for (slot, child) in self.layouts.owned_children(typ, span)? {
             path.push(slot.clone());
-            owner
-                .children
-                .insert(slot, self.input_owner(&child, span, input_bytes, name, path, capacities)?);
+            owner.children.insert(
+                slot,
+                self.input_owner(&child, span, input_bytes, name, path, capacities, false)?,
+            );
             path.pop();
         }
         Ok(owner)
@@ -581,7 +594,10 @@ impl Analysis<'_> {
     ) -> Result<(), VirErr> {
         let mut shared = false;
         owner.visit(&mut |node| {
-            shared |= node.shared.is_some() || node.closure.is_some() || node.worker.is_some()
+            shared |= node.input_worker
+                || node.shared.is_some()
+                || node.closure.is_some()
+                || node.worker.is_some()
         });
         if shared {
             // Forest records retain identity links, but the population consumer
@@ -609,7 +625,7 @@ impl Analysis<'_> {
     }
 
     fn destroy_owner(&mut self, owner: Owner, span: &Span, inputs: bool, proofs: &mut Vec<Stmt>) {
-        if owner.worker_occurrence.is_some() {
+        if owner.input_worker || owner.worker_occurrence.is_some() {
             self.heap.workers.detach_occurrence(span);
             return;
         }

@@ -23,7 +23,14 @@ impl Analysis<'_> {
         for (name, owner) in &self.heap.owners {
             owner.visit_paths(&mut vec![], &mut |path, node| {
                 if let (Some(elements), Some((typ, _))) = (&node.elements, &node.source) {
-                    if elements.precise && self.layouts.contains_references(typ) {
+                    // A helper input has only caller-charged children in this
+                    // frame. Its exact membership is instantiated at the call;
+                    // the helper checks the linear use of each removal.
+                    let caller_owned = self
+                        .transitions
+                        .worker_parameter
+                        .is_some_and(|(_, vector)| node.vector == Some(vector));
+                    if !caller_owned && elements.precise && self.layouts.contains_references(typ) {
                         record.reference_forests.insert(
                             (name.clone(), path.clone()),
                             (typ.clone(), elements.records.clone()),

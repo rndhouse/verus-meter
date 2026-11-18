@@ -196,6 +196,15 @@ description of the captured collection, and the receiving worker proves its
 remaining length and membership after each pop. Dropping a collection with an
 outstanding handle fails the local proof.
 
+An ordinary helper can take one handle vector by value and return the same
+backing. Its caller keeps the identities and join obligations of the surviving
+workers. A helper can pop and join vstd handles down to a symbolic remaining
+length when it can dispose of either outcome (a scalar or unit on success and
+unit on failure). Native handles and handles with owning result payloads can
+pass through a helper intact. The handle type alone supplies no proof that an
+incoming worker succeeded. These are local ownership and byte checks. The
+global concurrency proof is still required.
+
 The proof boundary separates construction, transport and byte accounting.
 Generated builders establish worker-description properties; verified one-step
 collection laws preserve those descriptions without reopening them. Loop exits
