@@ -125,11 +125,6 @@ impl Analysis<'_> {
         arms: &Arms,
         new_value: bool,
     ) -> Result<(), VirErr> {
-        let (payload, _) = self
-            .layouts
-            .result_payloads(&scrutinee.typ)
-            .ok_or_else(|| unsupported(&expr.span, "this primitive Result match"))?;
-        let payload = payload.clone();
         let TypX::Datatype(datatype, _, _) = &*scrutinee.typ else { unreachable!() };
         let mut success = None;
         for arm in arms.iter() {
@@ -166,21 +161,41 @@ impl Analysis<'_> {
             unsupported(&expr.span, "Result match without checked outcome ownership")
         })?;
         self.checked_result(&owner, &expr.span)?;
+        let observed = self.observed_worker_scalar(&owner);
+        let payload_owner = owner.children.remove(&OwnerSlot::Contents);
+        owner.joined = None;
+        self.release_owner(owner, &expr.span);
+        self.release_value(value, &expr.span);
+        self.checked_payload_arm(expr, scrutinee, arm, pattern, payload_owner, observed, new_value)
+    }
+
+    /// Both a checked successful join and extraction from a unique Arc transfer
+    /// their payload to the binding of the executable success arm.
+    pub(in super::super) fn checked_payload_arm(
+        &mut self,
+        expr: &Expr,
+        scrutinee: &Place,
+        arm: &Arm,
+        pattern: &Pattern,
+        payload_owner: Option<super::super::heap::Owner>,
+        observed_scalar: bool,
+        new_value: bool,
+    ) -> Result<(), VirErr> {
         self.transitions.operation(
             &expr.span,
             super::super::transfer::checked::Operation::JoinedMatch {
                 source: scrutinee.clone(),
                 pattern: pattern.clone(),
                 body: arm.x.body.clone(),
-                observed_scalar: self.observed_worker_scalar(&owner),
+                observed_scalar,
             },
         );
-        let payload_owner = owner.children.remove(&OwnerSlot::Contents);
-        owner.joined = None;
-        self.release_owner(owner, &expr.span);
-        self.release_value(value, &expr.span);
         let mut bindings = Vec::new();
-        self.option_pattern(pattern, &payload, &mut bindings, payload_owner, None)?;
+        let payload = match self.layouts.result_payloads(&scrutinee.typ) {
+            Some((ok, _)) => ok,
+            None => self.layouts.option_payload(&scrutinee.typ, &expr.span)?,
+        };
+        self.option_pattern(pattern, payload, &mut bindings, payload_owner, None)?;
         for (name, bytes) in &bindings {
             let id = self.storage.reserve_value(
                 &arm.x.body.span,

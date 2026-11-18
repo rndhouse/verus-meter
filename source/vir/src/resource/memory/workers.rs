@@ -557,7 +557,10 @@ impl Analysis<'_> {
         if handle.publication.is_some() {
             self.transitions.operation(
                 &expr.span,
-                super::transfer::checked::Operation::WorkerJoin { source: argument.clone() },
+                super::transfer::checked::Operation::WorkerJoin {
+                    source: argument.clone(),
+                    returned_root: None,
+                },
             );
         }
         self.heap.workers.complete(id, &expr.span)?;
@@ -582,6 +585,7 @@ impl Analysis<'_> {
         for (root, backing) in released.backing {
             self.release_shared_backing(root, backing, &expr.span, &mut proofs);
         }
+        self.finish_indexed_payloads(&expr.span, &mut proofs);
         if !proofs.is_empty() {
             self.growth.before.entry(expr.span.id).or_default().extend(proofs);
         }

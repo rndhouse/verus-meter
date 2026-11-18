@@ -243,6 +243,18 @@ pub open spec fn repeat(child: Seq<Record>, start: int, count: int) -> Seq<Recor
     }
 }
 
+/// One observed insertion extends a homogeneous collection by exactly one slot.
+pub proof fn repeat_step(child: Seq<Record>, start: int, count: int)
+    ensures
+        count <= 0 ==> repeat(child, start, count) == Seq::<Record>::empty(),
+        count > 0 ==> repeat(child, start, count) == repeat(child, start, count - 1) + prefix(
+            child,
+            seq![start + count - 1],
+        ),
+{
+    reveal(repeat);
+}
+
 /// A repeated region has a uniform per-element footprint and exact index views.
 pub proof fn repeat_facts(child: Seq<Record>, start: int, count: int)
     requires

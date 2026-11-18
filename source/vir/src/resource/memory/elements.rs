@@ -694,6 +694,7 @@ impl Analysis<'_> {
             complete &= node.geometry_known || node.source.is_some();
         });
         elements.precise &= complete;
+        self.reserve_known_slot(span, &mut child)?;
         let selection = child.shared.and_then(|link| match link {
             super::shared::StrongLink::Selected(id) if self.current_worker.is_none() => Some(id),
             _ => None,

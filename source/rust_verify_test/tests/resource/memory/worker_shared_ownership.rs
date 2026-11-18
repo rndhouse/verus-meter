@@ -1,6 +1,7 @@
 //! Shared allocation identity and lifetime across worker captures, joins and drops.
 
 mod occurrences;
+mod payloads;
 
 use super::support::rejects;
 
@@ -417,22 +418,6 @@ fn indexed_arc_keeps_its_vector_buffer_through_the_final_join() {
         crate::common::assert_vir_error_msgs(
             error,
             &["conditional memory budget exceeded", GLOBAL],
-        );
-    }
-
-    // Incoming storage and nested strong references have lifetimes of their own.
-    let buffer = "Vec::<u8>::with_capacity(b as usize)";
-    for (name, program) in [
-        ("nested_arc", code.replace(buffer, &format!("std::sync::Arc::new({buffer})"))),
-        (
-            "incoming_buffer",
-            code.replace("b: u16)", "b: u16, buf: Vec<u8>)").replace(buffer, "buf"),
-        ),
-    ] {
-        let error = crate::verify_one_file(name, program, &[]).unwrap_err();
-        crate::common::assert_vir_error_msg(
-            error,
-            "indexed Arc payload with incoming storage or nested reference lifetimes",
         );
     }
 }

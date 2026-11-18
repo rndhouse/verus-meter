@@ -2,7 +2,9 @@
 //! source checkpoint. This is a view of a possible worker phase. Observing it
 //! never runs the worker or releases storage on the publisher's continuation.
 
+mod reachability;
 mod selections;
+use reachability::Reachable;
 
 use super::{Backing, RootId, SharedRoots, StrongLink};
 use crate::{
@@ -17,7 +19,7 @@ use crate::{
         workers::WorkerId,
     },
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Replace only the references lent to this subtree. Strong references in
 /// siblings, completed results, or retained publisher locals stay outstanding.
@@ -68,69 +70,6 @@ impl SharedRoots {
                 }
             })
             .collect()
-    }
-
-    /// Find the fixed ownership graph reachable from these imports, then
-    /// propagate final drops through it. Two edges to one root are two
-    /// strong references, but its control block and payload are charged once.
-    fn at_worker_checkpoint(
-        &self,
-        checkpoint: &Checkpoint,
-        indexed: impl Fn(RootId) -> bool,
-    ) -> Result<BTreeMap<RootId, u64>, VirErr> {
-        let span = &checkpoint.site;
-        let mut counts = BTreeMap::new();
-        let mut children = BTreeMap::new();
-        let mut pending: Vec<_> = checkpoint.handles.keys().copied().collect();
-        while let Some(id) = pending.pop() {
-            if counts.contains_key(&id) {
-                continue;
-            }
-            let root = self.roots.get(&id).ok_or_else(|| {
-                unsupported(span, "a worker checkpoint outside its shared allocation domain")
-            })?;
-            let mut count = root.strong;
-            if let Some(observed) = checkpoint.handles.get(&id) {
-                count = observed.in_domain(count).ok_or_else(|| {
-                    unsupported(span, "inconsistent checkpoint strong-reference counts")
-                })?;
-            }
-            counts.insert(id, count);
-            if let Backing::Owned(owner) = &root.storage {
-                let mut edges = Vec::new();
-                super::visit_strong_handles(owner, span, super::References::None, |link| {
-                    let StrongLink::Known(child) = link else {
-                        return Err(unsupported(
-                            span,
-                            "a selected alias inside a worker checkpoint backing",
-                        ));
-                    };
-                    edges.push(child);
-                    Ok(())
-                })?;
-                pending.extend(edges.iter().copied());
-                children.insert(id, edges);
-            }
-        }
-        let mut dead: Vec<_> =
-            counts.iter().filter_map(|(id, count)| (*count == 0).then_some(*id)).collect();
-        while let Some(id) = dead.pop() {
-            // The outstanding symbolic count remains a separate retention
-            // condition. Indexed backing currently has byte-only descendants.
-            if indexed(id) {
-                continue;
-            }
-            for child in children.remove(&id).into_iter().flatten() {
-                let count = counts.get_mut(&child).unwrap();
-                *count = count.checked_sub(1).ok_or_else(|| {
-                    unsupported(span, "duplicate final destruction of a shared payload")
-                })?;
-                if *count == 0 {
-                    dead.push(child);
-                }
-            }
-        }
-        Ok(counts)
     }
 }
 
@@ -255,10 +194,11 @@ impl Analysis<'_> {
         let worker = self.growth.worker_executions[&actor].clone();
         for check in worker.shared_checkpoints() {
             let span = &check.site;
-            let mut counts = self.heap.shared.at_worker_checkpoint(check, |id| {
-                self.growth.indexed_shared.contains_key(&id)
-                    || self.growth.occurrence_peers.contains_key(&id)
-            })?;
+            let Reachable { fixed: mut counts, indexed_ancestors } =
+                self.heap.shared.at_worker_checkpoint(check, |id| {
+                    self.growth.indexed_shared.contains_key(&id)
+                        || self.growth.occurrence_peers.contains_key(&id)
+                })?;
             let (selected, selections) = self.heap.shared.project_selections(check)?;
             let mut imports = BTreeMap::new();
             let mut owned = Vec::new();
@@ -266,6 +206,17 @@ impl Analysis<'_> {
             // regardless of the selected result's identity.
             let fixed: std::collections::BTreeSet<_> = counts.keys().copied().collect();
             for id in selected.keys() {
+                if self
+                    .growth
+                    .indexed_shared
+                    .get(id)
+                    .is_some_and(|claims| claims.backing.references() != super::References::None)
+                {
+                    return Err(unsupported(
+                        span,
+                        "a mixed selected worker checkpoint with nested shared or worker handles",
+                    ));
+                }
                 counts
                     .entry(*id)
                     .or_insert_with(|| self.heap.shared.roots.get(id).map_or(0, |r| r.strong));
@@ -280,6 +231,12 @@ impl Analysis<'_> {
                 let claims = self.growth.indexed_shared.get(&id);
                 let backing = match self.heap.shared.roots.get(&id).map(|r| &r.storage) {
                     Some(Backing::Imported { entry }) => {
+                        if live == 0 && indexed_ancestors.contains_key(&id) {
+                            return Err(unsupported(
+                                span,
+                                "an indexed payload edge across two worker checkpoint scopes",
+                            ));
+                        }
                         imports.insert(id, Handles { entry: *entry, live });
                         continue;
                     }
@@ -296,13 +253,30 @@ impl Analysis<'_> {
                     }
                 };
                 let peers = self.growth.occurrence_peers.get(&id);
-                if live == 0 && claims.is_none() && peers.is_none() {
+                let ancestors = indexed_ancestors.get(&id);
+                if live == 0 && claims.is_none() && peers.is_none() && ancestors.is_none() {
                     continue;
+                }
+                let mut holds_job = false;
+                backing.visit(&mut |node| {
+                    holds_job |= node.worker.is_some()
+                        || node.selected_worker.is_some()
+                        || node
+                            .elements
+                            .as_ref()
+                            .is_some_and(|e| e.references == super::References::WorkerOccurrences);
+                });
+                if holds_job {
+                    return Err(unsupported(
+                        span,
+                        "a worker checkpoint with outstanding jobs inside shared backing",
+                    ));
                 }
                 let (mut bytes, proof) = self.checkpoint_backing(publication, backing)?;
                 let proofs = self.growth.after.entry(publication.id).or_default();
                 proofs.extend(proof);
                 let candidates = selected.get(&id);
+                let mut dependencies = Vec::new();
                 if let Some(claims) = claims {
                     let remaining = match candidates.and_then(|s| s.released.clone()) {
                         Some(debit) => claims.population.after_release(
@@ -313,29 +287,29 @@ impl Analysis<'_> {
                         ),
                         None => claims.population.pending.clone(),
                     };
-                    if live == 0 {
-                        let empty =
-                            crate::ast_util::mk_eq(span, &remaining, &contracts::literal(span, 0));
-                        bytes = super::super::growth::select(
-                            span,
-                            empty,
-                            contracts::literal(span, 0),
-                            bytes,
-                        );
-                    }
+                    dependencies.push(remaining);
                 }
-                if live == 0
-                    && let Some(peers) = peers
-                {
-                    let idle = crate::ast_util::mk_eq(
-                        span,
-                        &peers.population.pending,
-                        &contracts::literal(span, 0),
-                    );
+                if let Some(peers) = peers {
+                    dependencies.push(peers.population.pending.clone());
+                }
+                if live == 0 {
+                    for ancestor in ancestors.into_iter().flatten() {
+                        if let Some(claims) = self.growth.indexed_shared.get(ancestor) {
+                            dependencies.push(claims.population.pending.clone());
+                        }
+                        if let Some(peers) = self.growth.occurrence_peers.get(ancestor) {
+                            dependencies.push(peers.population.pending.clone());
+                        }
+                    }
+                    let zero = contracts::literal(span, 0);
+                    let idle = dependencies
+                        .iter()
+                        .map(|count| crate::ast_util::mk_eq(span, count, &zero))
+                        .collect();
                     bytes = super::super::growth::select(
                         span,
-                        idle,
-                        contracts::literal(span, 0),
+                        crate::ast_util::conjoin(span, &idle),
+                        zero,
                         bytes,
                     );
                 }

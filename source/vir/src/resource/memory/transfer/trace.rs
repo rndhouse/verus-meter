@@ -138,6 +138,8 @@ struct Trace<'a> {
     publications: HashMap<VarIdent, Expr>,
     /// Convert immutable symbolic inputs back into body-proof observations.
     proof_values: HashMap<VarIdent, Expr>,
+    /// Owned construction descriptors for extraction from a checked unique, fixed root.
+    shared_payloads: BTreeMap<super::super::shared::RootId, Value>,
     /// Constructor observations bound to their values on this symbolic visit.
     extent_values: HashMap<VarIdent, Expr>,
 }
@@ -185,6 +187,7 @@ pub(super) fn summarize(
         publications: HashMap::new(),
         proof_values: HashMap::new(),
         extent_values: HashMap::new(),
+        shared_payloads: BTreeMap::new(),
     };
     for (index, parameter) in function.x.params.iter().enumerate() {
         if parameter.x.mode != Mode::Exec {

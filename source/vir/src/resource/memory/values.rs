@@ -273,6 +273,62 @@ impl Analysis<'_> {
             }
             0
         };
+        if let Some(mut owner) = option_owner.take_if(|owner| owner.extracted_arc.is_some()) {
+            let TypX::Datatype(datatype, _, _) = &*scrutinee.typ else { unreachable!() };
+            let mut success = None;
+            for arm in arms.iter() {
+                if !matches!(arm.x.guard.x, ExprX::Const(Constant::Bool(true))) {
+                    return Err(unsupported(
+                        &arm.span,
+                        "guarded matches of a uniquely extracted payload",
+                    ));
+                }
+                match &arm.x.pattern.x {
+                    PatternX::Constructor(name, variant, fields) if name == datatype => {
+                        match (variant.as_str(), fields.as_slice()) {
+                            ("Some", [field]) if success.is_none() => {
+                                success = Some((arm, &field.a))
+                            }
+                            ("None", []) => {}
+                            _ => {
+                                return Err(unsupported(
+                                    &arm.span,
+                                    "this extracted payload pattern",
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(unsupported(
+                            &arm.span,
+                            "unique Arc extraction without explicit Some and None arms",
+                        ));
+                    }
+                }
+            }
+            let (arm, pattern) = success.ok_or_else(|| {
+                unsupported(&expr.span, "unique Arc extraction without its payload arm")
+            })?;
+            let child = owner.children.remove(&super::heap::OwnerSlot::Contents);
+            self.release_owner(owner, &expr.span);
+            let exits = self.flow.exits.len();
+            self.checked_payload_arm(expr, scrutinee, arm, pattern, child, false, new_value)?;
+            for edge in &mut self.flow.exits[exits..] {
+                edge.state.storage.release(
+                    &expr.span,
+                    MemoryKind::host_local(),
+                    scratch,
+                    "match input consumed on exit",
+                );
+            }
+            self.storage.release(
+                &expr.span,
+                MemoryKind::host_local(),
+                scratch,
+                "match input consumed",
+            );
+            return Ok(());
+        }
         let protection = self.heap.protect();
         let first_exit = self.flow.exits.len();
         let entry = self.branch_state();

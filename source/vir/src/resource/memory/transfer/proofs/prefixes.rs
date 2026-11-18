@@ -44,6 +44,9 @@ pub(in super::super) fn prefix(
             {
                 return VisitorControlFlow::Return;
             }
+            if back_edge && let Some(args) = simplify::inspect::call(value, "repeat") {
+                emitter.lemma(span, "repeat_step", args.as_ref().clone(), proofs);
+            }
             if back_edge && let Some(args) = simplify::inspect::call(value, "generate_children") {
                 emitter.lemma(span, "generate_children_step", args.as_ref().clone(), proofs);
                 last_block(span, args, proofs);

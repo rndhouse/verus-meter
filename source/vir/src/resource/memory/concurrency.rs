@@ -298,6 +298,8 @@ pub enum Operation {
     VstdSpawn,
     /// Reviewed vstd wrapper with the same waiting/result-transfer semantics.
     VstdJoin,
+    /// Consume the sole strong handle and move its payload out of the allocation.
+    ArcIntoInner,
 }
 
 impl Operation {

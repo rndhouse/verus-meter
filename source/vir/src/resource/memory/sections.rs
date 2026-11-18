@@ -80,6 +80,8 @@ impl Analysis<'_> {
             self.storage.set_allocation(backing.id, backing.kind.clone(), bytes);
         }
         let protected_elements = self.growth.protected_elements.clone();
+        let section_shared = self.growth.section_shared.clone();
+        self.growth.section_shared.extend(self.heap.shared.allocation_ids());
         let section_owners = self.growth.section_owners.clone();
         self.growth
             .section_owners
@@ -106,6 +108,7 @@ impl Analysis<'_> {
         }
         self.growth.protected_elements = protected_elements;
         self.growth.section_owners = section_owners;
+        self.growth.section_shared = section_shared;
         self.check_checkpoints()?;
         let section = std::mem::replace(&mut self.storage, parent);
         self.checkpoints = parent_checkpoints;

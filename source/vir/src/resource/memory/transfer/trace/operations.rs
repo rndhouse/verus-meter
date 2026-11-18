@@ -38,6 +38,35 @@ impl Trace<'_> {
         Some(Value::Owner(Node { origin: None, typ: typ.clone(), memory, minima }))
     }
 
+    /// A box and a present Option both own their payload at Contents. Only the
+    /// box allocates backing; the Option records the observed presence tag.
+    fn wrapped_owner(&self, value: &Expr, child: Value, bytes: u64, tag: i128) -> Value {
+        let span = &value.span;
+        let record = allocated(
+            span,
+            contracts::literal(span, bytes),
+            expr::integer(span, 0),
+            expr::integer(span, tag),
+        );
+        let mut memory = expr::push(span, expr::empty(span, expr::record_type()), record);
+        let mut minima = Minima::new();
+        if let Value::Owner(child) = child {
+            memory = expr::add(
+                span,
+                memory,
+                expr::prefix(
+                    span,
+                    child.memory,
+                    expr::path(span, [self.layouts.metadata_slot(&OwnerSlot::Contents)]),
+                ),
+            );
+            minima.extend(child.minima.into_iter().map(|(path, floor)| {
+                (std::iter::once(Step::Fixed(OwnerSlot::Contents)).chain(path).collect(), floor)
+            }));
+        }
+        Value::Owner(Node { origin: None, typ: value.typ.clone(), memory, minima })
+    }
+
     pub(super) fn operation(
         &mut self,
         value: &Expr,
@@ -118,7 +147,9 @@ impl Trace<'_> {
             Operation::WorkerPublish { source, identity, inputs, populations, result } => {
                 self.publish_worker(value, source, identity, inputs, populations, result)
             }
-            Operation::WorkerJoin { source } => self.join_worker(value, source),
+            Operation::WorkerJoin { source, returned_root } => {
+                self.join_worker(value, source, returned_root)
+            }
             Operation::ParameterJoin { source, phases } => {
                 if !phases.at(span) {
                     return None;
@@ -139,38 +170,18 @@ impl Trace<'_> {
                     let amount = contracts::literal(span, bytes);
                     self.loop_allocations.push((span.clone(), amount.clone(), amount));
                 }
-                let mut memory = expr::push(
-                    span,
-                    expr::empty(span, expr::record_type()),
-                    allocated(
-                        span,
-                        contracts::literal(span, bytes),
-                        expr::integer(span, 0),
-                        expr::integer(span, 0),
-                    ),
-                );
-                let mut minima = Minima::new();
-                if let Value::Owner(child) = child {
-                    memory = expr::add(
-                        span,
-                        memory,
-                        expr::prefix(
-                            span,
-                            child.memory,
-                            expr::path(span, [self.layouts.metadata_slot(&OwnerSlot::Contents)]),
-                        ),
-                    );
-                    minima.extend(child.minima.into_iter().map(|(path, floor)| {
-                        (
-                            std::iter::once(Step::Fixed(OwnerSlot::Contents)).chain(path).collect(),
-                            floor,
-                        )
-                    }));
-                }
-                Some(Value::Owner(Node { origin: None, typ: value.typ.clone(), memory, minima }))
+                Some(self.wrapped_owner(value, child, bytes, 0))
+            }
+            Operation::StrongTake { source, root } => {
+                self.value(&source)?;
+                let child = self.shared_payloads.get(&root)?.clone();
+                Some(self.wrapped_owner(value, child, 0, 1))
             }
             Operation::StrongNew { payload, root, coordinates } => {
-                self.value(&payload)?;
+                let child = self.value(&payload)?;
+                if coordinates.is_empty() {
+                    self.shared_payloads.insert(root, child);
+                }
                 // This is a private identity, not a parameter or a constant
                 // reusable across calls. The usual template-closure check rejects
                 // it if it escapes through a returned forest or original region.

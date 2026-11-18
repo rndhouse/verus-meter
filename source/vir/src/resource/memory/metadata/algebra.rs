@@ -99,6 +99,7 @@ fn module(name: &str) -> Option<&'static str> {
         | "product_bounds" => "iteration",
         "repeat"
         | "repeat_facts"
+        | "repeat_step"
         | "reverse_children"
         | "reverse_children_add"
         | "reverse_children_facts"

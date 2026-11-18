@@ -62,7 +62,7 @@ higher-order execution.
 | Surface | Required operations and restrictions | Owners |
 | --- | --- | --- |
 | Threads | `vstd::thread::spawn`, `JoinHandle::join`, and standard `std::thread::spawn`/`JoinHandle::join`; safe `move` FnOnce closures with supported concrete captures/results; symbolic spawn/join loops and acyclic nested spawning; all descendants joined | 03, 05, 07 |
-| Shared ownership | `Arc::new`, `Arc::clone`, dereference/borrow, explicit/implicit drop, supported field/container moves; strong references only; concrete supported payloads, including lock-protected owners; count final release and control storage | 03–05 |
+| Shared ownership | `Arc::new`, `Arc::clone`, dereference/borrow, explicit/implicit drop, supported field/container moves, and `Arc::into_inner` for a proved unique canonical handle; strong references only; concrete supported payloads, including lock-protected owners; count final release and control storage | 03–05 |
 | Standard mutex | `Mutex::new`, `lock`, `try_lock`, guard borrow/dereference/mutation, explicit/implicit guard drop; preserve protected payload ownership through supported operations; no mapped guards, raw access or poisoning recovery | 02, 04, 05 |
 | Result handling | Primitive-specific `Result` matching and proved-success extraction for lock, try-lock and join; `WouldBlock` has no acquisition; poison paths cannot be silently discarded | 02, 03, 05 |
 | Verified RwLock | vstd construction, exclusive acquire/release, shared acquire/borrow/release, and destruction through supported APIs; readers do not exclude each other | 02, 05, 06 |

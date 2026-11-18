@@ -122,6 +122,8 @@ pub(in super::super) enum Operation {
     /// A body-local canonical allocation. Its identity may be used to prove
     /// internal observations but cannot escape as a caller-relative input.
     StrongNew { payload: Expr, root: super::super::shared::RootId, coordinates: Vec<(u64, Expr)> },
+    /// A unique strong handle yields the original payload of its checked constructor.
+    StrongTake { source: Expr, root: super::super::shared::RootId },
     /// Clone one strong link from a checked borrowed place. The backing stays
     /// in its canonical root and the receiver retains its own handle.
     StrongClone { receiver: Place },
@@ -136,7 +138,11 @@ pub(in super::super) enum Operation {
         result: super::Template,
     },
     /// Collect exactly the runtime handle consumed by the source operation.
-    WorkerJoin { source: Expr },
+    WorkerJoin {
+        source: Expr,
+        /// Present only when the join checks the selected result against this fixed root.
+        returned_root: Option<super::super::shared::RootId>,
+    },
     /// Consume a helper input handle without inferring its completion outcome.
     ParameterJoin {
         source: Expr,

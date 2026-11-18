@@ -62,6 +62,7 @@ pub(crate) fn operation<'tcx>(
     }
     match (defining_trait, name.as_str()) {
         (None, "new") => Some(Operation::ArcNew),
+        (None, "into_inner") => Some(Operation::ArcIntoInner),
         (Some(tr), "clone") if Some(tr) == tcx.lang_items().clone_trait() => {
             Some(Operation::ArcClone)
         }

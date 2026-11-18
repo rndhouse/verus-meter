@@ -279,8 +279,7 @@ reserve one backing allocation across a symbolic number of outstanding workers.
 A single allocation created before the publishing loop stays charged once. Its charge
 includes locally owned payload storage. For example, workers sharing an `Arc<Vec<u8>>`
 retain one control block, one inline vector and one buffer at its reserved capacity.
-Payloads containing caller-owned storage or additional strong or worker handles
-require separate lifetime accounting. If the last fixed strong handle moves into
+If the last fixed strong handle moves into
 a worker whose handle enters a collection, the outstanding workers retain the
 backing. When a push evaluates a spawn directly, the slot records the handle
 produced by that spawn. Each join reconciles the aliases captured by that worker.
@@ -305,11 +304,34 @@ A worker receiving an entire vector of handles cannot drain indexed shared
 claims owned by its publisher. That transfer needs a summary of the references
 the receiving worker consumes or returns.
 
+For an allocation created before the publishing loop, a returned `Arc` can
+retain the original ownership of its payload through handle and result vectors.
+An incoming buffer stays charged to the caller. When a helper consumes it, joins
+all its workers and returns unit with the payload destroyed, the caller can reuse
+the bytes on return. The caller allows for its buffer throughout the helper's
+declared budget. Local lifetime evidence and the pending global peak obligation
+travel separately.
+
+Two fields of one payload can refer to the same inner allocation. The last outer
+drop releases both references. Any surviving inner clone keeps that allocation
+charged. The publisher can retain a whole payload conservatively until it proves
+that the outstanding handles and stored results have relinquished it. A worker
+checkpoint also considers nested allocations retained by indexed peers.
+
+An embedded join handle keeps its original worker and result storage. For an
+identified allocation with a proved sole remaining strong handle,
+`Arc::into_inner` moves out its payload. An explicit `Some`/`None` match can join
+the recovered handle. Losing the handle on destruction reports a detached worker.
+These checks preserve the ordinary Rust outcome specification. Extracting from
+an allocation with unresolved aliases requires additional evidence.
+
 A fresh `Arc<Vec<u8>>` created on each loop visit keeps that visit's identity
 through capture, handle-vector storage and join. With `n` visits and capacity
 `b`, the buffers can contribute `n * b` bytes. Several workers from one visit
 share its single buffer. The analysis accounts separately for each control
-block, inline vector, handle slot and completion tag.
+block, inline vector, handle slot and completion tag. Per-visit byte transport
+requires a completely owned payload without nested strong or worker handles.
+A fixed canonical payload can retain those handles with their original identity.
 
 When workers from one visit retain aliases independently, one handle carries the
 backing charge. A peer's join can transfer its reservation to a returned alias.

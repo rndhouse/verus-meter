@@ -58,6 +58,8 @@ pub(super) struct Owner {
     /// Native/vstd successful join payload, conditional on every possible body's
     /// normal-domain proofs. Ordinary Result values cannot invent this witness.
     pub(super) joined: Option<std::collections::BTreeSet<super::workers::WorkerId>>,
+    /// The Some outcome established by consuming a proved unique Arc.
+    pub(super) extracted_arc: Option<super::shared::RootId>,
     /// A join handle names storage kept in the domain's worker registry.
     pub(super) worker: Option<super::workers::FixedHandle>,
     /// Concrete closure definition; its owned fields occupy Capture child slots.
@@ -99,6 +101,7 @@ impl Default for Owner {
         Self {
             selected_worker: None,
             joined: None,
+            extracted_arc: None,
             worker: None,
             closure: None,
             shared: None,
@@ -566,7 +569,11 @@ impl Analysis<'_> {
 
     pub(super) fn release_owner(&mut self, owner: Owner, span: &Span) {
         let mut proofs = Vec::new();
+        let carrier_ended = self.ends_indexed_carrier(&owner);
         self.destroy_owner(owner, span, true, &mut proofs);
+        if carrier_ended {
+            self.finish_indexed_payloads(span, &mut proofs);
+        }
         self.growth.before.entry(span.id).or_default().extend(proofs);
     }
 
@@ -574,7 +581,11 @@ impl Analysis<'_> {
     /// operand. A declaration's span is not its eventual destruction site.
     pub(super) fn release_owner_after(&mut self, owner: Owner, span: &Span) {
         let mut proofs = Vec::new();
+        let carrier_ended = self.ends_indexed_carrier(&owner);
         self.destroy_owner(owner, span, true, &mut proofs);
+        if carrier_ended {
+            self.finish_indexed_payloads(span, &mut proofs);
+        }
         if !proofs.is_empty() {
             self.growth.after.entry(span.id).or_default().extend(proofs);
         }
@@ -632,13 +643,25 @@ impl Analysis<'_> {
     ) {
         self.peer_release_checks(root, &backing, span, proofs);
         if let Some(claims) = self.growth.indexed_shared.get(&root) {
-            claims.defer_backing(&mut self.storage, span, proofs);
+            claims.retain_backing(
+                root,
+                &mut self.heap.shared.held_payloads,
+                &mut self.storage,
+                span,
+                proofs,
+            );
         } else {
             self.destroy_owner(backing, span, true, proofs);
         }
     }
 
-    fn destroy_owner(&mut self, owner: Owner, span: &Span, inputs: bool, proofs: &mut Vec<Stmt>) {
+    pub(super) fn destroy_owner(
+        &mut self,
+        owner: Owner,
+        span: &Span,
+        inputs: bool,
+        proofs: &mut Vec<Stmt>,
+    ) {
         if owner.selected_worker.is_some() {
             self.heap.workers.detach_occurrence(span);
             return;

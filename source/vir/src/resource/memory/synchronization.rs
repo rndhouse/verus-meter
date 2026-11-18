@@ -555,6 +555,7 @@ fn reject_unaccounted_inner(
                             operation,
                             super::concurrency::Operation::ArcNew
                                 | super::concurrency::Operation::ArcClone
+                                | super::concurrency::Operation::ArcIntoInner
                                 | super::concurrency::Operation::ArcBorrow
                         )
                 {

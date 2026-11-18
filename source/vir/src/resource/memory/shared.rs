@@ -6,6 +6,7 @@
 //! count their captured handles while backing stays in the enclosing domain;
 //! their local final release cannot establish global reclamation.
 
+mod extraction;
 pub(super) mod phases;
 
 use super::{
@@ -146,6 +147,8 @@ pub(super) struct SharedRoots {
     // Keep root traversal deterministic and avoid consuming a randomized hash
     // seed in sequential functions that never create a shared allocation.
     roots: BTreeMap<RootId, Root>,
+    /// Canonical payloads still owned by indexed workers after the last fixed alias moved.
+    pub(super) held_payloads: BTreeSet<RootId>,
     selections: BTreeMap<u64, SelectedAlias>,
 }
 
@@ -183,7 +186,8 @@ impl SharedRoots {
     /// A new execution of the same join site may overwrite its proof local
     /// only after the previous visit's selected handles have been retired.
     pub(super) fn compatible_selections(&self, other: &Self) -> bool {
-        self.selections.len() == other.selections.len()
+        self.held_payloads == other.held_payloads
+            && self.selections.len() == other.selections.len()
             && self.selections.iter().all(|(id, selection)| {
                 other.selections.get(id).is_some_and(|s| selection.handles == s.handles)
             })
@@ -248,6 +252,10 @@ impl SharedRoots {
         Ok(())
     }
 
+    pub(super) fn allocation_ids(&self) -> impl Iterator<Item = RootId> + '_ {
+        self.roots.keys().chain(&self.held_payloads).copied()
+    }
+
     /// Rebind newly owned backing without changing shared identity or counts.
     pub(super) fn map_owned(
         &mut self,
@@ -309,6 +317,12 @@ impl SharedRoots {
         supported: References,
         span: &Span,
     ) -> Result<(), VirErr> {
+        if !self.held_payloads.is_empty() {
+            return Err(unsupported(
+                span,
+                "indexed shared payloads surviving their accounting domain",
+            ));
+        }
         if self.selections.values().any(|s| s.imported.is_none()) {
             return Err(unsupported(
                 span,
@@ -471,7 +485,9 @@ impl SharedRoots {
     }
 
     pub(super) fn is_empty(&self) -> bool {
-        self.selections.is_empty() && self.roots.values().all(|root| root.strong == 0)
+        self.held_payloads.is_empty()
+            && self.selections.is_empty()
+            && self.roots.values().all(|root| root.strong == 0)
     }
 
     pub(super) fn insert(&mut self, storage: Owner) -> Owner {
@@ -727,6 +743,12 @@ impl Analysis<'_> {
         let Some(ResourceIntrinsic::Concurrency(operation)) = attrs.resource_intrinsic else {
             return Ok(None);
         };
+        if operation == Operation::ArcIntoInner {
+            let [source] = args.as_slice() else {
+                return Err(unsupported(&expr.span, "this Arc::into_inner signature"));
+            };
+            return self.take_shared_payload(expr, source).map(Some);
+        }
         if !matches!(operation, Operation::ArcNew | Operation::ArcClone) {
             return Ok(None);
         }

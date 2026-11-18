@@ -3,6 +3,7 @@
 //! backing, including when a completed worker keeps the handle in its result.
 
 mod occurrences;
+mod payloads;
 mod peers;
 mod population;
 use population::Population;
@@ -32,20 +33,26 @@ pub(in super::super) struct Claims {
     /// The same ownership tree moves between fixed and conditional accounting.
     pub(in super::super) backing: Owner,
     /// Fixed and symbolic charges reached by this immutable payload.
-    charges: SharedBackingCharges,
+    charges: Option<SharedBackingCharges>,
 }
 
 impl Claims {
     /// A final directly tracked drop can make the backing conditional only if
     /// this accounting domain still has every charge of the payload.
-    pub(in super::super) fn defer_backing(
+    pub(in super::super) fn retain_backing(
         &self,
+        root: RootId,
+        held: &mut BTreeSet<RootId>,
         storage: &mut Accounting,
         span: &Span,
         proofs: &mut Vec<Stmt>,
     ) {
+        let Some(charges) = &self.charges else {
+            held.insert(root);
+            return;
+        };
         let empty = crate::ast_util::mk_eq(span, &self.population.pending, &expr::integer(span, 0));
-        if !self.charges.defer(storage, empty, span) {
+        if !charges.defer(storage, empty, span) {
             proofs.push(expr::check(
                 span,
                 crate::ast_util::mk_bool(span, false),
@@ -161,7 +168,8 @@ impl Analysis<'_> {
             let claims = match self.growth.indexed_shared.entry(root) {
                 std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
                 std::collections::btree_map::Entry::Vacant(entry) => {
-                    let charges = SharedBackingCharges::new(&backing, &self.growth.elements, span)?;
+                    let charges =
+                        SharedBackingCharges::for_payload(&backing, &self.growth.elements, span)?;
                     let population = Population::new(span, &mut self.growth.declarations);
                     entry.insert(Claims { population, backing, charges })
                 }
@@ -169,7 +177,13 @@ impl Analysis<'_> {
             let proofs = self.growth.after.entry(span.id).or_default();
             claims.population.publish(actor, count, span, proofs);
             if !self.heap.shared.has_strong(root) {
-                claims.defer_backing(&mut self.storage, span, proofs);
+                claims.retain_backing(
+                    root,
+                    &mut self.heap.shared.held_payloads,
+                    &mut self.storage,
+                    span,
+                    proofs,
+                );
             }
         }
         Ok(carried)
@@ -224,9 +238,6 @@ impl Analysis<'_> {
         if roots.len() > 1 {
             return Ok(self.reserve_arc_result(span, result, roots));
         }
-        let claims = self.growth.indexed_shared.get(&root).ok_or_else(|| {
-            unsupported(span, "an indexed Arc result outside its canonical domain")
-        })?;
         let path = expr::path(span, []);
         let actual = expr::lookup(span, result, path.clone());
         self.growth.before.entry(span.id).or_default().push(expr::check(
@@ -234,8 +245,21 @@ impl Analysis<'_> {
             crate::ast_util::mk_eq(span, &actual, &root.record(span, path)),
             "cannot establish the selected result's canonical shared allocation",
         ));
+        self.restore_indexed_alias(span, root)
+    }
+
+    fn restore_indexed_alias(&mut self, span: &Span, root: RootId) -> Result<Owner, VirErr> {
+        let claims = self.growth.indexed_shared.get(&root).ok_or_else(|| {
+            unsupported(span, "an indexed Arc result outside its canonical domain")
+        })?;
         if !self.heap.shared.has_strong(root) {
-            claims.charges.receive(&mut self.storage, span)?;
+            if let Some(charges) = &claims.charges {
+                charges.receive(&mut self.storage, span)?;
+            } else if self.growth.section_shared.contains(&root)
+                || !self.heap.shared.held_payloads.remove(&root)
+            {
+                return Err(unsupported(span, "an indexed result after its shared payload ended"));
+            }
         }
         self.heap.shared.receive_indexed(root, &claims.backing, span)
     }

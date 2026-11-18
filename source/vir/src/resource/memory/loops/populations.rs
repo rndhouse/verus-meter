@@ -192,7 +192,28 @@ impl crate::resource::memory::analysis::Analysis<'_> {
                         vec![forest.clone(), key.clone()],
                         crate::ast_util::int_typ(),
                     );
-                    current = contracts::add(span, current, count);
+                    // With one candidate root, every occupied result slot must
+                    // retain exactly one reference to it. Prove that relationship
+                    // on entry and after each push/pop before using the length.
+                    let (name, path) = &charge.location;
+                    let contribution = if self.growth.indexed_shared.len() == 1
+                        && self
+                            .heap
+                            .root(name)
+                            .and_then(|owner| owner.at(path))
+                            .and_then(|node| node.elements.as_ref())
+                            .is_some_and(|e| {
+                                e.references == super::super::elements::References::IndexedAliases
+                            }) {
+                        facts.push(expr::purpose(
+                            mk_eq(span, &count, &charge.length.0),
+                            "references in the homogeneous Arc result collection",
+                        ));
+                        charge.length.0.clone()
+                    } else {
+                        count
+                    };
+                    current = contracts::add(span, current, contribution);
                     self.growth.before.entry(span.id).or_default().push(expr::lemma(
                         span,
                         "shared_count_empty",

@@ -61,24 +61,23 @@ pub(in super::super) struct SharedBackingCharges {
 }
 
 impl SharedBackingCharges {
-    pub(in super::super) fn new(
+    /// Only a complete tree of local byte charges can substitute for a payload.
+    /// Incoming regions and strong or worker links need the original destructor.
+    pub(in super::super) fn for_payload(
         owner: &Owner,
         element_states: &[ElementState],
         span: &Span,
-    ) -> Result<Self, VirErr> {
+    ) -> Result<Option<Self>, VirErr> {
         if !owner.complete() || !owner.inputs().is_empty() || owner.references() != References::None
         {
-            return Err(unsupported(
-                span,
-                "indexed Arc payload with incoming storage or nested reference lifetimes",
-            ));
+            return Ok(None);
         }
         let Allocations { fixed, dynamic } = Allocations::owned(Some(owner), element_states, span)?;
         let fixed = fixed
             .into_iter()
             .map(|(kind, amount)| (Accounting::fresh_allocation(), Charge { kind, amount }))
             .collect();
-        Ok(Self { fixed, dynamic })
+        Ok(Some(Self { fixed, dynamic }))
     }
 
     /// A path can only defer an allocation it currently owns. Check every
@@ -334,7 +333,7 @@ mod tests {
             .into(),
             ..Default::default()
         };
-        let charges = SharedBackingCharges::new(&owner, &[], &site).unwrap();
+        let charges = SharedBackingCharges::for_payload(&owner, &[], &site).unwrap().unwrap();
         let mut storage = Accounting::new(&site, 256);
         storage.reserve(&site, MemoryKind::host_heap(), 40, "shared backing").unwrap();
         let mut alternative = storage.clone();

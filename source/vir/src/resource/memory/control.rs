@@ -352,6 +352,7 @@ pub(super) fn compatible(a: &Owner, b: &Owner) -> bool {
         }
     }
     a.joined == b.joined
+        && a.extracted_arc == b.extracted_arc
         && match (&a.selected_worker, &b.selected_worker) {
             (None, None) | (Some(SelectedWorker::Parameter), Some(SelectedWorker::Parameter)) => {
                 true

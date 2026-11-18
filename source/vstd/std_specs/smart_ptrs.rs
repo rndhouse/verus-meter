@@ -9,7 +9,10 @@ use core::alloc::Allocator;
 verus! {
 
 /// Consuming a vector preserves its elements in the resulting owning slice.
-pub assume_specification<T, A: Allocator>[ Vec::<T, A>::into_boxed_slice ](v: Vec<T, A>) -> (b: Box<[T], A>)
+pub assume_specification<T, A: Allocator>[ Vec::<T, A>::into_boxed_slice ](v: Vec<T, A>) -> (b: Box<
+    [T],
+    A,
+>)
     ensures
         b@ == v@,
 ;
@@ -47,6 +50,14 @@ pub assume_specification<T: core::default::Default>[ <Rc<
 pub assume_specification<T>[ Arc::<T>::new ](t: T) -> (v: Arc<T>)
     ensures
         *v == t,
+;
+
+/// Consuming an Arc can return its original payload. The ordinary value
+/// specification leaves the outcome open because other strong owners may exist.
+pub assume_specification<T, A: Allocator>[ Arc::<T, A>::into_inner ](v: Arc<T, A>) -> (result:
+    Option<T>)
+    ensures
+        result matches Some(t) ==> t == *v,
 ;
 
 pub assume_specification<T: core::default::Default>[ <Arc<

@@ -121,6 +121,8 @@ pub(super) struct Growth {
     pub(super) carried_scalars: std::collections::HashSet<VarIdent>,
     /// Owners paid by an enclosing section cannot supply local release credits.
     pub(super) section_owners: std::collections::HashSet<VarIdent>,
+    /// Enclosing allocation identities whose backing belongs to another section ledger.
+    pub(super) section_shared: std::collections::BTreeSet<super::shared::RootId>,
     /// Activate proof algebra at each operation, including inside isolated loop queries.
     pub(super) metadata_scopes: std::collections::HashSet<u64>,
     /// Helper-instantiated forests may need requested range or block views.

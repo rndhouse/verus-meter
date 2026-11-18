@@ -161,14 +161,25 @@ impl Trace<'_> {
         }))
     }
 
-    pub(super) fn join_worker(&mut self, value: &Expr, source: Expr) -> Option<Value> {
+    pub(super) fn join_worker(
+        &mut self,
+        value: &Expr,
+        source: Expr,
+        returned_root: Option<super::super::super::shared::RootId>,
+    ) -> Option<Value> {
         let Value::Owner(handle) = self.value(&source)? else { return None };
         let span = &value.span;
         let record = expr::lookup(span, handle.memory, expr::path(span, []));
         let result = expr::operation(span, "worker_result", vec![record], expr::memory_type());
         // An Arc's inline owner contains exactly one identity link; its
         // allocation and payload stay in the canonical backing.
-        let result = if self
+        let result = if let Some(root) = returned_root {
+            expr::push(
+                span,
+                expr::empty(span, expr::record_type()),
+                root.record(span, expr::path(span, [])),
+            )
+        } else if self
             .layouts
             .result_payloads(&value.typ)
             .is_some_and(|(typ, _)| matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _)))

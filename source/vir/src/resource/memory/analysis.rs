@@ -763,7 +763,9 @@ pub(super) fn check(
     }
     analysis.heap.workers.check_closed(&function.span)?;
     analysis.check_worker_parameter_result(&function.span)?;
-    if let Some(incomplete) = analysis.check_worker_domain(&function.span)? {
+    let incomplete = analysis.check_worker_domain(&function.span)?;
+    let mut worker_transfer = None;
+    if let Some(error) = &incomplete {
         if analysis.transitions.retained_workers {
             // The global envelope remains unavailable, but population induction
             // must consume the coordinator's actual ownership transformation.
@@ -778,6 +780,7 @@ pub(super) fn check(
             if let Some(inferred) = &inferred {
                 analysis.apply_transfer_evidence(inferred)?;
             }
+            worker_transfer = inferred;
         }
         analysis.check_checkpoints()?;
         let publications = std::mem::take(&mut analysis.growth.publications);
@@ -785,28 +788,40 @@ pub(super) fn check(
             prefix.emit(&mut analysis.growth, &publications)?;
         }
         analysis.worker_obligations()?;
-        let report = analysis.storage.finish_conditional();
-        analysis.obligations.extend(report.cost_points.iter().map(|(span, cost)| Obligation {
-            span: span.clone(),
-            cost: cost.clone(),
-            bound: super::footprint::MemoryBudget::total(analysis.bound.clone()),
-            kind: CheckKind::Function,
-        }));
-        return Ok(Some(FunctionAnalysis {
-            report,
-            summary: None,
-            incomplete: Some(incomplete),
-            calls: analysis.calls,
-            symbolic_bound,
-            obligations: analysis.obligations,
-            checks: analysis.checks,
-            growth: analysis.growth,
-        }));
+        // A closed consumer can export the destruction of a supplied payload.
+        // Its caller must still pay for *all* original regions for the whole
+        // declared call allowance, and the global concurrency error stays mandatory.
+        let consumed_payload = worker_transfer.is_some()
+            && super::model::unit(&f.outer_ret.x.typ)
+            && analysis.heap.borrowed.is_empty()
+            && analysis.result_owner.is_none()
+            && analysis.heap.shared.is_empty()
+            && analysis.growth.indexed_shared.values().any(|c| !c.backing.inputs().is_empty())
+            && analysis.storage.check_transferred(&function.span).is_ok();
+        if !consumed_payload {
+            let report = analysis.storage.finish_conditional();
+            analysis.obligations.extend(report.cost_points.iter().map(|(span, cost)| Obligation {
+                span: span.clone(),
+                cost: cost.clone(),
+                bound: super::footprint::MemoryBudget::total(analysis.bound.clone()),
+                kind: CheckKind::Function,
+            }));
+            return Ok(Some(FunctionAnalysis {
+                report,
+                summary: None,
+                incomplete: Some(error.clone()),
+                calls: analysis.calls,
+                symbolic_bound,
+                obligations: analysis.obligations,
+                checks: analysis.checks,
+                growth: analysis.growth,
+            }));
+        }
     }
     let return_parameter = result.parameter;
     let zero_charges = analysis.growth.zero_charges();
     let zero_forests = analysis.growth.zero_forests();
-    let profiles = analysis
+    let mut profiles = analysis
         .storage
         .points()
         .iter()
@@ -851,19 +866,29 @@ pub(super) fn check(
             super::allocations::ChildReplacement { owner: owner.unwrap(), capacities },
         );
     }
-    analysis.check_checkpoints()?;
-    let inferred = super::transfer::summarize(
-        function,
-        layouts,
-        functions,
-        summaries,
-        &modes.var_modes,
-        &analysis.transitions,
-    )?;
-    if let Some(inferred) = &inferred {
-        analysis.apply_transfer_evidence(inferred)?;
-    }
-    let report = if symbolic_bound.is_some() {
+    let inferred = if incomplete.is_some() {
+        profiles.push(super::lifetime::Profile {
+            cost: super::footprint::Footprint::allowance(analysis.bound.clone()),
+            result: false,
+            inputs: (0..analysis.input_paths.len()).collect(),
+        });
+        worker_transfer
+    } else {
+        analysis.check_checkpoints()?;
+        let inferred = super::transfer::summarize(
+            function,
+            layouts,
+            functions,
+            summaries,
+            &modes.var_modes,
+            &analysis.transitions,
+        )?;
+        if let Some(inferred) = &inferred {
+            analysis.apply_transfer_evidence(inferred)?;
+        }
+        inferred
+    };
+    let report = if incomplete.is_some() || symbolic_bound.is_some() {
         analysis.storage.finish_conditional()
     } else {
         analysis.storage.finish(&function.span)
@@ -954,8 +979,9 @@ pub(super) fn check(
     Ok(Some(FunctionAnalysis {
         report,
         summary: Some(summary),
-        incomplete: worker_parameter
-            .map(|_| super::workers::parameter_domain_error(&function.span)),
+        incomplete: incomplete.or_else(|| {
+            worker_parameter.map(|_| super::workers::parameter_domain_error(&function.span))
+        }),
         calls: analysis.calls,
         symbolic_bound,
         obligations: analysis.obligations,

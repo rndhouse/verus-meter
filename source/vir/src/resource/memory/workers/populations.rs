@@ -163,9 +163,16 @@ impl Analysis<'_> {
         );
         self.release_owner(owner, &source.span);
         self.release_value(handle, &source.span);
+        // A finite result recovered by receive_indexed_alias has just proved
+        // its identity against the actual joined record. The loop summary can
+        // store that link without selecting through the entire publication history.
+        let returned_root = arc_roots.as_ref().and_then(|_| result_owner.as_ref()?.shared?.known());
         self.transitions.operation(
             &source.span,
-            super::super::transfer::checked::Operation::WorkerJoin { source: argument.clone() },
+            super::super::transfer::checked::Operation::WorkerJoin {
+                source: argument.clone(),
+                returned_root,
+            },
         );
         let packed = self.pack_worker_result(
             source,

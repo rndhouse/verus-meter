@@ -46,6 +46,7 @@ fn with_trace(checked: &Checked, test: impl FnOnce(&mut Trace<'_>)) {
         publications: HashMap::new(),
         proof_values: HashMap::new(),
         extent_values: HashMap::new(),
+        shared_payloads: BTreeMap::new(),
     });
 }
 
