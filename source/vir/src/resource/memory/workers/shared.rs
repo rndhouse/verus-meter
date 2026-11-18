@@ -204,11 +204,11 @@ impl Analysis<'_> {
             claims.weights.insert(actor, count);
             let next =
                 contracts::add(span, claims.pending.clone(), contracts::literal(span, count));
-            self.growth.after.entry(span.id).or_default().push(expr::assign(
-                span,
-                &claims.pending,
-                next,
-            ));
+            let proofs = self.growth.after.entry(span.id).or_default();
+            proofs.push(expr::assign(span, &claims.pending, next));
+            if !self.heap.shared.has_strong(root) {
+                claims.defer_backing(&mut self.storage, span, proofs);
+            }
         }
         Ok(())
     }

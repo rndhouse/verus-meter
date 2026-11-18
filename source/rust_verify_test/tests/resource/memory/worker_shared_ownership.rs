@@ -5,6 +5,48 @@ use super::support::rejects;
 const GLOBAL: &str = "checked worker effects still require global lifetime and interference proofs";
 
 #[test]
+fn indexed_workers_can_own_every_alias_of_the_backing() {
+    let code = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn f() resources peak(memory) <= 512 {
+            let root = std::sync::Arc::new(Vec::<u8>::with_capacity(19));
+            let alias = root.clone();
+            let mut handles = Vec::with_capacity(2);
+            let first = std::thread::spawn(move || alias);
+            handles.push(first);
+            let second = std::thread::spawn(move || root);
+            handles.push(second);
+            assert(current(memory) <= 101);
+            let first = handles.pop().unwrap().join().unwrap();
+            drop(first);
+            assert(current(memory) <= 100);
+            let last = handles.pop().unwrap().join().unwrap();
+            drop(handles);
+            assert(current(memory) <= 67);
+            drop(last);
+            assert(current(memory) <= 0);
+        }
+        }
+    "#;
+    // The vector and its two slots cost 40, the tags cost 2, and the single
+    // shared backing costs 59. Each join transfers a different strong alias.
+    let valid = crate::verify_one_file("only_indexed_owners", code.into(), &[]).unwrap_err();
+    crate::common::assert_vir_error_msg(valid, GLOBAL);
+    for (name, bound, smaller) in [
+        ("publication", "<= 101", "<= 100"),
+        ("after_first_drop", "<= 100", "<= 99"),
+        ("last_owner", "<= 67", "<= 66"),
+    ] {
+        let error = crate::verify_one_file(name, code.replace(bound, smaller), &[]).unwrap_err();
+        crate::common::assert_vir_error_msgs(
+            error,
+            &["conditional memory budget exceeded", GLOBAL],
+        );
+    }
+}
+
+#[test]
 fn a_receiving_actor_cannot_discharge_its_publishers_indexed_shared_claims() {
     rejects(
         "worker_population_strong_capture",

@@ -376,8 +376,8 @@ impl SharedRoots {
         Ok(released)
     }
 
-    /// Move a worker's entry claim into its indexed publication. A remaining
-    /// fixed handle keeps the canonical root addressable while publishing.
+    /// Move a worker's entry claims into its indexed publication. When the
+    /// whole root moves, the indexed claims take over its backing charge.
     pub(super) fn index_imports(
         &mut self,
         entry: &Self,
@@ -392,14 +392,14 @@ impl SharedRoots {
         let mut claims = Vec::new();
         for (id, imported) in &entry.roots {
             let supported = self.roots.get(id).is_some_and(|root| {
-                root.strong > imported.strong
+                root.strong >= imported.strong
                     && matches!(imported.storage, Backing::Imported { entry } if entry == imported.strong)
                     && matches!(&root.storage, Backing::Owned(_))
             });
             if !supported {
                 return Err(unsupported(
                     span,
-                    "indexed worker aliases without a remaining owner of the canonical shared backing",
+                    "indexed worker aliases outside their canonical owned backing",
                 ));
             }
             let Backing::Owned(backing) = &self.roots[id].storage else { unreachable!() };
@@ -407,6 +407,7 @@ impl SharedRoots {
         }
         for (id, count, _) in &claims {
             self.roots.get_mut(id).unwrap().strong -= count;
+            self.take_backing_without_fixed_handles(*id);
         }
         Ok(claims)
     }

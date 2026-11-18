@@ -280,9 +280,9 @@ The allocation must originate outside repeated coordinator loops. Its charge inc
 locally owned payload storage. For example, workers sharing an `Arc<Vec<u8>>`
 retain one control block, one inline vector and one buffer at its reserved capacity.
 Payloads containing caller-owned storage or additional strong or worker handles
-require separate lifetime accounting. Another fixed strong handle must exist when
-each worker handle enters the collection. The coordinator may then drop its own
-handle before joining. Each join reconciles the aliases captured by that worker.
+require separate lifetime accounting. If the last fixed strong handle moves into
+a worker whose handle enters a collection, the outstanding workers retain the
+backing. Each join reconciles the aliases captured by that worker.
 When capture counts differ within one vector, each allocation's count is the
 sum over the occupied slots of the references captured by that slot's worker
 family. A pop transfers a handle out of the vector. Joining its worker and
