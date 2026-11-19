@@ -45,7 +45,25 @@ pub(super) fn prove_prefix_exit(
     memory: &Expr,
     statements: &mut Vec<Stmt>,
 ) -> Result<(), VirErr> {
-    proofs::prefix(span, memory, statements, false)
+    proofs::prefix(span, memory, statements, false)?;
+    let raw = simplify::inspect::call(memory, "runtime").map_or(memory, |args| &args[0]);
+    if let Some(args) = simplify::inspect::call(raw, "generate_children") {
+        // The complete publication is also its own full-length prefix. This
+        // connects subsequent individual pops to the same checked prefix law
+        // used when the source drains its handles in a loop.
+        let extent = super::contracts::add(
+            span,
+            args[3].clone(),
+            super::contracts::multiply(span, args[1].clone(), args[2].clone()),
+        );
+        statements.push(expr::lemma(
+            span,
+            "block_bounds_take",
+            vec![raw.clone(), extent.clone(), extent],
+        ));
+        statements.push(expr::lemma(span, "successive_prefix_pops", vec![raw.clone()]));
+    }
+    Ok(())
 }
 
 /// Specialize the indexed view of a retained construction block at the loop exit.

@@ -58,12 +58,11 @@ fn dropping_the_joined_wrapper_keeps_the_publishers_clone_live() {
     verify_bounds("worker_consumes_wrapper", consumed, &[113]);
 }
 
-#[test]
-fn dropping_wrappers_from_different_visits_keeps_both_inner_buffers() {
-    let source = r#"
+fn crossed_visits(requirement: &str, drain: &str) -> String {
+    r#"
     use vstd::prelude::*;
     verus! {
-        fn mixed(n: u16) requires 2 <= n, resources peak(memory) <= 130 * n + 256 {
+        fn mixed(n: u16) requires REQUIREMENT, resources peak(memory) <= 130 * n + 256 {
             let mut left = Vec::with_capacity(n as usize);
             let mut right = Vec::with_capacity(n as usize);
             let mut i = 0u16;
@@ -78,13 +77,7 @@ fn dropping_wrappers_from_different_visits_keeps_both_inner_buffers() {
                 i += 1;
             }
             if n == 2 { assert(current(memory) <= 302); }
-            while left.len() > 2 invariant left.len() == right.len(), 2 <= left.len() <= n,
-                decreases left.len(),
-            {
-                let a = left.pop().unwrap().join().unwrap();
-                let b = right.pop().unwrap().join().unwrap();
-                drop(a); drop(b);
-            }
+            DRAIN
             let newer = right.pop().unwrap().join().unwrap();
             let older = right.pop().unwrap().join().unwrap(); drop(older);
             let other = left.pop().unwrap().join().unwrap(); drop(other);
@@ -98,6 +91,41 @@ fn dropping_wrappers_from_different_visits_keeps_both_inner_buffers() {
             assert(current(memory) <= 4);
         }
     }
-    "#;
-    verify_bounds("crossed_visits", source.into(), &[259, 168]);
+    "#
+    .replace("REQUIREMENT", requirement)
+    .replace("DRAIN", drain)
+}
+
+#[test]
+fn dropping_wrappers_from_different_visits_keeps_both_inner_buffers() {
+    let source = crossed_visits(
+        "2 <= n",
+        r#"
+            while left.len() > 2 invariant left.len() == right.len(), 2 <= left.len() <= n,
+                decreases left.len(),
+            {
+                let a = left.pop().unwrap().join().unwrap();
+                let b = right.pop().unwrap().join().unwrap();
+                drop(a); drop(b);
+            }
+    "#,
+    );
+    verify_bounds("crossed_visits", source, &[259, 168]);
+}
+
+#[test]
+fn explicit_pops_must_consume_every_published_worker() {
+    let source = crossed_visits("n == 2", "");
+    verify_bounds("explicit_final_joins", source.clone(), &[]);
+    let lost = source.replace("let last = left.pop().unwrap().join().unwrap(); drop(last);", "");
+    let mut errors = crate::verify_one_file("missing_final_join", lost, &[]).unwrap_err();
+    errors.errors.sort_by(|left, right| left.message.cmp(&right.message));
+    assert_vir_error_msgs(
+        errors,
+        &[
+            "cannot discard outstanding worker handles",
+            "conditional memory budget exceeded",
+            GLOBAL,
+        ],
+    );
 }
