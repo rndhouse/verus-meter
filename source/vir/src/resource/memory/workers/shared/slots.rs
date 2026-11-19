@@ -25,8 +25,11 @@ impl Analysis<'_> {
             self.release_shared_backing(root, backing, span, &mut proofs);
         }
         self.growth.before.entry(span.id).or_default().extend(proofs);
-        owner.shared =
-            self.heap.shared.select_alias(expr::integer(span, root.serial()), [root].into()).shared;
+        owner.shared = self
+            .heap
+            .shared
+            .select_alias(expr::integer(span, root.serial()), [root].into(), None)
+            .shared;
         Ok(())
     }
 

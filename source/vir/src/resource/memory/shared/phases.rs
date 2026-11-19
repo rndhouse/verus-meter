@@ -41,6 +41,8 @@ impl Handles {
 pub(in super::super) struct Checkpoint {
     site: Span,
     handles: BTreeMap<RootId, Handles>,
+    /// Canonical payloads reserved by this actor’s incoming handle collections.
+    collections: BTreeSet<RootId>,
     selections: BTreeMap<u64, Handles>,
     /// Frame cost belongs to the checkpoint; backing costs belong to the
     /// publications where their canonical owners are in scope.
@@ -142,11 +144,13 @@ impl Analysis<'_> {
                 Some((*id, Handles { entry: alias.imported?, live: alias.handles }))
             })
             .collect();
-        if !handles.is_empty() || !selections.is_empty() {
+        let collections: BTreeSet<_> = self.transitions.collection_claims.keys().copied().collect();
+        if !handles.is_empty() || !selections.is_empty() || !collections.is_empty() {
             self.transitions.shared_checkpoints.push(Checkpoint {
                 site: span.clone(),
                 handles,
                 selections,
+                collections,
                 frame: frame.total(),
                 backing: Vec::new(),
                 publisher_guard: None,
@@ -195,16 +199,13 @@ impl Analysis<'_> {
         for check in worker.shared_checkpoints() {
             let span = &check.site;
             let Reachable { fixed: mut counts, indexed_ancestors } =
-                self.heap.shared.at_worker_checkpoint(check, |id| {
-                    self.growth.indexed_shared.contains_key(&id)
-                        || self.growth.occurrence_peers.contains_key(&id)
-                })?;
+                self.at_worker_checkpoint(check)?;
             let (selected, selections) = self.heap.shared.project_selections(check)?;
             let mut imports = BTreeMap::new();
             let mut owned = Vec::new();
-            // A candidate already reached through a fixed handle is observed
-            // regardless of the selected result's identity.
-            let fixed: std::collections::BTreeSet<_> = counts.keys().copied().collect();
+            // A known owner reaches its backing regardless of any separate
+            // selected alias's identity. Charge it once through the union.
+            let fixed: BTreeSet<_> = counts.keys().copied().collect();
             for id in selected.keys() {
                 if self
                     .growth
@@ -292,7 +293,15 @@ impl Analysis<'_> {
                 if let Some(peers) = peers {
                     dependencies.push(peers.population.pending.clone());
                 }
-                if live == 0 {
+                // A conditional publisher count and a symbolic receiver frame
+                // belong to separate proof scopes. A known full backing size
+                // is a conservative allowance through the collector's join.
+                let reserved_by_collector = check.collections.contains(&id)
+                    || ancestors.is_some_and(|roots| !roots.is_disjoint(&check.collections));
+                let full_allowance = reserved_by_collector
+                    && contracts::constant(&check.frame).is_none()
+                    && contracts::constant(&bytes).is_some();
+                if live == 0 && !full_allowance {
                     for ancestor in ancestors.into_iter().flatten() {
                         if let Some(claims) = self.growth.indexed_shared.get(ancestor) {
                             dependencies.push(claims.population.pending.clone());
@@ -325,6 +334,7 @@ impl Analysis<'_> {
                 owned.push(bytes);
             }
             let mut projected = check.clone();
+            projected.collections.clear();
             projected.handles = imports;
             projected.selections = selections;
             let guard = projected.publisher_guard.take();

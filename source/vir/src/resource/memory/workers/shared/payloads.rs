@@ -34,7 +34,18 @@ impl Analysis<'_> {
             return;
         }
         while let Some(root) =
-            self.heap.shared.held_payloads.difference(&self.growth.section_shared).next().copied()
+            self.heap.shared.held_payloads.difference(&self.growth.section_shared).copied().find(
+                |root| {
+                    // A moved handle vector no longer appears among named owners. Its
+                    // fixed collector retains these payloads until the matching join.
+                    !self.heap.workers.records.values().any(|worker| {
+                        matches!(worker.stage, super::super::Stage::Running)
+                            && worker.execution.as_ref().is_some_and(|e| {
+                                e.effects.ownership.collection_claims.contains_key(root)
+                            })
+                    })
+                },
+            )
         {
             self.heap.shared.held_payloads.remove(&root);
             let claims = &self.growth.indexed_shared[&root];

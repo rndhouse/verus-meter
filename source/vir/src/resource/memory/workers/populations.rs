@@ -92,8 +92,11 @@ impl Analysis<'_> {
         {
             // Receiving a returned alias can reserve backing even when the join
             // leaves the outstanding claim count unchanged.
-            self.require_indexed_claim_owner(&source.span)?;
-            Some(self.indexed_result_roots(&source.span, &occurrence)?)
+            let roots = self.indexed_result_roots(&source.span, &occurrence)?;
+            if !roots.values().all(|root| self.transitions.collection_claims.contains_key(root)) {
+                self.require_indexed_claim_owner(&source.span)?;
+            }
+            Some(roots)
         } else {
             None
         };

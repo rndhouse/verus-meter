@@ -73,6 +73,9 @@ pub(super) struct SelectedAlias {
     pub(super) identity: Expr,
     /// Every possible backing, independently checked against the record.
     pub(super) roots: BTreeSet<RootId>,
+    /// A collecting actor destroys this alias locally. Its publisher releases
+    /// the reservation with the captured vector when it joins this actor.
+    pub(super) collector: Option<super::workers::WorkerId>,
     /// Local clones share the selected result's single backing reservation.
     handles: u64,
     /// Number lent to this worker. The publisher holds the reservation until join.
@@ -177,9 +180,15 @@ fn visit_strong_handles(
 }
 
 impl SharedRoots {
-    pub(super) fn select_alias(&mut self, identity: Expr, roots: BTreeSet<RootId>) -> Owner {
+    pub(super) fn select_alias(
+        &mut self,
+        identity: Expr,
+        roots: BTreeSet<RootId>,
+        collector: Option<super::workers::WorkerId>,
+    ) -> Owner {
         let id = super::accounting::Accounting::fresh_allocation();
-        self.selections.insert(id, SelectedAlias { identity, roots, handles: 1, imported: None });
+        self.selections
+            .insert(id, SelectedAlias { identity, roots, collector, handles: 1, imported: None });
         Owner { shared: Some(StrongLink::Selected(id)), ..Default::default() }
     }
 

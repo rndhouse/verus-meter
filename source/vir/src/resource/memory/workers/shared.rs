@@ -2,6 +2,7 @@
 //! Workers run independently. Until collection their checked entry claims reserve
 //! backing, including when a completed worker keeps the handle in its result.
 
+mod collections;
 mod deferred;
 use deferred::Deferred;
 mod occurrences;
@@ -123,6 +124,12 @@ impl Analysis<'_> {
     ) -> Result<Option<Expr>, VirErr> {
         let worker = &self.heap.workers.records[&actor];
         let execution = worker.execution.as_ref().unwrap();
+        if !execution.effects.ownership.collection_claims.is_empty() {
+            return Err(unsupported(
+                span,
+                "retaining a collector with outstanding shared reservations in an indexed slot",
+            ));
+        }
         let returned = execution.returned_arc_root();
         if (!execution.shared.is_empty()
             && !returned.is_some_and(|id| worker.entry_shared.has_strong(id)))
@@ -251,7 +258,7 @@ impl Analysis<'_> {
         let root = *roots
             .first()
             .ok_or_else(|| unsupported(span, "an indexed Arc result without a publication"))?;
-        if roots.len() > 1 {
+        if roots.len() > 1 || self.current_worker.is_some() {
             return Ok(self.reserve_arc_result(span, result, roots));
         }
         let path = expr::path(span, []);
@@ -305,7 +312,7 @@ impl Analysis<'_> {
             proof,
             "cannot establish the selected result's canonical shared allocation",
         ));
-        self.heap.shared.select_alias(identity, roots)
+        self.heap.shared.select_alias(identity, roots, self.current_worker)
     }
 
     /// A fixed receiver can consume the original handle once. Keep the
@@ -316,6 +323,14 @@ impl Analysis<'_> {
         owner: &mut Owner,
     ) -> Result<(), VirErr> {
         use super::SelectedWorker;
+        if let Some(StrongLink::Selected(id)) = owner.shared
+            && self.heap.shared.selection(id).collector.is_some()
+        {
+            return Err(unsupported(
+                span,
+                "forwarding a collector's selected Arc to a nested worker",
+            ));
+        }
         if let Some(root) = owner.shared.and_then(StrongLink::known)
             && self.growth.peer_results.contains_key(&root)
         {
@@ -383,6 +398,17 @@ impl Analysis<'_> {
         alias: SelectedAlias,
         proofs: &mut Vec<Stmt>,
     ) {
+        if alias.collector.is_some() {
+            // The matching collector join retires the whole captured share.
+            if alias.collector != self.current_worker {
+                proofs.push(expr::check(
+                    span,
+                    crate::ast_util::mk_bool(span, false),
+                    "a collected Arc released outside its receiving worker",
+                ));
+            }
+            return;
+        }
         for root in &alias.roots {
             self.growth.indexed_shared[root].population.release(
                 span,
@@ -421,6 +447,9 @@ impl Analysis<'_> {
             _ => None,
         });
         for (root, claims) in &self.growth.indexed_shared {
+            if self.transitions.collection_claims.contains_key(root) {
+                continue;
+            }
             // A mixed result keeps one of the selected worker's entry claims.
             // Its last local alias reconciles that claim at destruction.
             let mut retained = None;

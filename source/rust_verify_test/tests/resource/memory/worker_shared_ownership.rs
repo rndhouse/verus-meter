@@ -1,5 +1,6 @@
 //! Shared allocation identity and lifetime across worker captures, joins and drops.
 
+mod collections;
 mod occurrences;
 mod payloads;
 
@@ -263,29 +264,6 @@ fn indexed_workers_can_own_every_alias_of_the_backing() {
             &["conditional memory budget exceeded", GLOBAL],
         );
     }
-}
-
-#[test]
-fn a_receiving_actor_cannot_discharge_its_publishers_indexed_shared_claims() {
-    rejects(
-        "worker_population_strong_capture",
-        r#"
-        fn f() resources peak(memory) <= 2048 {
-            let backing = std::sync::Arc::new(17u64);
-            let alias = backing.clone();
-            let mut handles = Vec::with_capacity(1);
-            let child = std::thread::spawn(move || { drop(alias); 17u64 });
-            handles.push(child);
-            let collector = std::thread::spawn(move || {
-                let mut pending = handles;
-                let _value = pending.pop().unwrap().join().unwrap();
-            });
-            collector.join().unwrap();
-            drop(backing);
-        }
-        "#,
-        "collection of indexed shared claims outside their publishing coordinator",
-    );
 }
 
 #[test]
@@ -633,29 +611,6 @@ const FULL_DRAIN: &str = r#"
     }
     drop(handles);
 "#;
-
-#[test]
-fn receiving_a_mixed_arc_result_requires_its_publishers_claim() {
-    // Each family returns its only captured alias. The join keeps its claim
-    // live in the result even when there is no net debit to either allocation.
-    let collection = format!(
-        "let collector = std::thread::spawn(move || {{
-            let mut handles = handles;
-            {FULL_DRAIN}
-        }});
-        collector.join().unwrap();"
-    );
-    let error = crate::verify_one_file(
-        "mixed_arc_receiving_worker",
-        mixed_arc_program("", DISJOINT_CAPTURES, &collection),
-        &[],
-    )
-    .unwrap_err();
-    crate::common::assert_vir_error_msg(
-        error,
-        "collection of indexed shared claims outside their publishing coordinator",
-    );
-}
 
 #[test]
 fn mixed_arc_workers_reconcile_a_symbolic_number_of_results() {

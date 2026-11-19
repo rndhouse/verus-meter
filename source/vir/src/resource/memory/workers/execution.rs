@@ -194,6 +194,7 @@ impl Analysis<'_> {
         }
         let publication = self.publication_state(span, actor, at_fork)?;
         let initial = storage.clone();
+        let collection_entries = self.capture_collection_claims(span, &entry, &inputs, result_type);
         let declarations = self.growth.declarations.len();
         // Enclosing loop coordinates belong to the actor's identity, not its
         // local control flow. A child body begins a separate reusable frame.
@@ -228,6 +229,7 @@ impl Analysis<'_> {
             growth: std::mem::take(&mut self.growth),
             bound: self.bound.clone(),
         };
+        worker.transitions.collection_claims = collection_entries;
         worker.heap.shared = entry.shared.clone();
         worker.heap.workers = body_workers;
         worker.growth.runtime_classification |=

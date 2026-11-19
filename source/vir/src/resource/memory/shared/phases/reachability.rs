@@ -8,34 +8,50 @@ pub(super) struct Reachable {
     pub(super) indexed_ancestors: BTreeMap<RootId, BTreeSet<RootId>>,
 }
 
-impl SharedRoots {
+impl Analysis<'_> {
     /// Find the fixed ownership graph reachable from these imports, then
     /// propagate final drops through it. Two edges to one root are two
     /// strong references, but its control block and payload are charged once.
     pub(super) fn at_worker_checkpoint(
         &self,
         checkpoint: &Checkpoint,
-        indexed: impl Fn(RootId) -> bool,
     ) -> Result<Reachable, VirErr> {
         let span = &checkpoint.site;
         let mut counts = BTreeMap::new();
         let mut children = BTreeMap::new();
-        let mut pending: Vec<_> = checkpoint.handles.keys().copied().collect();
+        let mut pending: Vec<_> =
+            checkpoint.handles.keys().chain(&checkpoint.collections).copied().collect();
         while let Some(id) = pending.pop() {
             if counts.contains_key(&id) {
                 continue;
             }
-            let root = self.roots.get(&id).ok_or_else(|| {
-                unsupported(span, "a worker checkpoint outside its shared allocation domain")
-            })?;
-            let mut count = root.strong;
+            let (mut count, backing) = if let Some(root) = self.heap.shared.roots.get(&id) {
+                let owned = match &root.storage {
+                    Backing::Owned(owner) => Some(owner.as_ref()),
+                    Backing::Imported { .. } => None,
+                };
+                (root.strong, owned)
+            } else if checkpoint.collections.contains(&id)
+                && let Some(claims) = self.growth.indexed_shared.get(&id)
+                && (self.heap.shared.held_payloads.contains(&id)
+                    || claims.backing.references() == super::super::References::None)
+            {
+                // With no fixed handles, a collector still reaches the original
+                // payload through the publisher's outstanding slot reservations.
+                (0, Some(&claims.backing))
+            } else {
+                return Err(unsupported(
+                    span,
+                    "a worker checkpoint outside its shared allocation domain",
+                ));
+            };
             if let Some(observed) = checkpoint.handles.get(&id) {
                 count = observed.in_domain(count).ok_or_else(|| {
                     unsupported(span, "inconsistent checkpoint strong-reference counts")
                 })?;
             }
             counts.insert(id, count);
-            if let Backing::Owned(owner) = &root.storage {
+            if let Some(owner) = backing {
                 let mut edges = Vec::new();
                 super::super::visit_strong_handles(
                     owner,
@@ -64,7 +80,9 @@ impl SharedRoots {
             // Pass that condition down each immutable edge while subtracting the
             // finite handle count once for every field (including duplicate links).
             let mut retained = ancestors.get(&id).cloned().unwrap_or_default();
-            if indexed(id) {
+            if self.growth.indexed_shared.contains_key(&id)
+                || self.growth.occurrence_peers.contains_key(&id)
+            {
                 retained.insert(id);
             }
             for child in children.remove(&id).into_iter().flatten() {

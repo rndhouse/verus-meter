@@ -74,7 +74,19 @@ impl Population {
                 (contracts::multiply(span, contracts::literal(span, weight), length.clone()), false)
             });
         }
-        let count = families
+        self.count_records(span, families, records, length).map(|count| (count, true))
+    }
+
+    /// Boundary transfers count the actual descriptors, including when other
+    /// handle collections in the caller have the same element type.
+    pub(super) fn count_records<'a>(
+        &self,
+        span: &Span,
+        families: impl Iterator<Item = &'a WorkerId>,
+        records: &Expr,
+        length: &Expr,
+    ) -> Option<Expr> {
+        families
             .filter_map(|id| {
                 let weight = *self.weights.get(id)?;
                 let count = expr::operation(
@@ -85,8 +97,25 @@ impl Population {
                 );
                 Some(contracts::multiply(span, contracts::literal(span, weight), count))
             })
-            .reduce(|a, b| contracts::add(span, a, b))?;
-        Some((count, true))
+            .reduce(|a, b| contracts::add(span, a, b))
+    }
+
+    /// A producer loop may have used a length-only invariant. Check the
+    /// matching descriptor count before exporting this vector's reservations.
+    pub(super) fn homogeneous_coverage<'a>(
+        &self,
+        span: &Span,
+        families: impl Iterator<Item = &'a WorkerId> + Clone,
+        forest: &Expr,
+        length: &Expr,
+    ) -> Option<Expr> {
+        let weight = self.uniform_weight(families.clone())?;
+        let exact = self.count_records(span, families, forest, length)?;
+        let uniform = contracts::multiply(span, contracts::literal(span, weight), length.clone());
+        Some(expr::purpose(
+            crate::ast_util::mk_eq(span, &exact, &uniform),
+            "captured worker families cover the occupied slots",
+        ))
     }
 
     /// Use the selected publication identity for mixed families. A uniform

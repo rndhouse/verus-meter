@@ -284,20 +284,7 @@ impl crate::resource::memory::analysis::Analysis<'_> {
             }
         }
         if needs_family_counts {
-            for law in
-                ["worker_family_count_empty", "worker_family_count_push", "worker_family_count_pop"]
-            {
-                let activation = crate::def::Spanned::new(
-                    span.clone(),
-                    StmtX::Expr(SpannedTyped::new(
-                        span,
-                        &crate::ast_util::unit_typ(),
-                        ExprX::Fuel(expr::function(law), 1, true),
-                    )),
-                );
-                self.growth.before_loop_proof(span, activation.clone());
-                self.growth.before.entry(record.body.span.id).or_default().push(activation);
-            }
+            self.growth.prove_family_counts(span, &record.body.span);
         }
         for (pending, current) in offsets {
             let entry = self.loop_snapshot(span, &current);
@@ -323,5 +310,42 @@ impl crate::resource::memory::analysis::Analysis<'_> {
             ));
         }
         facts
+    }
+}
+
+impl super::Loop {
+    /// The logical length paired with this exact runtime handle forest at this
+    /// loop head. Multiple local bindings can have the same vector type.
+    pub(in super::super) fn forest_length(&self, records: &Expr) -> Option<&Expr> {
+        let ExprX::Var(original) = &records.x else { return None };
+        self.charges.iter().find_map(|charge| {
+            let (_, forest) = self.reference_forests.get(&charge.location)?;
+            matches!(&forest.x, ExprX::Var(name) if name == original).then_some(&charge.length.0)
+        })
+    }
+}
+
+/// Broadcast laws for the number of workers of a given family in the actual slots.
+pub(in super::super) fn family_count_laws(span: &Span) -> impl Iterator<Item = Stmt> + '_ {
+    ["worker_family_count_empty", "worker_family_count_push", "worker_family_count_pop"]
+        .into_iter()
+        .map(|law| {
+            crate::def::Spanned::new(
+                span.clone(),
+                StmtX::Expr(SpannedTyped::new(
+                    span,
+                    &crate::ast_util::unit_typ(),
+                    ExprX::Fuel(expr::function(law), 1, true),
+                )),
+            )
+        })
+}
+
+impl Growth {
+    pub(in super::super) fn prove_family_counts(&mut self, head: &Span, body: &Span) {
+        for activate in family_count_laws(head) {
+            self.before_loop_proof(head, activate.clone());
+            self.before.entry(body.id).or_default().push(activate);
+        }
     }
 }

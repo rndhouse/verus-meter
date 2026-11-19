@@ -235,6 +235,9 @@ pub(in super::super) enum Kind {
 
 #[derive(Default)]
 pub(in super::super) struct Checked {
+    /// This fixed collector owns the reservations carried by its captured handle slots.
+    pub(in super::super) collection_claims:
+        std::collections::BTreeMap<super::super::shared::RootId, Expr>,
     /// Worker checkpoints whose incoming shared backing belongs to an enclosing actor.
     pub(in super::super) shared_checkpoints: Vec<super::super::shared::phases::Checkpoint>,
     /// Retained workers require a complete occurrence transformation even when

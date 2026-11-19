@@ -300,9 +300,14 @@ The publisher can store results of successive visits to the same join in a
 vector. Each occupied slot retains the allocation selected on its own visit.
 Popping the slot transfers that reference, and dropping the vector releases
 the references in its remaining slots. Local clones may survive either event.
-A worker receiving an entire vector of handles cannot drain indexed shared
-claims owned by its publisher. That transfer needs a summary of the references
-the receiving worker consumes or returns.
+A fixed worker can also receive a vector of outstanding handles, join every
+entry, drop any returned aliases and return unit or an inline scalar. At spawn,
+the publisher counts each allocation's references in the captured slots using
+their worker identities. Those references keep the backing charged through the
+collector's join. Other vectors and fixed aliases retain their own references.
+Dropping a nonempty handle vector or detaching a worker fails the local checks.
+Returning a partially drained vector or a surviving alias from this kind of
+collector still requires an outgoing ownership relation.
 
 For an allocation created before the publishing loop, a returned `Arc` can
 retain the original ownership of its payload through handle and result vectors.
@@ -369,7 +374,9 @@ until collection. If a captured handle came from a collection of workers that
 return different allocations, the check uses the identity frozen at that join.
 Dropping its last clone in the child releases exactly the selected reservation
 in the checkpoint view. Any other result or slot naming that allocation still
-retains its backing.
+retains its backing. A collector that receives a whole vector can conservatively
+count its candidate payloads throughout its body. For a symbolic collector
+frame, the verifier can use a constant backing allowance proved at publication.
 
 The publisher checks backing sizes against its allocation state. A constant
 allowance proved there can be used at the worker's source checkpoint. Symbolic
