@@ -258,18 +258,13 @@ impl Analysis<'_> {
             owner.dynamic.filter(|id| self.storage.contains_allocation(*id)).ok_or_else(|| {
                 unsupported(span, "a joined allocation peer outside its charging scope")
             })?;
-        let tag = contracts::literal(span, verus_meter_model::completion_bytes(0).unwrap());
         let packed = self.storage.dynamic_cost(span, charge);
-        proofs.push(expr::check(
-            span,
-            crate::ast_util::mk_ineq(span, &tag, &packed, InequalityOp::Le),
-            "cannot locate the selected worker's retained shared backing",
-        ));
+        let (bytes, _) = super::occurrences::split_carried_charge(span, packed, proofs);
         self.finish_peer_backing(
             span,
             role,
             identity.expect("selected worker family"),
-            contracts::subtract(span, packed, tag),
+            bytes,
             proofs,
         );
         Ok(())

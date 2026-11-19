@@ -2,6 +2,22 @@
 //! at join and keep its full identity available for reconciling independently retained peers.
 use super::*;
 
+/// Split a worker slot's charge into backing bytes and its completion tag.
+/// A slot holding only a peer's reservation can have zero backing bytes.
+pub(super) fn split_carried_charge(
+    span: &Span,
+    packed: Expr,
+    proofs: &mut Vec<Stmt>,
+) -> (Expr, Expr) {
+    let tag = contracts::literal(span, verus_meter_model::completion_bytes(0).unwrap());
+    proofs.push(expr::check(
+        span,
+        crate::ast_util::mk_ineq(span, &tag, &packed, InequalityOp::Le),
+        "cannot locate the selected worker's retained shared backing",
+    ));
+    (contracts::subtract(span, packed, tag.clone()), tag)
+}
+
 impl Analysis<'_> {
     pub(super) fn check_occurrence_payload(span: &Span, backing: &Owner) -> Result<(), VirErr> {
         if !backing.complete()
@@ -60,15 +76,9 @@ impl Analysis<'_> {
             unsupported(span, "a collected shared allocation without its charged handle")
         })?;
         let packed = self.storage.dynamic_cost(span, id);
-        let tag = contracts::literal(span, verus_meter_model::completion_bytes(0).unwrap());
-        self.growth.before.entry(span.id).or_default().push(expr::check(
-            span,
-            crate::ast_util::mk_ineq(span, &tag, &packed, InequalityOp::Le),
-            "cannot locate the selected worker's retained shared backing",
-        ));
-        // Split the charged slot before recording the join's delivery peak.
-        // The completion tag stays with the consumed handle until its release.
-        let bytes = contracts::subtract(span, packed, tag.clone());
+        let (bytes, tag) =
+            split_carried_charge(span, packed, self.growth.before.entry(span.id).or_default());
+        // The completion tag stays with the handle through result delivery.
         self.storage.set_allocation(id, owner.kind.clone(), tag);
         let identity = expr::field(
             span,
