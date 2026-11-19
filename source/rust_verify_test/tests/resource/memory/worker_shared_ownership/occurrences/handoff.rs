@@ -166,8 +166,8 @@ fn every_peer_of_the_same_visit_must_retire() {
                 proof {{ product(n as int, 41 + b as int); }}
                 let carrier = carriers.pop().unwrap().join().unwrap();
                 let peer = peers.pop().unwrap().join().unwrap();
-                let sibling = siblings.pop().unwrap().join().unwrap();
-                drop(sibling); drop(carrier); drop(peer);
+                DROP_SIBLING
+                drop(carrier); drop(peer);
             }}
             let carrier = carriers.pop().unwrap().join().unwrap(); drop(carrier);
             let peer = peers.pop().unwrap().join().unwrap(); drop(peer);
@@ -184,13 +184,23 @@ fn every_peer_of_the_same_visit_must_retire() {
         }}
         "#
     );
-    assert_vir_error_msg(
-        crate::verify_one_file("two_peers", program.clone(), &[]).unwrap_err(),
-        GLOBAL,
-    );
-    assert_vir_error_msgs(
-        crate::verify_one_file("two_peers_short", program.replace("<= 248", "<= 247"), &[])
+    for (name, release) in [
+        ("named_sibling", "let sibling = siblings.pop().unwrap().join().unwrap(); drop(sibling);"),
+        ("inline_sibling", "drop(siblings.pop().unwrap().join().unwrap());"),
+    ] {
+        let source = program.replace("DROP_SIBLING", release);
+        assert_vir_error_msg(
+            crate::verify_one_file(name, source.clone(), &[]).unwrap_err(),
+            GLOBAL,
+        );
+        assert_vir_error_msgs(
+            crate::verify_one_file(
+                &format!("{name}_short"),
+                source.replace("<= 248", "<= 247"),
+                &[],
+            )
             .unwrap_err(),
-        &["conditional memory budget exceeded", GLOBAL],
-    );
+            &["conditional memory budget exceeded", GLOBAL],
+        );
+    }
 }

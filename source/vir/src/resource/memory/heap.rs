@@ -768,8 +768,14 @@ impl Analysis<'_> {
                 let owner = self.result_owner.take().ok_or_else(|| {
                     unsupported(&expr.span, "dropping a temporary without shared ownership")
                 })?;
-                self.release_owner(owner, &expr.span);
+                // The operand may publish its ownership evidence at join. Its
+                // destructor runs only after that operand has produced the Arc.
+                self.release_owner_after(owner, &expr.span);
                 self.release_value(value, &expr.span);
+                self.transitions.operation(
+                    &expr.span,
+                    super::transfer::checked::Operation::Drop { source: args[0].clone() },
+                );
                 return Ok(Some(0));
             }
             let ExprX::ReadPlace(place, _) = &args[0].x else {
