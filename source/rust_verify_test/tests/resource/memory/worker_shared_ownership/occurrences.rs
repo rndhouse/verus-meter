@@ -2,6 +2,7 @@
 //! and join must preserve the key of the allocation actually returned.
 
 mod handoff;
+mod payloads;
 mod publication;
 
 use super::GLOBAL;
@@ -269,12 +270,21 @@ fn joining_restores_the_capacity_from_the_selected_visit() {
         }
         }
     "#;
-    assert_vir_error_msg(
-        crate::verify_one_file("vary_capacity", program.into(), &[]).unwrap_err(),
-        GLOBAL,
-    );
-    assert_vir_error_msgs(
-        crate::verify_one_file("vary_short", program.replace("<= 61", "<= 60"), &[]).unwrap_err(),
-        &["conditional memory budget exceeded", GLOBAL],
-    );
+    // Wrapping the selected inner allocation adds a 16-byte control block
+    // and an 8-byte inline Arc. Earlier and later visits still own 7 and 8 bytes.
+    let nested = program
+        .replace("handles.push", "let root = std::sync::Arc::new(root); handles.push")
+        .replace("<= 117", "<= 165")
+        .replace("<= 61", "<= 85");
+    for (name, source, exact, short) in [
+        ("vary_capacity", program, "<= 61", "<= 60"),
+        ("vary_nested_capacity", nested.as_str(), "<= 85", "<= 84"),
+    ] {
+        assert_vir_error_msg(crate::verify_one_file(name, source.into(), &[]).unwrap_err(), GLOBAL);
+        assert_vir_error_msgs(
+            crate::verify_one_file(&format!("{name}_short"), source.replace(exact, short), &[])
+                .unwrap_err(),
+            &["conditional memory budget exceeded", GLOBAL],
+        );
+    }
 }

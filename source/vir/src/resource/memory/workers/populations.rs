@@ -109,7 +109,7 @@ impl Analysis<'_> {
             self.growth.before.entry(source.span.id).or_default().extend(proofs);
         }
         let result_owner = if carried_arc {
-            Some(self.receive_carried_arc(&source.span, &owner, memory, peer)?)
+            Some(self.receive_carried_arc(&source.span, &owner, memory, peer, &occurrence)?)
         } else if let Some(id) = delegated {
             if !self.heap.workers.delegated.remove(&id) {
                 return Err(unsupported(
@@ -172,6 +172,13 @@ impl Analysis<'_> {
             super::super::transfer::checked::Operation::WorkerJoin {
                 source: argument.clone(),
                 returned_root,
+                payload_job: result_owner.as_ref().and_then(|o| o.shared?.known()).filter(|_| {
+                    carried_arc
+                        && occurrence
+                            .templates
+                            .iter()
+                            .any(|id| self.growth.payload_jobs.contains_key(id))
+                }),
             },
         );
         let packed = self.pack_worker_result(
@@ -295,19 +302,30 @@ impl Analysis<'_> {
         }
         let span = &source.span;
         let ExprX::Call { args, .. } = &source.x else { unreachable!() };
+        let job = execution.returned_arc_root().and_then(|root| {
+            self.transitions.shared_constructor(root).filter(|(_, coords)| !coords.is_empty())?;
+            let handle = self.heap.shared.payload_job(root)?;
+            Some((root, handle.actor, handle.publication.clone()?))
+        });
+        if let Some((_, inner, _)) = &job {
+            self.growth.payload_jobs.insert(actor, *inner);
+        }
         self.transitions.operation(
             span,
-            super::super::transfer::checked::Operation::WorkerPublish {
-                source: args[0].clone(),
-                identity: execution.publication.occurrence.clone(),
-                inputs: execution
-                    .inputs
-                    .iter()
-                    .map(|input| (input.typ.clone(), input.slot.clone()))
-                    .collect(),
-                populations: execution.effects.ownership.captured_populations.clone(),
-                result: execution.transfer.clone().unwrap(),
-            },
+            super::super::transfer::checked::Operation::WorkerPublish(
+                super::super::transfer::checked::WorkerPublication {
+                    payload_job: job.as_ref().map(|(root, _, _)| *root),
+                    source: args[0].clone(),
+                    identity: execution.publication.occurrence.clone(),
+                    inputs: execution
+                        .inputs
+                        .iter()
+                        .map(|input| (input.typ.clone(), input.slot.clone()))
+                        .collect(),
+                    populations: execution.effects.ownership.captured_populations.clone(),
+                    result: execution.transfer.clone().unwrap(),
+                },
+            ),
         );
         let first = self.growth.before.get(&span.id).map_or(0, Vec::len);
         let result = self
@@ -384,6 +402,9 @@ impl Analysis<'_> {
                 inputs = expr::add(span, inputs, expr::prefix(span, memory?, path));
             }
         }
+        if let Some((_, _, memory)) = job {
+            inputs = expr::attach_payload_job(span, inputs, memory);
+        }
         let record = expr::operation(
             span,
             "worker_observation",
@@ -435,6 +456,17 @@ impl Analysis<'_> {
                     .extend(&occurrence.templates);
             }
         }
+        self.index_worker_handle(owner, span, forest)
+    }
+
+    /// Move an executable join obligation and its completion tag into an
+    /// ownership descriptor, independent of the container retaining it.
+    pub(super) fn index_worker_handle(
+        &mut self,
+        owner: &mut Owner,
+        span: &Span,
+        forest: &Expr,
+    ) -> Result<Option<Expr>, VirErr> {
         let Some(handle) = &owner.worker else { return Ok(None) };
         let actor = handle.actor;
         let memory = handle.publication.clone().ok_or_else(|| {

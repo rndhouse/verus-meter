@@ -25,7 +25,7 @@ impl Analysis<'_> {
             .ok_or_else(|| {
                 unsupported(span, "extracting a shared payload without a known allocation")
             })?;
-        if !self.transitions.owns_fixed_root(root)
+        if !(self.transitions.owns_fixed_root(root) || self.transitions.recovered_job(root))
             || self.growth.section_shared.contains(&root)
             || self.growth.peer_results.contains_key(&root)
             || self.growth.occurrence_peers.contains_key(&root)

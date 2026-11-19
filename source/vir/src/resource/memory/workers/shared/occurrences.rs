@@ -32,37 +32,6 @@ impl Analysis<'_> {
         Ok(())
     }
 
-    pub(super) fn transfer_occurrence_backing(
-        &mut self,
-        span: &Span,
-        backing: &Owner,
-    ) -> Result<Expr, VirErr> {
-        use crate::resource::memory::footprint::MemoryKind;
-        let charges = self.owner_charges(span, backing);
-        let upper = self.owner_upper(span, backing);
-        let kind = MemoryKind::host_heap();
-        if charges.iter().any(|(k, v)| k != &kind && contracts::constant(v) != Some(0)) {
-            return Err(unsupported(
-                span,
-                "transporting a shared allocation with multiple memory kinds",
-            ));
-        }
-        let bytes = upper
-            .get(&kind)
-            .cloned()
-            .ok_or_else(|| unsupported(span, "an occurrence without a heap extent"))?;
-        let actual = charges.get(&kind).ok_or_else(|| {
-            unsupported(span, "a shared occurrence without a charged heap allocation")
-        })?;
-        self.growth.before.entry(span.id).or_default().push(expr::check(
-            span,
-            crate::ast_util::mk_ineq(span, actual, &bytes, InequalityOp::Le),
-            "cannot establish the transported shared backing extent",
-        ));
-        self.release_owner_storage(backing.clone(), span, false)?;
-        Ok(bytes)
-    }
-
     /// A returned strong handle takes over the selected worker's byte charge.
     /// Freeze its full allocation key before the pop's proof locals can be reused.
     pub(in crate::resource::memory::workers) fn receive_carried_arc(
@@ -71,6 +40,7 @@ impl Analysis<'_> {
         owner: &Owner,
         memory: Expr,
         role: Option<PeerResult>,
+        occurrence: &Occurrence,
     ) -> Result<Owner, VirErr> {
         let id = owner.dynamic.ok_or_else(|| {
             unsupported(span, "a collected shared allocation without its charged handle")
@@ -126,13 +96,14 @@ impl Analysis<'_> {
         } else {
             bytes
         };
+        let (mut backing, bytes) =
+            self.restore_payload_job(span, occurrence, role.is_some(), bytes)?;
         let allocation = Accounting::fresh_allocation();
         self.storage.set_allocation(allocation, owner.kind.clone(), bytes.clone());
-        let handle = self.heap.shared.insert(Owner {
-            dynamic: Some(allocation),
-            extent: Some(bytes),
-            ..Default::default()
-        });
+        backing.dynamic = Some(allocation);
+        backing.extent = Some(bytes);
+        self.restore_payload_links(span, occurrence, &mut backing)?;
+        let handle = self.heap.shared.insert(backing);
         let root = handle.shared.unwrap().known().unwrap();
         if let Some(role) = role {
             self.growth.peer_results.insert(root, role);

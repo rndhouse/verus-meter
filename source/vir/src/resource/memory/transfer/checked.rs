@@ -101,6 +101,23 @@ pub(in super::super) struct Assignment {
     pub(in super::super) input: Option<InputSplit>,
 }
 
+/// Substitution data derived at an actual spawn, replayed by the ownership trace.
+#[derive(Clone)]
+pub(in super::super) struct WorkerPublication {
+    /// Executable closure operand.
+    pub(in super::super) source: Expr,
+    /// Family and ordered loop coordinates.
+    pub(in super::super) identity: Expr,
+    /// Layout of the original captures.
+    pub(in super::super) inputs: Vec<(Typ, OwnerSlot)>,
+    /// Captured worker-vector observations by input index.
+    pub(in super::super) populations: HashMap<usize, Expr>,
+    /// Checked result relative to the captures.
+    pub(in super::super) result: super::Template,
+    /// Constructor whose payload supplies an embedded job observation.
+    pub(in super::super) payload_job: Option<super::super::shared::RootId>,
+}
+
 /// One executable ownership rule, with layout decisions supplied by accounting.
 #[derive(Clone)]
 pub(in super::super) enum Operation {
@@ -130,15 +147,11 @@ pub(in super::super) enum Operation {
     /// Capture transport happens at construction; it does not execute the body.
     Closure { captures: Vec<(super::super::concurrency::CaptureMode, Place)> },
     /// Publish a checked body with a snapshot of its concrete capture values.
-    WorkerPublish {
-        source: Expr,
-        identity: Expr,
-        inputs: Vec<(Typ, OwnerSlot)>,
-        populations: HashMap<usize, Expr>,
-        result: super::Template,
-    },
+    WorkerPublish(WorkerPublication),
     /// Collect exactly the runtime handle consumed by the source operation.
     WorkerJoin {
+        /// Freshly received outer allocation whose job comes from the selected record.
+        payload_job: Option<super::super::shared::RootId>,
         source: Expr,
         /// Present only when the join checks the selected result against this fixed root.
         returned_root: Option<super::super::shared::RootId>,
@@ -235,6 +248,9 @@ pub(in super::super) enum Kind {
 
 #[derive(Default)]
 pub(in super::super) struct Checked {
+    /// Incoming regions moved into a private carried allocation. The closed
+    /// consumer keeps the caller's full input charged through its return.
+    pub(in super::super) carried_inputs: HashSet<usize>,
     /// This fixed collector owns the reservations carried by its captured handle slots.
     pub(in super::super) collection_claims:
         std::collections::BTreeMap<super::super::shared::RootId, Expr>,
@@ -286,6 +302,13 @@ impl Checked {
         self.operations
             .values()
             .any(|op| matches!(op, Operation::StrongNew { root: owned, coordinates, .. } if *owned == root && coordinates.is_empty()))
+    }
+
+    /// This join recovered the payload of a uniquely transported Arc.
+    pub(in super::super) fn recovered_job(&self, root: super::super::shared::RootId) -> bool {
+        self.operations.values().any(
+            |op| matches!(op, Operation::WorkerJoin { payload_job: Some(id), .. } if *id == root),
+        )
     }
 
     /// Executable constructor at which the per-visit publication count resets.

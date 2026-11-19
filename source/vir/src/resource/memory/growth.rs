@@ -60,6 +60,16 @@ pub(super) struct Growth {
     /// Canonical allocation site captured by each retained occurrence family.
     pub(super) occurrence_roots:
         std::collections::BTreeMap<super::workers::WorkerId, super::shared::RootId>,
+    /// Paths of strong links from a transported outer allocation to fixed
+    /// coordinator-owned roots. The worker record selects the publication family.
+    pub(super) occurrence_links: std::collections::BTreeMap<
+        super::workers::WorkerId,
+        std::collections::BTreeMap<super::heap::OwnerPath, super::shared::RootId>,
+    >,
+    /// The worker body whose actual publication observation was captured
+    /// inside this family's returned Arc.
+    pub(super) payload_jobs:
+        std::collections::BTreeMap<super::workers::WorkerId, super::workers::WorkerId>,
     /// Reservations for peers that share a visit's backing with its carrying handle.
     pub(super) occurrence_peers:
         std::collections::BTreeMap<super::shared::RootId, super::workers::Peers>,

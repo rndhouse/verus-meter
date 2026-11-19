@@ -334,9 +334,22 @@ A fresh `Arc<Vec<u8>>` created on each loop visit keeps that visit's identity
 through capture, handle-vector storage and join. With `n` visits and capacity
 `b`, the buffers can contribute `n * b` bytes. Several workers from one visit
 share its single buffer. The analysis accounts separately for each control
-block, inline vector, handle slot and completion tag. Per-visit byte transport
-requires a completely owned payload without nested strong or worker handles.
-A fixed canonical payload can retain those handles with their original identity.
+block, inline vector, handle slot and completion tag.
+
+A fresh outer `Arc` can carry private backing reached through nested strong
+links. The last link into each private allocation transfers its bytes into the
+same visit's worker slot. Links to a shared root constructed before the loop
+retain their ordinary multiplicity across publication, join and drop. Several
+outer allocations can therefore keep a single inner buffer live. A closed
+consumer can also pop caller-owned buffers into fresh wrappers on successive
+visits. Its summary keeps the full original input charged to the caller through
+the declared call allowance and permits reuse on return. A fresh
+`Arc<JoinHandle<T>>` can carry an independent job. A unique extraction recovers
+the job published on that visit, including its original captures and result.
+Dropping the returned allocation with the job still inside leaves a detached
+worker. Private byte grouping requires all links to the grouped allocation to
+move together. Extracting other grouped payloads or mixing incompatible
+payload layouts at a join requires further ownership evidence.
 
 When workers from one visit retain aliases independently, one handle carries the
 backing charge. A peer's join can transfer its reservation to a returned alias.

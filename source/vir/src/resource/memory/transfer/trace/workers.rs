@@ -63,12 +63,16 @@ impl Trace<'_> {
     pub(super) fn publish_worker(
         &mut self,
         value: &Expr,
-        source: Expr,
-        identity: Expr,
-        inputs: Vec<(Typ, OwnerSlot)>,
-        populations: HashMap<usize, Expr>,
-        template: Template,
+        publication: checked::WorkerPublication,
     ) -> Option<Value> {
+        let checked::WorkerPublication {
+            source,
+            identity,
+            inputs,
+            populations,
+            result: template,
+            payload_job,
+        } = publication;
         let span = &value.span;
         let Value::Owner(captures) = self.value(&source)? else { return None };
         let selected = |index: usize, path: &[OwnerSlot]| {
@@ -141,10 +145,16 @@ impl Trace<'_> {
         let result = worker_description(span, result)
             .map_or_else(|| expr::empty(span, expr::record_type()), |node| node.memory);
         let identity = self.occurrence_value(span, &identity);
+        let inputs = if let Some(root) = payload_job {
+            let Value::Owner(job) = self.shared_payloads.get(&root)? else { return None };
+            expr::attach_payload_job(span, captures.memory, job.memory.clone())
+        } else {
+            captures.memory
+        };
         let record = expr::operation(
             span,
             "worker_observation",
-            vec![expr::path(span, []), identity, captures.memory, result],
+            vec![expr::path(span, []), identity, inputs, result],
             expr::record_type(),
         );
         let memory = expr::push(span, expr::empty(span, expr::record_type()), record);
@@ -166,10 +176,29 @@ impl Trace<'_> {
         value: &Expr,
         source: Expr,
         returned_root: Option<super::super::super::shared::RootId>,
+        payload_job: Option<super::super::super::shared::RootId>,
     ) -> Option<Value> {
         let Value::Owner(handle) = self.value(&source)? else { return None };
         let span = &value.span;
         let record = expr::lookup(span, handle.memory, expr::path(span, []));
+        if let Some(root) = payload_job {
+            let (arc, _) = self.layouts.result_payloads(&value.typ)?;
+            let TypX::Decorate(TypDecoration::Arc, _, job) = &**arc else { return None };
+            let memory = expr::payload_job(span, record.clone());
+            let tag = expr::worker_charge(
+                span,
+                contracts::literal(span, verus_meter_model::completion_bytes(0)?),
+            );
+            self.shared_payloads.insert(
+                root,
+                Value::Owner(Node {
+                    origin: None,
+                    typ: job.clone(),
+                    memory: expr::push(span, memory, tag),
+                    minima: Default::default(),
+                }),
+            );
+        }
         let result = expr::operation(span, "worker_result", vec![record], expr::memory_type());
         // An Arc's inline owner contains exactly one identity link; its
         // allocation and payload stay in the canonical backing.

@@ -167,6 +167,13 @@ pub(super) fn generated(
 /// branch. Captured metadata is immutable data, not another collection to walk.
 pub(super) fn worker_descriptions(span: &Span, value: &Expr, guard: Expr, output: &mut Vec<Expr>) {
     if let Some(args) = simplify::inspect::call(value, "worker_observation") {
+        // A carried job's publication occupies the root of the input view.
+        // Its result needs the same per-visit validity proof when it is joined.
+        if let Some(inputs) = simplify::inspect::call(&args[2], "push")
+            && simplify::inspect::call(&inputs[1], "worker_observation").is_some()
+        {
+            worker_descriptions(span, &inputs[1], guard.clone(), output);
+        }
         output.push(simplify::simplify(&super::super::choice(
             span,
             guard,

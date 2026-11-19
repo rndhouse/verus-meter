@@ -140,12 +140,7 @@ impl Accounting {
     /// A completed body must have transferred or released every charge. A
     /// missing descriptor cannot silently turn live storage into zero bytes.
     pub(in super::super) fn check_transferred(&self, span: &Span) -> Result<(), VirErr> {
-        if self.paths.iter().any(|path| {
-            path.fixed.values().any(|bytes| *bytes != 0)
-                || !path.dynamic.is_empty()
-                || path.values.values().any(|charge| charge.amount != 0)
-                || !path.inputs.is_empty()
-        }) {
+        if !self.only_frame_storage(&Default::default(), &Default::default()) {
             return Err(unsupported(
                 span,
                 "worker completion with storage absent from its result descriptor",
@@ -153,6 +148,22 @@ impl Accounting {
         }
         Ok(())
     }
+
+    /// At a closed consumer's exit only scalar frame slots and input regions
+    /// conservatively kept with their caller may remain.
+    pub(in super::super) fn only_frame_storage(
+        &self,
+        slots: &std::collections::HashSet<u64>,
+        inputs: &std::collections::HashSet<usize>,
+    ) -> bool {
+        self.paths.iter().all(|path| {
+            path.fixed.values().all(|bytes| *bytes == 0)
+                && path.dynamic.is_empty()
+                && path.values.iter().all(|(id, charge)| charge.amount == 0 || slots.contains(id))
+                && path.inputs.is_subset(inputs)
+        })
+    }
+
     /// Detach precisely the supplied value and its uniquely owned descendants.
     /// Canonical shared backing stays in its enclosing domain; a handle carries
     /// only its identity. The source keeps its earlier peak observations.

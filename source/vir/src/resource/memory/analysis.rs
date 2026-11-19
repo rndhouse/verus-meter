@@ -796,8 +796,26 @@ pub(super) fn check(
             && analysis.heap.borrowed.is_empty()
             && analysis.result_owner.is_none()
             && analysis.heap.shared.is_empty()
-            && analysis.growth.indexed_shared.values().any(|c| !c.backing.inputs().is_empty())
-            && analysis.storage.check_transferred(&function.span).is_ok();
+            && (!analysis.transitions.carried_inputs.is_empty()
+                || analysis.growth.indexed_shared.values().any(|c| !c.backing.inputs().is_empty()))
+            && {
+                // Scalar formals still occupy their inline argument slots at the
+                // end of the body. They leave with the frame and own no backing.
+                let scalars = f
+                    .params
+                    .iter()
+                    .filter(|p| super::contracts::scalar(&p.x.typ))
+                    .filter_map(|p| analysis.slots.get(&p.x.name))
+                    .flat_map(|value| value.ids.iter().copied())
+                    .collect();
+                analysis.storage.only_frame_storage(&scalars, &analysis.transitions.carried_inputs)
+            };
+        if !analysis.transitions.carried_inputs.is_empty() && !consumed_payload {
+            return Err(unsupported(
+                &function.span,
+                "transporting incoming Arc storage outside a closed worker consumer",
+            ));
+        }
         if !consumed_payload {
             let report = analysis.storage.finish_conditional();
             analysis.obligations.extend(report.cost_points.iter().map(|(span, cost)| Obligation {

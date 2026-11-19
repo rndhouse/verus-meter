@@ -41,6 +41,19 @@ pub(in super::super) fn worker_charge(span: &Span, bytes: Expr) -> Expr {
     )
 }
 
+/// Ordinary captures have nonempty field paths. The otherwise empty root
+/// of the input view can hold the embedded worker's immutable observation.
+pub(in super::super) fn attach_payload_job(span: &Span, inputs: Expr, job: Expr) -> Expr {
+    let record = lookup(span, job, path(span, []));
+    push(span, inputs, record)
+}
+
+/// Recover the handle observation from the actual selected publication.
+pub(in super::super) fn payload_job(span: &Span, publication: Expr) -> Expr {
+    let inputs = operation(span, "worker_inputs", vec![publication], memory_type());
+    push(span, empty(span, record_type()), lookup(span, inputs, path(span, [])))
+}
+
 /// Freeze a scalar as erased observation data, without an allocation or strong
 /// link. Boolean captures use 0/1; integers retain their mathematical value.
 pub(in super::super) fn scalar_observation(span: &Span, path: Expr, value: Expr) -> Expr {

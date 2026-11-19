@@ -2,9 +2,11 @@
 //! Workers run independently. Until collection their checked entry claims reserve
 //! backing, including when a completed worker keeps the handle in its result.
 
+mod carried;
 mod collections;
 mod deferred;
 use deferred::Deferred;
+mod jobs;
 mod occurrences;
 mod payloads;
 mod peers;
@@ -164,7 +166,6 @@ impl Analysis<'_> {
                         "indexed aliases of a repeated allocation with outstanding owners in another domain",
                     ));
                 }
-                Self::check_occurrence_payload(span, &backing)?;
                 let peer = self.heap.shared.has_strong(root);
                 let registered = self.growth.occurrence_peers.get(&root);
                 if let Some(previous) = self.growth.occurrence_roots.get(&actor) {
@@ -194,35 +195,50 @@ impl Analysis<'_> {
                             "a peer publication without a named ownership forest",
                         ));
                     };
+                    Self::check_occurrence_payload(span, &backing)?;
                     self.register_peer(span, actor, root, destination, &backing);
                     continue;
                 }
                 self.check_peer_limit(span, actor, root);
-                carried = Some(self.transfer_occurrence_backing(span, &backing)?);
+                carried = Some(self.pack_occurrence_backing(span, actor, root, backing, forest)?);
                 continue;
             }
-            let claims = match self.growth.indexed_shared.entry(root) {
-                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-                std::collections::btree_map::Entry::Vacant(entry) => {
-                    let charges =
-                        SharedBackingCharges::for_payload(&backing, &self.growth.elements, span)?;
-                    let population = Population::new(span, &mut self.growth.declarations);
-                    entry.insert(Claims { population, backing, charges })
-                }
-            };
-            let proofs = self.growth.after.entry(span.id).or_default();
-            claims.population.publish(actor, count, span, proofs);
-            if !self.heap.shared.has_strong(root) {
-                claims.retain_backing(
-                    root,
-                    &mut self.heap.shared.held_payloads,
-                    &mut self.storage,
-                    span,
-                    proofs,
-                );
-            }
+            self.publish_fixed_claims(actor, root, count, backing, span)?;
         }
         Ok(carried)
+    }
+
+    /// Reserve the actual strong links moved into one worker slot. A link can
+    /// be captured directly or reside inside the visit's transported payload.
+    fn publish_fixed_claims(
+        &mut self,
+        actor: WorkerId,
+        root: RootId,
+        count: u64,
+        backing: Owner,
+        span: &Span,
+    ) -> Result<(), VirErr> {
+        let claims = match self.growth.indexed_shared.entry(root) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let charges =
+                    SharedBackingCharges::for_payload(&backing, &self.growth.elements, span)?;
+                let population = Population::new(span, &mut self.growth.declarations);
+                entry.insert(Claims { population, backing, charges })
+            }
+        };
+        let proofs = self.growth.after.entry(span.id).or_default();
+        claims.population.publish(actor, count, span, proofs);
+        if !self.heap.shared.has_strong(root) {
+            claims.retain_backing(
+                root,
+                &mut self.heap.shared.held_payloads,
+                &mut self.storage,
+                span,
+                proofs,
+            );
+        }
+        Ok(())
     }
 
     /// Indexed backing and outstanding claims still belong to the publisher.

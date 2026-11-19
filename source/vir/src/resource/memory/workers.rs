@@ -560,6 +560,7 @@ impl Analysis<'_> {
                 super::transfer::checked::Operation::WorkerJoin {
                     source: argument.clone(),
                     returned_root: None,
+                    payload_job: None,
                 },
             );
         }
