@@ -135,6 +135,18 @@ impl crate::resource::memory::analysis::Analysis<'_> {
         let span = &record.span;
         let mut offsets = Vec::new();
         let mut facts = Vec::new();
+        for peers in self.growth.occurrence_peers.values() {
+            if let Some(deferred) = &peers.deferred {
+                facts.push(expr::purpose(
+                    crate::ast_util::mk_implies(
+                        span,
+                        &mk_eq(span, &peers.population.pending, &expr::integer(span, 0)),
+                        &deferred.empty(span),
+                    ),
+                    "all deferred backings retire with the final peer",
+                ));
+            }
+        }
         let mut live_forests = std::collections::BTreeSet::new();
         let mut selected_handle = false;
         for owner in self.heap.owners.values().chain(self.heap.borrowed.values()) {
@@ -227,10 +239,24 @@ impl crate::resource::memory::analysis::Analysis<'_> {
                 else {
                     continue;
                 };
-                let families = self.retained_families(payload);
-                if let Some((count, mixed)) =
-                    claims.collection_count(span, families, forest, &charge.length.0)
-                {
+                let local = match &forest.x {
+                    ExprX::Var(name) if peers.is_some() => {
+                        self.growth.forest_families.get(name).filter(|f| !f.is_empty())
+                    }
+                    _ => None,
+                };
+                let contribution = match local {
+                    Some(families) => {
+                        claims.collection_count(span, families.iter(), forest, &charge.length.0)
+                    }
+                    None => claims.collection_count(
+                        span,
+                        self.retained_families(payload),
+                        forest,
+                        &charge.length.0,
+                    ),
+                };
+                if let Some((count, mixed)) = contribution {
                     current = contracts::add(span, current, count);
                     related = true;
                     needs_family_counts |= mixed;

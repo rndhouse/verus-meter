@@ -92,12 +92,7 @@ impl Analysis<'_> {
                 ),
                 "cannot separate a peer handle from the shared backing charge",
             ));
-            self.growth.before.entry(span.id).or_default().push(expr::assign(
-                span,
-                &peer.bytes,
-                bytes,
-            ));
-            peer.bytes.clone()
+            self.metadata_local(span, "shared_result_bytes", bytes)
         } else {
             bytes
         };

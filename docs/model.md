@@ -335,12 +335,16 @@ A fixed canonical payload can retain those handles with their original identity.
 
 When workers from one visit retain aliases independently, one handle carries the
 backing charge. A peer's join can transfer its reservation to a returned alias.
-Either returned alias can drop first when the charge can pass to a live result
-with the same allocation identity. The verifier also accepts evidence that the
-peer reservations have all ended. A drop that would leave the backing with an
-uncollected peer needs evidence of where the charge will remain. Forwarding a
-returned alias with these reservations to another actor requires further support.
-The global concurrent peak proof is still required.
+If the carrying handle or result ends first, the publisher keeps its backing
+charged while peers from that allocation visit can still own it. Joining a worker
+that consumed its alias, or dropping its last returned alias, retires that
+reservation. A worker from another visit cannot release the charge even if its
+buffer has the same size. When the per-visit peer count is only an upper bound,
+the analysis can retain the charge until all peers from that constructor have
+ended. A loop that first sets up these deferred charges inside its body must
+prove they are empty on its next entry. Forwarding a returned alias with these
+reservations to another actor requires further support. The global concurrent
+peak proof is still required.
 
 At a worker's `current(memory)` checkpoint the verifier can reconcile directly
 identified strong handles with the publisher's ownership at spawn. A worker

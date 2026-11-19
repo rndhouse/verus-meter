@@ -51,6 +51,10 @@ pub(super) struct Growth {
         std::collections::BTreeMap<super::shared::RootId, super::workers::Claims>,
     /// Body templates actually transported into runtime ownership forests.
     pub(super) retained_worker_families: std::collections::BTreeSet<super::workers::WorkerId>,
+    /// Worker families observed entering each local handle forest. Membership
+    /// at extraction and the resulting loop-count candidates are checked.
+    pub(super) forest_families:
+        std::collections::BTreeMap<VarIdent, std::collections::BTreeSet<super::workers::WorkerId>>,
     /// Full frozen identity of a constructed or collected allocation from a repeated site.
     pub(super) shared_occurrences: std::collections::BTreeMap<super::shared::RootId, Expr>,
     /// Canonical allocation site captured by each retained occurrence family.

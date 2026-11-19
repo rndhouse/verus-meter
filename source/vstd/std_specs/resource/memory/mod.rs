@@ -8,6 +8,7 @@ pub mod cost;
 pub mod forest;
 pub mod groups;
 pub mod iteration;
+pub mod peers;
 pub mod ranges;
 pub mod references;
 pub mod removal;

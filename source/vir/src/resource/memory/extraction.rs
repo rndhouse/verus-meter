@@ -234,6 +234,20 @@ impl Analysis<'_> {
                         ));
                     }
                     self.take_selected_slot(&source.span, selected)?
+                } else if !self.growth.occurrence_peers.is_empty()
+                    && self.layouts.join_handle(&payload).is_some()
+                    && let ExprX::Var(forest) = &elements.records.x
+                    && let Some(families) =
+                        self.growth.forest_families.get(forest).cloned().filter(|f| !f.is_empty())
+                {
+                    self.worker_from_metadata(
+                        &source.span,
+                        &payload,
+                        selected,
+                        elements.view,
+                        elements.zero_charge(&self.growth),
+                        Some(families),
+                    )?
                 } else {
                     self.owner_from_metadata(
                         &source.span,

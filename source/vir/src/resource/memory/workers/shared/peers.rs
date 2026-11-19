@@ -3,13 +3,12 @@ use super::*;
 
 /// One received Arc may be the charged owner or a peer, depending on the
 /// publication selected by the executable pop. Freeze the distinction at join.
+#[derive(Clone)]
 pub(in crate::resource::memory) struct PeerResult {
     /// Allocation constructor whose population holds this reservation.
     pub(in crate::resource::memory) site: RootId,
     /// One while this group of local strong handles is a peer, zero when it carries the charge.
     pub(super) borrowed: Expr,
-    /// Live charge of this result, including a subsequent transfer from an alias.
-    pub(super) bytes: Expr,
     /// Checked upper on the same visit's peers still to reconcile. None uses
     /// the site-wide bound when a publication multiplicity is unknown.
     remaining: Option<Expr>,
@@ -28,6 +27,8 @@ pub(in crate::resource::memory) struct Peers {
     single_visit: bool,
     /// Maximum peers proved at each carrying publication.
     limits: BTreeMap<WorkerId, u64>,
+    /// Byte charges awaiting retirement of their own visit’s outstanding peers.
+    pub(in crate::resource::memory) deferred: Option<super::deferred::Deferred>,
 }
 
 impl Analysis<'_> {
@@ -66,6 +67,7 @@ impl Analysis<'_> {
                 issued,
                 single_visit: true,
                 limits: BTreeMap::new(),
+                deferred: None,
             }
         });
         peers.single_visit &= same_visit;
@@ -141,8 +143,7 @@ impl Analysis<'_> {
             self.metadata_local(span, "shared_remaining_peers", contracts::literal(span, n))
         });
         let borrowed = self.metadata_local(span, "returned_peer", weight);
-        let bytes = self.metadata_local(span, "shared_result_bytes", expr::integer(span, 0));
-        Ok(Some(PeerResult { site, borrowed, bytes, remaining }))
+        Ok(Some(PeerResult { site, borrowed, remaining }))
     }
 
     fn check_carrier_release(
@@ -167,155 +168,206 @@ impl Analysis<'_> {
         ));
     }
 
-    pub(in crate::resource::memory::workers) fn check_joined_carrier(
-        &self,
+    /// A worker that consumes its alias has no result link to observe. Recover
+    /// the visit from the actual captured field of the selected publication.
+    pub(in crate::resource::memory::workers) fn finish_joined_carrier(
+        &mut self,
         span: &Span,
         role: &PeerResult,
+        occurrence: &Occurrence,
+        owner: &Owner,
+        proofs: &mut Vec<Stmt>,
+    ) -> Result<(), VirErr> {
+        let inputs = expr::operation(
+            span,
+            "worker_inputs",
+            vec![occurrence.record.clone()],
+            expr::memory_type(),
+        );
+        let mut identity = None;
+        for actor in &occurrence.templates {
+            let execution = &self.growth.worker_executions[actor];
+            let mut path = None;
+            if let Some(captures) = &execution.entry.storage.owner {
+                captures.visit_paths(&mut Vec::new(), &mut |slots, node| {
+                    if node.shared.and_then(StrongLink::known) == Some(role.site) {
+                        path = Some(expr::path(
+                            span,
+                            slots.iter().map(|s| self.layouts.metadata_slot(s)),
+                        ));
+                    }
+                });
+            }
+            let Some(path) = path else {
+                self.check_carrier_release(
+                    span,
+                    role.site,
+                    role.borrowed.clone(),
+                    role.remaining.as_ref(),
+                    proofs,
+                );
+                return Ok(());
+            };
+            let visit = expr::field(
+                span,
+                expr::lookup(span, inputs.clone(), path),
+                "reference_identity",
+                expr::sequence_type(crate::ast_util::int_typ()),
+            );
+            // Selection already proved membership in this finite set.
+            identity = Some(match identity {
+                None => visit,
+                Some(previous) => {
+                    let family = expr::operation(
+                        span,
+                        "worker_matches",
+                        vec![occurrence.record.clone(), expr::path(span, actor.descriptor())],
+                        crate::ast_util::bool_typ(),
+                    );
+                    select(span, family, visit, previous)
+                }
+            });
+        }
+        let charge =
+            owner.dynamic.filter(|id| self.storage.contains_allocation(*id)).ok_or_else(|| {
+                unsupported(span, "a joined allocation peer outside its charging scope")
+            })?;
+        let tag = contracts::literal(span, verus_meter_model::completion_bytes(0).unwrap());
+        let packed = self.storage.dynamic_cost(span, charge);
+        proofs.push(expr::check(
+            span,
+            crate::ast_util::mk_ineq(span, &tag, &packed, InequalityOp::Le),
+            "cannot locate the selected worker's retained shared backing",
+        ));
+        self.finish_peer_backing(
+            span,
+            role,
+            identity.expect("selected worker family"),
+            contracts::subtract(span, packed, tag),
+            proofs,
+        );
+        Ok(())
+    }
+
+    fn ensure_deferred(&mut self, span: &Span, site: RootId) {
+        if self.growth.occurrence_peers[&site].deferred.is_none() {
+            let deferred =
+                super::deferred::Deferred::new(span, &mut self.growth, &mut self.storage);
+            self.growth.occurrence_peers.get_mut(&site).unwrap().deferred = Some(deferred);
+        }
+    }
+
+    /// The caller still pays for its intact handle and the old peer backings
+    /// while waiting and receiving. Freeze that cost before reconciling a
+    /// consuming worker; the resumed frame uses the resulting reservations.
+    pub(in crate::resource::memory::workers) fn freeze_join_backing(
+        &mut self,
+        span: &Span,
+        site: RootId,
+    ) -> bool {
+        self.ensure_deferred(span, site);
+        let deferred = self.growth.occurrence_peers[&site].deferred.as_ref().unwrap();
+        if !deferred.owned(&self.storage) {
+            return false;
+        }
+        let old = self.metadata_local(span, "waiting_peer_bytes", deferred.bytes(span));
+        self.growth.occurrence_peers[&site]
+            .deferred
+            .as_ref()
+            .unwrap()
+            .charge(&mut self.storage, old);
+        true
+    }
+
+    fn finish_peer_backing(
+        &mut self,
+        span: &Span,
+        role: &PeerResult,
+        visit: Expr,
+        bytes: Expr,
         proofs: &mut Vec<Stmt>,
     ) {
-        self.check_carrier_release(
-            span,
-            role.site,
-            role.borrowed.clone(),
-            role.remaining.as_ref(),
-            proofs,
-        )
+        let site = role.site;
+        // A peer that ends before a joined carrier discharges one reservation
+        // of that carrier only when both frozen allocation identities agree.
+        let zero = expr::integer(span, 0);
+        let one = expr::integer(span, 1);
+        for (root, carrier) in &self.growth.peer_results {
+            let Some(remaining) = &carrier.remaining else { continue };
+            if carrier.site != site || !self.heap.shared.owns_result_charge(*root, &self.storage) {
+                continue;
+            }
+            let ends_peer = crate::ast_util::conjoin(
+                span,
+                &vec![
+                    crate::ast_util::mk_eq(span, &role.borrowed, &one),
+                    crate::ast_util::mk_eq(span, &carrier.borrowed, &zero),
+                    crate::ast_util::mk_eq(span, &visit, &self.growth.shared_occurrences[root]),
+                ],
+            );
+            let debit = select(span, ends_peer, one.clone(), zero.clone());
+            proofs.push(expr::assign(
+                span,
+                remaining,
+                contracts::maximum(
+                    span,
+                    zero.clone(),
+                    contracts::subtract(span, remaining.clone(), debit),
+                ),
+            ));
+        }
+        self.ensure_deferred(span, site);
+        let peers = &self.growth.occurrence_peers[&site];
+        let deferred = peers.deferred.as_ref().unwrap();
+        if !deferred.owned(&self.storage) {
+            // Another path or section owns this ledger. Its existing charge
+            // survives, and this destructor must justify releasing its own.
+            self.check_carrier_release(
+                span,
+                site,
+                role.borrowed.clone(),
+                role.remaining.as_ref(),
+                proofs,
+            );
+            return;
+        }
+        let pending = &peers.population.pending;
+        let remaining = role.remaining.clone().unwrap_or_else(|| pending.clone());
+        deferred.finish(span, visit, bytes, remaining, role.borrowed.clone(), pending, proofs);
     }
 
     pub(in crate::resource::memory) fn peer_release_checks(
-        &self,
+        &mut self,
         root: RootId,
         backing: &Owner,
         span: &Span,
         proofs: &mut Vec<Stmt>,
     ) {
-        if let Some(role) = self.growth.peer_results.get(&root) {
-            if !backing.dynamic.is_some_and(|id| self.storage.contains_allocation(id)) {
+        if let Some(role) = self.growth.peer_results.get(&root).cloned() {
+            let Some(id) = backing.dynamic.filter(|id| self.storage.contains_allocation(*id))
+            else {
                 proofs.push(expr::check(
                     span,
                     crate::ast_util::mk_bool(span, false),
                     "cannot retire an indexed Arc result outside its charging scope",
                 ));
                 return;
-            }
-            // Prefer a live result that demonstrably names the *same visit*.
-            // A handoff retires its peer reservation and moves the original
-            // bytes. Equal extents or the same allocation site are insufficient.
-            let mut retired = role.borrowed.clone();
-            for (other, survivor) in &self.growth.peer_results {
-                if *other == root
-                    || survivor.site != role.site
-                    || !self.heap.shared.owns_result_charge(*other, &self.storage)
-                {
-                    continue;
-                }
-                let same = crate::ast_util::mk_eq(
-                    span,
-                    &self.growth.shared_occurrences[&root],
-                    &self.growth.shared_occurrences[other],
-                );
-                let chosen = role.reconcile_survivor(
-                    span,
-                    survivor,
-                    same,
-                    &retired,
-                    &self.growth.occurrence_peers[&role.site].population.pending,
-                    proofs,
-                );
-                retired = contracts::add(span, retired, chosen);
-            }
-            self.check_carrier_release(
+            };
+            self.finish_peer_backing(
                 span,
-                role.site,
-                retired.clone(),
-                role.remaining.as_ref(),
+                &role,
+                self.growth.shared_occurrences[&root].clone(),
+                self.storage.dynamic_cost(span, id),
                 proofs,
             );
             self.growth.occurrence_peers[&role.site].population.release(
                 span,
-                retired,
+                role.borrowed,
                 "cannot retire the returned allocation peer",
                 proofs,
             );
         } else if self.growth.occurrence_peers.contains_key(&root) {
             self.check_carrier_release(span, root, expr::integer(span, 0), None, proofs);
         }
-    }
-}
-
-impl PeerResult {
-    /// Reconcile one candidate against the dying root. A successful handoff
-    /// consumes one peer reservation and moves the entire byte charge.
-    fn reconcile_survivor(
-        &self,
-        span: &Span,
-        survivor: &Self,
-        same: Expr,
-        retired: &Expr,
-        pending: &Expr,
-        proofs: &mut Vec<Stmt>,
-    ) -> Expr {
-        let zero = expr::integer(span, 0);
-        let one = expr::integer(span, 1);
-        let take = crate::ast_util::conjoin(
-            span,
-            &vec![
-                crate::ast_util::mk_eq(span, retired, &zero),
-                crate::ast_util::mk_eq(span, &survivor.borrowed, &one),
-                same.clone(),
-            ],
-        );
-        // Snapshot the decision before updating the survivor's reservation.
-        let transfer = select(span, take, one.clone(), zero.clone());
-        let (chosen, declaration) =
-            expr::local(span, "shared_handoff", transfer.typ.clone(), transfer, Mode::Spec);
-        proofs.push(declaration);
-        let moved = select(
-            span,
-            crate::ast_util::mk_eq(span, &chosen, &one),
-            self.bytes.clone(),
-            zero.clone(),
-        );
-        if let Some(remaining) = &survivor.remaining {
-            // A peer dropping in front of a live carrier reconciles
-            // one real reservation for this key. If the carrier itself
-            // drops, its successor inherits the residual obligation.
-            let peer_retired = crate::ast_util::conjoin(
-                span,
-                &vec![
-                    same,
-                    crate::ast_util::mk_eq(span, &self.borrowed, &one),
-                    crate::ast_util::mk_eq(span, &survivor.borrowed, &zero),
-                ],
-            );
-            let previous = contracts::subtract(
-                span,
-                remaining.clone(),
-                select(span, peer_retired, one.clone(), zero.clone()),
-            );
-            let replacement = self.remaining.as_ref().unwrap_or(pending).clone();
-            let left = select(
-                span,
-                crate::ast_util::mk_eq(span, &chosen, &one),
-                contracts::subtract(span, replacement, one.clone()),
-                previous,
-            );
-            proofs.push(expr::assign(
-                span,
-                remaining,
-                contracts::maximum(span, zero.clone(), left),
-            ));
-        }
-        proofs.push(expr::assign(
-            span,
-            &survivor.bytes,
-            contracts::add(span, survivor.bytes.clone(), moved),
-        ));
-        proofs.push(expr::assign(
-            span,
-            &survivor.borrowed,
-            contracts::subtract(span, survivor.borrowed.clone(), chosen.clone()),
-        ));
-        chosen
     }
 }

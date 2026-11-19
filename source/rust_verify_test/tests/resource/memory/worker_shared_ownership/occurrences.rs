@@ -1,6 +1,8 @@
 //! Different visits to Arc::new have independent backings. Capture, publication
 //! and join must preserve the key of the allocation actually returned.
 
+mod handoff;
+
 use super::GLOBAL;
 use crate::common::{assert_vir_error_msg, assert_vir_error_msgs};
 
@@ -206,26 +208,6 @@ fn independently_stored_peers_charge_once_in_either_drop_order() {
             &["conditional memory budget exceeded", GLOBAL],
         );
     }
-}
-
-#[test]
-fn an_equal_sized_buffer_from_another_visit_cannot_take_the_charge() {
-    let collect = PAIRED
-        .replace("handles.len() > 0", "handles.len() > 2")
-        .replace("handles.len() <= n", "2 <= handles.len() <= n");
-    let final_two = r#"
-        let deferred = peers.pop().unwrap();
-        let earlier_peer = peers.pop().unwrap().join().unwrap();
-        let later = handles.pop().unwrap().join().unwrap();
-        drop(later);
-        let later_peer = deferred.join().unwrap(); drop(later_peer);
-        let earlier = handles.pop().unwrap().join().unwrap(); drop(earlier); drop(earlier_peer);
-    "#;
-    let program = peer_program(2, &format!("{collect}{final_two}"), DROP_VECTORS);
-    assert_vir_error_msgs(
-        crate::verify_one_file("wrong_visit", program, &[]).unwrap_err(),
-        &["cannot release a shared backing while an indexed peer can still own it", GLOBAL],
-    );
 }
 
 #[test]

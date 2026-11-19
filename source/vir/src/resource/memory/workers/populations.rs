@@ -62,7 +62,6 @@ impl Analysis<'_> {
         {
             return Err(unsupported(&source.span, "population join with a foreign result type"));
         }
-        let waiting = self.storage.live_expression(&source.span);
         let memory = expr::operation(
             &source.span,
             "worker_result",
@@ -99,9 +98,14 @@ impl Analysis<'_> {
             None
         };
         let peer = self.selected_peer(&source.span, &occurrence)?;
+        let frozen_site = peer
+            .as_ref()
+            .filter(|role| !carried_arc && self.freeze_join_backing(&source.span, role.site))
+            .map(|role| role.site);
+        let waiting = self.storage.live_expression(&source.span);
         if !carried_arc && let Some(role) = &peer {
             let mut proofs = vec![];
-            self.check_joined_carrier(&source.span, role, &mut proofs);
+            self.finish_joined_carrier(&source.span, role, &occurrence, &owner, &mut proofs)?;
             self.growth.before.entry(source.span.id).or_default().extend(proofs);
         }
         let result_owner = if carried_arc {
@@ -161,6 +165,13 @@ impl Analysis<'_> {
             self.storage.live_expression(&source.span),
             bytes,
         );
+        if let Some(site) = frozen_site {
+            self.growth.occurrence_peers[&site]
+                .deferred
+                .as_ref()
+                .unwrap()
+                .resume(&source.span, &mut self.storage);
+        }
         self.release_owner(owner, &source.span);
         self.release_value(handle, &source.span);
         // A finite result recovered by receive_indexed_alias has just proved
@@ -208,9 +219,11 @@ impl Analysis<'_> {
         memory: Expr,
         view: super::super::metadata::View,
         zero_charge: bool,
+        families: Option<BTreeSet<WorkerId>>,
     ) -> Result<Owner, VirErr> {
         let (result, _) = self.layouts.join_handle(typ).unwrap();
-        let templates: BTreeSet<_> = self.retained_families(result).copied().collect();
+        let templates =
+            families.unwrap_or_else(|| self.retained_families(result).copied().collect());
         if templates.is_empty() {
             return Err(unsupported(span, "a worker selection without a checked body family"));
         }
@@ -416,6 +429,21 @@ impl Analysis<'_> {
                     span,
                     "transporting shared backing inside an aggregate worker slot",
                 ));
+            }
+        }
+        if let ExprX::Var(destination) = &forest.x {
+            if let Some(handle) = &owner.worker {
+                self.growth
+                    .forest_families
+                    .entry(destination.clone())
+                    .or_default()
+                    .insert(handle.actor);
+            } else if let Some(SelectedWorker::Recorded(occurrence)) = &owner.selected_worker {
+                self.growth
+                    .forest_families
+                    .entry(destination.clone())
+                    .or_default()
+                    .extend(&occurrence.templates);
             }
         }
         let Some(handle) = &owner.worker else { return Ok(None) };

@@ -246,7 +246,7 @@ impl Analysis<'_> {
         zero_charge: bool,
     ) -> Result<Owner, VirErr> {
         if self.layouts.join_handle(typ).is_some() {
-            return self.worker_from_metadata(span, typ, memory, view, zero_charge);
+            return self.worker_from_metadata(span, typ, memory, view, zero_charge, None);
         }
         if matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _)) {
             return Err(super::super::model::unsupported(

@@ -2,6 +2,7 @@
 //! Workers run independently. Until collection their checked entry claims reserve
 //! backing, including when a completed worker keeps the handle in its result.
 
+mod deferred;
 mod occurrences;
 mod payloads;
 mod peers;
@@ -83,6 +84,15 @@ impl Analysis<'_> {
             .map(|edge| &edge.span)
             .chain(self.flow.reachable.then_some(body));
         for span in exits {
+            for deferred in
+                self.growth.occurrence_peers.values().filter_map(|p| p.deferred.as_ref())
+            {
+                self.growth.after.entry(span.id).or_default().push(expr::check(
+                    span,
+                    deferred.empty(span),
+                    "unreleased shared backing at accounting scope exit",
+                ));
+            }
             for claims in self
                 .growth
                 .indexed_shared
@@ -96,6 +106,9 @@ impl Analysis<'_> {
                     "outstanding shared worker claims at accounting scope exit",
                 ));
             }
+        }
+        for deferred in self.growth.occurrence_peers.values().filter_map(|p| p.deferred.as_ref()) {
+            deferred.release(&mut self.storage);
         }
     }
 
