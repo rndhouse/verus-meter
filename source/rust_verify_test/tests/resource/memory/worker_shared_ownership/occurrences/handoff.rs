@@ -16,9 +16,7 @@ const LEAVE_TWO: &str = r#"
     }
 "#;
 
-#[test]
-fn an_equal_sized_buffer_from_another_visit_cannot_take_the_charge() {
-    let final_two = r#"
+const FINAL_TWO: &str = r#"
         let deferred = peers.pop().unwrap();
         let earlier_peer = peers.pop().unwrap().join().unwrap();
         let later = handles.pop().unwrap().join().unwrap();
@@ -32,7 +30,10 @@ fn an_equal_sized_buffer_from_another_visit_cannot_take_the_charge() {
         if n == 2 && b == 19 { assert(current(memory) <= 146); }
         let earlier = handles.pop().unwrap().join().unwrap(); drop(earlier);
     "#;
-    let program = peer_program(2, LEAVE_TWO, &format!("{final_two}{DROP_VECTORS}"));
+
+#[test]
+fn an_equal_sized_buffer_from_another_visit_cannot_take_the_charge() {
+    let program = peer_program(2, LEAVE_TWO, &format!("{FINAL_TWO}{DROP_VECTORS}"));
     assert_vir_error_msg(
         crate::verify_one_file("pending_visit", program.clone(), &[]).unwrap_err(),
         GLOBAL,
@@ -47,6 +48,53 @@ fn an_equal_sized_buffer_from_another_visit_cannot_take_the_charge() {
             &["conditional memory budget exceeded", GLOBAL],
         );
     }
+}
+
+#[test]
+fn a_forwarded_carrier_keeps_its_original_visit() {
+    let program = peer_program(2, LEAVE_TWO, &format!("{FINAL_TWO}{DROP_VECTORS}"));
+    let check = |name, program| crate::verify_one_file(name, program, &[]).unwrap_err();
+    let consumed = program.replace(
+        "drop(later);",
+        r#"
+        let relay = std::thread::spawn(move || drop(later));
+        relay.join().unwrap();
+    "#,
+    );
+    assert_vir_error_msg(check("consume_forwarded_carrier", consumed.clone()), GLOBAL);
+    // Dropping the older visit's peer cannot release the newer visit's backing.
+    assert_vir_error_msgs(
+        check("forwarded_wrong_visit", consumed.replace("<= 214", "<= 213")),
+        &["conditional memory budget exceeded", GLOBAL],
+    );
+
+    let indexed = consumed.replace(
+        "relay.join().unwrap();",
+        r#"
+        let mut forwarded = Vec::with_capacity(1);
+        forwarded.push(relay);
+        forwarded.pop().unwrap().join().unwrap();
+    "#,
+    );
+    assert_vir_error_msg(
+        check("forwarded_into_indexed_receiver", indexed),
+        "indexing a forwarded Arc with outstanding allocation peers",
+    );
+
+    let returned = program.replace(
+        "drop(later);",
+        r#"
+        let relay = std::thread::spawn(move || later);
+        let link = relay.join().unwrap();
+        if n == 2 && b == 19 { assert(current(memory) <= 230); }
+        drop(link);
+    "#,
+    );
+    assert_vir_error_msg(check("return_forwarded_carrier", returned.clone()), GLOBAL);
+    assert_vir_error_msgs(
+        check("returned_carrier_short", returned.replace("<= 230", "<= 229")),
+        &["conditional memory budget exceeded", GLOBAL],
+    );
 }
 
 #[test]

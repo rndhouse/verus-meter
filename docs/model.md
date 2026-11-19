@@ -359,9 +359,12 @@ retains any capacity allocated by the push. The verifier checks the selected
 worker and its backing against the stored publication.
 
 A deferred charge first discovered inside a reusable body still needs an empty
-ledger on re-entry if earlier points in that body had no such charge. Forwarding
-a returned alias with these reservations to another actor requires further
-support. The global concurrent peak proof is still required.
+ledger on re-entry if earlier points in that body had no such charge. A fixed
+worker can receive the carrying result and drop or return it. The publisher
+retains the charge through the join and checks the original allocation visit
+when its last returned alias drops. Putting this receiving worker back into a
+handle vector requires a separate ownership relation. The global concurrent
+peak proof is still required.
 
 At a worker's `current(memory)` checkpoint the verifier can reconcile directly
 identified strong handles with the publisher's ownership at spawn. A worker

@@ -130,6 +130,19 @@ impl Analysis<'_> {
                 "retaining a collector with outstanding shared reservations in an indexed slot",
             ));
         }
+        // A fixed receiver imports this finite handle. Its publisher retains
+        // the original visit's backing and applies the receiver's exit counts
+        // at join. An indexed receiver would need that visit in every slot.
+        if worker
+            .entry_shared
+            .allocation_ids()
+            .any(|root| self.growth.peer_results.contains_key(&root))
+        {
+            return Err(unsupported(
+                span,
+                "indexing a forwarded Arc with outstanding allocation peers",
+            ));
+        }
         let returned = execution.returned_arc_root();
         if (!execution.shared.is_empty()
             && !returned.is_some_and(|id| worker.entry_shared.has_strong(id)))
@@ -329,14 +342,6 @@ impl Analysis<'_> {
             return Err(unsupported(
                 span,
                 "forwarding a collector's selected Arc to a nested worker",
-            ));
-        }
-        if let Some(root) = owner.shared.and_then(StrongLink::known)
-            && self.growth.peer_results.contains_key(&root)
-        {
-            return Err(unsupported(
-                span,
-                "forwarding a returned Arc with indexed peer reservations to another actor",
             ));
         }
         if let Some(SelectedWorker::Recorded(occurrence)) = &mut owner.selected_worker {

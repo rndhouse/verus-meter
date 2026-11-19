@@ -107,7 +107,7 @@ pub(in crate::resource::memory::workers) struct WaitingJoin {
     /// All caller storage observed after evaluating the join operand.
     frame: Footprint,
     /// Allocation and live byte expression to restore after observing the result.
-    resumed_backing: Option<(u64, Expr)>,
+    resumed_backing: Vec<(u64, Expr)>,
 }
 
 impl Analysis<'_> {
@@ -139,23 +139,46 @@ impl Analysis<'_> {
         }
     }
 
+    /// Receiving a fixed worker's exit state can run a nested payload's last
+    /// destructor. Snapshot the ledgers this frame already owns, including
+    /// backings reachable through another Arc. A ledger first created by the
+    /// destructor contributes only to the resumed frame.
+    pub(in crate::resource::memory::workers) fn wait_for_fixed_join(
+        &mut self,
+        span: &Span,
+    ) -> WaitingJoin {
+        let sites: Vec<_> = self
+            .growth
+            .occurrence_peers
+            .iter()
+            .filter_map(|(site, peers)| {
+                peers.deferred.as_ref()?.owned(&self.storage).then_some(*site)
+            })
+            .collect();
+        self.wait_for_join_result(span, sites)
+    }
+
     pub(in crate::resource::memory::workers) fn wait_for_join_result(
         &mut self,
         span: &Span,
-        consuming_peer: Option<&PeerResult>,
+        sites: impl IntoIterator<Item = RootId>,
     ) -> WaitingJoin {
-        let resumed_backing = consuming_peer.and_then(|peer| {
-            self.ensure_deferred(span, peer.site);
-            let deferred = self.growth.occurrence_peers[&peer.site].deferred.as_ref().unwrap();
-            if !deferred.owned(&self.storage) {
-                return None;
-            }
-            let allocation = deferred.allocation;
-            let live_bytes = deferred.bytes(span);
-            let waiting_bytes = self.metadata_local(span, "waiting_peer_bytes", live_bytes.clone());
-            self.storage.set_allocation(allocation, MemoryKind::host_heap(), waiting_bytes);
-            Some((allocation, live_bytes))
-        });
+        let resumed_backing = sites
+            .into_iter()
+            .filter_map(|site| {
+                self.ensure_deferred(span, site);
+                let deferred = self.growth.occurrence_peers[&site].deferred.as_ref().unwrap();
+                if !deferred.owned(&self.storage) {
+                    return None;
+                }
+                let allocation = deferred.allocation;
+                let live_bytes = deferred.bytes(span);
+                let waiting_bytes =
+                    self.metadata_local(span, "waiting_peer_bytes", live_bytes.clone());
+                self.storage.set_allocation(allocation, MemoryKind::host_heap(), waiting_bytes);
+                Some((allocation, live_bytes))
+            })
+            .collect();
         WaitingJoin { frame: self.storage.live_expression(span), resumed_backing }
     }
 }
@@ -170,7 +193,7 @@ impl WaitingJoin {
         inline_bytes: u64,
     ) -> (Footprint, Footprint) {
         let ready = states::completed(span, storage.live_expression(span), inline_bytes);
-        if let Some((allocation, live_bytes)) = self.resumed_backing {
+        for (allocation, live_bytes) in self.resumed_backing {
             storage.set_allocation(allocation, MemoryKind::host_heap(), live_bytes);
         }
         (self.frame, ready)

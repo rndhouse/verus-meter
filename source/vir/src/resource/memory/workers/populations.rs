@@ -102,7 +102,7 @@ impl Analysis<'_> {
         };
         let peer = self.selected_peer(&source.span, &occurrence)?;
         let consuming_peer = peer.as_ref().filter(|_| !carried_arc);
-        let waiting = self.wait_for_join_result(&source.span, consuming_peer);
+        let waiting = self.wait_for_join_result(&source.span, consuming_peer.map(|peer| peer.site));
         if let Some(role) = consuming_peer {
             let mut proofs = vec![];
             self.finish_joined_carrier(&source.span, role, &occurrence, &owner, &mut proofs)?;

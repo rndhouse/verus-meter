@@ -532,8 +532,8 @@ impl Analysis<'_> {
             .worker
             .ok_or_else(|| unsupported(&argument.span, "joining without worker provenance"))?;
         let id = handle.actor;
-        let waiting = self.storage.live_expression(&expr.span);
         self.heap.workers.wait(id, self.current_worker, &expr.span, value)?;
+        let waiting = self.wait_for_fixed_join(&expr.span);
         let execution = self.heap.workers.records[&id].execution.clone().ok_or_else(|| {
             unsupported(&expr.span, "join without checked executable worker effects")
         })?;
@@ -574,6 +574,8 @@ impl Analysis<'_> {
             self.rebind_worker_output(owner, &mut retained, &execution, &expr.span, None)
         })?;
         self.storage.receive_storage(retained, &expr.span)?;
+        let (waiting, ready) =
+            waiting.receive_result(&expr.span, &mut self.storage, execution.result.value.bytes);
         let mut proofs = Vec::new();
         if let Some(input) = &execution.entry.storage.owner {
             self.collect_delegated_handles(&expr.span, input)?;
@@ -602,11 +604,6 @@ impl Analysis<'_> {
         if !proofs.is_empty() {
             self.growth.before.entry(expr.span.id).or_default().extend(proofs);
         }
-        let ready = states::completed(
-            &expr.span,
-            self.storage.live_expression(&expr.span),
-            execution.result.value.bytes,
-        );
         let mut result = self.collect_worker_result(id, &expr.span)?;
         result.owner = result_owner;
         let actors = [id].into();
