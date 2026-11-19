@@ -3,7 +3,7 @@
 Implement the [approved plan](../plan-concurrent-symbolic-analysis.md) as one
 complete core feature. These tasks divide implementation responsibilities; they
 are not separate prototypes or releases. The [final audit](03.4.3-validate-and-close-03.md) reopened the shared ownership audit.
-Next is [03.4.2.3](03.4.2.3-join-shared-collections-in-a-worker.md).
+Next is [03.4.2.4](03.4.2.4-transfer-surviving-shared-ownership.md).
 The parent plan is the capability checklist; this index tracks the work that
 satisfies it. Read both before starting a task.
 
@@ -39,7 +39,7 @@ Preserve the semantics and synchronization precision established in 01 throughou
 | [ ] | [03.4.2 — Audit loops and shared ownership](03.4.2-audit-loops-and-shared-ownership.md) | Verify worker membership and final release across loop iterations. |
 | [x] | [03.4.2.1 — Carry peer-owned allocations through loop iterations](complete/03.4.2.1-carry-peer-backings-through-loops.md) | Account for a backing between separate carrier and peer drains. |
 | [x] | [03.4.2.2 — Join a carrier while publishing its peers](complete/03.4.2.2-join-during-peer-publication.md) | Preserve each surviving allocation when publication and collection share a loop. |
-| [ ] | [03.4.2.3 — Join shared collections in a worker](03.4.2.3-join-shared-collections-in-a-worker.md) | Reconcile fully drained shared handle collections with the publisher. |
+| [x] | [03.4.2.3 — Join shared collections in a worker](complete/03.4.2.3-join-shared-collections-in-a-worker.md) | Reconcile fully drained shared handle collections with the publisher. |
 | [ ] | [03.4.2.4 — Transfer surviving shared ownership](03.4.2.4-transfer-surviving-shared-ownership.md) | Carry remaining handles, returned aliases and per-visit reservations into the next actor. |
 | [ ] | [03.4.2.5 — Preserve repeated payload ownership](03.4.2.5-preserve-repeated-payload-ownership.md) | Preserve the inner owners of a fresh shared allocation on each visit. |
 | [ ] | [03.4.3 — Validate and close 03](03.4.3-validate-and-close-03.md) | Run integrated checks and reconcile the worker completion criteria. |
