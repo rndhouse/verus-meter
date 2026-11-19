@@ -98,12 +98,9 @@ impl Analysis<'_> {
             None
         };
         let peer = self.selected_peer(&source.span, &occurrence)?;
-        let frozen_site = peer
-            .as_ref()
-            .filter(|role| !carried_arc && self.freeze_join_backing(&source.span, role.site))
-            .map(|role| role.site);
-        let waiting = self.storage.live_expression(&source.span);
-        if !carried_arc && let Some(role) = &peer {
+        let consuming_peer = peer.as_ref().filter(|_| !carried_arc);
+        let waiting = self.wait_for_join_result(&source.span, consuming_peer);
+        if let Some(role) = consuming_peer {
             let mut proofs = vec![];
             self.finish_joined_carrier(&source.span, role, &occurrence, &owner, &mut proofs)?;
             self.growth.before.entry(source.span.id).or_default().extend(proofs);
@@ -160,18 +157,7 @@ impl Analysis<'_> {
             origins: [id].into(),
             ..super::super::lifetime::Value::unit()
         };
-        let ready = super::states::completed(
-            &source.span,
-            self.storage.live_expression(&source.span),
-            bytes,
-        );
-        if let Some(site) = frozen_site {
-            self.growth.occurrence_peers[&site]
-                .deferred
-                .as_ref()
-                .unwrap()
-                .resume(&source.span, &mut self.storage);
-        }
+        let (waiting, ready) = waiting.receive_result(&source.span, &mut self.storage, bytes);
         self.release_owner(owner, &source.span);
         self.release_value(handle, &source.span);
         // A finite result recovered by receive_indexed_alias has just proved

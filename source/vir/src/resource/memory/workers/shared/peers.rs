@@ -249,36 +249,6 @@ impl Analysis<'_> {
         Ok(())
     }
 
-    fn ensure_deferred(&mut self, span: &Span, site: RootId) {
-        if self.growth.occurrence_peers[&site].deferred.is_none() {
-            let deferred =
-                super::deferred::Deferred::new(span, &mut self.growth, &mut self.storage);
-            self.growth.occurrence_peers.get_mut(&site).unwrap().deferred = Some(deferred);
-        }
-    }
-
-    /// The caller still pays for its intact handle and the old peer backings
-    /// while waiting and receiving. Freeze that cost before reconciling a
-    /// consuming worker; the resumed frame uses the resulting reservations.
-    pub(in crate::resource::memory::workers) fn freeze_join_backing(
-        &mut self,
-        span: &Span,
-        site: RootId,
-    ) -> bool {
-        self.ensure_deferred(span, site);
-        let deferred = self.growth.occurrence_peers[&site].deferred.as_ref().unwrap();
-        if !deferred.owned(&self.storage) {
-            return false;
-        }
-        let old = self.metadata_local(span, "waiting_peer_bytes", deferred.bytes(span));
-        self.growth.occurrence_peers[&site]
-            .deferred
-            .as_ref()
-            .unwrap()
-            .charge(&mut self.storage, old);
-        true
-    }
-
     fn finish_peer_backing(
         &mut self,
         span: &Span,
