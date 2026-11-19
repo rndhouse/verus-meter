@@ -114,8 +114,8 @@ pub(in super::super) struct WorkerPublication {
     pub(in super::super) populations: HashMap<usize, Expr>,
     /// Checked result relative to the captures.
     pub(in super::super) result: super::Template,
-    /// Constructor whose payload supplies an embedded job observation.
-    pub(in super::super) payload_job: Option<super::super::shared::RootId>,
+    /// Constructor whose payload supplies the embedded handle observation.
+    pub(in super::super) payload_handle: Option<super::super::shared::RootId>,
 }
 
 /// One executable ownership rule, with layout decisions supplied by accounting.
@@ -150,8 +150,8 @@ pub(in super::super) enum Operation {
     WorkerPublish(WorkerPublication),
     /// Collect exactly the runtime handle consumed by the source operation.
     WorkerJoin {
-        /// Freshly received outer allocation whose job comes from the selected record.
-        payload_job: Option<super::super::shared::RootId>,
+        /// Freshly received outer allocation whose payload handle comes from the selected record.
+        payload_handle: Option<super::super::shared::RootId>,
         source: Expr,
         /// Present only when the join checks the selected result against this fixed root.
         returned_root: Option<super::super::shared::RootId>,
@@ -305,9 +305,9 @@ impl Checked {
     }
 
     /// This join recovered the payload of a uniquely transported Arc.
-    pub(in super::super) fn recovered_job(&self, root: super::super::shared::RootId) -> bool {
+    pub(in super::super) fn recovered_payload(&self, root: super::super::shared::RootId) -> bool {
         self.operations.values().any(
-            |op| matches!(op, Operation::WorkerJoin { payload_job: Some(id), .. } if *id == root),
+            |op| matches!(op, Operation::WorkerJoin { payload_handle: Some(id), .. } if *id == root),
         )
     }
 

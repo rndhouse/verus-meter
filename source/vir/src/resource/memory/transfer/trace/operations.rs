@@ -145,8 +145,8 @@ impl Trace<'_> {
             }
             Operation::Closure { captures } => self.closure(value, captures),
             Operation::WorkerPublish(publication) => self.publish_worker(value, publication),
-            Operation::WorkerJoin { source, returned_root, payload_job } => {
-                self.join_worker(value, source, returned_root, payload_job)
+            Operation::WorkerJoin { source, returned_root, payload_handle } => {
+                self.join_worker(value, source, returned_root, payload_handle)
             }
             Operation::ParameterJoin { source, phases } => {
                 if !phases.at(span) {
@@ -177,7 +177,10 @@ impl Trace<'_> {
             }
             Operation::StrongNew { payload, root, coordinates } => {
                 let child = self.value(&payload)?;
-                if coordinates.is_empty() || self.layouts.join_handle(&payload.typ).is_some() {
+                if coordinates.is_empty()
+                    || self.layouts.join_handle(&payload.typ).is_some()
+                    || matches!(&*payload.typ, TypX::Decorate(TypDecoration::Arc, _, _))
+                {
                     self.shared_payloads.insert(root, child);
                 }
                 // This is a private identity, not a parameter or a constant

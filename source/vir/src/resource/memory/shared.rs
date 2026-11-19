@@ -287,10 +287,10 @@ impl SharedRoots {
         })
     }
 
-    /// Direct join handle moved into the executable Arc constructor.
-    pub(super) fn payload_job(&self, id: RootId) -> Option<&super::workers::FixedHandle> {
+    /// Direct payload moved into the executable Arc constructor in this domain.
+    pub(super) fn payload(&self, id: RootId) -> Option<&Owner> {
         let Backing::Owned(backing) = &self.roots.get(&id)?.storage else { return None };
-        backing.children.get(&OwnerSlot::Contents)?.worker.as_ref()
+        backing.children.get(&OwnerSlot::Contents)
     }
 
     /// A peer may take over charged bytes only within the frame that owns its result.

@@ -42,14 +42,14 @@ pub(in super::super) fn worker_charge(span: &Span, bytes: Expr) -> Expr {
 }
 
 /// Ordinary captures have nonempty field paths. The otherwise empty root
-/// of the input view can hold the embedded worker's immutable observation.
-pub(in super::super) fn attach_payload_job(span: &Span, inputs: Expr, job: Expr) -> Expr {
-    let record = lookup(span, job, path(span, []));
+/// of the input view preserves a direct payload handle's immutable descriptor.
+pub(in super::super) fn attach_payload_handle(span: &Span, inputs: Expr, handle: Expr) -> Expr {
+    let record = lookup(span, handle, path(span, []));
     push(span, inputs, record)
 }
 
 /// Recover the handle observation from the actual selected publication.
-pub(in super::super) fn payload_job(span: &Span, publication: Expr) -> Expr {
+pub(in super::super) fn payload_handle(span: &Span, publication: Expr) -> Expr {
     let inputs = operation(span, "worker_inputs", vec![publication], memory_type());
     push(span, empty(span, record_type()), lookup(span, inputs, path(span, [])))
 }

@@ -348,8 +348,10 @@ the declared call allowance and permits reuse on return. A fresh
 the job published on that visit, including its original captures and result.
 Dropping the returned allocation with the job still inside leaves a detached
 worker. Private byte grouping requires all links to the grouped allocation to
-move together. Extracting other grouped payloads or mixing incompatible
-payload layouts at a join requires further ownership evidence.
+move together. For a unique returned `Arc<Arc<T>>`, extraction releases the
+outer control block and inline handle. The inner handle keeps the allocation
+identity observed at publication and the remaining bytes from that worker's
+slot. Other grouped payload layouts require a checked description to extract.
 
 When workers from one visit retain aliases independently, one handle carries the
 backing charge. A peer's join can transfer its reservation to a returned alias.

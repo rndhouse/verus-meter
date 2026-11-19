@@ -172,13 +172,18 @@ impl Analysis<'_> {
             super::super::transfer::checked::Operation::WorkerJoin {
                 source: argument.clone(),
                 returned_root,
-                payload_job: result_owner.as_ref().and_then(|o| o.shared?.known()).filter(|_| {
-                    carried_arc
-                        && occurrence
-                            .templates
-                            .iter()
-                            .any(|id| self.growth.payload_jobs.contains_key(id))
-                }),
+                payload_handle: result_owner.as_ref().and_then(|o| o.shared?.known()).filter(
+                    |root| {
+                        carried_arc
+                            && (self.growth.grouped_inners.contains_key(root)
+                                || occurrence.templates.iter().all(|id| {
+                                    matches!(
+                                        self.growth.payload_handles.get(id),
+                                        Some(super::PayloadHandle::Job(_))
+                                    )
+                                }))
+                    },
+                ),
             },
         );
         let packed = self.pack_worker_result(
@@ -302,19 +307,26 @@ impl Analysis<'_> {
         }
         let span = &source.span;
         let ExprX::Call { args, .. } = &source.x else { unreachable!() };
-        let job = execution.returned_arc_root().and_then(|root| {
+        let observed = execution.returned_arc_root().and_then(|root| {
             self.transitions.shared_constructor(root).filter(|(_, coords)| !coords.is_empty())?;
-            let handle = self.heap.shared.payload_job(root)?;
-            Some((root, handle.actor, handle.publication.clone()?))
+            let child = self.heap.shared.payload(root)?;
+            if let Some(handle) = &child.worker {
+                Some((root, super::PayloadHandle::Job(handle.actor), handle.publication.clone()?))
+            } else {
+                let inner = child.shared?.known()?;
+                let record = self.root_record(span, inner);
+                let memory = expr::push(span, expr::empty(span, expr::record_type()), record);
+                Some((root, super::PayloadHandle::Strong, memory))
+            }
         });
-        if let Some((_, inner, _)) = &job {
-            self.growth.payload_jobs.insert(actor, *inner);
+        if let Some((_, kind, _)) = &observed {
+            self.growth.payload_handles.insert(actor, *kind);
         }
         self.transitions.operation(
             span,
             super::super::transfer::checked::Operation::WorkerPublish(
                 super::super::transfer::checked::WorkerPublication {
-                    payload_job: job.as_ref().map(|(root, _, _)| *root),
+                    payload_handle: observed.as_ref().map(|(root, _, _)| *root),
                     source: args[0].clone(),
                     identity: execution.publication.occurrence.clone(),
                     inputs: execution
@@ -402,8 +414,8 @@ impl Analysis<'_> {
                 inputs = expr::add(span, inputs, expr::prefix(span, memory?, path));
             }
         }
-        if let Some((_, _, memory)) = job {
-            inputs = expr::attach_payload_job(span, inputs, memory);
+        if let Some((_, _, memory)) = observed {
+            inputs = expr::attach_payload_handle(span, inputs, memory);
         }
         let record = expr::operation(
             span,

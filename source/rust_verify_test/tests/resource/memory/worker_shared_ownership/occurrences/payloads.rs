@@ -1,12 +1,16 @@
 //! Inner allocations travel with the particular outer allocation that owns them.
 use super::*;
 
-#[test]
-fn privately_owned_inner_backings_follow_each_visit() {
-    let source = program(0, &format!("let root = std::sync::Arc::new(root); {PUBLISH}"), COLLECT)
+fn nested_buffers() -> String {
+    program(0, &format!("let root = std::sync::Arc::new(root); {PUBLISH}"), COLLECT)
         .replace("41 + b", "65 + b")
         .replace("<= 166", "<= 214")
-        .replace("<= 73", "<= 97");
+        .replace("<= 73", "<= 97")
+}
+
+#[test]
+fn privately_owned_inner_backings_follow_each_visit() {
+    let source = nested_buffers();
     assert_vir_error_msg(
         crate::verify_one_file("nested", source.clone(), &[]).unwrap_err(),
         GLOBAL,
@@ -17,6 +21,33 @@ fn privately_owned_inner_backings_follow_each_visit() {
             &["conditional memory budget exceeded", GLOBAL],
         );
     }
+}
+
+#[test]
+fn unique_wrapper_releases_only_its_own_backing_at_extraction() {
+    let take = r#"
+        let value = std::sync::Arc::into_inner(last);
+        match value {
+            Some(inner) => {
+                if b == 19 { assert(current(memory) <= 73); }
+                drop(inner);
+            },
+            None => {},
+        }
+    "#;
+    let source = nested_buffers().replace("drop(last);", take);
+    assert_vir_error_msg(crate::verify_one_file("take", source.clone(), &[]).unwrap_err(), GLOBAL);
+    assert_vir_error_msgs(
+        crate::verify_one_file("inner_short", source.replace("<= 73", "<= 72"), &[]).unwrap_err(),
+        &["conditional memory budget exceeded", GLOBAL],
+    );
+    let aliased = source
+        .replace("let value =", "let keep = last.clone(); let value =")
+        .replace("assert(current(memory) <= 6);", "drop(keep); assert(current(memory) <= 6);");
+    assert_vir_error_msg(
+        crate::verify_one_file("aliased_outer", aliased, &[]).unwrap_err(),
+        "extracting a shared payload without exclusive ownership",
+    );
 }
 
 #[test]
@@ -83,6 +114,35 @@ fn distinct_wrappers_share_one_inner_allocation() {
             &["conditional memory budget exceeded", GLOBAL],
         );
     }
+}
+
+#[test]
+fn extracted_alias_keeps_the_original_shared_backing() {
+    // The publisher and the matched handle share one 59-byte backing. With two
+    // 8-byte handles and 4 bytes of scalars the live total is 79.
+    let source = SHARED
+        .replace("Pair { a: inner.clone(), b: inner.clone() }", "inner.clone()")
+        .replace("<= 177", "<= 161")
+        .replace("<= 111", "<= 103")
+        .replace(
+            "drop(last);",
+            r#"
+            let slot = std::sync::Arc::into_inner(last);
+            match slot {
+                Some(handle) => { assert(current(memory) <= 79); drop(handle); },
+                None => {},
+            }
+            "#,
+        );
+    assert_vir_error_msg(
+        crate::verify_one_file("fixed_inner", source.clone(), &[]).unwrap_err(),
+        GLOBAL,
+    );
+    assert_vir_error_msgs(
+        crate::verify_one_file("fixed_inner_short", source.replace("<= 79", "<= 78"), &[])
+            .unwrap_err(),
+        &["conditional memory budget exceeded", GLOBAL],
+    );
 }
 
 #[test]

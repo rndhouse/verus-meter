@@ -66,10 +66,12 @@ pub(super) struct Growth {
         super::workers::WorkerId,
         std::collections::BTreeMap<super::heap::OwnerPath, super::shared::RootId>,
     >,
-    /// The worker body whose actual publication observation was captured
-    /// inside this family's returned Arc.
-    pub(super) payload_jobs:
-        std::collections::BTreeMap<super::workers::WorkerId, super::workers::WorkerId>,
+    /// Direct payload handle described by each family's publication record.
+    pub(super) payload_handles:
+        std::collections::BTreeMap<super::workers::WorkerId, super::workers::PayloadHandle>,
+    /// Selected inner identity of a privately grouped Arc. Extraction separates
+    /// the child's bytes only after the outer handle proves exclusive.
+    pub(super) grouped_inners: std::collections::BTreeMap<super::shared::RootId, Expr>,
     /// Reservations for peers that share a visit's backing with its carrying handle.
     pub(super) occurrence_peers:
         std::collections::BTreeMap<super::shared::RootId, super::workers::Peers>,

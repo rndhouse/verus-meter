@@ -30,6 +30,13 @@ pub(crate) use results::generated_join_move;
 pub(super) use results::resolve_join;
 pub(super) use shared::{Claims, PeerResult, Peers, PublicationSite};
 
+/// Kind of direct payload handle observed at a repeated Arc constructor.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum PayloadHandle {
+    Job(WorkerId),
+    Strong,
+}
+
 /// One owned handle to a fixed worker in the outstanding-worker registry.
 #[derive(Clone)]
 pub(super) struct FixedHandle {
@@ -560,7 +567,7 @@ impl Analysis<'_> {
                 super::transfer::checked::Operation::WorkerJoin {
                     source: argument.clone(),
                     returned_root: None,
-                    payload_job: None,
+                    payload_handle: None,
                 },
             );
         }

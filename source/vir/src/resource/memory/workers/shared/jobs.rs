@@ -15,7 +15,8 @@ impl Analysis<'_> {
         if let Some(job) = backing.children.get_mut(&OwnerSlot::Contents)
             && let Some(handle) = &job.worker
         {
-            if self.growth.payload_jobs.get(&actor) != Some(&handle.actor)
+            if self.growth.payload_handles.get(&actor)
+                != Some(&super::super::PayloadHandle::Job(handle.actor))
                 || !self
                     .heap
                     .workers
@@ -49,13 +50,16 @@ impl Analysis<'_> {
         let mut backing = Owner::default();
         let mut bytes = bytes;
         if let Some(inner) =
-            occurrence.templates.iter().find_map(|id| self.growth.payload_jobs.get(id)).copied()
+            occurrence.templates.iter().find_map(|id| match self.growth.payload_handles.get(id) {
+                Some(super::super::PayloadHandle::Job(inner)) => Some(*inner),
+                _ => None,
+            })
         {
             if has_peers
-                || !occurrence
-                    .templates
-                    .iter()
-                    .all(|id| self.growth.payload_jobs.get(id) == Some(&inner))
+                || !occurrence.templates.iter().all(|id| {
+                    self.growth.payload_handles.get(id)
+                        == Some(&super::super::PayloadHandle::Job(inner))
+                })
             {
                 return Err(unsupported(span, "mixed worker results with different embedded jobs"));
             }
@@ -72,7 +76,7 @@ impl Analysis<'_> {
             bytes = outer_bytes;
             let memory = expr::push(
                 span,
-                expr::payload_job(span, occurrence.record.clone()),
+                expr::payload_handle(span, occurrence.record.clone()),
                 expr::worker_charge(span, tag),
             );
             let job = self.worker_from_metadata(

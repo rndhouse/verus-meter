@@ -276,9 +276,23 @@ fn joining_restores_the_capacity_from_the_selected_visit() {
         .replace("handles.push", "let root = std::sync::Arc::new(root); handles.push")
         .replace("<= 117", "<= 165")
         .replace("<= 61", "<= 85");
+    let extracted = nested.replace(
+        "drop(earlier);",
+        r#"
+        let slot = std::sync::Arc::into_inner(earlier);
+        match slot {
+            Some(inner) => {
+                if observe == 1 { assert(current(memory) <= 61); }
+                drop(inner);
+            },
+            None => {},
+        }
+        "#,
+    );
     for (name, source, exact, short) in [
         ("vary_capacity", program, "<= 61", "<= 60"),
         ("vary_nested_capacity", nested.as_str(), "<= 85", "<= 84"),
+        ("vary_extracted_capacity", extracted.as_str(), "<= 61", "<= 60"),
     ] {
         assert_vir_error_msg(crate::verify_one_file(name, source.into(), &[]).unwrap_err(), GLOBAL);
         assert_vir_error_msgs(

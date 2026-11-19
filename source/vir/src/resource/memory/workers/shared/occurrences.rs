@@ -105,6 +105,22 @@ impl Analysis<'_> {
         self.restore_payload_links(span, occurrence, &mut backing)?;
         let handle = self.heap.shared.insert(backing);
         let root = handle.shared.unwrap().known().unwrap();
+        if role.is_none()
+            && occurrence.templates.iter().all(|id| {
+                self.growth.payload_handles.get(id) == Some(&super::super::PayloadHandle::Strong)
+            })
+        {
+            let payload = expr::payload_handle(span, occurrence.record.clone());
+            let link = expr::lookup(span, payload, expr::path(span, []));
+            let identity = expr::field(
+                span,
+                link,
+                "reference_identity",
+                expr::sequence_type(crate::ast_util::int_typ()),
+            );
+            let identity = self.freeze_shared_identity(span, identity, false);
+            self.growth.grouped_inners.insert(root, identity);
+        }
         if let Some(role) = role {
             self.growth.peer_results.insert(root, role);
         }
