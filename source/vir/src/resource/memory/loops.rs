@@ -43,7 +43,7 @@ struct Effects {
     /// Replacements can increase the enclosing runtime child's footprint.
     replacements: HashSet<LocalPath>,
     /// Assigned locals are checked against the summary's persistent scalar state.
-    writes: HashSet<VarIdent>,
+    writes: BTreeMap<VarIdent, Typ>,
     /// Helper effects whose iteration metadata is not yet representable.
     opaque_helpers: bool,
     /// Calls, owner expressions, or returns prevent a read-only summary.
@@ -236,7 +236,7 @@ impl Loop {
                 if let ExprX::Assign { place, .. } = &expression.x
                     && let PlaceX::Local(name) = &place.x
                 {
-                    effects.writes.insert(name.clone());
+                    effects.writes.insert(name.clone(), place.typ.clone());
                 }
                 if !in_body {
                     return Ok::<(), VirErr>(());
@@ -328,7 +328,7 @@ impl Loop {
                         InequalityOp::Gt | InequalityOp::Ge => left,
                     };
                     let stable = crate::ast_visitor::expr_visitor_check(candidate, &mut |_, value| {
-                        if matches!(&value.x, ExprX::Var(name) if scope.contains_key(name) || effects.writes.contains(name)) { Err(()) } else { Ok(()) }
+                        if matches!(&value.x, ExprX::Var(name) if scope.contains_key(name) || effects.writes.contains_key(name)) { Err(()) } else { Ok(()) }
                     }).is_ok();
                     if stable {
                         size_candidates.push(candidate.clone());
@@ -430,7 +430,11 @@ impl Loop {
     }
 
     pub(super) fn writes(&self) -> impl Iterator<Item = &VarIdent> {
-        self.effects.writes.iter()
+        self.effects.writes.keys()
+    }
+
+    pub(super) fn written_type(&self, name: &VarIdent) -> Option<&Typ> {
+        self.effects.writes.get(name)
     }
 
     pub(super) fn read_only(&self) -> bool {
@@ -462,7 +466,7 @@ pub(super) struct Transfer {
     pub(super) additional: Option<Expr>,
 }
 
-fn local(value: &Expr) -> Option<VarIdent> {
+pub(super) fn local(value: &Expr) -> Option<VarIdent> {
     match &value.x {
         ExprX::Var(name) => Some(name.clone()),
         ExprX::ReadPlace(place, _) => match &place.x {

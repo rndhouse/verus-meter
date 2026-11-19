@@ -47,12 +47,11 @@ impl Trace<'_> {
         use checked::Operation;
         match operation {
             Operation::Iterator(operation) => self.iterator_operation(value, operation),
-            Operation::SliceLength { receiver } => {
-                let Value::CollectionLength(length) = self.value(&receiver)? else {
-                    return Some(Value::Unknown);
-                };
-                Some(Value::Scalar(length))
-            }
+            Operation::SliceLength { receiver } => Some(match self.value(&receiver)? {
+                Value::CollectionLength(length) => Value::Scalar(length),
+                missing @ Value::UnknownSize(_) => missing,
+                _ => Value::Unknown,
+            }),
             Operation::ArraySlice { source, length } => {
                 self.value(&source)?;
                 Some(Value::CollectionLength(length))
@@ -66,7 +65,20 @@ impl Trace<'_> {
             Operation::Vector { capacity, element } => {
                 let actual =
                     contracts::multiply(span, capacity.clone(), contracts::literal(span, element));
-                let capacity = self.scalar(&capacity)?;
+                let capacity = match self.value(&capacity)? {
+                    Value::Scalar(capacity) => capacity,
+                    missing => {
+                        let mut failure = Failure::new(
+                            span,
+                            "cannot infer the allocation size from its capacity",
+                        );
+                        if let Value::UnknownSize(source) = missing {
+                            failure.observation = Some(source);
+                        }
+                        self.failure = Some(failure);
+                        return None;
+                    }
+                };
                 if self.loop_tokens.is_some() {
                     self.loop_allocations.push((
                         span.clone(),
@@ -518,12 +530,18 @@ impl Trace<'_> {
             {
                 return None;
             }
-            for (arg, parameter) in args.iter().zip(function.x.params.iter()) {
+            let mut values = HashMap::new();
+            for (index, (arg, parameter)) in args.iter().zip(function.x.params.iter()).enumerate() {
                 if parameter.x.mode == Mode::Exec {
-                    self.value(arg)?;
+                    values.insert(index, self.value(arg)?);
                 }
             }
-            return Some(Value::Unknown);
+            return Some(postconditions::call_result(
+                function,
+                &values,
+                Value::Unknown,
+                &value.span,
+            ));
         };
         let uses_owner = |index| {
             template.borrowed.contains_key(&index)
@@ -637,7 +655,8 @@ impl Trace<'_> {
         if let Value::Owner(Node { origin: Some(index), .. }) = &template.result {
             return values.get(index).cloned();
         }
-        Some(instantiate_value(&template.result, &replacements))
+        let result = instantiate_value(&template.result, &replacements);
+        Some(postconditions::call_result(function, &values, result, &value.span))
     }
 }
 

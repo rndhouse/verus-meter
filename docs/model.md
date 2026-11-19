@@ -124,6 +124,31 @@ Internally, charges distinguish `host.local` and `host.heap`. Current source
 contracts bound total `memory`; separate kind-specific limits and GPU allocator
 models are not yet provided.
 
+### Allocation sizes across calls
+
+A vector reservation records the capacity at the allocation site. Moving the
+vector carries that backing charge, and a growing push updates it under the
+model's allocation policy. A helper returning two buffers with capacities
+selected by the same flag can preserve both selections through a forwarding
+call. A caller can prove their combined charge for either flag and the
+individual charge after extracting one buffer.
+
+For a counted loop that only updates local observations, the checker can infer
+the final value of a scalar or shared slice length overwritten on every
+continuing path. The initial value applies on zero visits. On positive counts,
+the final write may depend on input observations and the last visit's index.
+The checker proves this relation at the loop head and checks the completed
+count on exit. This rule covers non-nested loops comparing scalar locals or
+literals with checked progress. A condition with writes or a partial break
+requires separate exit reasoning.
+
+A verified helper can also supply an exact scalar result through a
+`returns` clause or an unconditional `ensures` equality. Supported right-hand
+sides include scalar arguments, shared slice lengths, arithmetic, comparisons,
+and conditionals. When a required allocation size still depends on an
+unresolved observation, the diagnostic identifies the dependent allocation
+and the loop or helper call where inference lost the relationship.
+
 ## Synchronization size queries
 
 The `source-values-v40-64` model supports type-only sizes for standard `Mutex<T>`,

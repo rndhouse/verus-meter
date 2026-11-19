@@ -19,6 +19,7 @@ mod loops;
 mod operations;
 mod patterns;
 mod places;
+mod postconditions;
 mod provenance;
 mod workers;
 

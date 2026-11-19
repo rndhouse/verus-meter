@@ -369,6 +369,7 @@ impl Trace<'_> {
                 definitions,
                 entry_lengths,
                 prefixes: BTreeMap::new(),
+                overwrites: Vec::new(),
             },
         );
     }

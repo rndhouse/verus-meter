@@ -38,6 +38,8 @@ pub(in super::super) struct Evidence {
     pub(in super::super) definitions: BTreeMap<VarIdent, Expr>,
     /// Closed logical lengths before the first visit.
     pub(in super::super) entry_lengths: BTreeMap<LocalPath, Expr>,
+    /// Actual loop-head observations for overwritten scalar and slice bindings.
+    pub(in super::super) overwrites: Vec<Expr>,
     /// Exact checked prefix lengths, including branch-selected visit intervals.
     pub(in super::super) prefixes: BTreeMap<LocalPath, Expr>,
 }

@@ -133,9 +133,9 @@ impl Analysis<'_> {
             );
             let bound = progress::count(span, gap, evidence.stride);
             record.visits_bound = Some(bound.clone());
-            if !record.head_breaks.is_empty() {
-                // Verus cannot assume the negated while condition after a
-                // break. Check the completed count on all real exits instead.
+            if !record.head_breaks.is_empty() || !evidence.overwrites.is_empty() {
+                // A head break or a last-write observation needs the exact
+                // completed count proved on each normal exit.
                 self.growth
                     .loop_ensures
                     .entry(*id)
@@ -151,12 +151,13 @@ impl Analysis<'_> {
                 ),
                 crate::ast_util::mk_ineq(span, ordinal, &bound, InequalityOp::Le),
             ];
+            facts.extend(evidence.overwrites.iter().cloned());
             for (source, snapshot) in [
                 (&record.control.as_ref().unwrap().start, &observation.bounds.0),
                 (&record.control.as_ref().unwrap().end, &observation.bounds.1),
             ] {
                 if let Some(name) = local(source) {
-                    if !record.effects.writes.contains(&name) {
+                    if !record.effects.writes.contains_key(&name) {
                         let current =
                             SpannedTyped::new(span, &crate::ast_util::int_typ(), ExprX::Var(name));
                         facts.push(crate::ast_util::mk_eq(span, snapshot, &current));

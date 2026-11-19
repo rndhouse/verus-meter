@@ -670,7 +670,7 @@ fn consuming_vector_reserves_conditional_workspace_on_its_path() {
 
 // A loop-carried slice cannot export its old length as an allocation size.
 test_verify_one_file! {
-    #[test] reassigned_slice_length_cannot_size_a_returned_allocation verus_code! {
+    #[test] reassigned_slice_length_rejects_the_stale_allocation_bound verus_code! {
         use vstd::prelude::*;
 
         fn select_len(a: &[u8], b: &[u8], count: u8) -> (n: usize)
@@ -708,7 +708,7 @@ test_verify_one_file! {
             // The inner vector reserves 32 bytes, bringing the live total to 112.
             assert(current(memory) <= 81);
         }
-    } => Err(err) => assert_vir_error_msg(err, "no precise helper summary can be inferred")
+    } => Err(err) => assert_vir_error_msg(err, "conditional memory budget exceeded")
 }
 
 // Unmodeled iterable layouts and adapters still need explicit rules.

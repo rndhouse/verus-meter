@@ -8,6 +8,7 @@ use crate::resource::memory::loops::Loop;
 mod composition;
 mod guards;
 mod indexed;
+mod observations;
 mod prefixes;
 mod progress;
 
@@ -76,19 +77,29 @@ impl Trace<'_> {
             ));
             return None;
         }
+        if record.writes().any(|name| {
+            !record.scalar_steps.contains_key(name) && self.state.values.contains_key(name)
+        }) {
+            let mut trace = self.clone();
+            if let Some(value) = trace.overwritten_observations(&record) {
+                *self = trace;
+                return Some(value);
+            }
+        }
         // This fallback has no recurrence for reassigned bindings. A slice
         // length or iterator sequence captured before the loop can describe
         // different storage after a write, just like a scalar observation.
+        let source = Arc::new(span.clone());
         for value in self.state.values.values_mut() {
             if matches!(value, Value::Scalar(_)) {
-                *value = Value::Unknown;
+                *value = Value::UnknownSize(source.clone());
             }
         }
         for name in record.writes() {
             if let Some(value @ (Value::CollectionLength(_) | Value::Iterator(_))) =
                 self.state.values.get_mut(name)
             {
-                *value = Value::Unknown;
+                *value = Value::UnknownSize(source.clone());
             }
         }
         self.used.insert((checked::Kind::Loop, span.id));

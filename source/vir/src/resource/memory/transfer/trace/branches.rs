@@ -153,6 +153,9 @@ impl Trace<'_> {
                 Value::Scalar(choice(span, condition, yes.clone(), no.clone()))
             }
             (Value::Unit, Value::Unit) => Value::Unit,
+            (Value::UnknownSize(span), _) | (_, Value::UnknownSize(span)) => {
+                Value::UnknownSize(span.clone())
+            }
             (Value::Unknown, _) | (_, Value::Unknown) => Value::Unknown,
             _ => return None,
         })

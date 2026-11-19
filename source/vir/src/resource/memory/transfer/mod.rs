@@ -110,6 +110,8 @@ pub(super) enum Value {
     Owner(Node),
     Scalar(Expr),
     Unit,
+    /// Source loop or call where inference lost the size needed by a later allocation.
+    UnknownSize(std::sync::Arc<Span>),
     Unknown,
 }
 

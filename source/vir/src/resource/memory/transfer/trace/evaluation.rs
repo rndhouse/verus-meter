@@ -11,6 +11,15 @@ impl Trace<'_> {
     pub(super) fn scalar(&mut self, value: &Expr) -> Option<Expr> {
         match self.value(value)? {
             Value::Scalar(value) => Some(value),
+            Value::UnknownSize(source) => {
+                let mut failure = Failure::new(
+                    &value.span,
+                    "a scalar operand needs an unresolved size relationship",
+                );
+                failure.observation = Some(source);
+                self.failure = Some(failure);
+                None
+            }
             _ => None,
         }
     }

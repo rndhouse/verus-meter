@@ -12,21 +12,29 @@ pub(super) struct Failure {
     pub(super) span: Span,
     /// The inference boundary that could not produce an exact description.
     pub(super) reason: &'static str,
+    /// Earlier operation whose exit observation the dependent allocation needs.
+    pub(super) observation: Option<std::sync::Arc<Span>>,
 }
 
 impl Failure {
     pub(super) fn new(span: &Span, reason: &'static str) -> Self {
-        Self { span: span.clone(), reason }
+        Self { span: span.clone(), reason, observation: None }
     }
 
     pub(super) fn diagnostic(&self, function: &Span) -> VirErr {
-        super::super::model::unsupported(
+        let diagnostic = super::super::model::unsupported(
             &self.span,
             &format!(
                 "this runtime ownership transformation; no precise helper summary can be inferred: {}",
                 self.reason
             ),
         )
-        .secondary_label(function, "ownership summary required for this function")
+        .secondary_label(function, "ownership summary required for this function");
+        if let Some(site) = &self.observation {
+            diagnostic
+                .secondary_label(site, "the exact size relationship could not be inferred here")
+        } else {
+            diagnostic
+        }
     }
 }
