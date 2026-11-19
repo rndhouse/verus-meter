@@ -72,7 +72,7 @@ semantics, including checked capture ownership at the invocation boundary.
 effects and ownership templates, capture cleanup, and native/vstd join results.
 Source tests exercise generated local obligations while the mandatory global
 rejection remains. The completed 03.3 tests exercise symbolic worker populations
-and final shared releases in executable programs. The [03.4.3 audit](03.4.3-validate-and-close-03.md) records the outstanding ownership transfers.
+and final shared releases in executable programs. The [03.4.3 audit](03.4.3-validate-and-close-03.md) tracks final integration of the verified ownership transfers.
 
 ## Remaining work
 
