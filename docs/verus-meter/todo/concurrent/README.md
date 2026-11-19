@@ -3,7 +3,7 @@
 Implement the [approved plan](../plan-concurrent-symbolic-analysis.md) as one
 complete core feature. These tasks divide implementation responsibilities; they
 are not separate prototypes or releases. The [final audit](03.4.3-validate-and-close-03.md) reopened the shared ownership audit.
-Next is the [03.4.2 ownership audit](03.4.2-audit-loops-and-shared-ownership.md), followed by [03.4.3 final validation](03.4.3-validate-and-close-03.md).
+Next is [03.4.2.7](03.4.2.7-track-independent-inner-aliases.md), the remaining fix in the [ownership audit](03.4.2-audit-loops-and-shared-ownership.md). Then run [03.4.3 final validation](03.4.3-validate-and-close-03.md).
 The parent plan is the capability checklist; this index tracks the work that
 satisfies it. Read both before starting a task.
 
@@ -42,6 +42,8 @@ Preserve the semantics and synchronization precision established in 01 throughou
 | [x] | [03.4.2.3 — Join shared collections in a worker](complete/03.4.2.3-join-shared-collections-in-a-worker.md) | Reconcile fully drained shared handle collections with the publisher. |
 | [x] | [03.4.2.4 — Transfer surviving shared ownership](complete/03.4.2.4-transfer-surviving-shared-ownership.md) | Carry remaining handles, returned aliases and per-visit reservations into the next actor. |
 | [x] | [03.4.2.5 — Preserve repeated payload ownership](complete/03.4.2.5-preserve-repeated-payload-ownership.md) | Preserve the inner owners of a fresh shared allocation on each visit. |
+| [x] | [03.4.2.6 — Extract a joined inner Arc](complete/03.4.2.6-extract-a-joined-inner-arc.md) | Recover the selected inner allocation and release the unique wrapper. |
+| [ ] | [03.4.2.7 — Track independent inner aliases](03.4.2.7-track-independent-inner-aliases.md) | Keep a loop-created inner backing live through either order of publisher and worker drops. |
 | [ ] | [03.4.3 — Validate and close 03](03.4.3-validate-and-close-03.md) | Run integrated checks and reconcile the worker completion criteria. |
 | [ ] | [04 — Allocation and synchronization lifetimes](04-allocation-and-synchronization-lifetimes.md) | Compiler-derived containment, escape and release relationships. |
 | [ ] | [05 — Function and worker summaries](05-function-and-worker-summaries.md) | General helper/lifetime composition and protected payloads, extending 03.2's summaries. |
