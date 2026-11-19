@@ -585,17 +585,7 @@ impl Analysis<'_> {
         for (root, backing) in released.backing {
             self.release_shared_backing(root, backing, &expr.span, &mut proofs);
         }
-        // The publisher retains the collected vector's claims through the
-        // waiting and result handoff states. A final payload destructor must
-        // observe the same post-join reconciliation.
-        if execution.effects.ownership.collection_claims.is_empty() {
-            self.finish_indexed_payloads(&expr.span, &mut proofs);
-        } else {
-            let mut settled = Vec::new();
-            self.collect_captured_vectors(&expr.span, &execution, &mut settled)?;
-            self.finish_indexed_payloads(&expr.span, &mut settled);
-            self.growth.after.entry(expr.span.id).or_default().extend(settled);
-        }
+        self.finish_joined_payloads(&expr.span, &execution, &mut proofs)?;
         if !proofs.is_empty() {
             self.growth.before.entry(expr.span.id).or_default().extend(proofs);
         }

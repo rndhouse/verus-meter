@@ -14,14 +14,10 @@ impl Analysis<'_> {
         span: &Span,
         entry: &Entry,
         inputs: &[Input],
-        result: &Typ,
     ) -> BTreeMap<RootId, Expr> {
         let mut counts = BTreeMap::new();
         let mut membership = Vec::new();
-        if self.current_worker.is_some()
-            || self.growth.indexed_shared.is_empty()
-            || !(contracts::scalar(result) || crate::resource::memory::model::unit(result))
-        {
+        if self.growth.indexed_shared.is_empty() {
             return counts;
         }
         for input in inputs {
@@ -97,24 +93,32 @@ impl Analysis<'_> {
         counts
     }
 
-    /// On every normal exit the receiver proved empty discarded handle forests,
-    /// accounted for every individual handle and destroyed every
-    /// locally selected alias. Its inline result cannot carry ownership out.
-    pub(in crate::resource::memory::workers) fn collect_captured_vectors(
-        &self,
+    /// Finish payload destruction at a fixed join. A full drain keeps the
+    /// publisher's share live through the wait and result handoff. The worker's
+    /// checked exits and inline result establish that the entire share can end.
+    pub(in crate::resource::memory::workers) fn finish_joined_payloads(
+        &mut self,
         span: &Span,
         execution: &Execution,
-        proofs: &mut Vec<Stmt>,
+        before_join: &mut Vec<Stmt>,
     ) -> Result<(), VirErr> {
-        for (root, count) in &execution.effects.ownership.collection_claims {
-            self.require_indexed_claim_owner(span)?;
+        let captured = &execution.effects.ownership.collection_claims;
+        if captured.is_empty() {
+            self.finish_indexed_payloads(span, before_join);
+            return Ok(());
+        }
+        self.require_indexed_claim_owner(span)?;
+        let mut after_join = Vec::new();
+        for (root, count) in captured {
             self.growth.indexed_shared[root].population.release(
                 span,
                 count.clone(),
                 "cannot reconcile this collector's captured shared references",
-                proofs,
+                &mut after_join,
             );
         }
+        self.finish_indexed_payloads(span, &mut after_join);
+        self.growth.after.entry(span.id).or_default().extend(after_join);
         Ok(())
     }
 }

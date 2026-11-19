@@ -5,9 +5,10 @@
 use super::super::{
     accounting::Accounting,
     analysis::Analysis,
+    contracts,
     elements::References,
     lifetime::{Storage, Value},
-    model::unsupported,
+    model::{unit, unsupported},
     summary::BodyEffects,
 };
 use super::{WorkerId, inputs};
@@ -194,7 +195,15 @@ impl Analysis<'_> {
         }
         let publication = self.publication_state(span, actor, at_fork)?;
         let initial = storage.clone();
-        let collection_entries = self.capture_collection_claims(span, &entry, &inputs, result_type);
+        // The full-drain rule applies to coordinator publications whose result
+        // cannot carry a handle or alias out of the collecting worker.
+        let collection_entries = if self.current_worker.is_none()
+            && (unit(result_type) || contracts::scalar(result_type))
+        {
+            self.capture_collection_claims(span, &entry, &inputs)
+        } else {
+            Default::default()
+        };
         let declarations = self.growth.declarations.len();
         // Enclosing loop coordinates belong to the actor's identity, not its
         // local control flow. A child body begins a separate reusable frame.
