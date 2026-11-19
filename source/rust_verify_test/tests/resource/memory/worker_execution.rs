@@ -2,6 +2,8 @@
 //! generated local obligations verify; deliberately short bounds must also fail
 //! at the actual executable allocation, independently of that rejection.
 
+mod lifecycle;
+
 use super::support::rejects;
 
 const GLOBAL: &str = "checked worker effects still require global lifetime and interference proofs";
