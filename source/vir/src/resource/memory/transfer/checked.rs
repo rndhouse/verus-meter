@@ -106,6 +106,10 @@ pub(in super::super) struct Assignment {
 pub(in super::super) enum Operation {
     /// A finite iterator operation accepted by its layout and operation adapter.
     Iterator(crate::resource::memory::iterators::Operation),
+    /// Read the length of a checked shared slice.
+    SliceLength { receiver: Expr },
+    /// A checked array borrow coerced to a shared slice with a fixed length.
+    ArraySlice { source: Expr, length: Expr },
     /// Allocate a buffer using the checked capacity and inline element size.
     Vector { capacity: Expr, element: u64 },
     /// Allocate a fixed payload; an owning payload is nested under Contents.

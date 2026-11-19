@@ -386,23 +386,107 @@ test_verify_one_file! {
     } => Ok(())
 }
 
-// Owning containers and borrowed element iterators need explicit lifetime rules.
+test_verify_one_file! {
+    #[test] borrowed_slice_visits_use_the_existing_pointees verus_code! {
+        use vstd::prelude::*;
+
+        fn read(block: &[u8; 16]) -> u8 resources peak(memory) <= 16 {
+            block[0]
+        }
+
+        fn visit(blocks: &[[u8; 16]]) resources peak(memory) <= 128 {
+            for block in blocks {
+                let _checksum = read(block);
+            }
+            assert(current(memory) <= ref_size(blocks));
+        }
+    } => Ok(())
+}
+
+test_verify_one_file! {
+    #[test] borrowed_vector_visits_keep_owning_elements_available_to_helpers verus_code! {
+        use vstd::prelude::*;
+
+        fn read(block: &Box<[u8; 16]>) -> u8 resources peak(memory) <= 16 {
+            block[0]
+        }
+
+        fn visit(blocks: &Vec<Box<[u8; 16]>>) resources peak(memory) <= 128 {
+            for block in blocks {
+                let _checksum = read(block);
+            }
+        }
+
+        fn caller() resources peak(memory) <= 192 {
+            let mut blocks = Vec::with_capacity(2);
+            blocks.push(Box::new([0u8; 16]));
+            visit(&blocks);
+            assert(blocks.len() == 1);
+        }
+    } => Ok(())
+}
+
+#[test]
+fn borrowed_vector_cleanup_preserves_backing_and_owned_children() {
+    let source = r#"
+        fn empty() resources peak(memory) <= 150 {
+            let blocks = Vec::<Box<[u8; 16]>>::with_capacity(2);
+            for block in &blocks {
+                let _first = block[0];
+            }
+            assert(blocks.len() == 0);
+            assert(current(memory) <= 40);
+        }
+
+        fn early_exit() resources peak(memory) <= 150 {
+            let mut blocks = Vec::with_capacity(2);
+            blocks.push(Box::new([0u8; 16]));
+            for block in &blocks {
+                let _first = block[0];
+                break;
+            }
+            assert(blocks.len() == 1);
+            assert(current(memory) <= 56);
+        }
+    "#;
+    super::support::verifies("borrowed_vector_cleanup", source);
+    super::support::rejects(
+        "borrowed_vector_cleanup_short",
+        &source.replace("<= 56", "<= 55"),
+        "conditional memory budget exceeded: cannot prove the required model bytes fit the declared bound",
+    );
+}
+
+// Owning iterators and unmodeled iterable types still need explicit rules.
 #[test]
 fn unsupported_iterator_classes_and_adapters_reject() {
-    for (name, code) in [
+    for (name, code, diagnostic) in [
         (
             "owning",
             "let values = Vec::<Box<[u8; 16]>>::new(); for value in values { drop(value); }",
+            "does not support struct layouts outside this crate",
         ),
-        ("borrowed", "let values = [0u32; 4]; for value in &values { let copy = *value; }"),
-        ("inclusive", "for value in 0u8..=4 { let copy = value; }"),
-        ("zip", "for values in (0u8..4).zip(0u8..4) { }"),
+        (
+            "array_iter",
+            "let values = [0u32; 4]; for value in &values { let copy = *value; }",
+            "does not support this slice type",
+        ),
+        (
+            "inclusive",
+            "for value in 0u8..=4 { let copy = value; }",
+            "does not support struct layouts outside this crate",
+        ),
+        (
+            "zip",
+            "for values in (0u8..4).zip(0u8..4) { }",
+            "does not support struct layouts outside this crate",
+        ),
     ] {
         let source = format!(
             "use vstd::prelude::*; verus! {{ fn example() resources peak(memory) <= 100000 {{ {code} }} }}"
         );
         let err = verify_one_file(name, source, &[]).unwrap_err();
-        assert_vir_error_msg(err, "does not support struct layouts outside this crate");
+        assert_vir_error_msg(err, diagnostic);
     }
 }
 

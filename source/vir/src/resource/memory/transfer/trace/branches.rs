@@ -120,13 +120,28 @@ impl Trace<'_> {
         no: &Value,
     ) -> Option<Value> {
         Some(match (yes, no) {
-            (Value::Iterator(yes), Value::Iterator(no)) if yes.step == no.step => {
-                Value::Iterator(crate::resource::memory::iterators::Sequence {
-                    first: choice(span, condition.clone(), yes.first.clone(), no.first.clone()),
+            (Value::Iterator(yes), Value::Iterator(no)) => {
+                use crate::resource::memory::iterators::{Items, Sequence};
+                let items = match (&yes.items, &no.items) {
+                    (Items::Range { first: a, step }, Items::Range { first: b, step: other })
+                        if step == other =>
+                    {
+                        Items::Range {
+                            first: choice(span, condition.clone(), a.clone(), b.clone()),
+                            step: *step,
+                        }
+                    }
+                    (Items::Shared, Items::Shared) => Items::Shared,
+                    _ => return None,
+                };
+                Value::Iterator(Sequence {
+                    items,
                     count: choice(span, condition.clone(), yes.count.clone(), no.count.clone()),
                     position: choice(span, condition, yes.position.clone(), no.position.clone()),
-                    step: yes.step,
                 })
+            }
+            (Value::CollectionLength(yes), Value::CollectionLength(no)) => {
+                Value::CollectionLength(choice(span, condition, yes.clone(), no.clone()))
             }
             (Value::Owner(yes), Value::Owner(no)) => {
                 let mut minima = yes.minima.clone();

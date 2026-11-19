@@ -99,8 +99,10 @@ and runtime collections. Checked calls currently require safe, nongeneric,
 verified functions in the same crate and an acyclic call graph.
 
 Supported loops include counted while/unconditional loops, representable exits,
-and finite half-open integer for ranges with supported `rev`, `skip`, and `take`
-adapters. Exact ownership summaries support selected conditional effects, child
+finite half-open integer ranges with supported `rev`, `skip`, and `take` adapters,
+and forward loops over shared slices and vectors. Borrowed loops charge the
+iterator and yielded reference while the source owner retains its storage.
+Exact ownership summaries support selected conditional effects, child
 transfers, and indexed updates. This does not cover arbitrary data-dependent
 progress, partial exits, or all iterator APIs. A local peak proof can succeed
 while exporting caller-visible ownership remains unsupported.

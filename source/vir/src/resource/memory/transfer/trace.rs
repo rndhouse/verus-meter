@@ -205,6 +205,15 @@ pub(super) fn summarize(
                 SpannedTyped::new(&parameter.span, typ, ExprX::Var(parameter.x.name.clone())),
             );
             Value::Scalar(symbol)
+        } else if let Some(length) = super::super::iterators::slice_length(
+            &parameter.span,
+            SpannedTyped::new(&parameter.span, typ, ExprX::Var(parameter.x.name.clone())),
+        ) {
+            let symbol =
+                trace.symbol(&parameter.span, Input::SliceLength(index), length.typ.clone());
+            let ExprX::Var(name) = &symbol.x else { unreachable!() };
+            trace.proof_values.insert(name.clone(), length);
+            Value::CollectionLength(symbol)
         } else {
             Value::Unknown
         };
@@ -285,11 +294,13 @@ pub(super) fn summarize(
             collect(&floor.capacity);
         }
     }
-    if let Value::Scalar(value) = &result {
+    if let Value::Scalar(value) | Value::CollectionLength(value) = &result {
         collect(value);
     }
     if let Value::Iterator(sequence) = &result {
-        collect(&sequence.first);
+        if let super::super::iterators::Items::Range { first, .. } = &sequence.items {
+            collect(first);
+        }
         collect(&sequence.count);
         collect(&sequence.position);
     }

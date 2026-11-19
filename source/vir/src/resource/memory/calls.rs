@@ -281,6 +281,21 @@ impl Analysis<'_> {
         Ok(bytes)
     }
 
+    /// Preserve the array's length when the checked coercion creates a slice.
+    fn record_array_slice(&mut self, expr: &Expr, source: &Expr, array: &Typ) {
+        let TypX::Primitive(Primitive::Array, types) = &**array else { unreachable!() };
+        let TypX::ConstInt(length) = &*types[1] else { unreachable!() };
+        let length = SpannedTyped::new(
+            &expr.span,
+            &crate::ast_util::int_typ(),
+            ExprX::Const(crate::ast_util::const_int_from_string(length.to_string())),
+        );
+        self.transitions.operation(
+            &expr.span,
+            super::transfer::checked::Operation::ArraySlice { source: source.clone(), length },
+        );
+    }
+
     fn call_expr_inner(&mut self, expr: &Expr, destination: bool) -> Result<u64, VirErr> {
         let operands;
         match &expr.x {
@@ -298,6 +313,10 @@ impl Analysis<'_> {
                 }
                 // Validate the receiver; length evaluation creates no source slot.
                 operands = self.expr(&args[0])?;
+                self.transitions.operation(
+                    &expr.span,
+                    super::transfer::checked::Operation::SliceLength { receiver: args[0].clone() },
+                );
             }
             ExprX::Call {
                 target: CallTarget::Fun(CallTargetKind::Static, _, _, _, attrs),
@@ -324,6 +343,7 @@ impl Analysis<'_> {
                     self.layouts.size(array, &expr.span)?;
                     self.discard(value)?;
                     self.layouts.size(&expr.typ, &expr.span)?;
+                    self.record_array_slice(expr, value, array);
                     return Ok(0);
                 }
                 let (from, to) = match (&*args[0].typ, &*expr.typ) {
@@ -341,6 +361,9 @@ impl Analysis<'_> {
                 // Coercion uses the destination reference's storage. Backing
                 // array storage stays with its original owner.
                 operands = self.expr(&args[0])?;
+                if matches!(&*expr.typ, TypX::Decorate(TypDecoration::Ref, None, _)) {
+                    self.record_array_slice(expr, &args[0], from);
+                }
             }
             ExprX::Call {
                 target: CallTarget::Fun(CallTargetKind::Static, target, typs, impls, attrs),

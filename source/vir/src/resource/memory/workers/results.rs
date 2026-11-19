@@ -180,7 +180,7 @@ impl Analysis<'_> {
         self.release_owner(owner, &expr.span);
         self.release_value(value, &expr.span);
         let mut bindings = Vec::new();
-        self.option_pattern(pattern, &payload, &mut bindings, payload_owner)?;
+        self.option_pattern(pattern, &payload, &mut bindings, payload_owner, None)?;
         for (name, bytes) in &bindings {
             let id = self.storage.reserve_value(
                 &arm.x.body.span,

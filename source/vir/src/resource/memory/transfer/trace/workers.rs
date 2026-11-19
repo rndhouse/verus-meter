@@ -108,6 +108,7 @@ impl Trace<'_> {
                 Input::Property(index, path, field) => {
                     property(span, selected(*index, path), field)
                 }
+                Input::SliceLength(_) => return None,
                 Input::Minimum(_, _) => expr::integer(span, 0),
             };
             replacements.insert(symbol.name.clone(), replacement);

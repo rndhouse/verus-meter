@@ -68,6 +68,8 @@ pub(super) enum Input {
     Complete,
     /// An immutable snapshot of an executable scalar argument.
     Scalar(usize),
+    /// Length of a shared slice argument.
+    SliceLength(usize),
     /// The supplied descriptor forest, with complete or frame-local byte charges.
     Forest(usize),
     /// One root descriptor property at a finite fixed ownership path.
@@ -101,8 +103,10 @@ pub(super) struct Node {
 
 #[derive(Clone)]
 pub(super) enum Value {
-    /// A supported finite scalar iterator; it owns no descriptor forest.
+    /// A supported finite iterator with no descriptor forest.
     Iterator(super::iterators::Sequence),
+    /// Sequence length observed through a shared slice or vector.
+    CollectionLength(Expr),
     Owner(Node),
     Scalar(Expr),
     Unit,
@@ -266,13 +270,18 @@ fn instantiate_node(node: &Node, values: &HashMap<VarIdent, Expr>) -> Node {
 fn instantiate_value(value: &Value, values: &HashMap<VarIdent, Expr>) -> Value {
     match value {
         Value::Iterator(sequence) => Value::Iterator(super::iterators::Sequence {
-            first: substitute(&sequence.first, values),
+            items: match &sequence.items {
+                super::iterators::Items::Range { first, step } => {
+                    super::iterators::Items::Range { first: substitute(first, values), step: *step }
+                }
+                super::iterators::Items::Shared => super::iterators::Items::Shared,
+            },
             count: substitute(&sequence.count, values),
             position: substitute(&sequence.position, values),
-            step: sequence.step,
         }),
         Value::Owner(node) => Value::Owner(instantiate_node(node, values)),
         Value::Scalar(value) => Value::Scalar(substitute(value, values)),
+        Value::CollectionLength(value) => Value::CollectionLength(substitute(value, values)),
         _ => value.clone(),
     }
 }

@@ -121,6 +121,7 @@ impl Analysis<'_> {
         typ: &Typ,
         slots: &mut Vec<(VarIdent, u64)>,
         mut owner: Option<super::heap::Owner>,
+        shared_next: Option<&Typ>,
     ) -> Result<(), VirErr> {
         if !crate::ast_util::types_equal(&pattern.typ, typ) {
             return Err(unsupported(&pattern.span, "this Option pattern coercion"));
@@ -144,7 +145,13 @@ impl Analysis<'_> {
                 if self.var_modes.get(&binding.name) != Some(&Mode::Exec) {
                     return Err(unsupported(&pattern.span, "non-executable Option bindings"));
                 }
-                let bytes = self.layouts.return_size(&binding.typ, &pattern.span)?;
+                let bytes = if shared_next
+                    .is_some_and(|item| crate::ast_util::types_equal(item, &binding.typ))
+                {
+                    self.layouts.ref_size(&binding.typ, &pattern.span)?
+                } else {
+                    self.layouts.return_size(&binding.typ, &pattern.span)?
+                };
                 slots.push((binding.name.clone(), bytes));
                 if owning {
                     self.transitions.pattern(&pattern.span, Transition::Bind(binding.name.clone()));
@@ -182,7 +189,11 @@ impl Analysis<'_> {
                         Ok(())
                     }
                     ("Some", [field]) => {
-                        let payload = self.layouts.option_payload(typ, &pattern.span)?.clone();
+                        let payload = if let Some(item) = shared_next {
+                            item.clone()
+                        } else {
+                            self.layouts.option_payload(typ, &pattern.span)?.clone()
+                        };
                         if owning {
                             self.transitions.pattern(
                                 &pattern.span,
@@ -198,7 +209,7 @@ impl Analysis<'_> {
                         if let Some(owner) = owner {
                             self.release_owner(owner, &pattern.span);
                         }
-                        self.option_pattern(&field.a, &payload, slots, child)
+                        self.option_pattern(&field.a, &payload, slots, child, shared_next)
                     }
                     _ => Err(unsupported(&pattern.span, "this Option pattern")),
                 }
@@ -229,9 +240,17 @@ impl Analysis<'_> {
         if self.layouts.owner(&expr.typ) {
             return Err(unsupported(&expr.span, "conditional heap ownership results"));
         }
+        let shared_next = match &scrutinee.x {
+            PlaceX::Temporary(value) => super::iterators::shared_next(value),
+            _ => None,
+        };
         let mut option_owner = None;
         let scratch = if let PlaceX::Temporary(value) = &scrutinee.x {
-            let bytes = self.layouts.size(&scrutinee.typ, &scrutinee.span)?;
+            let bytes = if let Some(item) = shared_next {
+                1 + self.layouts.ref_size(item, &scrutinee.span)?
+            } else {
+                self.layouts.size(&scrutinee.typ, &scrutinee.span)?
+            };
             self.storage.reserve(
                 &value.span,
                 MemoryKind::host_local(),
@@ -266,7 +285,13 @@ impl Analysis<'_> {
             self.restore_branch(&entry);
             let arm_exits = self.flow.exits.len();
             let mut slots = Vec::new();
-            self.option_pattern(&arm.x.pattern, &scrutinee.typ, &mut slots, option_owner.clone())?;
+            self.option_pattern(
+                &arm.x.pattern,
+                &scrutinee.typ,
+                &mut slots,
+                option_owner.clone(),
+                shared_next,
+            )?;
             // Bindings exist throughout the arm, including its guard/body.
             for (name, bytes) in &slots {
                 let id = self.storage.reserve_value(

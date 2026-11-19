@@ -170,6 +170,13 @@ impl Trace<'_> {
         // type must govern this decision rather than the enclosing place type.
         if let PlaceX::Local(name) = &place.x {
             return Some(match self.state.values.get(name) {
+                Some(Value::Owner(node))
+                    if matches!(&**typ, TypX::Decorate(TypDecoration::Ref, None, _))
+                        && self.layouts.vector(&node.typ) =>
+                {
+                    self.effects.push(Effect::Read(name.clone()));
+                    Value::CollectionLength(property(&place.span, node.memory.clone(), "length"))
+                }
                 Some(Value::Owner(value)) if matches!(&**typ, TypX::AnonymousClosure(..)) => {
                     Value::Owner(value.clone())
                 }

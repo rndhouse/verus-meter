@@ -39,6 +39,7 @@ are included only where needed for memory verification.
 - [Batched construction](heap/loops/batched_construction.rs): derive an input-dependent budget while collecting two buffers per batch.
 - [Buffer collection](heap/loops/buffer_collection.rs): compute a memory budget from the requested number of heap buffers while retaining a local array.
 - [For-loop construction](heap/loops/for_construction.rs): collect buffers with an integer range and account for iterator state separately.
+- [Streaming checksums](heap/loops/streaming_checksums.rs): borrow each input block and reuse the same scratch allowance on every iteration.
 - [Partial transfers](heap/loops/partial_transfers.rs): move batches of children and release the source independently.
 - [Peak overlap](heap/loops/peak_overlap.rs): release extracted work buffers while collecting results within an input-dependent budget.
 

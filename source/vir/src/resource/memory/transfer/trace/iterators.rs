@@ -1,11 +1,11 @@
-//! Specialize checked scalar iterator operations and their finite progress.
+//! Specialize checked iterator operations and their finite progress.
 //!
 //! Only the successful body of an accepted for record may advance symbolically.
 //! The real next call and exhaustion edge remain subject to ordinary Verus proof.
 
 use super::*;
 use crate::resource::memory::{
-    iterators::{Operation, Sequence},
+    iterators::{Items, Operation, Sequence},
     loops::Loop,
 };
 
@@ -31,7 +31,30 @@ impl Trace<'_> {
                     expr::integer(span, 0),
                     contracts::subtract(span, end, first.clone()),
                 );
-                Sequence { first, count, step: 1, position: expr::integer(span, 0) }
+                Sequence {
+                    items: Items::Range { first, step: 1 },
+                    count,
+                    position: expr::integer(span, 0),
+                }
+            }
+            Operation::BorrowCollection { source, vector } => {
+                let count = if let Some(vector) = vector {
+                    let location = self.checked_location(&vector)?;
+                    if location.1.is_empty()
+                        && let Some(Value::CollectionLength(length)) =
+                            self.state.values.get(&location.0)
+                    {
+                        length.clone()
+                    } else {
+                        let owner = self.get(span, &location, &vector.typ)?;
+                        self.effects.push(Effect::Read(location.0));
+                        property(span, owner.memory, "length")
+                    }
+                } else {
+                    let Value::CollectionLength(length) = self.value(&source)? else { return None };
+                    length
+                };
+                Sequence { items: Items::Shared, count, position: expr::integer(span, 0) }
             }
             Operation::Adapt { kind, args } => {
                 let Value::Iterator(mut source) = self.value(&args[0])? else { return None };
@@ -39,12 +62,13 @@ impl Trace<'_> {
                 match kind {
                     IteratorInto | IteratorWrap => {}
                     IteratorRev => {
-                        source.first = contracts::add(
+                        let Items::Range { first, step } = &mut source.items else { return None };
+                        *first = contracts::add(
                             span,
-                            source.first,
+                            first.clone(),
                             contracts::multiply(
                                 span,
-                                expr::integer(span, source.step),
+                                expr::integer(span, *step),
                                 contracts::subtract(
                                     span,
                                     source.count.clone(),
@@ -52,7 +76,7 @@ impl Trace<'_> {
                                 ),
                             ),
                         );
-                        source.step = -source.step;
+                        *step = -*step;
                     }
                     IteratorTake | IteratorSkip => {
                         let amount = self.scalar(&args[1])?;
@@ -60,12 +84,15 @@ impl Trace<'_> {
                         if kind == IteratorTake {
                             source.count = selected;
                         } else {
-                            source.first = contracts::add(
+                            let Items::Range { first, step } = &mut source.items else {
+                                return None;
+                            };
+                            *first = contracts::add(
                                 span,
-                                source.first,
+                                first.clone(),
                                 contracts::multiply(
                                     span,
-                                    expr::integer(span, source.step),
+                                    expr::integer(span, *step),
                                     selected.clone(),
                                 ),
                             );
@@ -85,18 +112,24 @@ impl Trace<'_> {
                 let Value::Iterator(sequence) = self.state.values.get_mut(&receiver)? else {
                     return None;
                 };
-                let yielded = contracts::add(
-                    span,
-                    sequence.first.clone(),
-                    contracts::multiply(
-                        span,
-                        expr::integer(span, sequence.step),
-                        sequence.position.clone(),
-                    ),
-                );
+                let item = match &sequence.items {
+                    Items::Range { first, step } => {
+                        let yielded = contracts::add(
+                            span,
+                            first.clone(),
+                            contracts::multiply(
+                                span,
+                                expr::integer(span, *step),
+                                sequence.position.clone(),
+                            ),
+                        );
+                        Value::Scalar(simplify::simplify(&yielded))
+                    }
+                    Items::Shared => Value::Unknown,
+                };
                 sequence.position =
                     contracts::add(span, sequence.position.clone(), expr::integer(span, 1));
-                return Some(Value::Scalar(simplify::simplify(&yielded)));
+                return Some(item);
             }
         };
         Some(Value::Iterator(sequence))

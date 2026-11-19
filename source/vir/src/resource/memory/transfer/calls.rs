@@ -220,6 +220,12 @@ impl Analysis<'_> {
                     view == super::super::metadata::View::Complete,
                 ),
                 Input::Scalar(index) => scalar_snapshots[index].clone(),
+                Input::SliceLength(index) => {
+                    let pure = super::super::projections::spec_value(&args[*index])?;
+                    let length = super::super::iterators::slice_length(&value.span, pure)
+                        .ok_or_else(|| unsupported(&value.span, "this slice argument"))?;
+                    self.transfer_scalar_snapshot(&value.span, length)
+                }
                 Input::Forest(index) => forests[index].clone(),
                 Input::Property(index, path, field) => {
                     let owner = owners[index].at(path).expect("fixed template input path");

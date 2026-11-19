@@ -47,6 +47,16 @@ impl Trace<'_> {
         use checked::Operation;
         match operation {
             Operation::Iterator(operation) => self.iterator_operation(value, operation),
+            Operation::SliceLength { receiver } => {
+                let Value::CollectionLength(length) = self.value(&receiver)? else {
+                    return Some(Value::Unknown);
+                };
+                Some(Value::Scalar(length))
+            }
+            Operation::ArraySlice { source, length } => {
+                self.value(&source)?;
+                Some(Value::CollectionLength(length))
+            }
             Operation::Evaluate { args } => {
                 for argument in args.iter() {
                     self.value(argument)?;
@@ -492,7 +502,42 @@ impl Trace<'_> {
         origins: &checked::CallOrigins,
     ) -> Option<Value> {
         let function = self.functions.get(target)?;
-        let template = self.summaries.get(target)?.transfer.as_ref()?;
+        let summary = self.summaries.get(target)?;
+        let Some(template) = &summary.transfer else {
+            // A read-only helper may compute a value outside the ownership
+            // trace's scalar language. Its declared peak and executable body
+            // have already been checked, and its arguments still execute.
+            if self.layouts.owner(&value.typ)
+                || function.x.params.iter().any(|p| {
+                    p.x.mode == Mode::Exec
+                        && (self.layouts.owner(&p.x.typ) || matches!(&*p.x.typ, TypX::MutRef(_)))
+                })
+                || !origins.sources.is_empty()
+                || !origins.targets.is_empty()
+                || !origins.peaks.is_empty()
+            {
+                return None;
+            }
+            for (arg, parameter) in args.iter().zip(function.x.params.iter()) {
+                if parameter.x.mode == Mode::Exec {
+                    self.value(arg)?;
+                }
+            }
+            return Some(Value::Unknown);
+        };
+        let uses_owner = |index| {
+            template.borrowed.contains_key(&index)
+                || template.symbols.iter().any(|symbol| match symbol.input {
+                    Input::Complete => true,
+                    Input::Forest(owner)
+                    | Input::Property(owner, _, _)
+                    | Input::Minimum(owner, _) => owner == index,
+                    _ => false,
+                })
+                || !origins.sources.is_empty()
+                || !origins.targets.is_empty()
+                || !origins.peaks.is_empty()
+        };
         let mut values = HashMap::new();
         let mut locations = HashMap::new();
         for (index, (arg, parameter)) in args.iter().zip(function.x.params.iter()).enumerate() {
@@ -500,10 +545,23 @@ impl Trace<'_> {
                 continue;
             }
             let actual = if let Some(place) = borrowed.get(&index) {
-                let location = self.checked_location(place)?;
-                let node = self.get(&arg.span, &location, &place.typ)?;
-                locations.insert(index, location);
-                Value::Owner(node)
+                // A shared iterator's yielded reference can be passed to
+                // a read-only helper whose summary needs no owner metadata.
+                // Keep the ordinary projection path for tracked borrows,
+                // including indexed receivers with executable operands.
+                let (name, path) = &place.location;
+                if path.is_empty()
+                    && matches!(self.state.values.get(name), Some(Value::Unknown))
+                    && matches!(&*parameter.x.typ, TypX::Decorate(TypDecoration::Ref, None, _))
+                    && !uses_owner(index)
+                {
+                    self.value(arg)?
+                } else {
+                    let location = self.checked_location(place)?;
+                    let node = self.get(&arg.span, &location, &place.typ)?;
+                    locations.insert(index, location);
+                    Value::Owner(node)
+                }
             } else {
                 self.value(arg)?
             };
@@ -528,12 +586,14 @@ impl Trace<'_> {
                 values.get(&match &symbol.input {
                     Input::Complete => unreachable!(),
                     Input::Scalar(i)
+                    | Input::SliceLength(i)
                     | Input::Forest(i)
                     | Input::Property(i, _, _)
                     | Input::Minimum(i, _) => *i,
                 })?,
             ) {
-                (Input::Scalar(_), Value::Scalar(value)) => value.clone(),
+                (Input::Scalar(_), Value::Scalar(value))
+                | (Input::SliceLength(_), Value::CollectionLength(value)) => value.clone(),
                 (Input::Forest(_), Value::Owner(node)) => node.memory.clone(),
                 (Input::Property(_, path, field), Value::Owner(node)) => {
                     let selected = expr::subtree(

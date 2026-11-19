@@ -92,6 +92,12 @@ impl Analysis<'_> {
                         unsupported(span, "a worker result template without a scalar observation")
                     })?
                 }
+                Symbol::SliceLength(_) => {
+                    return Err(unsupported(
+                        span,
+                        "a worker result that depends on a slice length",
+                    ));
+                }
                 Symbol::Forest(index) => {
                     // Serialization reads the saved accounting view; it neither
                     // transfers storage nor records a new memory event.
