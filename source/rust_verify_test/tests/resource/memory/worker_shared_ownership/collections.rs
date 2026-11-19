@@ -163,8 +163,11 @@ fn collector_returns_the_remaining_handle_slots() {
         .replace("requires keep <= 2 * n,", "requires n == 1, keep == 1,")
         .replace(FULL_DRAIN, "drop(handles);")
         .replace("assert(current(memory) <= 6);", "");
+    let mut errors = check("lost_returned_slots", lost);
+    // The drop and scope-exit checks may report their failures in either order.
+    errors.errors.sort_by(|left, right| left.message.cmp(&right.message));
     assert_vir_error_msgs(
-        check("lost_returned_slots", lost),
+        errors,
         &[
             "cannot discard outstanding worker handles",
             "outstanding shared worker claims at accounting scope exit",
