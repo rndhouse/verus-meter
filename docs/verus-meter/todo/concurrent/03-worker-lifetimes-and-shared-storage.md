@@ -72,7 +72,7 @@ semantics, including checked capture ownership at the invocation boundary.
 effects and ownership templates, capture cleanup, and native/vstd join results.
 Source tests exercise generated local obligations while the mandatory global
 rejection remains. The completed 03.3 tests exercise symbolic worker populations
-and final shared releases in executable programs. The 03.4 audit is next.
+and final shared releases in executable programs. The [03.4.3 audit](03.4.3-validate-and-close-03.md) records the outstanding ownership transfers.
 
 ## Remaining work
 
@@ -87,13 +87,13 @@ and final shared releases in executable programs. The 03.4 audit is next.
 
 - [x] Both standard and vstd spawn/join use checked bodies for concrete move
   closures, including supported captures, results and source control flow.
-- [ ] Closure construction, spawn setup/publication overlap, execution, waiting,
+- [x] Closure construction, spawn setup/publication overlap, execution, waiting,
   completion and joining preserve all modeled inline and separately owned storage.
   Returning storage stays charged until collection; join transfers it once.
 - [ ] Capture scalar values, aggregate projections, allocation identities and
   synchronization relationships survive construction, calls and thread boundaries.
   `Send`/`Sync` remain enforced and supply no exclusion or memory allowance.
-- [ ] Symbolic loops describe actual historical spawns, outstanding workers and
+- [x] Symbolic loops describe actual historical spawns, outstanding workers and
   retained results, including zero iterations, partial joins and repeated capture
   construction. Generated count/ownership obligations follow executable events.
 - [ ] Acyclic nested worker trees, handle transfers and waits preserve actor and
@@ -103,7 +103,7 @@ and final shared releases in executable programs. The 03.4 audit is next.
   checked input/output descriptors. Count backing/control storage once and each
   handle separately; prove final release globally. Preserve protected payload
   identity for the owning-payload operations completed in 05.
-- [ ] Completion records are allocated at publication. Panic-free worker proofs,
+- [x] Completion records are allocated at publication. Panic-free worker proofs,
   environmental assumptions and primitive Result outcomes follow 01; native join
   success is never an unproved assumption. Reject detach, scoped borrowed captures,
   Weak/raw/cyclic ownership, leaks and other excluded operations explicitly.

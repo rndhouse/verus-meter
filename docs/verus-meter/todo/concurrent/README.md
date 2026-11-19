@@ -2,8 +2,8 @@
 
 Implement the [approved plan](../plan-concurrent-symbolic-analysis.md) as one
 complete core feature. These tasks divide implementation responsibilities; they
-are not separate prototypes or releases. The worker lifetime and shared ownership audits are complete.
-Next is [03.4.3 — Validate and close 03](03.4.3-validate-and-close-03.md).
+are not separate prototypes or releases. The [final audit](03.4.3-validate-and-close-03.md) reopened the shared ownership audit.
+Next is [03.4.2.3](03.4.2.3-join-shared-collections-in-a-worker.md).
 The parent plan is the capability checklist; this index tracks the work that
 satisfies it. Read both before starting a task.
 
@@ -36,9 +36,12 @@ Preserve the semantics and synchronization precision established in 01 throughou
 | [x] | [03.3 — Symbolic populations and shared ownership](complete/03.3-symbolic-populations-and-shared-ownership.md) | Tracks 03.3.0–03.3.3 in order through per-allocation counts, transfers, worker states and final release. |
 | [ ] | [03.4 — Worker integration and completion](03.4-worker-integration-and-completion.md) | Evidence for all worker requirements and explicit remaining proof boundaries. |
 | [x] | [03.4.1 — Audit worker lifetimes](complete/03.4.1-audit-worker-lifetimes.md) | Trace ownership through spawn, waiting, completion and join. |
-| [x] | [03.4.2 — Audit loops and shared ownership](complete/03.4.2-audit-loops-and-shared-ownership.md) | Verify worker membership and final release across loop iterations. |
+| [ ] | [03.4.2 — Audit loops and shared ownership](03.4.2-audit-loops-and-shared-ownership.md) | Verify worker membership and final release across loop iterations. |
 | [x] | [03.4.2.1 — Carry peer-owned allocations through loop iterations](complete/03.4.2.1-carry-peer-backings-through-loops.md) | Account for a backing between separate carrier and peer drains. |
 | [x] | [03.4.2.2 — Join a carrier while publishing its peers](complete/03.4.2.2-join-during-peer-publication.md) | Preserve each surviving allocation when publication and collection share a loop. |
+| [ ] | [03.4.2.3 — Join shared collections in a worker](03.4.2.3-join-shared-collections-in-a-worker.md) | Reconcile fully drained shared handle collections with the publisher. |
+| [ ] | [03.4.2.4 — Transfer surviving shared ownership](03.4.2.4-transfer-surviving-shared-ownership.md) | Carry remaining handles, returned aliases and per-visit reservations into the next actor. |
+| [ ] | [03.4.2.5 — Preserve repeated payload ownership](03.4.2.5-preserve-repeated-payload-ownership.md) | Preserve the inner owners of a fresh shared allocation on each visit. |
 | [ ] | [03.4.3 — Validate and close 03](03.4.3-validate-and-close-03.md) | Run integrated checks and reconcile the worker completion criteria. |
 | [ ] | [04 — Allocation and synchronization lifetimes](04-allocation-and-synchronization-lifetimes.md) | Compiler-derived containment, escape and release relationships. |
 | [ ] | [05 — Function and worker summaries](05-function-and-worker-summaries.md) | General helper/lifetime composition and protected payloads, extending 03.2's summaries. |
