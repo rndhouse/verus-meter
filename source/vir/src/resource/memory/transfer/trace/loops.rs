@@ -76,8 +76,18 @@ impl Trace<'_> {
             ));
             return None;
         }
+        // This fallback has no recurrence for reassigned bindings. A slice
+        // length or iterator sequence captured before the loop can describe
+        // different storage after a write, just like a scalar observation.
         for value in self.state.values.values_mut() {
             if matches!(value, Value::Scalar(_)) {
+                *value = Value::Unknown;
+            }
+        }
+        for name in record.writes() {
+            if let Some(value @ (Value::CollectionLength(_) | Value::Iterator(_))) =
+                self.state.values.get_mut(name)
+            {
                 *value = Value::Unknown;
             }
         }

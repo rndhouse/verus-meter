@@ -608,6 +608,49 @@ test_verify_one_file! {
     } => Ok(())
 }
 
+// A loop-carried slice cannot export its old length as an allocation size.
+test_verify_one_file! {
+    #[test] reassigned_slice_length_cannot_size_a_returned_allocation verus_code! {
+        use vstd::prelude::*;
+
+        fn select_len(a: &[u8], b: &[u8], count: u8) -> (n: usize)
+            ensures count > 0 ==> n == b.len(), count == 0 ==> n == a.len(),
+            resources peak(memory) <= 200,
+        {
+            let mut s = a;
+            let mut i = 0u8;
+            while i < count
+                invariant i <= count, i > 0 ==> s == b, i == 0 ==> s == a,
+                decreases count - i,
+            {
+                s = b;
+                i += 1;
+            }
+            s.len()
+        }
+
+        fn build(a: &[u8], b: &[u8]) -> (v: Vec<Vec<u8>>)
+            requires a.len() == 1, b.len() == 32,
+            ensures v.len() == 1,
+            resources peak(memory) <= 512,
+        {
+            let n = select_len(a, b, 1);
+            let inner = Vec::<u8>::with_capacity(n);
+            let mut out = Vec::with_capacity(1);
+            out.push(inner);
+            out
+        }
+        fn caller(a: &[u8], b: &[u8])
+            requires a.len() == 1, b.len() == 32,
+            resources peak(memory) <= 1024,
+        {
+            let v = build(a, b);
+            // The inner vector reserves 32 bytes, bringing the live total to 112.
+            assert(current(memory) <= 81);
+        }
+    } => Err(err) => assert_vir_error_msg(err, "no precise helper summary can be inferred")
+}
+
 // Unmodeled iterable layouts and adapters still need explicit rules.
 #[test]
 fn unsupported_iterator_classes_and_adapters_reject() {

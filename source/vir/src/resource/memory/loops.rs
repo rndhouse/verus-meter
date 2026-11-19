@@ -232,6 +232,12 @@ impl Loop {
             crate::ast_visitor::expr_visitor_check(region, &mut |_, expression| {
                 effects.ownership |= layouts.owner(&expression.typ)
                     || matches!(expression.x, ExprX::Call { .. } | ExprX::Return(_));
+                // A condition can rebind a local even on the final, false test.
+                if let ExprX::Assign { place, .. } = &expression.x
+                    && let PlaceX::Local(name) = &place.x
+                {
+                    effects.writes.insert(name.clone());
+                }
                 if !in_body {
                     return Ok::<(), VirErr>(());
                 }
@@ -240,9 +246,6 @@ impl Loop {
                         if let Some(location) = super::paths::place(place, typ) {
                             effects.replacements.insert(location);
                         }
-                    }
-                    if let PlaceX::Local(name) = &place.x {
-                        effects.writes.insert(name.clone());
                     }
                 }
                 if let ExprX::Call { target: CallTarget::Fun(_, fun, _, _, attrs), args, .. } =
