@@ -2,8 +2,8 @@
 
 Implement the [approved plan](../plan-concurrent-symbolic-analysis.md) as one
 complete core feature. These tasks divide implementation responsibilities; they
-are not separate prototypes or releases. The worker lifetime audit is complete. Next is
-[03.4.2 — Audit loops and shared ownership](03.4.2-audit-loops-and-shared-ownership.md).
+are not separate prototypes or releases. The [loop and shared ownership audit](03.4.2-audit-loops-and-shared-ownership.md) remains open.
+Next is [03.4.2.2 — Join a carrier while publishing its peers](03.4.2.2-join-during-peer-publication.md).
 The parent plan is the capability checklist; this index tracks the work that
 satisfies it. Read both before starting a task.
 
@@ -37,6 +37,8 @@ Preserve the semantics and synchronization precision established in 01 throughou
 | [ ] | [03.4 — Worker integration and completion](03.4-worker-integration-and-completion.md) | Evidence for all worker requirements and explicit remaining proof boundaries. |
 | [x] | [03.4.1 — Audit worker lifetimes](complete/03.4.1-audit-worker-lifetimes.md) | Trace ownership through spawn, waiting, completion and join. |
 | [ ] | [03.4.2 — Audit loops and shared ownership](03.4.2-audit-loops-and-shared-ownership.md) | Verify worker membership and final release across loop iterations. |
+| [x] | [03.4.2.1 — Carry peer-owned allocations through loop iterations](complete/03.4.2.1-carry-peer-backings-through-loops.md) | Account for a backing between separate carrier and peer drains. |
+| [ ] | [03.4.2.2 — Join a carrier while publishing its peers](03.4.2.2-join-during-peer-publication.md) | Preserve each surviving allocation when publication and collection share a loop. |
 | [ ] | [03.4.3 — Validate and close 03](03.4.3-validate-and-close-03.md) | Run integrated checks and reconcile the worker completion criteria. |
 | [ ] | [04 — Allocation and synchronization lifetimes](04-allocation-and-synchronization-lifetimes.md) | Compiler-derived containment, escape and release relationships. |
 | [ ] | [05 — Function and worker summaries](05-function-and-worker-summaries.md) | General helper/lifetime composition and protected payloads, extending 03.2's summaries. |
