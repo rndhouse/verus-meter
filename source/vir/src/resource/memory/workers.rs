@@ -28,7 +28,7 @@ pub(super) use parameters::parameter_domain_error;
 pub(super) use populations::SelectedWorker;
 pub(crate) use results::generated_join_move;
 pub(super) use results::resolve_join;
-pub(super) use shared::{Claims, PeerResult, Peers};
+pub(super) use shared::{Claims, PeerResult, Peers, PublicationSite};
 
 /// One owned handle to a fixed worker in the outstanding-worker registry.
 #[derive(Clone)]

@@ -23,6 +23,8 @@ pub(in super::super) struct Observation {
 /// Evidence published only after the complete ownership transformation succeeds.
 #[derive(Clone)]
 pub(in super::super) struct Evidence {
+    /// Pops selecting a fresh append from the same visit.
+    pub(in super::super) local_pops: std::collections::BTreeSet<u64>,
     /// Per-collection membership, logical length and backing at a source loop head.
     pub(in super::super) populations: Vec<super::populations::PopulationPrefix>,
     /// Positive decrease of the source comparison's gap on each visit.

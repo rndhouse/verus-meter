@@ -11,7 +11,11 @@ use super::*;
 /// Disjoint paths can interleave. A read, unknown mutation, overlapping parent,
 /// or changed payload prevents the reduction. Runtime indices are deliberately
 /// excluded: equal path classes do not imply equal executable indices.
-pub(super) fn compose(effects: Vec<Effect>) -> Vec<Effect> {
+pub(super) fn compose(
+    effects: Vec<Effect>,
+    selections: &HashMap<VarIdent, Selection>,
+) -> Vec<Effect> {
+    let effects = temporary_slots(effects, selections);
     let mut result: Vec<Effect> = Vec::new();
     for effect in effects {
         let Effect::Append { location, child: Value::Owner(child), typ, .. } = &effect else {
@@ -67,6 +71,68 @@ pub(super) fn compose(effects: Vec<Effect>) -> Vec<Effect> {
         })
         .collect();
     result.into_iter().zip(keep).filter_map(|(effect, keep)| keep.then_some(effect)).collect()
+}
+
+/// Normalize an adjacent append and pop of a fresh child. The body still
+/// verifies the pop's membership, payload and peak. If the selected child
+/// escapes into a persistent effect, preserve its transfer edge for the planner.
+fn temporary_slots(effects: Vec<Effect>, selections: &HashMap<VarIdent, Selection>) -> Vec<Effect> {
+    if !effects.windows(2).any(|pair| matches!(pair, [Effect::Append { .. }, Effect::Pop { .. }])) {
+        return effects;
+    }
+    let mut used = HashSet::new();
+    for effect in &effects {
+        // Nested range effects have additional source and per-range identities.
+        if !matches!(
+            effect,
+            Effect::Append { .. } | Effect::Pop { .. } | Effect::Identity { .. } | Effect::Read(_)
+        ) {
+            return effects;
+        }
+        let mut collect = |value: &Expr| {
+            crate::ast_visitor::expr_visitor_walk(value, &mut |leaf| {
+                if let ExprX::Var(name) = &leaf.x {
+                    used.insert(name.clone());
+                }
+                crate::visitor::VisitorControlFlow::Recurse
+            });
+        };
+        effect.expressions(&mut collect);
+        if let Some(location) = effect.location() {
+            location.2.iter().for_each(collect);
+        }
+    }
+
+    let mut output = Vec::new();
+    let mut iter = effects.into_iter().peekable();
+    while let Some(push) = iter.next() {
+        if let Effect::Append { location, typ, grow, element, original, .. } = &push
+            && let Some(Effect::Pop { location: next, token: Some(token), .. }) = iter.peek()
+            && location.0 == next.0
+            && location.1 == next.1
+            && !location.1.iter().any(|slot| matches!(slot, OwnerSlot::Element(_)))
+            && simplify::inspect::empty(original)
+            && let Some(selected) = selections.get(token)
+            && !used.contains(token)
+            && !used.contains(&selected.presence.0)
+            && selected.original.as_ref().is_none_or(|(name, _)| !used.contains(name))
+        {
+            iter.next();
+            output.push(if *grow {
+                Effect::TemporarySlot {
+                    pop_site: selected.site,
+                    location: location.clone(),
+                    typ: typ.clone(),
+                    element: *element,
+                }
+            } else {
+                Effect::Identity { location: location.clone(), typ: typ.clone() }
+            });
+        } else {
+            output.push(push);
+        }
+    }
+    output
 }
 
 /// Combine adjacent effects on the same disjoint role into ordered forest
@@ -242,7 +308,7 @@ pub(super) fn generators(
             Effect::Pop { location, typ, .. } => {
                 Effect::PopBlock { location, typ, amount: expr::integer(span, 1), flows: None }
             }
-            Effect::Identity { .. } => effect,
+            Effect::Identity { .. } | Effect::TemporarySlot { .. } => effect,
             // Completed ranges have identities for whole ranges, not individual children.
             _ => return None,
         };

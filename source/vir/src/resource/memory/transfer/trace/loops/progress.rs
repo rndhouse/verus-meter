@@ -295,7 +295,7 @@ impl Trace<'_> {
                     contracts::constant(amount).map(|n| -i128::from(n))
                 }
                 Effect::TransferBlock { amount, .. } => contracts::constant(amount).map(i128::from),
-                Effect::Identity { .. } => Some(0),
+                Effect::TemporarySlot { .. } | Effect::Identity { .. } => Some(0),
                 Effect::Read(_) => continue,
                 _ => None,
             };
@@ -361,6 +361,7 @@ impl Trace<'_> {
         self.loop_progress.insert(
             record.span.id,
             crate::resource::memory::loops::progress::Evidence {
+                local_pops: Default::default(),
                 populations: Vec::new(),
                 stride,
                 lengths,
@@ -407,7 +408,7 @@ impl Trace<'_> {
             let initial = lengths.clone();
             let mut joined = initial.clone();
             for program in phase {
-                let effects = composition::compose(program.effects);
+                let effects = composition::compose(program.effects, &self.loop_inputs);
                 let blocks =
                     composition::blocks(span, effects.clone(), tokens, binder, self.layouts)
                         .or_else(|| {
@@ -450,7 +451,9 @@ impl Trace<'_> {
                                     ),
                                 ),
                             ),
-                            Effect::Identity { .. } => length.clone(),
+                            Effect::TemporarySlot { .. } | Effect::Identity { .. } => {
+                                length.clone()
+                            }
                             _ => {
                                 blocked.insert(path);
                                 continue;

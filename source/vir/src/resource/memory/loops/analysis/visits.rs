@@ -123,6 +123,18 @@ impl Analysis<'_> {
         evidence: &std::collections::HashMap<u64, progress::Evidence>,
     ) {
         for (id, evidence) in evidence {
+            // This child comes directly from a push in the same visit. Asking for
+            // views through every earlier generated prefix is expensive and adds
+            // no evidence about it. Keep the body's selection and byte checks.
+            for site in &evidence.local_pops {
+                if let Some(proofs) = self.growth.before.get_mut(site) {
+                    proofs.retain(|stmt| {
+                        let StmtX::Expr(call) = &stmt.x else { return true };
+                        !matches!(&call.x, ExprX::Call { target: CallTarget::Fun(_, f, _, _, _), .. }
+                            if metadata::expr::is_operation(f, "request_path"))
+                    });
+                }
+            }
             let record = self.transitions.loops.get_mut(id).unwrap();
             let Some(observation) = &record.progress else { continue };
             let span = &record.span;

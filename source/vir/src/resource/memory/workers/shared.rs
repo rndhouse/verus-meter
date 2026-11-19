@@ -3,11 +3,14 @@
 //! backing, including when a completed worker keeps the handle in its result.
 
 mod deferred;
+use deferred::Deferred;
 mod occurrences;
 mod payloads;
 mod peers;
 mod population;
+mod publication;
 use population::Population;
+pub(in super::super) use publication::PublicationSite;
 mod slots;
 pub(in super::super) use peers::{PeerResult, Peers};
 
@@ -171,7 +174,7 @@ impl Analysis<'_> {
                             "a peer publication without a named ownership forest",
                         ));
                     };
-                    self.register_peer(span, actor, root, destination);
+                    self.register_peer(span, actor, root, destination, &backing);
                     continue;
                 }
                 self.check_peer_limit(span, actor, root);

@@ -27,6 +27,8 @@ pub(in crate::resource::memory) struct Peers {
     single_visit: bool,
     /// Maximum peers proved at each carrying publication.
     limits: BTreeMap<WorkerId, u64>,
+    /// Candidate extent per construction for the loop allocating these peers.
+    pub(in crate::resource::memory) publication: Option<(u64, Expr)>,
     /// Families actually collected in each loop, used to propose checked drain invariants.
     pub(in crate::resource::memory) joins: BTreeMap<u64, BTreeSet<WorkerId>>,
     /// Byte charges awaiting retirement of their own visit’s outstanding peers.
@@ -40,6 +42,7 @@ impl Analysis<'_> {
         actor: WorkerId,
         root: RootId,
         destination: &VarIdent,
+        backing: &Owner,
     ) {
         let constructor = self.transitions.shared_constructor(root);
         let same_visit = constructor.is_some_and(|(_, coordinates)| {
@@ -48,6 +51,16 @@ impl Analysis<'_> {
             })
         });
         let site = constructor.map(|(site, _)| site);
+        let (deferred, publication) = site
+            .and_then(|site| self.growth.publication_ledgers.remove(&site))
+            .map(|prepared| {
+                let extent = self
+                    .owner_upper(span, backing)
+                    .remove(&crate::resource::memory::footprint::MemoryKind::host_heap())
+                    .expect("Arc backing extent");
+                prepared.bind(extent, &self.bound)
+            })
+            .unzip();
         let peers = self.growth.occurrence_peers.entry(root).or_insert_with(|| {
             let population = Population::new(span, &mut self.growth.declarations);
             let issued = site.map(|site| {
@@ -69,7 +82,8 @@ impl Analysis<'_> {
                 issued,
                 single_visit: true,
                 limits: BTreeMap::new(),
-                deferred: None,
+                deferred,
+                publication,
                 joins: BTreeMap::new(),
             }
         });
@@ -318,7 +332,18 @@ impl Analysis<'_> {
         }
         let pending = &peers.population.pending;
         let remaining = role.remaining.clone().unwrap_or_else(|| pending.clone());
-        deferred.finish(span, visit, bytes, remaining, role.borrowed.clone(), pending, proofs);
+        let publication =
+            peers.publication.as_ref().is_some_and(|(id, _)| self.growth.loop_regions.contains(id));
+        deferred.finish(
+            span,
+            visit,
+            bytes,
+            remaining,
+            role.borrowed.clone(),
+            pending,
+            publication,
+            proofs,
+        );
     }
 
     pub(in crate::resource::memory) fn peer_release_checks(
@@ -351,7 +376,41 @@ impl Analysis<'_> {
                 "cannot retire the returned allocation peer",
                 proofs,
             );
-        } else if self.growth.occurrence_peers.contains_key(&root) {
+        } else if let Some(peers) = self.growth.occurrence_peers.get(&root) {
+            if peers
+                .publication
+                .as_ref()
+                .is_some_and(|(id, _)| self.growth.loop_regions.last() == Some(id))
+                && !self.growth.section_shared.contains(&root)
+                && self.current_worker.is_none()
+                && peers.deferred.as_ref().is_some_and(|d| d.owned(&self.storage))
+                && let Some(bytes) = self.local_peer_bytes(span, backing)
+            {
+                // The fixed worker returned the original allocation. Its last
+                // direct drop transfers the full payload charge to outstanding
+                // peers of this visit. The original owner is destroyed next.
+                let (_, coordinates) =
+                    self.transitions.shared_constructor(root).expect("publication constructor");
+                let visit = &self.growth.shared_occurrences[&root];
+                proofs.push(expr::check(
+                    span,
+                    crate::ast_util::mk_eq(span, visit, &root.occurrence(span, coordinates)),
+                    "cannot establish the local owner's allocation visit",
+                ));
+                let role = PeerResult {
+                    site: root,
+                    borrowed: expr::integer(span, 0),
+                    remaining: peers.issued.clone(),
+                };
+                self.finish_peer_backing(
+                    span,
+                    &role,
+                    self.growth.shared_occurrences[&root].clone(),
+                    bytes,
+                    proofs,
+                );
+                return;
+            }
             self.check_carrier_release(span, root, expr::integer(span, 0), None, proofs);
         }
     }

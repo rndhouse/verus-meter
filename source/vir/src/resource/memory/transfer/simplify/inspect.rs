@@ -20,7 +20,7 @@ pub(in super::super) fn call<'a>(value: &'a Expr, name: &str) -> Option<&'a Expr
 }
 
 /// Recognize an explicit empty sequence rather than infer symbolic emptiness.
-pub(super) fn empty(value: &Expr) -> bool {
+pub(in super::super) fn empty(value: &Expr) -> bool {
     call(value, "empty").is_some()
 }
 

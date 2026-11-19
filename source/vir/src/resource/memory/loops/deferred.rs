@@ -25,7 +25,12 @@ impl Analysis<'_> {
         let mut facts = Vec::new();
         let mut sums = Vec::new();
         for (site, peers) in &self.growth.occurrence_peers {
-            let Some(families) = peers.joins.get(&span.id) else { continue };
+            let publication = peers.publication.as_ref().filter(|(id, _)| *id == span.id);
+            let empty = BTreeSet::new();
+            let families = peers.joins.get(&span.id).unwrap_or(&empty);
+            if families.is_empty() && publication.is_none() {
+                continue;
+            }
             let Some(ledger) = &peers.deferred else { continue };
             if !ledger.owned(&self.storage) {
                 continue;
@@ -79,7 +84,23 @@ impl Analysis<'_> {
                 ));
                 continue;
             }
-            sums.push(sum);
+            if let Some((_, extent)) = publication {
+                // Each construction in this body can contribute its extent once.
+                // The actual updates must establish the bound at every back edge.
+                let ordinal = self.growth.loop_occurrences[&span.id].clone();
+                // Combine tags and backings in the same product as the
+                // published per-visit storage. Both terms are source observations.
+                let tags = contracts::literal(span, peers.population.weights.len() as u64);
+                let width = contracts::add(span, extent.clone(), tags);
+                let upper = contracts::multiply(span, ordinal, width);
+                sum = contracts::add(span, sum, peers.population.pending.clone());
+                facts.push(expr::purpose(
+                    mk_ineq(span, &sum, &upper, InequalityOp::Le),
+                    "shared backings retained from completed publication visits",
+                ));
+            } else {
+                sums.push(sum);
+            }
         }
         if !sums.is_empty() {
             let law = SpannedTyped::new(

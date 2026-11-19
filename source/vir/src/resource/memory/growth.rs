@@ -63,6 +63,10 @@ pub(super) struct Growth {
     /// Reservations for peers that share a visit's backing with its carrying handle.
     pub(super) occurrence_peers:
         std::collections::BTreeMap<super::shared::RootId, super::workers::Peers>,
+    /// Empty charges reserved at loop entry for constructors that may publish
+    /// and collect workers in the same visit. Actual publication claims them.
+    pub(super) publication_ledgers:
+        std::collections::BTreeMap<u64, super::workers::PublicationSite>,
     /// Outstanding reservations transferred from a worker into a named result.
     pub(super) peer_results:
         std::collections::BTreeMap<super::shared::RootId, super::workers::PeerResult>,

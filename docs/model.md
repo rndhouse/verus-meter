@@ -347,6 +347,12 @@ and those retained for peers, including at the next loop head. In a paired drain
 dropping the joined `Arc` inline or through a named result runs the destructor
 after the join produces the handle.
 
+A publication loop can also join one worker immediately and leave its peers in
+a vector. The next iteration starts with their backings still charged. If the
+joined handle passes through a vector slot, popping it restores the length and
+retains any capacity allocated by the push. The verifier checks the selected
+worker and its backing against the stored publication.
+
 A deferred charge first discovered inside a reusable body still needs an empty
 ledger on re-entry if earlier points in that body had no such charge. Forwarding
 a returned alias with these reservations to another actor requires further

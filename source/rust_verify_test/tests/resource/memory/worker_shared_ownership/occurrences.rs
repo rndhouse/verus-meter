@@ -2,6 +2,7 @@
 //! and join must preserve the key of the allocation actually returned.
 
 mod handoff;
+mod publication;
 
 use super::GLOBAL;
 use crate::common::{assert_vir_error_msg, assert_vir_error_msgs};

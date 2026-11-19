@@ -284,7 +284,7 @@ impl Trace<'_> {
         tokens: &HashSet<VarIdent>,
         binder: &VarIdent,
     ) -> Option<Vec<Effect>> {
-        let effects = composition::compose(effects);
+        let effects = composition::compose(effects, &self.loop_inputs);
         composition::blocks(span, effects.clone(), tokens, binder, self.layouts)
             .filter(|effects| transfer_edges(effects).is_some())
             .or_else(|| {
@@ -384,7 +384,8 @@ impl Trace<'_> {
                 | Effect::AppendBlock { typ, .. }
                 | Effect::GenerateBlock { typ, .. }
                 | Effect::PopBlock { typ, .. }
-                | Effect::Identity { typ, .. } => typ,
+                | Effect::Identity { typ, .. }
+                | Effect::TemporarySlot { typ, .. } => typ,
                 _ => return None,
             };
             let node = self.get(span, location, typ)?;
@@ -535,6 +536,28 @@ impl Trace<'_> {
             }
             match effect {
                 Effect::Identity { .. } => {}
+                Effect::TemporarySlot { element, pop_site, .. } => {
+                    self.loop_progress.get_mut(&span.id)?.local_pops.insert(*pop_site);
+                    // A positive number of visits needs room for exactly one
+                    // extra slot. Pop keeps the resulting backing and capacity.
+                    let (cap, retained, _) = growth::push_transition(
+                        span,
+                        capacity.clone(),
+                        bytes.clone(),
+                        length.clone(),
+                        *element,
+                        false,
+                    );
+                    let visited = mk_ineq(span, &expr::integer(span, 0), count, InequalityOp::Lt);
+                    node.memory = with_root(
+                        span,
+                        node.memory,
+                        choice(span, visited.clone(), retained, bytes),
+                        choice(span, visited, cap, capacity),
+                        length,
+                        self.layouts.owning_elements(&node.typ),
+                    );
+                }
                 Effect::PopBlock { amount, .. } => {
                     let removed = contracts::multiply(span, count.clone(), amount.clone());
                     let final_length = contracts::maximum(
@@ -843,7 +866,9 @@ impl Trace<'_> {
         let location = effect.location()?;
         let original = regions.get(&(location.0.clone(), location.1.clone()))?.clone();
         let remaining = match effect {
-            Effect::Identity { .. } | Effect::AppendBlock { .. } => original.clone(),
+            Effect::Identity { .. } | Effect::TemporarySlot { .. } | Effect::AppendBlock { .. } => {
+                original.clone()
+            }
             Effect::GenerateBlock { .. } => expr::add(
                 span,
                 original.clone(),

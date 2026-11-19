@@ -34,7 +34,7 @@ impl RootId {
         )
     }
 
-    fn occurrence(self, span: &Span, coordinates: &[(u64, Expr)]) -> Expr {
+    pub(super) fn occurrence(self, span: &Span, coordinates: &[(u64, Expr)]) -> Expr {
         use super::metadata::expr;
         let mut identity = expr::path(span, [self.serial()]);
         for (site, ordinal) in coordinates {

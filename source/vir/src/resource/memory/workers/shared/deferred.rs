@@ -19,7 +19,7 @@ pub(in crate::resource::memory) struct Deferred {
 }
 
 impl Deferred {
-    fn new(span: &Span, growth: &mut Growth, storage: &mut Accounting) -> Self {
+    pub(super) fn new(span: &Span, growth: &mut Growth, storage: &mut Accounting) -> Self {
         let entry = std::sync::Arc::new(TypX::Datatype(
             Dt::Path(
                 crate::path!(CrateId::Vstd => "std_specs", "resource", "memory", "peers", "DeferredBacking"),
@@ -83,6 +83,7 @@ impl Deferred {
         remaining: Expr,
         retired: Expr,
         pending: &Expr,
+        publication: bool,
         proofs: &mut Vec<Stmt>,
     ) {
         let laws = SpannedTyped::new(
@@ -91,12 +92,11 @@ impl Deferred {
             ExprX::Fuel(expr::function("group_deferred_backings"), 1, true),
         );
         proofs.push(crate::def::Spanned::new(span.clone(), StmtX::Expr(laws)));
-        let next = expr::operation(
-            span,
-            "finish_peer_backing",
-            vec![self.entries.clone(), visit, bytes, remaining, retired, pending.clone()],
-            self.entries.typ.clone(),
-        );
+        let args = vec![self.entries.clone(), visit, bytes, remaining, retired, pending.clone()];
+        if publication {
+            proofs.push(expr::lemma(span, "finish_peer_bound", args.clone()));
+        }
+        let next = expr::operation(span, "finish_peer_backing", args, self.entries.typ.clone());
         proofs.push(expr::assign(span, &self.entries, next));
     }
 }

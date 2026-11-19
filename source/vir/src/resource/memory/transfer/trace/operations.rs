@@ -399,6 +399,7 @@ impl Trace<'_> {
                     self.loop_inputs.insert(
                         token.clone(),
                         Selection {
+                            site: span.id,
                             memory: partition.selected.clone(),
                             original,
                             presence: (name.clone(), removal.tag.clone()?),

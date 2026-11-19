@@ -201,6 +201,7 @@ impl Trace<'_> {
             self.loop_inputs.insert(
                 token.clone(),
                 Selection {
+                    site: span.id,
                     memory: partition.selected,
                     original: None,
                     presence: (tag, expr::integer(span, 1)),

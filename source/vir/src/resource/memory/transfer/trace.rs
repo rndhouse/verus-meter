@@ -56,6 +56,8 @@ struct State {
 /// Repetition substitutes both the payload forest and the per-visit tag.
 #[derive(Clone)]
 struct Selection {
+    /// Executable removal that produced the selection.
+    site: u64,
     /// Complete physical child selected on the representative visit.
     memory: Expr,
     /// Original input region, independently of newly introduced storage.

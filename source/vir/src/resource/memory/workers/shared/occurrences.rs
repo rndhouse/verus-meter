@@ -96,6 +96,20 @@ impl Analysis<'_> {
                 // The checked membership and packed size above prove this
                 // handle carries only its completion tag.
                 zero
+            } else if contracts::constant(&peer.borrowed) == Some(0)
+                && let Some((region, extent)) =
+                    &self.growth.occurrence_peers[&peer.site].publication
+                && self.growth.loop_regions.last() == Some(region)
+            {
+                // Split the proof at collection. The source-selected slot must
+                // supply the charge; this visit's checked envelope can then be
+                // used directly by the drop and the next iteration.
+                self.growth.before.entry(span.id).or_default().push(expr::check(
+                    span,
+                    crate::ast_util::mk_ineq(span, &bytes, extent, InequalityOp::Le),
+                    "cannot bound the collected backing by its publication extent",
+                ));
+                extent.clone()
             } else {
                 self.metadata_local(span, "shared_result_bytes", bytes)
             }

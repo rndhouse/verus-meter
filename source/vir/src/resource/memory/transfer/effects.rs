@@ -82,6 +82,15 @@ pub(in super::super) enum Effect {
         element: u64,
         grow: bool,
     },
+    /// A push followed by a pop restores the children and length. Any growth
+    /// needed for the temporary slot survives both operations.
+    TemporarySlot {
+        /// Source pop whose selected child was just appended on this visit.
+        pop_site: u64,
+        location: Location,
+        typ: Typ,
+        element: u64,
+    },
     /// Checked operations restore this role's complete entry forest.
     Identity {
         location: Location,
@@ -99,6 +108,7 @@ impl Effect {
             | Self::PopBlock { location, .. }
             | Self::Append { location, .. }
             | Self::Pop { location, .. }
+            | Self::TemporarySlot { location, .. }
             | Self::Identity { location, .. } => Some(location),
             _ => None,
         }
@@ -114,6 +124,7 @@ impl Effect {
             | Self::PopBlock { location, .. }
             | Self::Append { location, .. }
             | Self::Pop { location, .. }
+            | Self::TemporarySlot { location, .. }
             | Self::Identity { location, .. } => &location.0,
         }
     }
@@ -127,7 +138,8 @@ impl Effect {
             Self::Append { .. }
             | Self::AppendBlock { .. }
             | Self::TransferBlock { .. }
-            | Self::GenerateBlock { .. } => true,
+            | Self::GenerateBlock { .. }
+            | Self::TemporarySlot { .. } => true,
             _ => false,
         }
     }
@@ -137,7 +149,10 @@ impl Effect {
     pub(super) fn exportable(&self) -> bool {
         match self {
             Self::Guarded { effect, .. } => effect.exportable(),
-            Self::Mutation(_) | Self::TransferBlock { .. } | Self::GenerateBlock { .. } => false,
+            Self::TemporarySlot { .. }
+            | Self::Mutation(_)
+            | Self::TransferBlock { .. }
+            | Self::GenerateBlock { .. } => false,
             _ => true,
         }
     }
@@ -229,7 +244,9 @@ impl Effect {
                 *amount = substitute(amount, values);
                 location
             }
-            Self::Pop { location, .. } | Self::Identity { location, .. } => location,
+            Self::Pop { location, .. }
+            | Self::TemporarySlot { location, .. }
+            | Self::Identity { location, .. } => location,
         };
         location.0 = prefix.0.clone();
         location.1 = prefix.1.iter().chain(location.1.iter()).cloned().collect();

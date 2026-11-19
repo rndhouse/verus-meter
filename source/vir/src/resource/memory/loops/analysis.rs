@@ -21,6 +21,7 @@ impl Analysis<'_> {
         let nested = self.growth.loop_depth > 0;
         record.nested = nested;
         self.prepare_element_loop(&record)?;
+        let publication_sites = self.prepare_publication_ledgers(&record.span, &record.body);
         let fresh_ledgers = self.prepare_deferred_loop(&expr.span);
         for (name, owner) in &self.heap.owners {
             owner.visit_paths(&mut vec![], &mut |path, node| {
@@ -150,6 +151,7 @@ impl Analysis<'_> {
                 self.growth.iterator_item_slots.remove(name);
             }
         }
+        self.finish_publication_ledgers(&record.span, publication_sites);
         let mut breaks = Vec::new();
         let mut continues = Vec::new();
         for edge in self.flow.exits.split_off(first_exit) {
