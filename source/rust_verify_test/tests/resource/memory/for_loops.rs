@@ -611,16 +611,20 @@ test_verify_one_file! {
 // Only a reachable branch needs its temporary storage reserved at the loop head.
 #[test]
 fn consuming_vector_reserves_conditional_workspace_on_its_path() {
+    // Both ordinary visits fit this budget. Taking the workspace branch exceeds it.
+    const VISIT_BUDGET_BYTES: u64 = 240;
+    const OPTIONAL_WORKSPACE_BYTES: usize = 4 * 1024;
+
     let inline = r#"
         fn visit(flag: bool)
             requires !flag,
-            resources peak(memory) <= 240,
+            resources peak(memory) <= VISIT_BUDGET_BYTES,
         {
             let mut blocks = Vec::with_capacity(2);
             blocks.push(5u64);
             for block in blocks {
                 if flag {
-                    let workspace = [0u8; 4096];
+                    let workspace = [0u8; OPTIONAL_WORKSPACE_BYTES];
                 }
             }
         }
@@ -628,7 +632,7 @@ fn consuming_vector_reserves_conditional_workspace_on_its_path() {
     let transfer = r#"
         fn collect(flag: bool)
             requires !flag,
-            resources peak(memory) <= 240,
+            resources peak(memory) <= VISIT_BUDGET_BYTES,
         {
             let mut kept = Vec::with_capacity(2);
             let mut blocks = Vec::with_capacity(2);
@@ -637,7 +641,7 @@ fn consuming_vector_reserves_conditional_workspace_on_its_path() {
                 if !flag {
                     let marker = 0u8;
                 } else {
-                    let workspace = [0u8; 4096];
+                    let workspace = [0u8; OPTIONAL_WORKSPACE_BYTES];
                 }
                 kept.push(block);
             }
@@ -647,7 +651,11 @@ fn consuming_vector_reserves_conditional_workspace_on_its_path() {
         ("inline", inline, "memory budget exceeded for the consuming iterator"),
         ("transfer", transfer, "memory budget exceeded for transferring iterator elements"),
     ] {
-        super::support::verifies(&format!("iterator_guard_{name}"), code);
+        // Resource contracts currently require the budget as a literal here.
+        let code = code
+            .replace("VISIT_BUDGET_BYTES", &VISIT_BUDGET_BYTES.to_string())
+            .replace("OPTIONAL_WORKSPACE_BYTES", &OPTIONAL_WORKSPACE_BYTES.to_string());
+        super::support::verifies(&format!("iterator_guard_{name}"), &code);
         let reachable = code.replace("requires !flag", "requires flag");
         let err = verify_one_file(
             &format!("iterator_guard_{name}_reachable"),
