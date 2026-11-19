@@ -353,6 +353,14 @@ outer control block and inline handle. The inner handle keeps the allocation
 identity observed at publication and the remaining bytes from that worker's
 slot. Other grouped payload layouts require a checked description to extract.
 
+The publisher can also keep a clone of a fresh inner allocation when it sends
+the outer `Arc` to a worker. The worker slot pays for the wrapper and reserves
+one reference to that visit's inner backing. If the publisher drops its clone
+first, the backing stays charged through the worker and any returned handle.
+If the wrapper drops first, the publisher's clone keeps the backing live.
+Joining or dropping a wrapper from another iteration cannot release it. This
+rule covers a direct inner `Arc` whose backing consists of locally owned bytes.
+
 When workers from one visit retain aliases independently, one handle carries the
 backing charge. A peer's join can transfer its reservation to a returned alias.
 If the carrying handle or result ends first, the publisher keeps its backing

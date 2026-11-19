@@ -2,6 +2,7 @@
 //! and join must preserve the key of the allocation actually returned.
 
 mod handoff;
+mod nested_peers;
 mod payloads;
 mod publication;
 

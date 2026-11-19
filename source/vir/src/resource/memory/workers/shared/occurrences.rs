@@ -32,6 +32,17 @@ impl Analysis<'_> {
         Ok(())
     }
 
+    pub(super) fn published_inner_identity(span: &Span, occurrence: &Occurrence) -> Expr {
+        let payload = expr::payload_handle(span, occurrence.record.clone());
+        let link = expr::lookup(span, payload, expr::path(span, []));
+        expr::field(
+            span,
+            link,
+            "reference_identity",
+            expr::sequence_type(crate::ast_util::int_typ()),
+        )
+    }
+
     /// A returned strong handle takes over the selected worker's byte charge.
     /// Freeze its full allocation key before the pop's proof locals can be reused.
     pub(in crate::resource::memory::workers) fn receive_carried_arc(
@@ -40,6 +51,7 @@ impl Analysis<'_> {
         owner: &Owner,
         memory: Expr,
         role: Option<PeerResult>,
+        nested: Option<RootId>,
         occurrence: &Occurrence,
     ) -> Result<Owner, VirErr> {
         let id = owner.dynamic.ok_or_else(|| {
@@ -103,22 +115,31 @@ impl Analysis<'_> {
         backing.dynamic = Some(allocation);
         backing.extent = Some(bytes);
         self.restore_payload_links(span, occurrence, &mut backing)?;
-        let handle = self.heap.shared.insert(backing);
-        let root = handle.shared.unwrap().known().unwrap();
+        let mut inner = None;
         if role.is_none()
             && occurrence.templates.iter().all(|id| {
                 self.growth.payload_handles.get(id) == Some(&super::super::PayloadHandle::Strong)
             })
         {
-            let payload = expr::payload_handle(span, occurrence.record.clone());
-            let link = expr::lookup(span, payload, expr::path(span, []));
-            let identity = expr::field(
+            let identity = self.freeze_shared_identity(
                 span,
-                link,
-                "reference_identity",
-                expr::sequence_type(crate::ast_util::int_typ()),
+                Self::published_inner_identity(span, occurrence),
+                false,
             );
-            let identity = self.freeze_shared_identity(span, identity, false);
+            if let Some(site) = nested {
+                let child = self.restore_nested_peer(span, site, identity.clone());
+                backing.children.insert(crate::resource::memory::heap::OwnerSlot::Contents, child);
+            }
+            inner = Some(identity);
+        } else if nested.is_some() {
+            return Err(unsupported(
+                span,
+                "a returned wrapper without its published inner identity",
+            ));
+        }
+        let handle = self.heap.shared.insert(backing);
+        let root = handle.shared.unwrap().known().unwrap();
+        if let Some(identity) = inner {
             self.growth.grouped_inners.insert(root, identity);
         }
         if let Some(role) = role {

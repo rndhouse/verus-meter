@@ -13,6 +13,7 @@ pub(super) fn record() -> Dt {
 fn module(name: &str) -> Option<&'static str> {
     Some(match name {
         "deferred_bytes"
+        | "peer_width_products"
         | "finish_peer_bound"
         | "finish_peer_backing"
         | "group_deferred_backings" => "peers",

@@ -69,14 +69,17 @@ pub(super) struct Growth {
     /// Direct payload handle described by each family's publication record.
     pub(super) payload_handles:
         std::collections::BTreeMap<super::workers::WorkerId, super::workers::PayloadHandle>,
+    /// Inner allocation site independently reserved by each worker family carrying a wrapper.
+    pub(super) nested_peers:
+        std::collections::BTreeMap<super::workers::WorkerId, super::shared::RootId>,
     /// Selected inner identity of a privately grouped Arc. Extraction separates
     /// the child's bytes only after the outer handle proves exclusive.
     pub(super) grouped_inners: std::collections::BTreeMap<super::shared::RootId, Expr>,
     /// Reservations for peers that share a visit's backing with its carrying handle.
     pub(super) occurrence_peers:
         std::collections::BTreeMap<super::shared::RootId, super::workers::Peers>,
-    /// Empty charges reserved at loop entry for constructors that may publish
-    /// and collect workers in the same visit. Actual publication claims them.
+    /// Empty charges reserved at loop entry for constructors whose backing
+    /// may outlive the publisher's local handles. Actual publication claims them.
     pub(super) publication_ledgers:
         std::collections::BTreeMap<u64, super::workers::PublicationSite>,
     /// Outstanding reservations transferred from a worker into a named result.

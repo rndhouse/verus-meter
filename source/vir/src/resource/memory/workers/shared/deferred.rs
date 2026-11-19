@@ -14,7 +14,10 @@ pub(in crate::resource::memory) struct Deferred {
     entries: Expr,
     /// Typed empty sequence used at initialization, loop heads and exits.
     empty: Expr,
-    /// One host-heap charge whose amount is the sum of the retained extents.
+    /// Each live deferred backing needs at least one outstanding reference.
+    /// When installed, every deposit checks this immutable per-backing upper bound.
+    per_backing: Option<(Expr, Expr)>,
+    /// One host-heap charge covering the retained extents in the publishing scope.
     allocation: u64,
 }
 
@@ -45,18 +48,46 @@ impl Deferred {
             ));
         }
         let allocation = Accounting::fresh_allocation();
-        let deferred = Self { entries, empty, allocation };
+        let deferred = Self { entries, empty, allocation, per_backing: None };
         storage.set_allocation(allocation, MemoryKind::host_heap(), deferred.bytes(span));
         deferred
     }
 
-    pub(in crate::resource::memory) fn bytes(&self, span: &Span) -> Expr {
+    pub(in crate::resource::memory) fn history_bytes(&self, span: &Span) -> Expr {
         expr::operation(
             span,
             "deferred_bytes",
             vec![self.entries.clone()],
             crate::ast_util::int_typ(),
         )
+    }
+
+    pub(in crate::resource::memory) fn bytes(&self, span: &Span) -> Expr {
+        let history = self.history_bytes(span);
+        match &self.per_backing {
+            None => history,
+            Some((extent, pending)) => contracts::minimum(
+                span,
+                history,
+                contracts::multiply(span, extent.clone(), pending.clone()),
+            ),
+        }
+    }
+
+    /// The history and the population are independent upper bounds. Stale
+    /// conservative history entries may outlive a visit, but a real retained
+    /// allocation always needs an outstanding reservation for its own identity.
+    pub(super) fn bound_by_reservations(
+        &mut self,
+        span: &Span,
+        extent: Expr,
+        pending: Expr,
+        storage: &mut Accounting,
+    ) {
+        if self.per_backing.is_none() {
+            self.per_backing = Some((extent, pending));
+            storage.set_allocation(self.allocation, MemoryKind::host_heap(), self.bytes(span));
+        }
     }
 
     /// Each accounting exit has proved that no bytes remain on this allocation.
@@ -86,6 +117,13 @@ impl Deferred {
         publication: bool,
         proofs: &mut Vec<Stmt>,
     ) {
+        if let Some((extent, _)) = &self.per_backing {
+            proofs.push(expr::check(
+                span,
+                crate::ast_util::mk_ineq(span, &bytes, extent, InequalityOp::Le),
+                "cannot establish the byte bound for this retained allocation",
+            ));
+        }
         let laws = SpannedTyped::new(
             span,
             &crate::ast_util::unit_typ(),

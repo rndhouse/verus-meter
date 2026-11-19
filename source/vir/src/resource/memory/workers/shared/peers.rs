@@ -1,6 +1,8 @@
 //! Source-checked reservations for independently retained workers that share one allocation visit.
 use super::*;
 
+mod nested;
+
 /// One received Arc may be the charged owner or a peer, depending on the
 /// publication selected by the executable pop. Freeze the distinction at join.
 #[derive(Clone)]
@@ -283,6 +285,22 @@ impl Analysis<'_> {
         // of that carrier only when both frozen allocation identities agree.
         let zero = expr::integer(span, 0);
         let one = expr::integer(span, 1);
+        if contracts::constant(&role.borrowed) == Some(1)
+            && self.current_worker.is_none()
+            && self.heap.shared.has_strong(site)
+            && self.growth.nested_peers.values().any(|root| *root == site)
+            && let Some(issued) = &self.growth.occurrence_peers[&site].issued
+        {
+            let same = crate::ast_util::mk_eq(span, &visit, &self.growth.shared_occurrences[&site]);
+            let debit = select(span, same, one.clone(), zero.clone());
+            let next = contracts::subtract(span, issued.clone(), debit);
+            proofs.push(expr::check(
+                span,
+                crate::ast_util::mk_ineq(span, &zero, &next, InequalityOp::Le),
+                "cannot retire another visit's local inner reservation",
+            ));
+            proofs.push(expr::assign(span, issued, next));
+        }
         for (root, carrier) in &self.growth.peer_results {
             let Some(remaining) = &carrier.remaining else { continue };
             if contracts::constant(&role.borrowed) == Some(0)

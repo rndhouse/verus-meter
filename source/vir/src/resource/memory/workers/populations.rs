@@ -102,14 +102,29 @@ impl Analysis<'_> {
         };
         let peer = self.selected_peer(&source.span, &occurrence)?;
         let consuming_peer = peer.as_ref().filter(|_| !carried_arc);
-        let waiting = self.wait_for_join_result(&source.span, consuming_peer.map(|peer| peer.site));
+        let nested = self.selected_nested_peer(&source.span, &occurrence)?;
+        let consuming_nested = nested.filter(|_| !carried_arc);
+        let waiting = self.wait_for_join_result(
+            &source.span,
+            consuming_peer.map(|peer| peer.site).into_iter().chain(consuming_nested),
+        );
+        if let Some(site) = consuming_nested {
+            self.finish_consumed_wrapper(&source.span, site, &occurrence);
+        }
         if let Some(role) = consuming_peer {
             let mut proofs = vec![];
             self.finish_joined_carrier(&source.span, role, &occurrence, &owner, &mut proofs)?;
             self.growth.before.entry(source.span.id).or_default().extend(proofs);
         }
         let result_owner = if carried_arc {
-            Some(self.receive_carried_arc(&source.span, &owner, memory, peer, &occurrence)?)
+            Some(self.receive_carried_arc(
+                &source.span,
+                &owner,
+                memory,
+                peer,
+                nested,
+                &occurrence,
+            )?)
         } else if let Some(id) = delegated {
             if !self.heap.workers.delegated.remove(&id) {
                 return Err(unsupported(
@@ -307,7 +322,18 @@ impl Analysis<'_> {
         }
         let span = &source.span;
         let ExprX::Call { args, .. } = &source.x else { unreachable!() };
-        let observed = execution.returned_arc_root().and_then(|root| {
+        // A worker that consumes its sole wrapper still publishes the inner
+        // identity: its join retires the reservation without returning a handle.
+        let wrapper = execution.returned_arc_root().or_else(|| {
+            let mut roots = execution.entry.shared.allocation_ids();
+            let root = roots.next()?;
+            (roots.next().is_none()
+                && execution.shared.is_empty()
+                && execution.result.owner.is_none()
+                && self.heap.shared.payload(root)?.shared.is_some())
+            .then_some(root)
+        });
+        let observed = wrapper.and_then(|root| {
             self.transitions.shared_constructor(root).filter(|(_, coords)| !coords.is_empty())?;
             let child = self.heap.shared.payload(root)?;
             if let Some(handle) = &child.worker {

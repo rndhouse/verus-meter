@@ -22,8 +22,13 @@ impl Analysis<'_> {
                 fixed.insert(path.clone(), root);
             }
         });
+        let direct = backing
+            .children
+            .get(&crate::resource::memory::heap::OwnerSlot::Contents)
+            .and_then(|child| child.shared)
+            .and_then(StrongLink::known);
         let mut pending = vec![(true, backing)];
-        let mut open = BTreeSet::new();
+        let mut open = BTreeMap::new();
         let mut extents = Vec::new();
         while let Some((outermost, mut owner)) = pending.pop() {
             if owner.references() != crate::resource::memory::elements::References::None {
@@ -53,7 +58,7 @@ impl Analysis<'_> {
                         ));
                     }
                     if self.heap.shared.has_strong(root) {
-                        open.insert(root);
+                        open.insert(root, (count, child));
                     } else {
                         open.remove(&root);
                         pending.push((false, child));
@@ -74,12 +79,7 @@ impl Analysis<'_> {
             }
             extents.push(self.transfer_occurrence_backing(span, owner)?);
         }
-        if !open.is_empty() {
-            return Err(unsupported(
-                span,
-                "carrying a nested Arc with an independently live alias",
-            ));
-        }
+        self.publish_nested_peer(span, actor, outer, direct, open, forest)?;
         if self.growth.occurrence_links.get(&actor).is_some_and(|prior| prior != &fixed) {
             return Err(unsupported(span, "a worker family with varying nested shared ownership"));
         }

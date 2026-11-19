@@ -135,6 +135,35 @@ pub broadcast proof fn finish_peer_bound(
     }
 }
 
+/// Split the occupied wrapper slots from their reserved backing bytes, and
+/// update the latter product when one reservation starts or ends.
+pub proof fn peer_width_products(extent: int, slot: int)
+    ensures
+        extent * 1 == extent,
+        forall|k: int| #[trigger] (extent * k) == k * extent,
+        forall|k: int| #[trigger] ((k + 1) * extent) == k * extent + extent,
+        forall|k: int| #[trigger] ((k - 1) * extent) == k * extent - extent,
+        forall|k: int| #[trigger] ((extent + slot) * k) == slot * k + extent * k,
+        forall|k: int| #[trigger] (k * (extent + slot)) == slot * k + extent * k,
+{
+    use crate::arithmetic::mul::*;
+    assert forall|k: int| #[trigger] (extent * k) == k * extent by {
+        lemma_mul_is_commutative(extent, k);
+    }
+    assert forall|k: int| #[trigger] ((k + 1) * extent) == k * extent + extent by {
+        assert((k + 1) * extent == k * extent + extent) by (nonlinear_arith);
+    }
+    assert forall|k: int| #[trigger] ((k - 1) * extent) == k * extent - extent by {
+        assert((k - 1) * extent == k * extent - extent) by (nonlinear_arith);
+    }
+    assert forall|k: int| #[trigger] ((extent + slot) * k) == slot * k + extent * k by {
+        assert((extent + slot) * k == slot * k + extent * k) by (nonlinear_arith);
+    }
+    assert forall|k: int| #[trigger] (k * (extent + slot)) == slot * k + extent * k by {
+        lemma_mul_is_commutative(k, extent + slot);
+    }
+}
+
 /// Reduce a retirement over one stored visit, preserving the other entries.
 pub broadcast proof fn retire_push(
     entries: Seq<DeferredBacking>,

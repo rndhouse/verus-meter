@@ -48,6 +48,8 @@ impl Analysis<'_> {
         let mut sites = Vec::new();
         let mut spawns = false;
         let mut joins = false;
+        let mut wraps_arc = false;
+        let mut clones = false;
         crate::ast_visitor::expr_visitor_walk(body, &mut |value| {
             if matches!(value.x, ExprX::NonSpecClosure { .. } | ExprX::Loop { .. }) {
                 return Return;
@@ -57,13 +59,16 @@ impl Analysis<'_> {
             {
                 spawns |= op.spawns();
                 joins |= op.joins();
+                clones |= op == crate::resource::memory::concurrency::Operation::ArcClone;
                 if op == crate::resource::memory::concurrency::Operation::ArcNew {
+                    wraps_arc |= matches!(&*value.typ, TypX::Decorate(TypDecoration::Arc, _, child)
+                        if matches!(&**child, TypX::Decorate(TypDecoration::Arc, _, _)));
                     sites.push(value.span.id);
                 }
             }
             Recurse
         });
-        if sites.is_empty() || !spawns || !joins {
+        if sites.is_empty() || !spawns || !(joins || (wraps_arc && clones)) {
             return Vec::new();
         }
         let inputs: Arc<HashSet<VarIdent>> = Arc::new(
