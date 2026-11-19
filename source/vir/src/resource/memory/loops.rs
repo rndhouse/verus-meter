@@ -105,7 +105,7 @@ pub(super) struct Loop {
     entry_headroom: Vec<Expr>,
     /// Simultaneous body costs used to bound temporary local storage. Helper
     /// allowances are specialized only after their iteration observations close.
-    local_costs: Vec<super::footprint::Footprint>,
+    local_costs: Vec<(Span, super::footprint::Footprint)>,
     /// Shared source classification; consumers do not rescan the body.
     effects: Effects,
     /// State identities and source lengths at this loop, independent of later

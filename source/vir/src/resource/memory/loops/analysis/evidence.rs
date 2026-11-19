@@ -40,24 +40,24 @@ impl Analysis<'_> {
                 let span = &record.span;
                 let selection =
                     footprint::MemorySelection::kind(footprint::MemoryKind::host_local());
-                let fixed_local = record
-                    .local_costs
-                    .iter()
-                    .filter_map(|cost| contracts::constant(&cost.select(span, &selection)))
-                    .max();
-                if let (Some(local), [candidate]) = (fixed_local, record.entry_headroom.as_slice())
+                if let [candidate] = record.entry_headroom.as_slice()
                     && let ExprX::Binary(BinaryOp::Inequality(InequalityOp::Le), heap, bound) =
                         &candidate.x
                 {
-                    let upper = contracts::add(span, heap.clone(), contracts::literal(span, local));
-                    let fact = crate::ast_util::mk_implies(
-                        span,
-                        &iterator.nonempty(span),
-                        &crate::ast_util::mk_ineq(span, &upper, bound, InequalityOp::Le),
+                    let facts = record.iterator_headroom(
+                        iterator,
+                        &record.proof_scalars,
+                        heap,
+                        bound,
+                        |cost| contracts::constant(&cost.select(span, &selection)),
                     );
-                    self.growth.loops.entry(*id).or_default().push(metadata::expr::purpose(
-                        fact,
-                        "memory budget exceeded for transferring iterator elements",
+                    self.growth.loops.entry(*id).or_default().extend(facts.into_iter().map(
+                        |fact| {
+                            metadata::expr::purpose(
+                                fact,
+                                "memory budget exceeded for transferring iterator elements",
+                            )
+                        },
                     ));
                 }
             }
@@ -230,7 +230,7 @@ impl Analysis<'_> {
         let reserve = contracts::multiply(&record.span, amount, visits);
         let call_ceiling = scratch.cloned().unwrap_or_else(|| contracts::literal(&record.span, 0));
         let mut local_peak = contracts::literal(&record.span, 0);
-        for cost in &record.local_costs {
+        for (_, cost) in &record.local_costs {
             // Body-local scalar aliases do not exist at the loop head.
             // Their helper allowances use checked iteration ceilings;
             // explicit layout charges and stable bounds stay unchanged.

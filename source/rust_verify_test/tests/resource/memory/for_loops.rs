@@ -608,6 +608,58 @@ test_verify_one_file! {
     } => Ok(())
 }
 
+// Only a reachable branch needs its temporary storage reserved at the loop head.
+#[test]
+fn consuming_vector_reserves_conditional_workspace_on_its_path() {
+    let inline = r#"
+        fn visit(flag: bool)
+            requires !flag,
+            resources peak(memory) <= 240,
+        {
+            let mut blocks = Vec::with_capacity(2);
+            blocks.push(5u64);
+            for block in blocks {
+                if flag {
+                    let workspace = [0u8; 4096];
+                }
+            }
+        }
+    "#;
+    let transfer = r#"
+        fn collect(flag: bool)
+            requires !flag,
+            resources peak(memory) <= 240,
+        {
+            let mut kept = Vec::with_capacity(2);
+            let mut blocks = Vec::with_capacity(2);
+            blocks.push(Box::new(5u64));
+            for block in blocks {
+                if !flag {
+                    let marker = 0u8;
+                } else {
+                    let workspace = [0u8; 4096];
+                }
+                kept.push(block);
+            }
+        }
+    "#;
+    for (name, code, message) in [
+        ("inline", inline, "memory budget exceeded for the consuming iterator"),
+        ("transfer", transfer, "memory budget exceeded for transferring iterator elements"),
+    ] {
+        super::support::verifies(&format!("iterator_guard_{name}"), code);
+        let reachable = code.replace("requires !flag", "requires flag");
+        let err = verify_one_file(
+            &format!("iterator_guard_{name}_reachable"),
+            format!("use vstd::prelude::*; verus! {{ {reachable} }}"),
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(err.errors.len(), 1);
+        assert_help_error_msg(err, message);
+    }
+}
+
 // A loop-carried slice cannot export its old length as an allocation size.
 test_verify_one_file! {
     #[test] reassigned_slice_length_cannot_size_a_returned_allocation verus_code! {

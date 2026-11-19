@@ -6,6 +6,7 @@
 
 mod charges;
 mod evidence;
+mod headroom;
 mod nested;
 mod visits;
 
@@ -240,7 +241,7 @@ impl Analysis<'_> {
             ));
         }
         let costs = &iteration_peak.costs[first_cost..];
-        record.local_costs = costs.iter().map(|(_, cost)| cost.clone()).collect();
+        record.local_costs = costs.to_vec();
         if let Some(iterator) = &record.iterator
             && head.heap.owners.contains_key(&iterator.receiver)
             && let Some(last) = costs.iter().rposition(|(site, _)| iterator.dispatch_site(site.id))
@@ -277,34 +278,30 @@ impl Analysis<'_> {
             && let ExprX::Var(backing) = &extent.x
         {
             let span = &record.span;
-            let fixed_overlap = record
-                .local_costs
-                .iter()
-                .filter_map(|point| match &point.total().x {
-                    ExprX::Var(name) if name == backing => Some(0),
-                    ExprX::Binary(BinaryOp::Arith(ArithOp::Add(_)), left, right) => {
-                        match (&left.x, &right.x) {
-                            (ExprX::Var(name), _) if name == backing => contracts::constant(right),
-                            (_, ExprX::Var(name)) if name == backing => contracts::constant(left),
-                            _ => None,
+            let facts =
+                record.iterator_headroom(iterator, &loop_scalars, extent, &self.bound, |point| {
+                    match &point.total().x {
+                        ExprX::Var(name) if name == backing => Some(0),
+                        ExprX::Binary(BinaryOp::Arith(ArithOp::Add(_)), left, right) => {
+                            match (&left.x, &right.x) {
+                                (ExprX::Var(name), _) if name == backing => {
+                                    contracts::constant(right)
+                                }
+                                (_, ExprX::Var(name)) if name == backing => {
+                                    contracts::constant(left)
+                                }
+                                _ => None,
+                            }
                         }
+                        _ => None,
                     }
-                    _ => None,
-                })
-                .max();
-            if let Some(overlap) = fixed_overlap {
-                let allowance =
-                    contracts::add(span, extent.clone(), contracts::literal(span, overlap));
-                let headroom = crate::ast_util::mk_implies(
-                    span,
-                    &iterator.nonempty(span),
-                    &crate::ast_util::mk_ineq(span, &allowance, &self.bound, InequalityOp::Le),
-                );
-                self.growth.loops.entry(span.id).or_default().push(metadata::expr::purpose(
-                    headroom,
+                });
+            self.growth.loops.entry(span.id).or_default().extend(facts.into_iter().map(|fact| {
+                metadata::expr::purpose(
+                    fact,
                     "memory budget exceeded for the consuming iterator and its loop body",
-                ));
-            }
+                )
+            }));
         }
         let candidate =
             crate::ast_util::mk_ineq(&expr.span, &entry_heap, &self.bound, InequalityOp::Le);

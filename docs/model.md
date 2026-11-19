@@ -108,6 +108,8 @@ Each successful advance transfers one element to the loop body. When elements
 own allocations, the iterator requires a complete, precise ownership forest
 without outstanding shared references or caller-owned regions. On exhaustion
 or an early exit, it releases any unvisited elements along with its backing.
+For consuming loops, an `if` over supported immutable scalars in scope at
+loop entry can reserve temporary storage only on the branch that uses it.
 Exact ownership summaries support selected conditional effects, child
 transfers, and indexed updates. This does not cover arbitrary data-dependent
 progress, partial exits, or all iterator APIs. A local peak proof can succeed
