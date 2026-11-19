@@ -241,3 +241,44 @@ fn a_job_inside_the_payload_must_reach_its_own_join() {
         &["cannot extract a shared payload while indexed aliases still own it", GLOBAL],
     );
 }
+
+#[test]
+fn joined_strong_ownership_rejects_weak_raw_and_leaking_exits() {
+    let body = r#"
+        use vstd::prelude::*;
+        verus! {
+        fn run() resources peak(memory) <= 512 {
+            let worker = std::thread::spawn(move || std::sync::Arc::new(1u64));
+            let arc = worker.join().unwrap();
+            ESCAPE
+        }
+        }
+    "#;
+    for (name, escape, diagnostic) in [
+        ("weak", "let _weak = std::sync::Arc::downgrade(&arc);", "downgrade` is not supported"),
+        ("raw", "let _ptr = std::sync::Arc::into_raw(arc);", "into_raw` is not supported"),
+        ("leak", "std::mem::forget(arc);", "mem::forget` is not supported"),
+    ] {
+        let error = crate::verify_one_file(name, body.replace("ESCAPE", escape), &[]).unwrap_err();
+        crate::common::assert_any_vir_error_msg(error, diagnostic);
+    }
+}
+
+#[test]
+fn a_worker_cannot_justify_final_release_for_a_strong_cycle() {
+    super::rejects(
+        "strong_cycle",
+        r#"
+        struct Node { next: std::sync::Mutex<Option<std::sync::Arc<Node>>> }
+        fn make_cycle(root: std::sync::Arc<Node>) resources peak(memory) <= 512 {
+            let worker = std::thread::spawn(move || {
+                let peer = root.clone();
+                let mut slot = root.next.lock().unwrap();
+                *slot = Some(peer);
+            });
+            worker.join().unwrap();
+        }
+        "#,
+        "recursive struct layouts",
+    );
+}
