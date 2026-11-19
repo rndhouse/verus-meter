@@ -6,7 +6,7 @@ already handles loop lowering, progress and exits. These tasks add the memory
 effects of yielding a reference or transferring an owned element.
 
 - [x] [01 — Borrowed slices and vectors](complete/01-borrowed-iteration.md)
-- [ ] [02 — Consuming vectors](02-consuming-vectors.md)
+- [x] [02 — Consuming vectors](complete/02-consuming-vectors.md)
 
 ## Acceptance example
 
