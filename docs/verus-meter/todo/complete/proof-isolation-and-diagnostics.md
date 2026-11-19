@@ -17,7 +17,7 @@ commit reference and a concise account of any remaining boundary. Keep detailed
 investigation evidence and validation results in commit messages; keep raw logs
 in ignored disposable locations. Do not accumulate chronological status reports.
 
-[Concurrent TODO 03.3](../concurrent/03.3-symbolic-populations-and-shared-ownership.md)
+[Concurrent TODO 03.3](../concurrent/complete/03.3-symbolic-populations-and-shared-ownership.md)
 remains open. This work does not complete it or enable global concurrent bounds.
 Move this file to `docs/verus-meter/todo/complete/` only when all three sections
 are resolved, updating relative links when moving it.

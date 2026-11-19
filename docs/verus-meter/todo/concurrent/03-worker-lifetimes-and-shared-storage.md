@@ -71,8 +71,8 @@ semantics, including checked capture ownership at the invocation boundary.
 03.2 connects fixed worker bodies to the existing memory pass, common checked
 effects and ownership templates, capture cleanup, and native/vstd join results.
 Source tests exercise generated local obligations while the mandatory global
-rejection remains. Symbolic populations and global shared lifetimes remain in
-03.3; internal transition tests cannot substitute for that source integration.
+rejection remains. The completed 03.3 tests exercise symbolic worker populations
+and final shared releases in executable programs. The 03.4 audit is next.
 
 ## Remaining work
 
@@ -80,7 +80,7 @@ rejection remains. Symbolic populations and global shared lifetimes remain in
 | --- | --- | --- |
 | [x] | [03.1 — Closure invocation and cleanup](complete/03.1-closure-invocation-and-cleanup.md) | Source-semantic invocation, ownership transport and cleanup without exact generated-wrapper admission checks. |
 | [x] | [03.2 — Executable worker analysis](complete/03.2-executable-worker-analysis.md) | Actual worker bodies produce checked effects connected to entry, completion and native/vstd join. |
-| [ ] | [03.3 — Symbolic populations and shared ownership](03.3-symbolic-populations-and-shared-ownership.md) | Executable spawn/join loops, nested workers, retained results and global strong ownership have checked symbolic transitions. |
+| [x] | [03.3 — Symbolic populations and shared ownership](complete/03.3-symbolic-populations-and-shared-ownership.md) | Executable spawn/join loops, nested workers, retained results and global strong ownership have checked symbolic transitions. |
 | [ ] | [03.4 — Worker integration and completion](03.4-worker-integration-and-completion.md) | All worker requirements below have source-connected evidence and explicit rejection boundaries. |
 
 ## Completion criteria
