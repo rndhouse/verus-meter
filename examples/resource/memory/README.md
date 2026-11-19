@@ -40,6 +40,7 @@ are included only where needed for memory verification.
 - [Buffer collection](heap/loops/buffer_collection.rs): compute a memory budget from the requested number of heap buffers while retaining a local array.
 - [For-loop construction](heap/loops/for_construction.rs): collect buffers with an integer range and account for iterator state separately.
 - [Streaming checksums](heap/loops/streaming_checksums.rs): borrow each input block and reuse the same scratch allowance on every iteration.
+- [Staged checksums](heap/loops/staged_checksums.rs): buffer decoded blocks and consume them in order under a larger section allowance.
 - [Partial transfers](heap/loops/partial_transfers.rs): move batches of children and release the source independently.
 - [Peak overlap](heap/loops/peak_overlap.rs): release extracted work buffers while collecting results within an input-dependent budget.
 
@@ -70,5 +71,6 @@ operation or checkpoint that exceeds its allowance.
 - [Checkpoint](expected-failures/checkpoint.rs): assert too small a bound on an earlier peak.
 - [Overlapping allocations](expected-failures/heap_overlap.rs): allocate an extra box beyond an input-dependent collection budget.
 - [Loop allocation overlap](expected-failures/loop_peak_overlap.rs): retain an extracted buffer while reserving its replacement on later iterations.
+- [Staged checksums under the streaming allowance](expected-failures/staged_checksums.rs): keep the same section allowance while adding a vector of decoded blocks.
 - [Returned allocations](expected-failures/heap_returns.rs): retain allocations across repeated helper calls.
 - [Vector growth](expected-failures/vector_growth.rs): grow beyond the reserved buffer without extra allowance.

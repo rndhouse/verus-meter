@@ -24,6 +24,43 @@ impl Analysis<'_> {
                     metadata::expr::purpose(fact, "memory ownership transfer conservation")
                 }),
             );
+            // Moving an existing child leaves its heap bytes in the transfer
+            // group. Reserve fixed local overlap at the head so an isolated
+            // visit can stage the item without losing that fact. Both the
+            // reserve and the actual operation peaks are checked by Verus.
+            if let Some(iterator) = &record.iterator
+                && transfers.iter().any(|transfer| {
+                    let source = &record.charges[transfer.source];
+                    transfer.source != transfer.target
+                        && source.location.0 == iterator.receiver
+                        && source.location.1.is_empty()
+                        && source.backing.is_none()
+                })
+            {
+                let span = &record.span;
+                let selection =
+                    footprint::MemorySelection::kind(footprint::MemoryKind::host_local());
+                let fixed_local = record
+                    .local_costs
+                    .iter()
+                    .filter_map(|cost| contracts::constant(&cost.select(span, &selection)))
+                    .max();
+                if let (Some(local), [candidate]) = (fixed_local, record.entry_headroom.as_slice())
+                    && let ExprX::Binary(BinaryOp::Inequality(InequalityOp::Le), heap, bound) =
+                        &candidate.x
+                {
+                    let upper = contracts::add(span, heap.clone(), contracts::literal(span, local));
+                    let fact = crate::ast_util::mk_implies(
+                        span,
+                        &iterator.nonempty(span),
+                        &crate::ast_util::mk_ineq(span, &upper, bound, InequalityOp::Le),
+                    );
+                    self.growth.loops.entry(*id).or_default().push(metadata::expr::purpose(
+                        fact,
+                        "memory budget exceeded for transferring iterator elements",
+                    ));
+                }
+            }
             if transfers.iter().any(|transfer| transfer.additional.is_some()) {
                 let mut additions = std::collections::BTreeMap::new();
                 for transfer in transfers {

@@ -90,6 +90,10 @@ pub(super) struct Growth {
     pub(super) loop_ensures: HashMap<u64, Vec<Expr>>,
     /// Universal sibling and reservation facts are needed only by reusable bodies.
     pub(super) loop_depth: usize,
+    /// Checked wrapper position and length at its real next call.
+    pub(super) iterator_heads: HashMap<u64, (Expr, Expr)>,
+    /// Late-initialized scratch slots in checked wrapper dispatches.
+    pub(super) iterator_item_slots: std::collections::HashSet<VarIdent>,
     /// Source loop binders surrounding a construction. Their dynamic occurrence
     /// substitutions are required before repeated environments can be published.
     pub(super) loop_regions: Vec<crate::messages::AstId>,

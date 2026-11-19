@@ -102,6 +102,12 @@ Supported loops include counted while/unconditional loops, representable exits,
 finite half-open integer ranges with supported `rev`, `skip`, and `take` adapters,
 and forward loops over shared slices and vectors. Borrowed loops charge the
 iterator and yielded reference while the source owner retains its storage.
+Forward loops can also consume standard vectors. The iterator retains the
+original backing allocation until it is dropped, even if no items remain.
+Each successful advance transfers one element to the loop body. When elements
+own allocations, the iterator requires a complete, precise ownership forest
+without outstanding shared references or caller-owned regions. On exhaustion
+or an early exit, it releases any unvisited elements along with its backing.
 Exact ownership summaries support selected conditional effects, child
 transfers, and indexed updates. This does not cover arbitrary data-dependent
 progress, partial exits, or all iterator APIs. A local peak proof can succeed

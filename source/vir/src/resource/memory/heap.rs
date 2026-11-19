@@ -391,6 +391,9 @@ impl Analysis<'_> {
         capacities: &HashMap<super::paths::LocalPath, Expr>,
         worker_parameter: bool,
     ) -> Result<Owner, VirErr> {
+        if super::iterators::owns_vector_storage(typ) {
+            return Err(unsupported(span, "taking a consuming iterator as a parameter"));
+        }
         if matches!(&**typ, TypX::AnonymousClosure(..)) {
             return Err(unsupported(span, "closure inputs without a checked capture summary"));
         }

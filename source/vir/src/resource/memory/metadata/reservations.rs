@@ -261,6 +261,9 @@ impl Analysis<'_> {
         typ: &Typ,
         value: Expr,
     ) -> Result<(), VirErr> {
+        if super::super::iterators::owns_vector_storage(typ) {
+            return Ok(());
+        }
         let value = as_value(span, value);
         owner.source = Some((typ.clone(), value.clone()));
         if let Some(elements) = &mut owner.elements {

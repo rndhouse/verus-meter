@@ -60,7 +60,19 @@ impl Analysis<'_> {
                             .map(|elements| elements.states.values().copied().collect::<Vec<_>>())
                             .unwrap_or_default(),
                         node.vector,
-                        self.owner_length(span, node),
+                        if let Some(iterator) = &record.iterator
+                            && name == &iterator.receiver
+                            && path.is_empty()
+                            && node.vector.is_none()
+                        {
+                            contracts::subtract(
+                                span,
+                                iterator.length.clone(),
+                                iterator.position.clone(),
+                            )
+                        } else {
+                            self.owner_length(span, node)
+                        },
                     ));
                 }
             });

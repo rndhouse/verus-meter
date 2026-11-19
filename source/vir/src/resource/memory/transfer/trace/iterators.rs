@@ -7,6 +7,7 @@ use super::*;
 use crate::resource::memory::{
     iterators::{Items, Operation, Sequence},
     loops::Loop,
+    metadata::operations::Removal,
 };
 
 impl Trace<'_> {
@@ -54,7 +55,43 @@ impl Trace<'_> {
                     let Value::CollectionLength(length) = self.value(&source)? else { return None };
                     length
                 };
-                Sequence { items: Items::Shared, count, position: expr::integer(span, 0) }
+                Sequence { items: Items::Collection, count, position: expr::integer(span, 0) }
+            }
+            Operation::ConsumeVector { source } => {
+                let Value::Owner(mut owner) = self.value(&source)? else { return None };
+                let count = property(span, owner.memory.clone(), "length");
+                Sequence {
+                    items: if self.layouts.owning_elements(&owner.typ) {
+                        let children = expr::operation(
+                            span,
+                            "reverse_children",
+                            vec![
+                                owner.memory.clone(),
+                                expr::integer(span, 0),
+                                count.clone(),
+                                expr::integer(span, 0),
+                            ],
+                            expr::memory_type(),
+                        );
+                        // The transfer planner already composes tail removals
+                        // with ordered appends. Reverse only the descriptor
+                        // indices, leaving the original allocation and visit
+                        // order intact.
+                        owner.memory = with_root(
+                            span,
+                            children,
+                            property(span, owner.memory.clone(), "bytes"),
+                            property(span, owner.memory.clone(), "capacity"),
+                            count.clone(),
+                            true,
+                        );
+                        Items::Owned(owner)
+                    } else {
+                        Items::Collection
+                    },
+                    count,
+                    position: expr::integer(span, 0),
+                }
             }
             Operation::Adapt { kind, args } => {
                 let Value::Iterator(mut source) = self.value(&args[0])? else { return None };
@@ -112,27 +149,90 @@ impl Trace<'_> {
                 let Value::Iterator(sequence) = self.state.values.get_mut(&receiver)? else {
                     return None;
                 };
-                let item = match &sequence.items {
+                let position = sequence.position.clone();
+                sequence.position = contracts::add(span, position.clone(), expr::integer(span, 1));
+                return match &sequence.items {
                     Items::Range { first, step } => {
                         let yielded = contracts::add(
                             span,
                             first.clone(),
-                            contracts::multiply(
-                                span,
-                                expr::integer(span, *step),
-                                sequence.position.clone(),
-                            ),
+                            contracts::multiply(span, expr::integer(span, *step), position),
                         );
-                        Value::Scalar(simplify::simplify(&yielded))
+                        Some(Value::Scalar(simplify::simplify(&yielded)))
                     }
-                    Items::Shared => Value::Unknown,
+                    Items::Collection => Some(Value::Unknown),
+                    Items::Owned(owner) => {
+                        let owner = owner.clone();
+                        self.advance_owned(value, receiver, owner)
+                    }
                 };
-                sequence.position =
-                    contracts::add(span, sequence.position.clone(), expr::integer(span, 1));
-                return Some(item);
             }
         };
         Some(Value::Iterator(sequence))
+    }
+
+    /// A checked successful advance is one removal from the reversed forest.
+    /// Export its selection token so a subsequent append can reuse that child.
+    fn advance_owned(
+        &mut self,
+        value: &Expr,
+        receiver: VarIdent,
+        mut owner: Node,
+    ) -> Option<Value> {
+        let span = &value.span;
+        let location = (receiver, vec![], vec![]);
+        let length = property(span, owner.memory.clone(), "length");
+        let removal = Removal::pop(span, length);
+        let partition = removal.partition(span, owner.memory.clone());
+        let mut child = partition.selected.clone();
+        let token = if self.branch_depth == 0
+            && self.loop_roots.as_ref().is_some_and(|roots| roots.contains(&location.0))
+            && let Some(tokens) = &mut self.loop_tokens
+        {
+            let token = VarIdent(
+                Arc::new("$memory_iteration_child".into()),
+                VarIdentDisambiguate::VirTemp(span.id),
+            );
+            let tag = VarIdent(
+                Arc::new("$memory_iteration_presence".into()),
+                VarIdentDisambiguate::VirTemp(span.id),
+            );
+            tokens.extend([token.clone(), tag.clone()]);
+            self.loop_inputs.insert(
+                token.clone(),
+                Selection {
+                    memory: partition.selected,
+                    original: None,
+                    presence: (tag, expr::integer(span, 1)),
+                },
+            );
+            child = SpannedTyped::new(span, &expr::memory_type(), ExprX::Var(token.clone()));
+            Some(token)
+        } else {
+            None
+        };
+        let minima = owner
+            .minima
+            .iter()
+            .filter_map(|(path, floor)| {
+                path.strip_prefix(&[Step::Repeated]).map(|path| (path.to_vec(), floor.clone()))
+            })
+            .collect();
+        owner.origin = None;
+        owner.memory = with_root(
+            span,
+            partition.remaining,
+            property(span, owner.memory.clone(), "bytes"),
+            property(span, owner.memory.clone(), "capacity"),
+            removal.length,
+            true,
+        );
+        let typ = owner.typ.clone();
+        self.set(span, &location, owner)?;
+        self.effects.pop();
+        self.effects.push(Effect::Pop { location, typ, token });
+        // The successful-body expression already has the selected payload type.
+        Some(Value::Owner(Node { origin: None, typ: value.typ.clone(), memory: child, minima }))
     }
 
     /// Observe the same index and count in the proof and finite sequence domains.

@@ -103,7 +103,7 @@ pub(super) struct Node {
 
 #[derive(Clone)]
 pub(super) enum Value {
-    /// A supported finite iterator with no descriptor forest.
+    /// Checked finite progress and any owned, ordered source elements.
     Iterator(super::iterators::Sequence),
     /// Sequence length observed through a shared slice or vector.
     CollectionLength(Expr),
@@ -274,7 +274,10 @@ fn instantiate_value(value: &Value, values: &HashMap<VarIdent, Expr>) -> Value {
                 super::iterators::Items::Range { first, step } => {
                     super::iterators::Items::Range { first: substitute(first, values), step: *step }
                 }
-                super::iterators::Items::Shared => super::iterators::Items::Shared,
+                super::iterators::Items::Collection => super::iterators::Items::Collection,
+                super::iterators::Items::Owned(owner) => {
+                    super::iterators::Items::Owned(instantiate_node(owner, values))
+                }
             },
             count: substitute(&sequence.count, values),
             position: substitute(&sequence.position, values),
@@ -328,7 +331,7 @@ fn with_root(
     ))
 }
 
-fn choice(span: &Span, condition: Expr, yes: Expr, no: Expr) -> Expr {
+pub(super) fn choice(span: &Span, condition: Expr, yes: Expr, no: Expr) -> Expr {
     if simplify::inspect::same_expression(&yes, &no) {
         return yes;
     }

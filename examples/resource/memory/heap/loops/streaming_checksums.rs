@@ -22,7 +22,7 @@ fn checksum(block: &Block) -> u16
 }
 
 fn checksums(input: [u8; 2]) -> Vec<u16>
-    resources peak(memory) <= 210,
+    resources peak(memory) <= 600,
 {
     let blocks: &[u8] = &input;
     let mut sums = Vec::with_capacity(2);

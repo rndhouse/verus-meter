@@ -134,7 +134,20 @@ impl Analysis<'_> {
         record.completed = self.loop_progress(&mut record)?;
         let head = self.branch_state();
         let first_exit = self.flow.exits.len();
+        if let Some(iterator) = &record.iterator {
+            let (site, head) = iterator.observe_advance();
+            self.growth.iterator_heads.insert(site, head);
+            if let Some(name) = iterator.item_slot() {
+                self.growth.iterator_item_slots.insert(name.clone());
+            }
+        }
         self.discard(&record.body)?;
+        if let Some(iterator) = &record.iterator {
+            self.growth.iterator_heads.remove(&iterator.observe_advance().0);
+            if let Some(name) = iterator.item_slot() {
+                self.growth.iterator_item_slots.remove(name);
+            }
+        }
         let mut breaks = Vec::new();
         let mut continues = Vec::new();
         for edge in self.flow.exits.split_off(first_exit) {
@@ -226,8 +239,73 @@ impl Analysis<'_> {
                 "partial loop exits after changing fixed ownership roles or original input regions",
             ));
         }
-        record.local_costs =
-            iteration_peak.costs[first_cost..].iter().map(|(_, cost)| cost.clone()).collect();
+        let costs = &iteration_peak.costs[first_cost..];
+        record.local_costs = costs.iter().map(|(_, cost)| cost.clone()).collect();
+        if let Some(iterator) = &record.iterator
+            && head.heap.owners.contains_key(&iterator.receiver)
+            && let Some(last) = costs.iter().rposition(|(site, _)| iterator.dispatch_site(site.id))
+        {
+            // Exhaustion still invokes next with the backing allocation live.
+            // No item staging or work from the successful path is reachable.
+            let span = &record.span;
+            let local = super::super::footprint::MemorySelection::kind(
+                super::super::footprint::MemoryKind::host_local(),
+            );
+            if let Some(bytes) = costs[..=last]
+                .iter()
+                .filter_map(|(_, cost)| contracts::constant(&cost.select(span, &local)))
+                .max()
+            {
+                let cost =
+                    contracts::add(span, entry_heap.clone(), contracts::literal(span, bytes));
+                let bound = crate::ast_util::mk_ineq(span, &cost, &self.bound, InequalityOp::Le);
+                let empty =
+                    crate::ast_util::mk_eq(span, &iterator.length, &contracts::literal(span, 0));
+                self.growth.loops.entry(span.id).or_default().push(metadata::expr::purpose(
+                    crate::ast_util::mk_implies(span, &empty, &bound),
+                    "memory budget exceeded when checking an empty consuming iterator",
+                ));
+            }
+        }
+        // An inline-element iterator keeps one immutable allocation charge.
+        // Carry the visit's fixed headroom into an isolated loop proof.
+        if let Some(iterator) = &record.iterator
+            && let Some(owner) = head.heap.owners.get(&iterator.receiver)
+            && owner.source.is_none()
+            && owner.elements.is_none()
+            && let Some(extent) = &owner.extent
+            && let ExprX::Var(backing) = &extent.x
+        {
+            let span = &record.span;
+            let fixed_overlap = record
+                .local_costs
+                .iter()
+                .filter_map(|point| match &point.total().x {
+                    ExprX::Var(name) if name == backing => Some(0),
+                    ExprX::Binary(BinaryOp::Arith(ArithOp::Add(_)), left, right) => {
+                        match (&left.x, &right.x) {
+                            (ExprX::Var(name), _) if name == backing => contracts::constant(right),
+                            (_, ExprX::Var(name)) if name == backing => contracts::constant(left),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                })
+                .max();
+            if let Some(overlap) = fixed_overlap {
+                let allowance =
+                    contracts::add(span, extent.clone(), contracts::literal(span, overlap));
+                let headroom = crate::ast_util::mk_implies(
+                    span,
+                    &iterator.nonempty(span),
+                    &crate::ast_util::mk_ineq(span, &allowance, &self.bound, InequalityOp::Le),
+                );
+                self.growth.loops.entry(span.id).or_default().push(metadata::expr::purpose(
+                    headroom,
+                    "memory budget exceeded for the consuming iterator and its loop body",
+                ));
+            }
+        }
         let candidate =
             crate::ast_util::mk_ineq(&expr.span, &entry_heap, &self.bound, InequalityOp::Le);
         record.entry_headroom = vec![candidate];

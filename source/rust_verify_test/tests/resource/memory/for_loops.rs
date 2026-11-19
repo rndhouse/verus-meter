@@ -457,14 +457,165 @@ fn borrowed_vector_cleanup_preserves_backing_and_owned_children() {
     );
 }
 
-// Owning iterators and unmodeled iterable types still need explicit rules.
+#[test]
+fn consuming_vector_break_keeps_only_the_selected_owner() {
+    let source = r#"
+        fn early_exit() resources peak(memory) <= 256 {
+            let mut kept = Vec::with_capacity(1);
+            let mut blocks = Vec::with_capacity(2);
+            blocks.push(Box::new([1u8; 16]));
+            blocks.push(Box::new([2u8; 16]));
+            for block in blocks {
+                assert(block[0] == 1);
+                assert(peak(memory) <= 144);
+                kept.push(block);
+                break;
+            }
+            assert(kept.len() == 1);
+            assert(kept[0][0] == 1);
+            assert(current(memory) <= 48);
+        }
+    "#;
+    super::support::verifies("consuming_vector_break", source);
+    super::support::rejects(
+        "consuming_vector_break_short",
+        &source.replace("<= 48", "<= 47"),
+        "conditional memory budget exceeded",
+    );
+}
+
+#[test]
+fn consuming_vector_retains_spare_backing_through_the_last_visit() {
+    let source = r#"
+        fn last() resources peak(memory) <= 256 {
+            let mut blocks = Vec::with_capacity(4);
+            blocks.push(Box::new([7u8; 16]));
+            for block in blocks {
+                assert(block[0] == 7);
+                // Iterator, four reserved slots, yielded handle, and payload.
+                assert(current(memory) <= 88);
+                break;
+            }
+            assert(current(memory) <= 0);
+        }
+    "#;
+    super::support::verifies("consuming_vector_last", source);
+    super::support::rejects(
+        "consuming_vector_last_short",
+        &source.replace("<= 88", "<= 87"),
+        "conditional memory budget exceeded",
+    );
+}
+
+test_verify_one_file! {
+    #[test] consuming_vector_exhaustion_drops_backing verus_code! {
+        use vstd::prelude::*;
+
+        fn drain() resources peak(memory) <= 256 {
+            let mut blocks = Vec::with_capacity(2);
+            blocks.push(Box::new([1u8; 16]));
+            blocks.push(Box::new([2u8; 16]));
+            for block in blocks {
+                drop(block);
+            }
+            assert(current(memory) <= 0);
+        }
+
+        fn empty_reserved() resources peak(memory) <= 256 {
+            let blocks = Vec::<Box<[u8; 16]>>::with_capacity(2);
+            for block in blocks {
+                assert(false);
+                drop(block);
+            }
+            assert(current(memory) <= 0);
+        }
+
+        fn transfer_empty() -> (kept: Vec<Box<[u8; 16]>>)
+            ensures kept.len() == 0,
+            resources peak(memory) <= 125,
+        {
+            let mut kept = Vec::with_capacity(2);
+            let blocks = Vec::<Box<[u8; 16]>>::with_capacity(2);
+            for block in blocks {
+                assert(false);
+                let scratch = [0u8; 512];
+                kept.push(block);
+            }
+            kept
+        }
+    } => Ok(())
+}
+
+#[test]
+fn consuming_vector_collects_and_returns_children_in_order() {
+    let source = r#"
+        fn collect() -> (kept: Vec<Vec<u8>>)
+            ensures kept.len() == 2,
+            resources peak(memory) <= 512,
+        {
+            let mut kept = Vec::with_capacity(2);
+            let mut blocks = Vec::with_capacity(2);
+            let first = Vec::<u8>::with_capacity(7);
+            blocks.push(first);
+            let second = Vec::<u8>::with_capacity(3);
+            blocks.push(second);
+            for block in blocks {
+                kept.push(block);
+            }
+            kept
+        }
+
+        fn caller() resources peak(memory) <= 1024 {
+            let mut kept = collect();
+            assert(current(memory) <= 82);
+            let last = kept.pop().unwrap();
+            drop(kept);
+            // The second child reserves three bytes and the first reserves seven.
+            assert(current(memory) <= 27);
+        }
+    "#;
+    super::support::verifies("consuming_vector_collect", source);
+    super::support::rejects(
+        "consuming_vector_collect_short",
+        &source.replace("<= 27", "<= 26"),
+        "conditional memory budget exceeded",
+    );
+}
+
+test_verify_one_file! {
+    #[test] consuming_vector_return_releases_the_unvisited_children verus_code! {
+        use vstd::prelude::*;
+
+        fn first() -> (kept: Vec<Box<[u8; 16]>>)
+            ensures kept.len() == 1 && kept[0][0] == 1,
+            resources peak(memory) <= 256,
+        {
+            let mut kept = Vec::with_capacity(1);
+            let mut blocks = Vec::with_capacity(2);
+            blocks.push(Box::new([1u8; 16]));
+            blocks.push(Box::new([2u8; 16]));
+            for block in blocks {
+                kept.push(block);
+                return kept;
+            }
+            kept
+        }
+
+        fn caller() resources peak(memory) <= 300 {
+            let kept = first();
+            assert(current(memory) <= 48);
+        }
+    } => Ok(())
+}
+
+// Unmodeled iterable layouts and adapters still need explicit rules.
 #[test]
 fn unsupported_iterator_classes_and_adapters_reject() {
     for (name, code, diagnostic) in [
         (
-            "owning",
-            "let values = Vec::<Box<[u8; 16]>>::new(); for value in values { drop(value); }",
-            "does not support struct layouts outside this crate",
+            "consuming_rev",
+            "let values = Vec::<u64>::new(); for value in values.into_iter().rev() { }",
+            "does not support adapters over collection iterators",
         ),
         (
             "array_iter",

@@ -131,7 +131,10 @@ impl Trace<'_> {
                             step: *step,
                         }
                     }
-                    (Items::Shared, Items::Shared) => Items::Shared,
+                    (Items::Collection, Items::Collection) => Items::Collection,
+                    (Items::Owned(a), Items::Owned(b)) => {
+                        Items::Owned(Self::join_owner(span, condition.clone(), a, b))
+                    }
                     _ => return None,
                 };
                 Value::Iterator(Sequence {
@@ -144,14 +147,7 @@ impl Trace<'_> {
                 Value::CollectionLength(choice(span, condition, yes.clone(), no.clone()))
             }
             (Value::Owner(yes), Value::Owner(no)) => {
-                let mut minima = yes.minima.clone();
-                join_minima(span, &mut minima, &no.minima);
-                Value::Owner(Node {
-                    origin: if yes.origin == no.origin { yes.origin } else { None },
-                    typ: yes.typ.clone(),
-                    memory: choice(span, condition, yes.memory.clone(), no.memory.clone()),
-                    minima,
-                })
+                Value::Owner(Self::join_owner(span, condition, yes, no))
             }
             (Value::Scalar(yes), Value::Scalar(no)) => {
                 Value::Scalar(choice(span, condition, yes.clone(), no.clone()))
@@ -160,5 +156,16 @@ impl Trace<'_> {
             (Value::Unknown, _) | (_, Value::Unknown) => Value::Unknown,
             _ => return None,
         })
+    }
+
+    fn join_owner(span: &Span, condition: Expr, yes: &Node, no: &Node) -> Node {
+        let mut minima = yes.minima.clone();
+        join_minima(span, &mut minima, &no.minima);
+        Node {
+            origin: if yes.origin == no.origin { yes.origin } else { None },
+            typ: yes.typ.clone(),
+            memory: choice(span, condition, yes.memory.clone(), no.memory.clone()),
+            minima,
+        }
     }
 }

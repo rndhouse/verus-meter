@@ -64,7 +64,15 @@ impl Trace<'_> {
                                 if matches!(value, Value::Owner(_))
                                     && !matches!(&*binding.typ, TypX::AnonymousClosure(..))
                                 {
-                                    return None;
+                                    match self.checked.patterns.get(&pattern.span.id) {
+                                        Some(checked::Pattern::Bind(name))
+                                            if *name == binding.name =>
+                                        {
+                                            self.used
+                                                .insert((checked::Kind::Pattern, pattern.span.id));
+                                        }
+                                        _ => return None,
+                                    }
                                 }
                                 locals.push(binding.name.clone());
                             }

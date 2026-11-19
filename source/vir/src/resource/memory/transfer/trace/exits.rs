@@ -40,6 +40,13 @@ impl Trace<'_> {
         let outer = self.path.clone();
         let active = self.active_iterator.clone();
         self.active_iterator = record.iterator.as_ref().map(|iterator| iterator.receiver.clone());
+        if let Some(iterator) = &record.iterator {
+            for id in iterator.patterns() {
+                if self.checked.patterns.contains_key(id) {
+                    self.used.insert((checked::Kind::Pattern, *id));
+                }
+            }
+        }
         self.path = crate::ast_util::mk_bool(&record.span, true);
         for id in &record.head_breaks {
             if self.checked.exits.get(id) != Some(&Target::Break(record.label.clone())) {
@@ -133,6 +140,13 @@ impl Trace<'_> {
         let first_effect = self.effects.len();
         let active = self.active_iterator.clone();
         self.active_iterator = record.iterator.as_ref().map(|iterator| iterator.receiver.clone());
+        if let Some(iterator) = &record.iterator {
+            for id in iterator.patterns() {
+                if self.checked.patterns.contains_key(id) {
+                    self.used.insert((checked::Kind::Pattern, *id));
+                }
+            }
+        }
         if let Some(iterator) = &record.iterator {
             self.used.insert((checked::Kind::Exit, iterator.exhaustion));
             self.value(&record.iteration_body)?;

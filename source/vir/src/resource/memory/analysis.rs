@@ -287,6 +287,11 @@ impl Analysis<'_> {
                         self.slots.insert(binding.name.clone(), value);
                         if self.layouts.owner(&binding.typ) {
                             owned_locals.push(binding.name.clone());
+                            if init.is_none()
+                                && self.growth.iterator_item_slots.contains(&binding.name)
+                            {
+                                break 'statement;
+                            }
                             let mut owner = self.result_owner.take().ok_or_else(|| {
                                 unsupported(&stmt.span, "uninitialized heap owners")
                             })?;

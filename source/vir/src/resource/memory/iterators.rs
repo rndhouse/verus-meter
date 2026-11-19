@@ -1,7 +1,8 @@
 //! Explicit layouts and operation rules for finite iterator state.
 //!
 //! Iterators have their own inline lifetime. Supported adapters retain that
-//! state without owning allocations; unfamiliar and owning iterators reject.
+//! state without owning allocations. The consuming vector iterator retains
+//! the backing allocation and every child it has yet to yield.
 
 use super::{analysis::Analysis, footprint::MemoryKind, model::unsupported};
 use crate::ast::*;
@@ -14,6 +15,8 @@ pub(super) enum Kind {
     Range,
     /// A standard shared slice iterator over storage owned elsewhere.
     Slice,
+    /// A consuming vector iterator with the original backing allocation.
+    Vector,
     /// A finite iterator visited from its last element to its first.
     Rev,
     /// An iterator with an additional remaining-item counter.
@@ -31,6 +34,7 @@ pub(super) fn kind(typ: &Typ) -> Option<Kind> {
     let known = [
         (crate::path!(CrateId::Core => "ops", "range", "Range"), Kind::Range),
         (crate::path!(CrateId::Core => "slice", "iter", "Iter"), Kind::Slice),
+        (crate::path!(CrateId::Alloc => "vec", "into_iter", "IntoIter"), Kind::Vector),
         (crate::path!(CrateId::Core => "iter", "adapters", "rev", "Rev"), Kind::Rev),
         (crate::path!(CrateId::Core => "iter", "adapters", "take", "Take"), Kind::Take),
         (crate::path!(CrateId::Core => "iter", "adapters", "skip", "Skip"), Kind::Skip),
@@ -40,8 +44,22 @@ pub(super) fn kind(typ: &Typ) -> Option<Kind> {
 }
 
 /// Model size excludes erased wrapper fields and includes every native adapter.
-pub(super) fn size(typ: &Typ, span: &Span) -> Result<u64, VirErr> {
+pub(super) fn size(
+    layouts: &super::layout::Layouts,
+    typ: &Typ,
+    span: &Span,
+) -> Result<u64, VirErr> {
     let TypX::Datatype(_, args, _) = &**typ else { unreachable!() };
+    if kind(typ) == Some(Kind::Vector) {
+        let [_, allocator] = args.as_slice() else {
+            return Err(unsupported(span, "this consuming vector iterator layout"));
+        };
+        if !layouts.standard_allocator(allocator) {
+            return Err(unsupported(span, "a consuming iterator with a custom allocator"));
+        }
+        // Retain the backing pointer and capacity alongside the live range.
+        return Ok(4 * super::model::WORD_BYTES);
+    }
     let [inner] = args.as_slice() else {
         return Err(unsupported(span, "this iterator layout"));
     };
@@ -52,13 +70,13 @@ pub(super) fn size(typ: &Typ, span: &Span) -> Result<u64, VirErr> {
         Some(Kind::Slice) => 2 * super::model::WORD_BYTES,
         Some(kind) => {
             let inner_kind = kind_of_source(inner, span)?;
-            if inner_kind == Kind::Slice && kind != Kind::Wrapper {
-                return Err(unsupported(span, "adapters over borrowed collection iterators"));
+            if matches!(inner_kind, Kind::Slice | Kind::Vector) && kind != Kind::Wrapper {
+                return Err(unsupported(span, "adapters over collection iterators"));
             }
             if inner_kind == Kind::Wrapper {
                 return Err(unsupported(span, "adapters over for-loop wrappers"));
             }
-            let base = size(inner, span)?;
+            let base = size(layouts, inner, span)?;
             if matches!(kind, Kind::Take | Kind::Skip) {
                 base.checked_add(super::model::WORD_BYTES)
                     .ok_or_else(|| unsupported(span, "iterator sizes exceeding u64"))?
@@ -69,6 +87,18 @@ pub(super) fn size(typ: &Typ, span: &Span) -> Result<u64, VirErr> {
         None => return Err(unsupported(span, "this iterator class")),
     };
     Ok(bytes)
+}
+
+/// A native consuming iterator or the Verus wrapper that moves it into a loop.
+pub(super) fn owns_vector_storage(typ: &Typ) -> bool {
+    match kind(typ) {
+        Some(Kind::Vector) => true,
+        Some(Kind::Wrapper) => {
+            let TypX::Datatype(_, types, _) = &**typ else { unreachable!() };
+            types.first().is_some_and(|inner| kind(inner) == Some(Kind::Vector))
+        }
+        _ => false,
+    }
 }
 
 fn kind_of_source(typ: &Typ, span: &Span) -> Result<Kind, VirErr> {
@@ -131,6 +161,8 @@ pub(super) enum Operation {
         /// Vectors use their existing checked geometry; slices carry a length.
         vector: Option<super::transfer::checked::Place>,
     },
+    /// Transfer a vector's reserved storage to an iterator.
+    ConsumeVector { source: Expr },
     /// One successful visit's advancement; exhaustion is checked by its loop.
     Advance {
         /// Exact native wrapper binding advanced by the checked operation.
@@ -154,9 +186,10 @@ pub(super) struct Sequence {
 pub(super) enum Items {
     /// An integer range, with its initial value and signed unit stride.
     Range { first: Expr, step: i128 },
-    /// References have inline storage, with their pointees remaining external
-    /// to the iterator. Their executable values remain subject to Verus proof.
-    Shared,
+    /// An inline item or shared reference whose value is checked by Verus.
+    Collection,
+    /// Remaining children in reverse visit order so the next child is the tail.
+    Owned(super::transfer::Node),
 }
 
 /// Observe a shared slice's length without evaluating an executable call.
@@ -224,7 +257,7 @@ impl Analysis<'_> {
                 self.layouts.slice_element(source_type, &source.span)?;
                 None
             };
-            size(&expr.typ, &expr.span)?;
+            size(self.layouts, &expr.typ, &expr.span)?;
             self.transitions.operation(
                 &expr.span,
                 super::transfer::checked::Operation::Iterator(Operation::BorrowCollection {
@@ -232,9 +265,21 @@ impl Analysis<'_> {
                     vector,
                 }),
             );
+        } else if op == IteratorInto && self.layouts.vector(&source.typ) {
+            if args.len() != 1 || kind(&expr.typ) != Some(Kind::Vector) {
+                return Err(unsupported(&expr.span, "this consuming vector iterator"));
+            }
+            self.layouts.vector_element(&source.typ, &source.span)?;
+            size(self.layouts, &expr.typ, &expr.span)?;
+            self.transitions.operation(
+                &expr.span,
+                super::transfer::checked::Operation::Iterator(Operation::ConsumeVector {
+                    source: source.clone(),
+                }),
+            );
         } else if op == IteratorNext {
             let source_kind = kind_of_source(source_type, &expr.span)?;
-            size(source_type, &expr.span)?;
+            size(self.layouts, source_type, &expr.span)?;
             if source_kind != Kind::Wrapper || args.len() != 1 {
                 return Err(unsupported(&expr.span, "this iterator advancement"));
             }
@@ -246,7 +291,7 @@ impl Analysis<'_> {
             );
         } else {
             let source_kind = kind_of_source(source_type, &expr.span)?;
-            size(source_type, &expr.span)?;
+            size(self.layouts, source_type, &expr.span)?;
             let expected = match op {
                 IteratorInto => source_kind,
                 IteratorWrap => Kind::Wrapper,
@@ -261,7 +306,7 @@ impl Analysis<'_> {
             {
                 return Err(unsupported(&expr.span, "this iterator class or adapter"));
             }
-            size(&expr.typ, &expr.span)?;
+            size(self.layouts, &expr.typ, &expr.span)?;
             self.transitions.operation(
                 &expr.span,
                 super::transfer::checked::Operation::Iterator(Operation::Adapt {
@@ -288,6 +333,110 @@ impl Analysis<'_> {
         for (argument, value) in args.iter().zip(values) {
             self.release_value(value, &argument.span);
         }
+        if op == IteratorNext && self.layouts.owner(&expr.typ) {
+            self.result_owner = Some(self.extract_iterator_element(expr, source)?);
+        }
+        if owns_vector_storage(&expr.typ) {
+            let mut owner = self.result_owner.take().ok_or_else(|| {
+                unsupported(&expr.span, "consuming iterator without backing ownership")
+            })?;
+            self.freeze_owner_geometry(source, &mut owner);
+            if op == IteratorInto
+                && kind(&expr.typ) == Some(Kind::Vector)
+                && self.layouts.vector(&source.typ)
+                && let Some(id) = owner.vector
+            {
+                // Iterator advancement never resizes the backing allocation.
+                // Freeze its tracked charge while it is still the vector's,
+                // then keep the same allocation identity through cleanup.
+                if let Some(elements) = &mut owner.elements {
+                    if !elements.precise
+                        || elements.view != super::metadata::View::Complete
+                        || !elements.inputs.is_empty()
+                        || elements.references != super::elements::References::None
+                    {
+                        return Err(unsupported(
+                            &expr.span,
+                            "consuming iterator without a complete element forest",
+                        ));
+                    }
+                    // Visited children leave gaps at their old indices. No
+                    // vector length or dense source view describes this forest.
+                    elements.source = None;
+                    for id in elements.states.values() {
+                        self.growth.elements[*id].forget_length();
+                    }
+                }
+                let backing = self.growth.vectors[id].backing.clone();
+                let frozen = self.allocation_snapshot(&expr.span, backing.bytes);
+                self.storage.set_allocation(backing.id, backing.kind, frozen.clone());
+                owner.vector = None;
+                owner.extent = Some(frozen);
+            }
+            self.result_owner = Some(owner);
+        }
         Ok(Some(0))
+    }
+
+    /// Separate the yielded child from still-unvisited elements. The index
+    /// comes from the actual wrapper head and never selects a child on exhaustion.
+    fn extract_iterator_element(
+        &mut self,
+        expr: &Expr,
+        source: &Expr,
+    ) -> Result<super::heap::Owner, VirErr> {
+        use super::metadata::expr as meta;
+        let span = &expr.span;
+        let Some((position, length)) = self.growth.iterator_heads.get(&span.id).cloned() else {
+            return Err(unsupported(
+                span,
+                "owning iterator advancement outside a checked for loop",
+            ));
+        };
+        let receiver = receiver(source)
+            .ok_or_else(|| unsupported(span, "an indirect owning iterator receiver"))?;
+        let elements =
+            self.heap.owners.get(&receiver).and_then(|owner| owner.elements.clone()).ok_or_else(
+                || unsupported(span, "an owning iterator without its remaining elements"),
+            )?;
+        let present = crate::ast_util::mk_ineq(span, &position, &length, InequalityOp::Lt);
+        let index = super::growth::select(span, present.clone(), position, meta::integer(span, -1));
+        let index = self.allocation_snapshot(span, index);
+        let path = meta::push(span, meta::path(span, []), index);
+        let partition =
+            super::metadata::operations::detach(span, elements.records.clone(), path.clone());
+        let selected = self.metadata_local(
+            span,
+            "iterator_item",
+            super::transfer::choice(
+                span,
+                present.clone(),
+                partition.selected,
+                meta::empty(span, meta::record_type()),
+            ),
+        );
+        self.metadata_partition(span, elements.records.clone(), path);
+        let remaining = super::transfer::choice(
+            span,
+            present.clone(),
+            partition.remaining,
+            elements.records.clone(),
+        );
+        self.growth.before.entry(span.id).or_default().push(meta::assign(
+            span,
+            &elements.records,
+            remaining,
+        ));
+        self.set_element_records(span, &elements, false);
+        let typ = self.layouts.option_payload(&expr.typ, span)?.clone();
+        let item = self.owner_from_metadata(span, &typ, selected, elements.view, false)?;
+        let tag =
+            super::growth::select(span, present, meta::integer(span, 1), meta::integer(span, 0));
+        let tag = self.allocation_snapshot(span, tag);
+        Ok(super::heap::Owner {
+            geometry: Some(tag),
+            children: [(super::heap::OwnerSlot::Contents, item)].into(),
+            ..Default::default()
+        })
     }
 }

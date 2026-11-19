@@ -27,6 +27,10 @@ pub(super) struct ForLoop {
     dispatch: u64,
     /// Binding selected by Some, with its real compiler type and identity.
     binding: Pattern,
+    /// Ownership pattern transitions in the real Some and None arms.
+    patterns: Vec<u64>,
+    /// Generated slot assigned only on the successful advance.
+    item_slot: Option<VarIdent>,
     /// Next operation, evaluated as successful only within a counted visit.
     next: Expr,
     /// Selected arm, including the macro's assignment to the yielded local.
@@ -152,6 +156,39 @@ fn strip(value: &Expr) -> &Expr {
 }
 
 impl ForLoop {
+    /// The real executable advance observes the wrapper before its index changes.
+    pub(super) fn observe_advance(&self) -> (u64, (Expr, Expr)) {
+        (self.next.span.id, (self.position.clone(), self.length.clone()))
+    }
+
+    /// Whether the iterator originally had any successful visits.
+    pub(super) fn nonempty(&self, span: &Span) -> Expr {
+        crate::ast_util::mk_ineq(
+            span,
+            &super::contracts::literal(span, 0),
+            &self.length,
+            InequalityOp::Lt,
+        )
+    }
+
+    /// The built-in advancement and dispatch sites precede the source body.
+    pub(super) fn dispatch_site(&self, site: u64) -> bool {
+        site == self.dispatch
+            || site == self.next.span.id
+            || site == self.selected.span.id
+            || self.patterns.contains(&site)
+    }
+
+    /// Identify the scratch slot used by the checked successful arm.
+    pub(super) fn item_slot(&self) -> Option<&VarIdent> {
+        self.item_slot.as_ref()
+    }
+
+    /// The symbolic successful visit subsumes the dispatch's ownership patterns.
+    pub(super) fn patterns(&self) -> &[u64] {
+        &self.patterns
+    }
+
     /// Only the macro's checked wrapper-next dispatch supplies iteration facts.
     /// A different lowering or an unsupported yield shape fails explicitly.
     pub(super) fn new(body: &Expr, invs: &LoopInvariants, label: &Label) -> Result<Self, VirErr> {
@@ -229,6 +266,19 @@ impl ForLoop {
         let previous = previous.ok_or_else(|| {
             unsupported(&body.span, "a for loop without its pre-advance snapshot")
         })?;
+        let PatternX::Var(item) = &binding.x else { unreachable!() };
+        let mut item_slot = None;
+        crate::ast_visitor::expr_visitor_check(&selected, &mut |_, value| {
+            if let ExprX::Assign { place, rhs, op: None, .. } = &value.x
+                && let PlaceX::Local(target) = &place.x
+                && super::paths::expr(rhs, &binding.typ)
+                    .is_some_and(|(name, path)| name == item.name && path.is_empty())
+            {
+                item_slot = Some(target.clone());
+            }
+            Ok::<(), VirErr>(())
+        })?;
+        let patterns = arms.iter().map(|arm| arm.x.pattern.span.id).collect();
         Ok(Self {
             receiver,
             position,
@@ -237,6 +287,8 @@ impl ForLoop {
             exhaustion,
             dispatch: dispatch.span.id,
             binding,
+            patterns,
+            item_slot,
             next,
             selected,
         })

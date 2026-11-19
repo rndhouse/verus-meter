@@ -86,6 +86,29 @@ impl Analysis<'_> {
         let (name, path) = super::paths::place(place, typ)
             .ok_or_else(|| unsupported(&place.span, "assignment outside a fixed child path"))?;
         if path.is_empty() {
+            if self.growth.iterator_item_slots.contains(&name)
+                && self.slots.contains_key(&name)
+                && !self.heap.owners.contains_key(&name)
+            {
+                self.initialize_expr(rhs)?;
+                let mut item = self
+                    .result_owner
+                    .take()
+                    .ok_or_else(|| unsupported(&rhs.span, "an iterator item without ownership"))?;
+                let source = crate::ast_util::place_to_spec_expr(place);
+                self.bind_collection_sources(&rhs.span, &mut item, typ, source.clone())?;
+                self.transitions.assignment(
+                    &place.span,
+                    super::transfer::checked::Place {
+                        source,
+                        typ: typ.clone(),
+                        location: (name.clone(), path),
+                    },
+                    None,
+                );
+                self.heap.owners.insert(name, item);
+                return Ok(());
+            }
             return Err(unsupported(&place.span, "reassignment of heap owners"));
         }
         if !super::paths::indexed(&path) {

@@ -4,7 +4,10 @@
 //! decisions come from body accounting, not from inspecting source types alone.
 
 use super::*;
-use crate::resource::memory::{metadata, paths};
+use crate::resource::memory::{
+    iterators::{Items, owns_vector_storage},
+    metadata, paths,
+};
 
 impl Trace<'_> {
     /// Evaluate index operands used by a checked source ownership projection.
@@ -71,8 +74,13 @@ impl Trace<'_> {
 
     /// Select an owner and its reservation minima without consuming it.
     pub(super) fn get(&self, span: &Span, location: &Location, typ: &Typ) -> Option<Node> {
-        let Value::Owner(root) = self.state.values.get(&location.0)? else {
-            return None;
+        let root = match self.state.values.get(&location.0)? {
+            Value::Owner(root) => root,
+            Value::Iterator(sequence) if location.1.is_empty() => {
+                let Items::Owned(root) = &sequence.items else { return None };
+                root
+            }
+            _ => return None,
         };
         let class = Self::class(&location.1);
         let minima = root
@@ -100,7 +108,12 @@ impl Trace<'_> {
     pub(super) fn set(&mut self, span: &Span, location: &Location, child: Node) -> Option<()> {
         self.effects.push(Effect::Mutation(location.0.clone()));
         if location.1.is_empty() {
-            self.state.values.insert(location.0.clone(), Value::Owner(child));
+            if let Some(Value::Iterator(sequence)) = self.state.values.get_mut(&location.0) {
+                let Items::Owned(owner) = &mut sequence.items else { return None };
+                *owner = child;
+            } else {
+                self.state.values.insert(location.0.clone(), Value::Owner(child));
+            }
         } else {
             let Value::Owner(root) = self.state.values.get_mut(&location.0)? else {
                 return None;
@@ -160,6 +173,13 @@ impl Trace<'_> {
         if let Some(transition) = self.checked.moves.get(&place.span.id).cloned() {
             self.used.insert((checked::Kind::Move, place.span.id));
             let location = self.checked_location(&transition)?;
+            if location.1.is_empty()
+                && owns_vector_storage(typ)
+                && matches!(self.state.values.get(&location.0), Some(Value::Iterator(_)))
+            {
+                self.effects.push(Effect::Mutation(location.0.clone()));
+                return self.state.values.remove(&location.0);
+            }
             return Some(Value::Owner(self.take(&place.span, &location, &transition.typ)?));
         }
         if self.layouts.owner(typ) {

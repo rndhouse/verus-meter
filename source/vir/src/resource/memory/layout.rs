@@ -191,6 +191,9 @@ impl Layouts {
     }
 
     pub(super) fn return_size(&self, typ: &Typ, span: &Span) -> Result<u64, VirErr> {
+        if super::iterators::owns_vector_storage(typ) {
+            return Err(unsupported(span, "returning a consuming iterator"));
+        }
         if !self.owner(typ) && matches!(&**typ, TypX::Decorate(..) | TypX::MutRef(_)) {
             return Err(unsupported(span, "reference return values"));
         }
@@ -205,7 +208,7 @@ impl Layouts {
         if self.result_payloads(typ).is_some() {
             return true;
         }
-        if self.join_handle(typ).is_some() {
+        if self.join_handle(typ).is_some() || super::iterators::owns_vector_storage(typ) {
             return true;
         }
         if super::heap::boxed(typ)
@@ -345,6 +348,9 @@ impl Layouts {
     ) -> Result<std::collections::BTreeMap<super::heap::OwnerSlot, Typ>, VirErr> {
         use super::heap::OwnerSlot;
         let mut children = std::collections::BTreeMap::new();
+        if super::iterators::owns_vector_storage(typ) {
+            return Ok(children);
+        }
         if let Some((success, _)) = self.result_payloads(typ) {
             // Executable Result ownership requires a checked join-success
             // witness. Unknown outcomes are rejected at inputs/construction;
@@ -392,7 +398,7 @@ impl Layouts {
         Ok(children)
     }
 
-    fn standard_allocator(&self, typ: &Typ) -> bool {
+    pub(super) fn standard_allocator(&self, typ: &Typ) -> bool {
         match &**typ {
             TypX::Primitive(Primitive::Global, _) => true,
             TypX::Datatype(name, args, _) => {
@@ -587,7 +593,7 @@ impl Layouts {
                 self.size_inner(payload, span, visiting)?;
                 Ok(WORD_BYTES)
             }
-            _ if super::iterators::kind(typ).is_some() => super::iterators::size(typ, span),
+            _ if super::iterators::kind(typ).is_some() => super::iterators::size(self, typ, span),
             _ if self.option(typ) => {
                 let payload = self.option_payload(typ, span)?;
                 self.size_inner(payload, span, visiting)?
