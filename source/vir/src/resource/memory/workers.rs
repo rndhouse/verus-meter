@@ -578,6 +578,13 @@ impl Analysis<'_> {
         if let Some(input) = &execution.entry.storage.owner {
             self.collect_delegated_handles(&expr.span, input)?;
         }
+        let returned_selection = self.receive_collector_selection(
+            &expr.span,
+            &execution,
+            &handle,
+            &mut shared,
+            result_owner.as_mut(),
+        )?;
         let released = self.heap.shared.receive_worker(&shared, &expr.span)?;
         for selection in released.selections {
             self.release_selected_alias(&expr.span, selection, &mut proofs);
@@ -585,7 +592,13 @@ impl Analysis<'_> {
         for (root, backing) in released.backing {
             self.release_shared_backing(root, backing, &expr.span, &mut proofs);
         }
-        self.finish_joined_payloads(&expr.span, &execution, &mut proofs)?;
+        self.finish_joined_payloads(
+            &expr.span,
+            &execution,
+            result_owner.as_ref(),
+            returned_selection,
+            &mut proofs,
+        )?;
         if !proofs.is_empty() {
             self.growth.before.entry(expr.span.id).or_default().extend(proofs);
         }

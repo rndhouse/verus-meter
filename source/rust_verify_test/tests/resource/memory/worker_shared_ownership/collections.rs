@@ -122,3 +122,102 @@ fn publisher_can_drop_its_last_fixed_alias_before_collecting() {
             .unwrap_err();
     assert_vir_error_msgs(error, &["live 57 bytes exceeds bound 56 bytes", GLOBAL]);
 }
+
+#[test]
+fn collector_returns_the_remaining_handle_slots() {
+    let collection = r#"
+        let collector = std::thread::spawn(move || -> (r: Vec<std::thread::JoinHandle<std::sync::Arc<Vec<u8>>>>)
+            ensures r.len() == keep
+        {
+            let mut batch = handles;
+            while batch.len() > keep as usize
+                invariant keep <= batch.len() <= 2 * n,
+                decreases batch.len(),
+            {
+                let h = batch.pop().unwrap();
+                drop(h.join().unwrap());
+            }
+            batch
+        });
+        let mut handles = collector.join().unwrap();
+        if n == 1 && keep == 0 { assert(current(memory) <= 46); }
+        if n == 1 && keep == 1 { assert(current(memory) <= 94); }
+        if n == 1 && keep == 2 { assert(current(memory) <= 154); }
+    "#;
+    let program = mixed_arc_program(
+        "requires keep <= 2 * n,",
+        DISJOINT_CAPTURES,
+        &format!("{collection}{FULL_DRAIN}"),
+    )
+    .replace("fn f(n: u16)", "fn f(n: u16, keep: u16)")
+    .replace("memory) <= 4);", "memory) <= 6);");
+    let check = |name, program| verify_one_file(name, program, &[]).unwrap_err();
+    assert_vir_error_msg(check("collector_returns_slots", program.clone()), GLOBAL);
+    assert_vir_error_msgs(
+        check("collector_remainder_short", program.replace("<= 94", "<= 93")),
+        &["conditional memory budget exceeded", GLOBAL],
+    );
+    // A concrete failing execution leaves one real handle. Its backing still
+    // has an outstanding reference when the function exits.
+    let lost = program
+        .replace("requires keep <= 2 * n,", "requires n == 1, keep == 1,")
+        .replace(FULL_DRAIN, "drop(handles);")
+        .replace("assert(current(memory) <= 6);", "");
+    assert_vir_error_msgs(
+        check("lost_returned_slots", lost),
+        &[
+            "cannot discard outstanding worker handles",
+            "outstanding shared worker claims at accounting scope exit",
+            GLOBAL,
+        ],
+    );
+}
+
+#[test]
+fn collected_arc_keeps_the_selected_workers_result_identity() {
+    let collection = r#"
+        let collector = std::thread::spawn(move || {
+            let mut batch = handles;
+            while batch.len() > 1 invariant 1 <= batch.len() <= 2 * n, decreases batch.len(), {
+                let h = batch.pop().unwrap();
+                drop(h.join().unwrap());
+            }
+            let link = batch.pop().unwrap().join().unwrap();
+            drop(batch);
+            link
+        });
+        let link = collector.join().unwrap();
+        assert(current(memory) <= 59);
+        drop(link);
+    "#;
+    let program = mixed_arc_program("requires n > 0,", DISJOINT_CAPTURES, collection);
+    let check = |name, program| verify_one_file(name, program, &[]).unwrap_err();
+    assert_vir_error_msg(check("collector_returns_first_arc", program), GLOBAL);
+    // The same collector with one concrete pair gives a small counterexample.
+    // Reversing its captures changes the surviving allocation from 47 to 59 bytes.
+    let pair = format!(
+        r#"
+        use vstd::prelude::*;
+        verus! {{
+            fn f() resources peak(memory) <= 340 {{
+                let n = 1u16;
+                let small = std::sync::Arc::new(Vec::<u8>::with_capacity(7));
+                let large = std::sync::Arc::new(Vec::<u8>::with_capacity(19));
+                let mut handles = Vec::with_capacity(2);
+                {DISJOINT_CAPTURES}
+                drop(small); drop(large);
+                {collection}
+            }}
+        }}
+    "#
+    )
+    .replace("<= 59", "<= 57");
+    assert_vir_error_msg(check("collector_fixed_pair", pair.clone()), GLOBAL);
+    let switched = pair
+        .replace("a = small.clone()", "a = large.clone()")
+        .replace("c = large.clone()", "c = small.clone()");
+    assert_vir_error_msgs(
+        check("collector_returns_larger_arc", switched),
+        &["conditional memory budget exceeded", GLOBAL],
+    );
+}

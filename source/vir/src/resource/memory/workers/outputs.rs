@@ -58,6 +58,17 @@ fn close(value: &Expr, inputs: &[Input], allowed: &HashSet<VarIdent>) -> Option<
     Some(value)
 }
 
+impl super::FixedHandle {
+    /// Read the result from this handle's frozen publication in the joining frame.
+    pub(super) fn result_memory(&self, span: &Span) -> Result<Expr, VirErr> {
+        let observation = self.publication.as_ref().ok_or_else(|| {
+            unsupported(span, "a worker population result without its handle's checked publication")
+        })?;
+        let record = expr::lookup(span, observation.clone(), expr::path(span, []));
+        Ok(expr::operation(span, "worker_result", vec![record], expr::memory_type()))
+    }
+}
+
 impl Analysis<'_> {
     /// Instantiate the same parameter-relative transformation used by ordinary
     /// helpers. Entry owners and their charge state are immutable observations;
@@ -245,14 +256,7 @@ impl Analysis<'_> {
         let memory = if let Some(handle) = result
             && population
         {
-            let observation = handle.publication.as_ref().ok_or_else(|| {
-                unsupported(
-                    span,
-                    "a worker population result without its handle's checked publication",
-                )
-            })?;
-            let record = expr::lookup(span, observation.clone(), expr::path(span, []));
-            Some(expr::operation(span, "worker_result", vec![record], expr::memory_type()))
+            Some(handle.result_memory(span)?)
         } else if needs_template {
             self.worker_result_memory(execution, span)?
         } else {

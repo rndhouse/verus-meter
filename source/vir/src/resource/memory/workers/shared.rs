@@ -399,7 +399,7 @@ impl Analysis<'_> {
         proofs: &mut Vec<Stmt>,
     ) {
         if alias.collector.is_some() {
-            // The matching collector join retires the whole captured share.
+            // The matching collector join reconciles its captured share and result.
             if alias.collector != self.current_worker {
                 proofs.push(expr::check(
                     span,

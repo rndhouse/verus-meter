@@ -37,6 +37,21 @@ impl Analysis<'_> {
         self.enable_transfer_algebra(span);
         let mut proofs = Vec::new();
         super::proofs::forest_views(span, &node.memory, &mut proofs, template.ordered)?;
+        // A direct shared result exposes its identity to the joining actor.
+        // Request the indexed projections that computed it while the captured
+        // publication forest is still available in this proof scope.
+        if let Some(push) = simplify::inspect::call(&node.memory, "push")
+            && let Some(link) = simplify::inspect::call(&push[1], "shared_reference")
+        {
+            super::proofs::forest(span, &link[1], &mut proofs)?;
+        }
+        // Returning a drained vector preserves the exact cost of its retained
+        // prefix, including the completion record of the last surviving handle.
+        if let Some(push) = simplify::inspect::call(&node.memory, "push")
+            && let Some(cut) = simplify::inspect::call(&push[0], "take_children")
+        {
+            proofs.push(expr::lemma(span, "retained_prefix_cost_step", cut.as_ref().clone()));
+        }
         self.growth.before.entry(span.id).or_default().extend(proofs);
         Ok(Some(node))
     }

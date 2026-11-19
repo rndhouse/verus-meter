@@ -300,14 +300,14 @@ The publisher can store results of successive visits to the same join in a
 vector. Each occupied slot retains the allocation selected on its own visit.
 Popping the slot transfers that reference, and dropping the vector releases
 the references in its remaining slots. Local clones may survive either event.
-A fixed worker can also receive a vector of outstanding handles, join every
-entry, drop any returned aliases and return unit or an inline scalar. At spawn,
-the publisher counts each allocation's references in the captured slots using
-their worker identities. Those references keep the backing charged through the
-collector's join. Other vectors and fixed aliases retain their own references.
-Dropping a nonempty handle vector or detaching a worker fails the local checks.
-Returning a partially drained vector or a surviving alias from this kind of
-collector still requires an outgoing ownership relation.
+A fixed worker can also receive a vector of outstanding handles and drain it
+fully or to a symbolic remaining length. At spawn the publisher counts each
+allocation's references in the captured slots. These keep the backing charged
+through the collector's join. If the collector returns a handle vector, the
+publisher counts the references in its actual remaining slots. If it returns
+a joined `Arc`, the checked publication identifies which backing survives.
+Other vectors and fixed aliases retain their own references. Dropping a
+nonempty handle vector or detaching a worker fails the local checks.
 
 For an allocation created before the publishing loop, a returned `Arc` can
 retain the original ownership of its payload through handle and result vectors.

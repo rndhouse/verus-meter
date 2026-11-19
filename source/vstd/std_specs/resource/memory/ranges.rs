@@ -526,6 +526,33 @@ pub proof fn take_children_facts(memory: Seq<Record>, length: int)
     }
 }
 
+/// Decompose a partially drained forest at its last remaining slot. A
+/// singleton retains exactly that child's cost and original indexed view.
+pub proof fn retained_prefix_cost_step(memory: Seq<Record>, length: int)
+    requires
+        well_formed(memory),
+    ensures
+        view_requested(memory, length - 1),
+        length > 0 ==> cost(take_children(memory, length), 0) == cost(
+            take_children(memory, length - 1),
+            0,
+        ) + cost(subtree(memory, seq![length - 1]), 0),
+        length == 1 ==> cost(take_children(memory, length), 0) == cost(
+            subtree(memory, seq![0int]),
+            0,
+        ),
+{
+    let path = seq![length - 1];
+    request_path(memory, path);
+    take_children_facts(memory, length);
+    take_children_pop(memory, length);
+    super::cost::cost_partition(take_children(memory, length), path, 0);
+    if length == 1 {
+        take_children_facts(memory, 0);
+        super::cost::cost_empty(0);
+    }
+}
+
 /// Any sequence of source pops from a checked prefix preserves the same
 /// original forest. At length zero no worker or allocation record survives.
 pub proof fn successive_prefix_pops(memory: Seq<Record>)

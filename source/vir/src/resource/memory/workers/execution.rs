@@ -89,7 +89,7 @@ impl Analysis<'_> {
         // Its imported reference relation has therefore been composed back into
         // the coordinator. Remaining aliases must belong to the actual result
         // or to canonically retained payloads, never to a discarded body view.
-        self.heap.shared.check_result(self.result_owner.as_ref(), References::None, span)?;
+        self.heap.shared.check_result(self.result_owner.as_ref(), References::None, None, span)?;
         for (actor, execution) in &self.growth.worker_executions {
             if *actor != execution.actor {
                 return Err(unsupported(
@@ -195,10 +195,13 @@ impl Analysis<'_> {
         }
         let publication = self.publication_state(span, actor, at_fork)?;
         let initial = storage.clone();
-        // The full-drain rule applies to coordinator publications whose result
-        // cannot carry a handle or alias out of the collecting worker.
+        // A collector may discharge its captured share or hand it back in a
+        // precisely described handle vector or direct Arc result.
         let collection_entries = if self.current_worker.is_none()
-            && (unit(result_type) || contracts::scalar(result_type))
+            && (unit(result_type)
+                || contracts::scalar(result_type)
+                || self.collection_worker_payload(result_type).is_some()
+                || matches!(&**result_type, TypX::Decorate(TypDecoration::Arc, _, _)))
         {
             self.capture_collection_claims(span, &entry, &inputs)
         } else {
@@ -397,6 +400,7 @@ impl Analysis<'_> {
         worker.heap.shared.check_result(
             result.owner.as_ref(),
             References::WorkerOccurrences,
+            Some(actor),
             span,
         )?;
         let mut retained = worker.storage.take_storage(&result, &worker.growth, span)?;

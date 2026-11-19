@@ -324,6 +324,7 @@ impl SharedRoots {
         &self,
         result: Option<&Owner>,
         supported: References,
+        collector: Option<super::workers::WorkerId>,
         span: &Span,
     ) -> Result<(), VirErr> {
         if !self.held_payloads.is_empty() {
@@ -332,7 +333,13 @@ impl SharedRoots {
                 "indexed shared payloads surviving their accounting domain",
             ));
         }
-        if self.selections.values().any(|s| s.imported.is_none()) {
+        let returned = result.and_then(|owner| owner.shared);
+        if self.selections.iter().any(|(id, s)| {
+            s.imported.is_none()
+                && !(collector.is_some()
+                    && collector == s.collector
+                    && returned == Some(StrongLink::Selected(*id)))
+        }) {
             return Err(unsupported(
                 span,
                 "selected Arc handles surviving their accounting domain",
@@ -912,12 +919,12 @@ mod tests {
             .into(),
             ..Default::default()
         };
-        roots.check_result(Some(&result), References::None, &span()).unwrap();
+        roots.check_result(Some(&result), References::None, None, &span()).unwrap();
         let mut missing = result.clone();
         missing.children.remove(&OwnerSlot::Capture(0));
-        assert!(roots.check_result(Some(&missing), References::None, &span()).is_err());
+        assert!(roots.check_result(Some(&missing), References::None, None, &span()).is_err());
         // Checking an output must preserve its actual counts and storage.
-        roots.check_result(Some(&result), References::None, &span()).unwrap();
+        roots.check_result(Some(&result), References::None, None, &span()).unwrap();
     }
 
     #[test]
@@ -930,10 +937,10 @@ mod tests {
             unreachable!()
         };
         **payload = second;
-        assert!(roots.check_result(None, References::None, &span()).is_err());
+        assert!(roots.check_result(None, References::None, None, &span()).is_err());
         // Even an additional actual result handle cannot discharge the cycle.
         let returned = roots.clone_strong(StrongLink::Known(id), &span()).unwrap();
-        assert!(roots.check_result(Some(&returned), References::None, &span()).is_err());
+        assert!(roots.check_result(Some(&returned), References::None, None, &span()).is_err());
     }
 
     #[test]
