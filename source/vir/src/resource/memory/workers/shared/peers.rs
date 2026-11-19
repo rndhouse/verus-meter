@@ -27,6 +27,8 @@ pub(in crate::resource::memory) struct Peers {
     single_visit: bool,
     /// Maximum peers proved at each carrying publication.
     limits: BTreeMap<WorkerId, u64>,
+    /// Families actually collected in each loop, used to propose checked drain invariants.
+    pub(in crate::resource::memory) joins: BTreeMap<u64, BTreeSet<WorkerId>>,
     /// Byte charges awaiting retirement of their own visit’s outstanding peers.
     pub(in crate::resource::memory) deferred: Option<super::deferred::Deferred>,
 }
@@ -68,6 +70,7 @@ impl Analysis<'_> {
                 single_visit: true,
                 limits: BTreeMap::new(),
                 deferred: None,
+                joins: BTreeMap::new(),
             }
         });
         peers.single_visit &= same_visit;
@@ -127,7 +130,10 @@ impl Analysis<'_> {
             ));
         }
         let site = *sites.first().unwrap();
-        let peers = &self.growth.occurrence_peers[&site];
+        let peers = self.growth.occurrence_peers.get_mut(&site).unwrap();
+        for id in &self.growth.loop_regions {
+            peers.joins.entry(*id).or_default().extend(&occurrence.templates);
+        }
         let weight = peers
             .population
             .selected_weight(span, occurrence)
@@ -139,10 +145,16 @@ impl Analysis<'_> {
             .map(|actor| peers.limits.get(actor).copied())
             .collect::<Option<Vec<_>>>()
             .map(|limits| limits.into_iter().max().unwrap_or(0));
-        let remaining = limit.map(|n| {
+        // Uniform membership already fixes the role across every possible
+        // publication. Only a mixed selection needs to freeze the role at join.
+        let borrowed = if contracts::constant(&weight).is_some() {
+            weight
+        } else {
+            self.metadata_local(span, "returned_peer", weight)
+        };
+        let remaining = limit.filter(|_| contracts::constant(&borrowed) != Some(1)).map(|n| {
             self.metadata_local(span, "shared_remaining_peers", contracts::literal(span, n))
         });
-        let borrowed = self.metadata_local(span, "returned_peer", weight);
         Ok(Some(PeerResult { site, borrowed, remaining }))
     }
 
@@ -264,7 +276,10 @@ impl Analysis<'_> {
         let one = expr::integer(span, 1);
         for (root, carrier) in &self.growth.peer_results {
             let Some(remaining) = &carrier.remaining else { continue };
-            if carrier.site != site || !self.heap.shared.owns_result_charge(*root, &self.storage) {
+            if contracts::constant(&role.borrowed) == Some(0)
+                || carrier.site != site
+                || !self.heap.shared.owns_result_charge(*root, &self.storage)
+            {
                 continue;
             }
             let ends_peer = crate::ast_util::conjoin(

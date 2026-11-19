@@ -341,10 +341,16 @@ that consumed its alias, or dropping its last returned alias, retires that
 reservation. A worker from another visit cannot release the charge even if its
 buffer has the same size. When the per-visit peer count is only an upper bound,
 the analysis can retain the charge until all peers from that constructor have
-ended. A loop that first sets up these deferred charges inside its body must
-prove they are empty on its next entry. Forwarding a returned alias with these
-reservations to another actor requires further support. The global concurrent
-peak proof is still required.
+ended. After publication, a loop can drain carrying handles before a later loop
+drains their peers. The publisher counts both the backings still in handle slots
+and those retained for peers, including at the next loop head. In a paired drain,
+dropping the joined `Arc` inline or through a named result runs the destructor
+after the join produces the handle.
+
+A deferred charge first discovered inside a reusable body still needs an empty
+ledger on re-entry if earlier points in that body had no such charge. Forwarding
+a returned alias with these reservations to another actor requires further
+support. The global concurrent peak proof is still required.
 
 At a worker's `current(memory)` checkpoint the verifier can reconcile directly
 identified strong handles with the publisher's ownership at spawn. A worker

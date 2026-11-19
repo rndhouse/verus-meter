@@ -50,7 +50,7 @@ impl Deferred {
         deferred
     }
 
-    fn bytes(&self, span: &Span) -> Expr {
+    pub(in crate::resource::memory) fn bytes(&self, span: &Span) -> Expr {
         expr::operation(
             span,
             "deferred_bytes",
@@ -68,7 +68,7 @@ impl Deferred {
         crate::ast_util::mk_eq(span, &self.entries, &self.empty)
     }
 
-    pub(super) fn owned(&self, storage: &Accounting) -> bool {
+    pub(in crate::resource::memory) fn owned(&self, storage: &Accounting) -> bool {
         storage.contains_allocation(self.allocation)
     }
 
@@ -111,6 +111,27 @@ pub(in crate::resource::memory::workers) struct WaitingJoin {
 }
 
 impl Analysis<'_> {
+    /// A separate drain can inherit storage from an earlier iteration. Install
+    /// the publisher's charge before taking any loop-head or waiting snapshots.
+    pub(in crate::resource::memory) fn prepare_deferred_loop(
+        &mut self,
+        span: &Span,
+    ) -> BTreeSet<RootId> {
+        if self.current_worker.is_some() {
+            return BTreeSet::new();
+        }
+        let fresh: BTreeSet<_> = self
+            .growth
+            .occurrence_peers
+            .iter()
+            .filter_map(|(site, peers)| peers.deferred.is_none().then_some(*site))
+            .collect();
+        for site in &fresh {
+            self.ensure_deferred(span, *site);
+        }
+        fresh
+    }
+
     pub(super) fn ensure_deferred(&mut self, span: &Span, site: RootId) {
         if self.growth.occurrence_peers[&site].deferred.is_none() {
             let deferred = Deferred::new(span, &mut self.growth, &mut self.storage);

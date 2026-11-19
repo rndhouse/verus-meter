@@ -6,6 +6,7 @@
 //! different loop shape or invent effects from unchecked syntax.
 
 mod analysis;
+mod deferred;
 mod exits;
 pub(super) mod populations;
 pub(super) mod progress;

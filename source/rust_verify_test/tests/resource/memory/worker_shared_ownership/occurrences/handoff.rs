@@ -204,3 +204,51 @@ fn every_peer_of_the_same_visit_must_retire() {
         );
     }
 }
+
+#[test]
+fn peer_backing_survives_until_its_own_drain() {
+    let carrier = "let carrier = handles.pop().unwrap().join().unwrap(); drop(carrier);";
+    let peer = "let peer = peers.pop().unwrap().join().unwrap(); drop(peer);";
+    let paired = format!(
+        r#"
+        while handles.len() > 0 invariant handles.len() == peers.len(), handles.len() <= n,
+            decreases handles.len(),
+        {{
+            proof {{ product(n as int, 41 + b as int); }}
+            {carrier}
+            if handles.len() == 0 && n == 2 && b == 19 {{ assert(current(memory) <= 146); }}
+            {peer}
+        }}
+        if n == 2 && b == 19 {{ assert(current(memory) <= 86); }}
+    "#
+    );
+    let separate = format!(
+        r#"
+        while handles.len() > 0 invariant handles.len() <= n, peers.len() == n,
+            decreases handles.len(),
+        {{
+            proof {{ product(n as int, 41 + b as int); }}
+            {carrier}
+        }}
+        if n == 2 && b == 19 {{ assert(current(memory) <= 206); }}
+        while peers.len() > 0 invariant peers.len() <= n, decreases peers.len(), {{
+            proof {{ product(n as int, 41 + b as int); }}
+            {peer}
+        }}
+    "#
+    );
+    for (name, drain, live) in [("paired", paired, 146), ("separate", separate, 206)] {
+        // At n=2 the locals and vector slots occupy 86 bytes. Each peer
+        // still outstanding here retains one completion tag and 59 bytes.
+        let program = peer_program(0, &drain, DROP_VECTORS);
+        assert_vir_error_msg(
+            crate::verify_one_file(name, program.clone(), &[]).unwrap_err(),
+            GLOBAL,
+        );
+        let short = program.replace(&format!("<= {live}"), &format!("<= {}", live - 1));
+        assert_vir_error_msgs(
+            crate::verify_one_file(&format!("{name}_short"), short, &[]).unwrap_err(),
+            &["conditional memory budget exceeded", GLOBAL],
+        );
+    }
+}

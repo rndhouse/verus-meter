@@ -92,7 +92,13 @@ impl Analysis<'_> {
                 ),
                 "cannot separate a peer handle from the shared backing charge",
             ));
-            self.metadata_local(span, "shared_result_bytes", bytes)
+            if contracts::constant(&peer.borrowed) == Some(1) {
+                // The checked membership and packed size above prove this
+                // handle carries only its completion tag.
+                zero
+            } else {
+                self.metadata_local(span, "shared_result_bytes", bytes)
+            }
         } else {
             bytes
         };

@@ -6,7 +6,7 @@ pub(in crate::resource::memory) struct Population {
     /// Unreconciled reservations, including those held by returned aliases.
     pub(in crate::resource::memory) pending: Expr,
     /// Number of handles actually moved into one occurrence of this family.
-    pub(super) weights: BTreeMap<WorkerId, u64>,
+    pub(in crate::resource::memory) weights: BTreeMap<WorkerId, u64>,
 }
 
 impl Population {

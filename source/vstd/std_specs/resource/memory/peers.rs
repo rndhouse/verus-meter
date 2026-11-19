@@ -10,7 +10,7 @@ pub struct DeferredBacking {
     /// Immutable identity recorded by construction, publication and join.
     pub visit: Seq<int>,
     /// Original backing extent, including the control block and owned storage.
-    pub bytes: int,
+    pub bytes: nat,
     /// Checked upper bound on reservations that still retain this backing.
     pub peers: int,
 }
@@ -34,7 +34,7 @@ pub open spec fn defer_backing(
     peers: int,
 ) -> Seq<DeferredBacking> {
     if peers > 0 && bytes > 0 {
-        entries.push(DeferredBacking { visit, bytes, peers })
+        entries.push(DeferredBacking { visit, bytes: bytes as nat, peers })
     } else {
         entries
     }
@@ -85,6 +85,54 @@ pub broadcast proof fn deferred_push(entries: Seq<DeferredBacking>, entry: Defer
         #[trigger] deferred_bytes(entries.push(entry)) == deferred_bytes(entries) + entry.bytes,
 {
     assert(entries.push(entry).drop_last() =~= entries);
+}
+
+/// Retiring one visit can never increase the sum, including when other
+/// visits with identical extents still have outstanding reservations.
+proof fn retire_bytes(entries: Seq<DeferredBacking>, visit: Seq<int>)
+    ensures
+        0 <= deferred_bytes(retire_peer(entries, visit)) <= deferred_bytes(entries),
+    decreases entries.len(),
+{
+    if entries.len() > 0 {
+        let rest = entries.drop_last();
+        let last = entries.last();
+        retire_bytes(rest, visit);
+        if last.visit != visit {
+            deferred_push(retire_peer(rest, visit), last);
+        } else if last.peers > 1 {
+            deferred_push(
+                retire_peer(rest, visit),
+                DeferredBacking { peers: last.peers - 1, ..last },
+            );
+        }
+    }
+}
+
+/// Only a carrying result can add bytes. A peer may release its own visit
+/// or leave its extent unchanged when other peers survive.
+pub broadcast proof fn finish_peer_bound(
+    entries: Seq<DeferredBacking>,
+    visit: Seq<int>,
+    bytes: int,
+    remaining: int,
+    retired: int,
+    pending: int,
+)
+    ensures
+        0 <= deferred_bytes(entries),
+        deferred_bytes(
+            #[trigger] finish_peer_backing(entries, visit, bytes, remaining, retired, pending),
+        ) <= deferred_bytes(entries) + if retired == 0 && bytes > 0 {
+            bytes
+        } else {
+            0
+        },
+{
+    retire_bytes(entries, visit);
+    if remaining > 0 && bytes > 0 {
+        deferred_push(entries, DeferredBacking { visit, bytes: bytes as nat, peers: remaining });
+    }
 }
 
 /// Reduce a retirement over one stored visit, preserving the other entries.

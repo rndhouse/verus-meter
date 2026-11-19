@@ -21,6 +21,7 @@ impl Analysis<'_> {
         let nested = self.growth.loop_depth > 0;
         record.nested = nested;
         self.prepare_element_loop(&record)?;
+        let fresh_ledgers = self.prepare_deferred_loop(&expr.span);
         for (name, owner) in &self.heap.owners {
             owner.visit_paths(&mut vec![], &mut |path, node| {
                 if let (Some(elements), Some((typ, _))) = (&node.elements, &node.source) {
@@ -376,6 +377,7 @@ impl Analysis<'_> {
             self.growth.loop_ensures.entry(expr.span.id).or_default().extend(exits);
         }
         invariants.extend(self.loop_shared_claims(&record));
+        invariants.extend(self.deferred_drain_bounds(&record, &fresh_ledgers, &entry_heap));
         invariants.extend(forest_bounds);
         invariants.extend(frame_invariants);
         invariants.extend(entry_facts);

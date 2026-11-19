@@ -12,7 +12,10 @@ pub(super) fn record() -> Dt {
 
 fn module(name: &str) -> Option<&'static str> {
     Some(match name {
-        "deferred_bytes" | "finish_peer_backing" | "group_deferred_backings" => "peers",
+        "deferred_bytes"
+        | "finish_peer_bound"
+        | "finish_peer_backing"
+        | "group_deferred_backings" => "peers",
         "block_bounds"
         | "block_bounds_add"
         | "block_bounds_empty_selection"
