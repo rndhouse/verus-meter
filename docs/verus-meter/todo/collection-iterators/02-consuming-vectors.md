@@ -1,6 +1,6 @@
 # 02 — Consuming vectors
 
-Extend the [borrowed iteration work](01-borrowed-iteration.md) to
+Extend the [borrowed iteration work](complete/01-borrowed-iteration.md) to
 `for item in owners`, where `owners: Vec<T>`. Converting the vector to its
 iterator transfers ownership of the backing allocation and its remaining
 elements. Each successful advance transfers one element to the loop body.

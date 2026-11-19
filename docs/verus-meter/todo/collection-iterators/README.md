@@ -5,7 +5,7 @@ slice or vector, or consumes a vector. The [range iterator work](../complete/hea
 already handles loop lowering, progress and exits. These tasks add the memory
 effects of yielding a reference or transferring an owned element.
 
-- [ ] [01 — Borrowed slices and vectors](01-borrowed-iteration.md)
+- [x] [01 — Borrowed slices and vectors](complete/01-borrowed-iteration.md)
 - [ ] [02 — Consuming vectors](02-consuming-vectors.md)
 
 ## Acceptance example
