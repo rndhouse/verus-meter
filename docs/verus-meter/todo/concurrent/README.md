@@ -3,7 +3,7 @@
 Implement the [approved plan](../plan-concurrent-symbolic-analysis.md) as one
 complete core feature. These tasks divide implementation responsibilities; they
 are not separate prototypes or releases. TODOs 01–02 and 03.1–03.3 are complete. Next is
-[03.4 — Worker integration and completion](03.4-worker-integration-and-completion.md).
+[03.4.1 — Audit worker lifetimes](03.4.1-audit-worker-lifetimes.md).
 The parent plan is the capability checklist; this index tracks the work that
 satisfies it. Read both before starting a task.
 
@@ -35,6 +35,9 @@ Preserve the semantics and synchronization precision established in 01 throughou
 | [x] | [03.2 — Executable worker analysis](complete/03.2-executable-worker-analysis.md) | Checked body effects and worker-summary integration through completion/join. |
 | [x] | [03.3 — Symbolic populations and shared ownership](complete/03.3-symbolic-populations-and-shared-ownership.md) | Tracks 03.3.0–03.3.3 in order through per-allocation counts, transfers, worker states and final release. |
 | [ ] | [03.4 — Worker integration and completion](03.4-worker-integration-and-completion.md) | Evidence for all worker requirements and explicit remaining proof boundaries. |
+| [ ] | [03.4.1 — Audit worker lifetimes](03.4.1-audit-worker-lifetimes.md) | Trace ownership through spawn, waiting, completion and join. |
+| [ ] | [03.4.2 — Audit loops and shared ownership](03.4.2-audit-loops-and-shared-ownership.md) | Verify worker membership and final release across loop iterations. |
+| [ ] | [03.4.3 — Validate and close 03](03.4.3-validate-and-close-03.md) | Run integrated checks and reconcile the worker completion criteria. |
 | [ ] | [04 — Allocation and synchronization lifetimes](04-allocation-and-synchronization-lifetimes.md) | Compiler-derived containment, escape and release relationships. |
 | [ ] | [05 — Function and worker summaries](05-function-and-worker-summaries.md) | General helper/lifetime composition and protected payloads, extending 03.2's summaries. |
 | [ ] | [06 — Verified protocols and bounded permits](06-verified-protocols-and-bounded-permits.md) | Custom Verus protocols and the selected semaphore interface. |
