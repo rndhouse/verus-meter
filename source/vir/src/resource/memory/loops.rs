@@ -116,6 +116,8 @@ pub(super) struct Loop {
     element_sources: HashMap<usize, Expr>,
     /// Immutable scalars eligible for completed element-charge policies.
     proof_scalars: HashSet<VarIdent>,
+    /// Shared slices whose lengths can close a symbolic loop-entry observation.
+    proof_slices: HashSet<VarIdent>,
     /// Inductive element bounds supplied after enclosing policies are complete.
     element_facts: Vec<Expr>,
 }
@@ -158,6 +160,10 @@ impl Loop {
     /// a scalar that changes during the loop.
     pub(super) fn stable_scalar(&self, name: &VarIdent) -> bool {
         self.proof_scalars.contains(name)
+    }
+
+    pub(super) fn stable_entry_observation(&self, name: &VarIdent) -> bool {
+        self.stable_scalar(name) || self.proof_slices.contains(name)
     }
 
     /// Fixed collection roles whose logical lengths have entry snapshots.
@@ -369,6 +375,7 @@ impl Loop {
             element_ids: vec![],
             element_sources: HashMap::new(),
             proof_scalars: HashSet::new(),
+            proof_slices: HashSet::new(),
             element_facts: vec![],
             reference_forests: BTreeMap::new(),
         })

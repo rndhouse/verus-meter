@@ -195,6 +195,59 @@ fn borrowed_iteration_proves_inline_append_counts_without_item_values() {
 }
 
 #[test]
+fn completed_slice_length_funds_the_next_collection_loop() {
+    let program = |extra: bool, section_backing: &str| {
+        let append = if extra { "staged.push(0u8);" } else { "" };
+        let extra_bytes = if extra { "+ value_size(u8) + return_size(checksum)" } else { "" };
+        let extra_length = if extra { "+ 1" } else { "" };
+        format!(
+            "
+        fn checksum(byte: u8) -> u16
+            resources peak(memory) <= value_size(byte) + value_size(u16),
+        {{ byte as u16 }}
+
+        fn collect(packed: &[u8], n: u16) -> (sums: Vec<u16>)
+            requires packed.len() == n,
+            ensures sums.len() == packed.len() {extra_length},
+            resources peak(memory) <= ref_size(packed) + value_size(n)
+                + value_size(Vec<u16>) + n * return_size(checksum) + peak(checksum)
+                + value_size(Vec<u8>) + n * value_size(u8) {extra_bytes},
+        {{
+            let mut sums = Vec::new();
+            resources peak(memory) <= packed.len() * return_size(checksum) + peak(checksum)
+                {section_backing} {extra_bytes}
+            {{
+                let mut staged = Vec::new();
+                for byte in packed {{
+                    staged.push(*byte);
+                }}
+                {append}
+                for byte in &staged {{
+                    sums.push(checksum(*byte));
+                }}
+            }}
+            sums
+        }}"
+        )
+    };
+    let backing = "+ value_size(Vec<u8>) + packed.len() * value_size(u8)";
+    verifies("staged_slice_length", &program(false, backing));
+    verifies("staged_slice_length_after_append", &program(true, backing));
+
+    // The handle fits during staging. The bytes it keeps live must still
+    // count when the second loop starts growing the output.
+    let code = program(false, "+ value_size(Vec<u8>)");
+    let err = verify_one_file(
+        "staging_exceeds_streaming_allowance",
+        format!("use vstd::prelude::*; verus! {{ {code} }}"),
+        &[],
+    )
+    .unwrap_err();
+    assert!(!err.errors.is_empty());
+    assert!(err.errors.iter().all(|error| error.message.contains("memory budget exceeded")));
+}
+
+#[test]
 fn nested_section_retains_growth_on_each_path() {
     let code = "fn f(grow: bool) resources peak(memory) <= 45 {
         let mut v = Vec::<u32>::new();

@@ -45,6 +45,13 @@ impl Analysis<'_> {
         let mut forest_bounds = self.element_loop_bounds(&record);
         forest_bounds.extend(self.loop_charge_candidates(&mut record));
         let loop_scalars = self.stable_scalars.clone();
+        record.proof_slices = self
+            .growth
+            .immutable_slices
+            .iter()
+            .filter(|name| self.slots.contains_key(*name))
+            .cloned()
+            .collect();
         let entry = self.storage.live();
         let ids = self.heap.vectors();
         let shared_payloads = self.shared_payload_invariants(&expr.span);

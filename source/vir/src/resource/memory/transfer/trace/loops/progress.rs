@@ -329,11 +329,21 @@ impl Trace<'_> {
                 lengths.entry(path).or_insert(delta);
             }
         }
+        // An earlier loop can express a collection's completed length through
+        // an immutable slice input. Use that same observation in later loops.
         let entry = |value: &Expr| {
             let value = substitute(value, &self.proof_values);
             crate::ast_visitor::expr_visitor_check(&value, &mut |scope, value| {
-                if matches!(&value.x, ExprX::Var(name) if !scope.contains_key(name) && !record.stable_scalar(name)) { Err(()) } else { Ok(()) }
-            }).ok().map(|_| value)
+                if let ExprX::Var(name) = &value.x
+                    && !scope.contains_key(name)
+                    && !record.stable_entry_observation(name)
+                {
+                    return Err(());
+                }
+                Ok(())
+            })
+            .ok()
+            .map(|_| value)
         };
         let bounds = (entry(&progress.bounds.0), entry(&progress.bounds.1));
         let scalars = progress
