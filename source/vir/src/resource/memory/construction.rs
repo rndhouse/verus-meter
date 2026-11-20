@@ -107,6 +107,7 @@ impl Analysis<'_> {
         expr: &Expr,
         destination: bool,
     ) -> Result<Option<u64>, VirErr> {
+        let mut owner = super::heap::Owner::default();
         let fields: Vec<&Expr> = match &expr.x {
             ExprX::Ctor(name, variant, fields, None)
                 if super::iterators::kind(&expr.typ) == Some(super::iterators::Kind::Range) =>
@@ -146,6 +147,7 @@ impl Analysis<'_> {
             }
             ExprX::Ctor(name @ Dt::Path(_), variant_name, fields, None) => {
                 let variant = self.layouts.struct_variant(&expr.typ, &expr.span)?;
+                owner.declared_fields = Some(variant.fields.clone());
                 let TypX::Datatype(result_name, _, _) = &*expr.typ else { unreachable!() };
                 if name != result_name
                     || *variant_name != variant.name
@@ -196,11 +198,6 @@ impl Analysis<'_> {
                 bytes,
                 "aggregate expression result",
             )?;
-        }
-        let mut owner = super::heap::Owner::default();
-        if matches!(expr.x, ExprX::Ctor(Dt::Path(_), ..)) && !self.layouts.option(&expr.typ) {
-            owner.declared_fields =
-                Some(self.layouts.struct_variant(&expr.typ, &expr.span)?.fields.clone());
         }
         let mut transitions = Vec::new();
         for (index, field) in fields.into_iter().enumerate() {
