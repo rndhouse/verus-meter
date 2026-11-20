@@ -3,7 +3,7 @@
 Implement the [approved plan](../plan-concurrent-symbolic-analysis.md) as one
 complete core feature. These tasks divide implementation responsibilities; they
 are not separate prototypes or releases.
-Next is [03.4.3 final validation](03.4.3-validate-and-close-03.md). The [ownership audit](complete/03.4.2-audit-loops-and-shared-ownership.md) and all seven follow-ups are complete.
+Next is [03.4.3 final validation](03.4.3-validate-and-close-03.md). The [ownership audit](complete/03.4.2-audit-loops-and-shared-ownership.md) and all eight follow-ups are complete.
 The parent plan is the capability checklist; this index tracks the work that
 satisfies it. Read both before starting a task.
 
@@ -44,6 +44,7 @@ Preserve the semantics and synchronization precision established in 01 throughou
 | [x] | [03.4.2.5 — Preserve repeated payload ownership](complete/03.4.2.5-preserve-repeated-payload-ownership.md) | Preserve the inner owners of a fresh shared allocation on each visit. |
 | [x] | [03.4.2.6 — Extract a joined inner Arc](complete/03.4.2.6-extract-a-joined-inner-arc.md) | Recover the selected inner allocation and release the unique wrapper. |
 | [x] | [03.4.2.7 — Track independent inner aliases](complete/03.4.2.7-track-independent-inner-aliases.md) | Keep a loop-created inner backing live through either order of publisher and worker drops. |
+| [x] | [03.4.2.8 — Index a worker with a forwarded Arc](complete/03.4.2.8-index-a-worker-with-a-forwarded-arc.md) | Preserve the original allocation visit when a receiving worker enters another handle vector. |
 | [ ] | [03.4.3 — Validate and close 03](03.4.3-validate-and-close-03.md) | Run integrated checks and reconcile the worker completion criteria. |
 | [ ] | [04 — Allocation and synchronization lifetimes](04-allocation-and-synchronization-lifetimes.md) | Compiler-derived containment, escape and release relationships. |
 | [ ] | [05 — Function and worker summaries](05-function-and-worker-summaries.md) | General helper/lifetime composition and protected payloads, extending 03.2's summaries. |
