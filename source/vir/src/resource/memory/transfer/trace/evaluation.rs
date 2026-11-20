@@ -217,9 +217,18 @@ impl Trace<'_> {
                 Some(Value::Unit)
             }
             ExprX::Binary(op, left, right) => {
-                let left = self.scalar(left)?;
-                let right = self.scalar(right)?;
-                Some(Value::Scalar(Self::binary(span, *op, left, right, &value.typ)))
+                let left = self.value(left)?;
+                let right = self.value(right)?;
+                Some(match (left, right) {
+                    (Value::Scalar(left), Value::Scalar(right)) => {
+                        Value::Scalar(Self::binary(span, *op, left, right, &value.typ))
+                    }
+                    (Value::UnknownSize(source), _) | (_, Value::UnknownSize(source)) => {
+                        Value::UnknownSize(source)
+                    }
+                    (Value::Unknown, _) | (_, Value::Unknown) => Value::Unknown,
+                    _ => return None,
+                })
             }
             ExprX::Unary(op, operand) => {
                 let operand = self.scalar(operand)?;

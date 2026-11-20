@@ -611,6 +611,7 @@ impl Trace<'_> {
             values.insert(index, actual);
         }
         let mut replacements = HashMap::new();
+        let mut opaque_result = false;
         for symbol in &template.symbols {
             if matches!(symbol.input, Input::Complete) {
                 let forests: Vec<_> = values
@@ -654,6 +655,13 @@ impl Trace<'_> {
                     .get(path)
                     .map(|f| f.capacity.clone())
                     .unwrap_or_else(|| expr::integer(&value.span, 0)),
+                (
+                    Input::Scalar(_) | Input::SliceLength(_),
+                    Value::Unknown | Value::UnknownSize(_),
+                ) if symbol.scalar_result_only => {
+                    opaque_result = true;
+                    continue;
+                }
                 _ => return None,
             };
             replacements.insert(symbol.name.clone(), replacement);
@@ -680,7 +688,11 @@ impl Trace<'_> {
         if let Value::Owner(Node { origin: Some(index), .. }) = &template.result {
             return values.get(index).cloned();
         }
-        let result = instantiate_value(&template.result, &replacements);
+        let result = if opaque_result {
+            Value::Unknown
+        } else {
+            instantiate_value(&template.result, &replacements)
+        };
         Some(postconditions::call_result(function, &values, result, &value.span))
     }
 }

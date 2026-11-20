@@ -102,6 +102,8 @@ pub(super) struct Symbol {
     pub(super) name: VarIdent,
     /// The caller observation substituted for that variable.
     pub(super) input: Input,
+    /// An unavailable observation only makes the scalar result opaque.
+    pub(super) scalar_result_only: bool,
 }
 
 /// A complete owner expression and conservative uniform reservation candidates.

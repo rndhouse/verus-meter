@@ -109,7 +109,7 @@ impl Trace<'_> {
             Arc::new("$memory_transfer_input".into()),
             VarIdentDisambiguate::VirTemp(accounting::Accounting::fresh_allocation()),
         );
-        self.symbols.push(Symbol { name: name.clone(), input });
+        self.symbols.push(Symbol { name: name.clone(), input, scalar_result_only: false });
         SpannedTyped::new(span, &typ, ExprX::Var(name))
     }
 

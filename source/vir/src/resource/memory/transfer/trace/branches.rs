@@ -6,7 +6,7 @@
 use super::*;
 
 impl Trace<'_> {
-    /// Evaluate a scalar condition before tracing its two alternatives.
+    /// A data-dependent condition can leave identical checked storage effects.
     pub(super) fn branch(
         &mut self,
         span: &Span,
@@ -14,8 +14,33 @@ impl Trace<'_> {
         yes: &Expr,
         no: &Option<Expr>,
     ) -> Option<Value> {
-        let condition = self.scalar(condition)?;
-        self.branch_from(span, condition, yes, no)
+        let observation = match self.value(condition)? {
+            Value::Scalar(condition) => return self.branch_from(span, condition, yes, no),
+            Value::Unknown => None,
+            Value::UnknownSize(source) => Some(source),
+            _ => return None,
+        };
+        if self.loop_tokens.is_none() {
+            self.failure = observation.map(|source| {
+                let mut failure = Failure::new(
+                    &condition.span,
+                    "a scalar operand needs an unresolved size relationship",
+                );
+                failure.observation = Some(source);
+                failure
+            });
+            return None;
+        }
+        let result = self.branch_with_condition(span, None, yes, no);
+        if result.is_none() && self.failure.is_none() {
+            let mut failure = Failure::new(
+                &condition.span,
+                "cannot establish a common collection effect for both branches of the loop",
+            );
+            failure.observation = observation;
+            self.failure = Some(failure);
+        }
+        result
     }
 
     /// Trace guarded alternatives, preserve exits, and join continuing states.
@@ -26,10 +51,23 @@ impl Trace<'_> {
         yes: &Expr,
         no: &Option<Expr>,
     ) -> Option<Value> {
+        self.branch_with_condition(span, Some(condition), yes, no)
+    }
+
+    fn branch_with_condition(
+        &mut self,
+        span: &Span,
+        condition: Option<Expr>,
+        yes: &Expr,
+        no: &Option<Expr>,
+    ) -> Option<Value> {
         let before = self.state.clone();
         let outer = self.path.clone();
-        self.path = exits::and(span, outer.clone(), condition.clone());
+        if let Some(condition) = &condition {
+            self.path = exits::and(span, outer.clone(), condition.clone());
+        }
         let effect_start = self.effects.len();
+        let exit_start = self.exits.len();
         let yes_value = self.value(yes)?;
         let yes = self.state.clone();
         let yes_reachable = self.reachable;
@@ -37,12 +75,20 @@ impl Trace<'_> {
         let yes_effects = self.effects.split_off(effect_start);
         self.state = before;
         self.reachable = true;
-        self.path = exits::and(span, outer.clone(), exits::not(span, condition.clone()));
+        self.path = condition.as_ref().map_or_else(
+            || outer.clone(),
+            |condition| exits::and(span, outer.clone(), exits::not(span, condition.clone())),
+        );
         let no_value = if let Some(no) = no { self.value(no)? } else { Value::Unit };
         let no = self.state.clone();
         let no_effects = self.effects.split_off(effect_start);
+        if condition.is_none()
+            && (!yes_reachable || !self.reachable || self.exits.len() != exit_start)
+        {
+            return None;
+        }
         self.state = match (yes_reachable, self.reachable) {
-            (true, true) => Self::join_state(span, condition.clone(), yes, no)?,
+            (true, true) => Self::join_states(span, condition.as_ref(), yes, no)?,
             (true, false) => yes,
             _ => no,
         };
@@ -53,13 +99,17 @@ impl Trace<'_> {
             self.path = yes_path;
         }
         self.reachable |= yes_reachable;
-        let decision = Arc::new(condition.clone());
-        for (selected, effects) in [(true, yes_effects), (false, no_effects)] {
-            self.effects.extend(effects.into_iter().map(|effect| Effect::Guarded {
-                decision: decision.clone(),
-                selected,
-                effect: Box::new(effect),
-            }));
+        if let Some(condition) = &condition {
+            let decision = Arc::new(condition.clone());
+            for (selected, effects) in [(true, yes_effects), (false, no_effects)] {
+                self.effects.extend(effects.into_iter().map(|effect| Effect::Guarded {
+                    decision: decision.clone(),
+                    selected,
+                    effect: Box::new(effect),
+                }));
+            }
+        } else {
+            self.effects.extend(common_inline_appends(yes_effects, no_effects)?);
         }
         if let Some(joins) = self.checked.branches.get(&span.id) {
             self.used.insert((checked::Kind::Branch, span.id));
@@ -68,12 +118,13 @@ impl Trace<'_> {
                     Some(id) => self.regions.get(&id).cloned(),
                     None => Some(expr::empty(span, expr::record_type())),
                 };
-                let memory = choice(span, condition.clone(), memory(join.yes)?, memory(join.no)?);
+                let memory =
+                    choose(span, condition.as_ref(), &memory(join.yes)?, &memory(join.no)?)?;
                 self.regions.insert(join.result, simplify::simplify(&memory));
             }
         }
         match (yes_reachable, no_reachable) {
-            (true, true) => Self::join_value(span, condition, &yes_value, &no_value),
+            (true, true) => Self::join_values(span, condition.as_ref(), &yes_value, &no_value),
             (true, false) => Some(yes_value),
             (false, true) => Some(no_value),
             (false, false) => Some(Value::Unit),
@@ -82,7 +133,13 @@ impl Trace<'_> {
 
     /// Join matching live bindings and retain only shared immutable definitions.
     pub(super) fn join_state(span: &Span, condition: Expr, yes: State, no: State) -> Option<State> {
-        if let ExprX::Const(Constant::Bool(selected)) = condition.x {
+        Self::join_states(span, Some(&condition), yes, no)
+    }
+
+    fn join_states(span: &Span, condition: Option<&Expr>, yes: State, no: State) -> Option<State> {
+        if let Some(condition) = condition
+            && let ExprX::Const(Constant::Bool(selected)) = condition.x
+        {
             return Some(if selected { yes } else { no });
         }
         if yes.values.keys().collect::<HashSet<_>>() != no.values.keys().collect::<HashSet<_>>() {
@@ -92,10 +149,7 @@ impl Trace<'_> {
             .values
             .iter()
             .map(|(name, left)| {
-                Some((
-                    name.clone(),
-                    Self::join_value(span, condition.clone(), left, &no.values[name])?,
-                ))
+                Some((name.clone(), Self::join_values(span, condition, left, &no.values[name])?))
             })
             .collect::<Option<_>>()?;
         let definitions = yes
@@ -119,6 +173,15 @@ impl Trace<'_> {
         yes: &Value,
         no: &Value,
     ) -> Option<Value> {
+        Self::join_values(span, Some(&condition), yes, no)
+    }
+
+    fn join_values(
+        span: &Span,
+        condition: Option<&Expr>,
+        yes: &Value,
+        no: &Value,
+    ) -> Option<Value> {
         Some(match (yes, no) {
             (Value::Iterator(yes), Value::Iterator(no)) => {
                 use crate::resource::memory::iterators::{Items, Sequence};
@@ -126,33 +189,36 @@ impl Trace<'_> {
                     (Items::Range { first: a, step }, Items::Range { first: b, step: other })
                         if step == other =>
                     {
-                        Items::Range {
-                            first: choice(span, condition.clone(), a.clone(), b.clone()),
-                            step: *step,
-                        }
+                        Items::Range { first: choose(span, condition, a, b)?, step: *step }
                     }
                     (Items::Collection, Items::Collection) => Items::Collection,
                     (Items::Owned(a), Items::Owned(b)) => {
-                        Items::Owned(Self::join_owner(span, condition.clone(), a, b))
+                        Items::Owned(Self::join_owner(span, condition, a, b)?)
                     }
                     _ => return None,
                 };
                 Value::Iterator(Sequence {
                     items,
-                    count: choice(span, condition.clone(), yes.count.clone(), no.count.clone()),
-                    position: choice(span, condition, yes.position.clone(), no.position.clone()),
+                    count: choose(span, condition, &yes.count, &no.count)?,
+                    position: choose(span, condition, &yes.position, &no.position)?,
                 })
             }
             (Value::CollectionLength(yes), Value::CollectionLength(no)) => {
-                Value::CollectionLength(choice(span, condition, yes.clone(), no.clone()))
+                Value::CollectionLength(choose(span, condition, yes, no)?)
             }
             (Value::Owner(yes), Value::Owner(no)) => {
-                Value::Owner(Self::join_owner(span, condition, yes, no))
+                Value::Owner(Self::join_owner(span, condition, yes, no)?)
             }
             (Value::Scalar(yes), Value::Scalar(no)) => {
-                Value::Scalar(choice(span, condition, yes.clone(), no.clone()))
+                choose(span, condition, yes, no).map_or(Value::Unknown, Value::Scalar)
             }
             (Value::Unit, Value::Unit) => Value::Unit,
+            (Value::Owner(_) | Value::Iterator(_), _)
+            | (_, Value::Owner(_) | Value::Iterator(_))
+                if condition.is_none() =>
+            {
+                return None;
+            }
             (Value::UnknownSize(span), _) | (_, Value::UnknownSize(span)) => {
                 Value::UnknownSize(span.clone())
             }
@@ -161,14 +227,73 @@ impl Trace<'_> {
         })
     }
 
-    fn join_owner(span: &Span, condition: Expr, yes: &Node, no: &Node) -> Node {
+    fn join_owner(span: &Span, condition: Option<&Expr>, yes: &Node, no: &Node) -> Option<Node> {
         let mut minima = yes.minima.clone();
         join_minima(span, &mut minima, &no.minima);
-        Node {
+        Some(Node {
             origin: if yes.origin == no.origin { yes.origin } else { None },
             typ: yes.typ.clone(),
-            memory: choice(span, condition, yes.memory.clone(), no.memory.clone()),
+            memory: choose(span, condition, &yes.memory, &no.memory)?,
             minima,
+        })
+    }
+}
+
+/// Descriptors may depend on a known condition. An opaque condition can only
+/// preserve observations that agree on both paths.
+fn choose(span: &Span, condition: Option<&Expr>, yes: &Expr, no: &Expr) -> Option<Expr> {
+    if let Some(condition) = condition {
+        Some(choice(span, condition.clone(), yes.clone(), no.clone()))
+    } else if simplify::inspect::same_expression(yes, no) {
+        Some(yes.clone())
+    } else {
+        None
+    }
+}
+
+/// Payload values of inline appends are absent from the ownership descriptor.
+/// Keep both paths' read dependencies and require identical ordered writes.
+fn common_inline_appends(yes: Vec<Effect>, no: Vec<Effect>) -> Option<Vec<Effect>> {
+    let (yes_reads, yes): (Vec<_>, Vec<_>) =
+        yes.into_iter().partition(|effect| matches!(effect, Effect::Read(_)));
+    let (no_reads, no): (Vec<_>, Vec<_>) =
+        no.into_iter().partition(|effect| matches!(effect, Effect::Read(_)));
+    if yes.len() != no.len() {
+        return None;
+    }
+    for (yes, no) in yes.iter().zip(&no) {
+        let (
+            Effect::Append { location: a, typ, child, original, element, grow },
+            Effect::Append {
+                location: b,
+                typ: other_typ,
+                child: other_child,
+                original: other_original,
+                element: other_element,
+                grow: other_grow,
+            },
+        ) = (yes, no)
+        else {
+            return None;
+        };
+        if a.0 != b.0
+            || a.1 != b.1
+            || a.2.len() != b.2.len()
+            || !a.2.iter().zip(&b.2).all(|(a, b)| simplify::inspect::same_expression(a, b))
+            || !crate::ast_util::types_equal(typ, other_typ)
+            || matches!(child, Value::Owner(_) | Value::Iterator(_))
+            || matches!(other_child, Value::Owner(_) | Value::Iterator(_))
+            || !simplify::inspect::same_expression(original, other_original)
+            || element != other_element
+            || grow != other_grow
+        {
+            return None;
         }
     }
+    let appends = yes.into_iter().map(|mut effect| {
+        let Effect::Append { child, .. } = &mut effect else { unreachable!() };
+        *child = Value::Unknown;
+        effect
+    });
+    Some(yes_reads.into_iter().chain(no_reads).chain(appends).collect())
 }

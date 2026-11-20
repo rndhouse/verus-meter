@@ -153,6 +153,48 @@ fn an_input_length_funds_one_output_slot_per_iteration() {
 }
 
 #[test]
+fn borrowed_iteration_proves_inline_append_counts_without_item_values() {
+    let program = |body: &str| {
+        format!(
+            "
+        fn checksum(byte: u8) -> u16
+            resources peak(memory) <= value_size(byte) + value_size(u16),
+        {{ byte as u16 }}
+
+        fn collect(packed: &[u8], n: u16) -> Vec<u16>
+            requires packed.len() == n,
+            resources peak(memory) <= ref_size(packed) + value_size(n)
+                + value_size(Vec<u16>) + n * return_size(checksum) + peak(checksum),
+        {{
+            let mut sums = Vec::new();
+            resources peak(memory) <= packed.len() * return_size(checksum) + peak(checksum) {{
+                for byte in packed {{
+                    {body}
+                }}
+            }}
+            sums
+        }}"
+        )
+    };
+    verifies("borrowed_append_opaque_result", &program("sums.push(checksum(*byte));"));
+    verifies(
+        "borrowed_append_same_effect",
+        &program("if *byte > 0 { sums.push(checksum(*byte)); } else { sums.push(0u16); }"),
+    );
+    let unequal = program(
+        "if *byte > 0 { sums.push(checksum(*byte)); sums.push(1u16); } else { sums.push(0u16); }",
+    );
+    let err = verify_one_file(
+        "borrowed_append_unequal_effect",
+        format!("use vstd::prelude::*; verus! {{ {unequal} }}"),
+        &[],
+    )
+    .unwrap_err();
+    assert!(!err.errors.is_empty());
+    assert!(err.errors.iter().all(|error| error.message.contains("memory budget exceeded")));
+}
+
+#[test]
 fn nested_section_retains_growth_on_each_path() {
     let code = "fn f(grow: bool) resources peak(memory) <= 45 {
         let mut v = Vec::<u32>::new();

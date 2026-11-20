@@ -284,7 +284,7 @@ pub(super) fn summarize(
         .ok_or_else(|| Failure::new(&function.span, "output lifetime mapping"))?;
     // Unused scalar arguments need no snapshot or additional representability restriction.
     let mut names = HashSet::new();
-    let mut collect = |value: &Expr| {
+    let collect = |names: &mut HashSet<VarIdent>, value: &Expr| {
         let _ = crate::ast_visitor::expr_visitor_check(value, &mut |scope, value| {
             if let ExprX::Var(name) = &value.x {
                 if !scope.contains_key(name) {
@@ -294,36 +294,45 @@ pub(super) fn summarize(
             Ok::<(), VirErr>(())
         });
     };
+    let mut storage_names = |value: &Expr| collect(&mut names, value);
     for node in borrowed.values().chain(match &result {
         Value::Owner(node) => Some(node),
         _ => None,
     }) {
-        collect(&node.memory);
+        storage_names(&node.memory);
         for floor in node.minima.values() {
-            collect(&floor.capacity);
+            storage_names(&floor.capacity);
         }
     }
-    if let Value::Scalar(value) | Value::CollectionLength(value) = &result {
-        collect(value);
+    if let Value::CollectionLength(value) = &result {
+        storage_names(value);
     }
     if let Value::Iterator(sequence) = &result {
         if let super::super::iterators::Items::Range { first, .. } = &sequence.items {
-            collect(first);
+            storage_names(first);
         }
-        collect(&sequence.count);
-        collect(&sequence.position);
+        storage_names(&sequence.count);
+        storage_names(&sequence.position);
     }
     trace.regions.retain(|id, _| *id >= checked.inputs.len());
     for region in trace.regions.values() {
-        collect(region);
+        storage_names(region);
     }
     for region in origins.values().flat_map(|paths| paths.values()) {
-        collect(region);
+        storage_names(region);
     }
     if let Some(effects) = &effects {
         for (_, effect) in effects {
-            effect.expressions(&mut collect);
+            effect.expressions(&mut storage_names);
         }
+    }
+    // A caller can compose the checked effects without describing the
+    // scalar result, as long as the missing observation affects only it.
+    for symbol in &mut trace.symbols {
+        symbol.scalar_result_only = !names.contains(&symbol.name);
+    }
+    if let Value::Scalar(value) = &result {
+        collect(&mut names, value);
     }
     // A template may refer only to caller observations. In particular, a
     // representative iteration's counter and extracted-child tokens cannot

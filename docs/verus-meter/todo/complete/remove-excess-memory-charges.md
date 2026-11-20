@@ -17,5 +17,5 @@ Find and remove charges for compiler lowering and private library implementation
 ## Review through examples
 
 - As each correction is validated, link its commit and flag every changed example for review. Show the before-and-after budget or verification result and identify the charge that disappeared.
-- Separate proof follow-up. The variable-length checksum still needs inference that the loop pushes one result per input.
+- The [variable-length streaming proof](../../../../source/rust_verify_test/tests/resource/memory/growth.rs) now infers one push per input. Carrying staged storage between loops remains a separate proof task.
 - Reuse existing examples and tests where they show the distinction. Finish when the identified excess charges are removed across the supported collections and the affected examples confirm that source-visible storage still counts.
