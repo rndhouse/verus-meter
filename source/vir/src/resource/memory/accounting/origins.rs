@@ -16,22 +16,9 @@ pub(in super::super) struct FixedOrigin {
     pub(in super::super) identity: u64,
 }
 
-/// The owning actor and the actual nested loop visits that instantiate a source
-/// allocation. A move or a subsequent unlock cannot change this binder.
-#[derive(Clone)]
-pub(in super::super) struct AllocationVisit {
-    pub(in super::super) source: u64,
-    pub(in super::super) actor: Option<super::super::workers::WorkerId>,
-    pub(in super::super) coordinates: Vec<(u64, crate::ast::Expr)>,
-}
-
 impl super::super::analysis::Analysis<'_> {
     pub(in super::super) fn bind_allocation(&mut self, span: &Span, id: u64) -> Result<(), VirErr> {
-        let visit = AllocationVisit {
-            source: span.id,
-            actor: self.current_worker,
-            coordinates: self.actor_coordinates(self.local_occurrences(span)?),
-        };
+        let visit = self.source_visit(span.id, self.local_occurrences(span)?);
         if self.transitions.allocation_visits.insert(id, visit).is_some() {
             return Err(super::unsupported(span, "a duplicate allocation occurrence binder"));
         }

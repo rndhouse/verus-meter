@@ -21,14 +21,9 @@ pub(in super::super) struct Interval {
     pub(in super::super) acquisition: Acquisition,
 }
 
-/// Dynamic visits to one checked native constructor or acquisition. Worker
-/// publication coordinates precede the enclosing loops of the actor itself.
-#[derive(Clone)]
-pub(in super::super) struct Occurrence {
-    pub(in super::super) site: super::super::concurrency::sites::Binding<Operation>,
-    pub(in super::super) actor: Option<super::super::workers::WorkerId>,
-    pub(in super::super) coordinates: Vec<(u64, Expr)>,
-}
+/// A mutex construction or acquisition retains its checked native operation.
+pub(in super::super) type Occurrence =
+    super::super::workers::SourceVisit<super::super::concurrency::sites::Binding<Operation>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in super::super) enum Owned {
@@ -106,8 +101,7 @@ impl Analysis<'_> {
                 "a synchronization site without its local loop occurrence",
             ));
         }
-        let coordinates = self.actor_coordinates(local);
-        Ok(Occurrence { site: site.clone(), actor: self.current_worker, coordinates })
+        Ok(self.source_visit(site.clone(), local))
     }
 
     /// Resolve a reference to an already known mutex. Stored references retain

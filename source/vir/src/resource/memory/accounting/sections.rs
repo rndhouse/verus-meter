@@ -31,28 +31,13 @@ impl Accounting {
     pub(in super::super) fn section_prefixes(
         &self,
         span: &Span,
-        mut freeze: impl FnMut(Expr) -> Expr,
+        mut freeze: impl FnMut(&Expr) -> Expr,
     ) -> Vec<Point> {
         self.paths
             .iter()
             .map(|path| {
-                let mut path = path.clone();
-                for charge in path.dynamic.values_mut() {
-                    charge.amount = freeze(charge.amount.clone());
-                }
-                Point {
-                    span: span.clone(),
-                    cost: Self::path_expression(&path, span),
-                    fixed_origins: path.fixed_origins(),
-                    allocations: path.dynamic.keys().copied().collect(),
-                    inputs: path.inputs,
-                    values: path.values.into_keys().collect(),
-                    condition: super::super::synchronization::local::Condition {
-                        held: path.held.into_iter().collect(),
-                        ..Default::default()
-                    },
-                    section_entry: path.section_entry,
-                }
+                let cost = path.footprint_with(span, &mut freeze);
+                Point::from_live(span, cost, path, super::Boundary::Live)
             })
             .collect()
     }
@@ -139,7 +124,7 @@ mod tests {
         let mut inner = Accounting::new(&span, 1024);
         inner.enter_section(&outer);
         inner.record_live(&span).unwrap();
-        let prefixes = outer.section_prefixes(&span, |amount| amount);
+        let prefixes = outer.section_prefixes(&span, Clone::clone);
         let report = inner.finish_section(&span);
         let before = outer.points().len();
         outer.compose_section_phases(&prefixes, &report, before);

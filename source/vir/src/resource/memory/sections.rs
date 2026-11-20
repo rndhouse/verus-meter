@@ -66,10 +66,10 @@ impl Analysis<'_> {
         })?;
         let prefixes = if synchronized {
             parent.section_prefixes(contract_span, |amount| {
-                if contracts::constant(&amount).is_some() {
-                    amount
+                if contracts::constant(amount).is_some() {
+                    amount.clone()
                 } else {
-                    self.allocation_snapshot(contract_span, amount)
+                    self.allocation_snapshot(contract_span, amount.clone())
                 }
             })
         } else {

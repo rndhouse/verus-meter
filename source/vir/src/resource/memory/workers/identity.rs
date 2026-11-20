@@ -4,7 +4,10 @@
 //! site shares a family, but creates another worker. Nested publications also
 //! retain their enclosing occurrence, so two parents cannot share child state.
 
-use crate::messages::AstId;
+use crate::{
+    ast::{Expr, TypX},
+    messages::AstId,
+};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -25,6 +28,33 @@ impl WorkerId {
     /// alone must never identify every visit to a repeated publication.
     pub(in super::super) fn descriptor(self) -> [i128; 2] {
         [i128::from(self.family.0), i128::from(self.occurrence)]
+    }
+}
+
+/// A visit to a source site in one actor. The site retains its operation-specific
+/// evidence. Publication coordinates precede the actor's own enclosing loops.
+#[derive(Clone)]
+pub(in super::super) struct SourceVisit<S> {
+    /// A source location or a checked native operation at that location.
+    pub(in super::super) site: S,
+    actor: Option<WorkerId>,
+    coordinates: Vec<(AstId, Expr)>,
+}
+
+impl super::Analysis<'_> {
+    pub(in super::super) fn source_visit<S>(
+        &self,
+        site: S,
+        local: Vec<(AstId, Expr)>,
+    ) -> SourceVisit<S> {
+        SourceVisit { site, actor: self.current_worker, coordinates: self.actor_coordinates(local) }
+    }
+}
+
+impl<S> SourceVisit<S> {
+    pub(in super::super) fn valid_for(&self, actor: Option<WorkerId>) -> bool {
+        self.actor == actor
+            && self.coordinates.iter().all(|(_, ordinal)| matches!(&*ordinal.typ, TypX::Int(_)))
     }
 }
 

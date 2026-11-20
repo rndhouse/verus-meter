@@ -21,7 +21,7 @@ mod shared;
 pub(super) mod states;
 mod waits;
 
-pub(super) use identity::{Families, WorkerId};
+pub(super) use identity::{Families, SourceVisit, WorkerId};
 pub(super) use inputs::Input;
 pub(super) use inputs::restore_proof_bindings;
 pub(super) use parameters::parameter_domain_error;

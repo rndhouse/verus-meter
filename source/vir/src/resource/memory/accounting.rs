@@ -3,6 +3,7 @@
 use super::contracts;
 use super::footprint::{Charge, Footprint, MemoryBudget, MemoryKind, MemorySelection};
 use super::model::{MODEL_NAME, unsupported};
+use super::synchronization::local::{Boundary, Condition};
 use crate::ast::{Expr, VirErr, VirErrAs};
 use crate::messages::{Span, note};
 use std::collections::{HashMap, HashSet};
@@ -10,7 +11,6 @@ use std::sync::Arc;
 
 mod intervals;
 mod origins;
-pub(super) use origins::AllocationVisit;
 mod sections;
 mod transport;
 pub(super) use transport::SharedBackingCharges;
@@ -173,6 +173,32 @@ pub(super) struct Live {
 }
 
 impl Live {
+    /// Sections freeze dynamic byte terms at entry. Fixed charges and their
+    /// symbolic addition order follow the ordinary path expression.
+    fn footprint_with(
+        &self,
+        span: &Span,
+        mut dynamic_amount: impl FnMut(&Expr) -> Expr,
+    ) -> Footprint {
+        let mut cost = Footprint::zero(span);
+        let mut values = std::collections::BTreeMap::<MemoryKind, u64>::new();
+        for charge in self.values.values() {
+            *values.entry(charge.kind.clone()).or_default() += charge.amount;
+        }
+        for (kind, amount) in values {
+            cost = cost.add(span, Footprint::charge(kind, contracts::literal(span, amount)));
+        }
+        for (kind, amount) in &self.fixed {
+            cost =
+                cost.add(span, Footprint::charge(kind.clone(), contracts::literal(span, *amount)));
+        }
+        for charge in self.dynamic.values() {
+            cost = cost
+                .add(span, Footprint::charge(charge.kind.clone(), dynamic_amount(&charge.amount)));
+        }
+        cost
+    }
+
     fn add_fixed(&mut self, span: &Span, kind: &MemoryKind, bytes: u64) -> Result<(), VirErr> {
         let amount = self.fixed.entry(kind.clone()).or_default();
         *amount = amount
@@ -194,7 +220,7 @@ impl Live {
 pub(super) struct Point {
     section_entry: Option<Arc<[super::synchronization::local::Interval]>>,
     pub(super) span: Span,
-    pub(super) condition: super::synchronization::local::Condition,
+    pub(super) condition: Condition,
     pub(super) cost: Footprint,
     /// Fixed heap constructors individually charged on this reaching path.
     pub(super) fixed_origins: std::collections::BTreeSet<origins::FixedOrigin>,
@@ -202,6 +228,23 @@ pub(super) struct Point {
     pub(super) allocations: std::collections::BTreeSet<u64>,
     pub(super) values: HashSet<u64>,
     pub(super) inputs: HashSet<usize>,
+}
+
+impl Point {
+    /// Pair an observation's byte expression with the ownership and acquisitions
+    /// of the same reaching path, including its enclosing section's entry state.
+    fn from_live(span: &Span, cost: Footprint, path: &Live, boundary: Boundary) -> Self {
+        Self {
+            span: span.clone(),
+            cost,
+            condition: Condition { held: path.held.iter().copied().collect(), boundary },
+            section_entry: path.section_entry.clone(),
+            fixed_origins: path.fixed_origins(),
+            allocations: path.dynamic.keys().copied().collect(),
+            values: path.values.keys().copied().collect(),
+            inputs: path.inputs.clone(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -485,22 +528,7 @@ impl Accounting {
         Ok(())
     }
     fn path_expression(path: &Live, span: &Span) -> Footprint {
-        let mut cost = Footprint::zero(span);
-        let mut values = std::collections::BTreeMap::<MemoryKind, u64>::new();
-        for charge in path.values.values() {
-            *values.entry(charge.kind.clone()).or_default() += charge.amount;
-        }
-        for (kind, amount) in values {
-            cost = cost.add(span, Footprint::charge(kind, contracts::literal(span, amount)));
-        }
-        for (kind, amount) in &path.fixed {
-            cost =
-                cost.add(span, Footprint::charge(kind.clone(), contracts::literal(span, *amount)));
-        }
-        for charge in path.dynamic.values() {
-            cost = cost.add(span, Footprint::charge(charge.kind.clone(), charge.amount.clone()));
-        }
-        cost
+        path.footprint_with(span, Clone::clone)
     }
     pub(super) fn live_expression(&self, span: &Span) -> Footprint {
         self.paths
@@ -541,30 +569,12 @@ impl Accounting {
         }
     }
     fn record_point(&mut self, span: &Span, cost: Footprint, path: &Live) {
-        self.record_phase(span, cost, path, super::synchronization::local::Boundary::Live);
+        self.record_phase(span, cost, path, Boundary::Live);
     }
 
-    fn record_phase(
-        &mut self,
-        span: &Span,
-        cost: Footprint,
-        path: &Live,
-        boundary: super::synchronization::local::Boundary,
-    ) {
+    fn record_phase(&mut self, span: &Span, cost: Footprint, path: &Live, boundary: Boundary) {
         self.peak_costs.push((span.clone(), cost.clone()));
-        Arc::make_mut(&mut self.report.points).push(Point {
-            span: span.clone(),
-            cost,
-            condition: super::synchronization::local::Condition {
-                held: path.held.iter().copied().collect(),
-                boundary,
-            },
-            section_entry: path.section_entry.clone(),
-            fixed_origins: path.fixed_origins(),
-            allocations: path.dynamic.keys().copied().collect(),
-            values: path.values.keys().copied().collect(),
-            inputs: path.inputs.clone(),
-        });
+        Arc::make_mut(&mut self.report.points).push(Point::from_live(span, cost, path, boundary));
         self.report.conditional = true;
     }
     #[cfg(test)]

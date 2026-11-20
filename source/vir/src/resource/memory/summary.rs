@@ -35,9 +35,7 @@ impl BodyEffects {
         let intervals = self.ownership.interval_binders(&self.body.span, actor)?;
         use super::synchronization::local::Boundary;
         for birth in self.ownership.allocation_visits.values() {
-            if birth.actor != actor
-                || birth.coordinates.iter().any(|(_, n)| !matches!(&*n.typ, TypX::Int(_)))
-            {
+            if !birth.valid_for(actor) {
                 return Err(super::model::unsupported(
                     &self.body.span,
                     "an allocation outside its creating actor or loop occurrence",
@@ -99,7 +97,7 @@ impl BodyEffects {
                 Ok(pattern.clone())
             },
         )?;
-        if self.ownership.allocation_visits.values().any(|visit| !sites.contains(&visit.source)) {
+        if self.ownership.allocation_visits.values().any(|visit| !sites.contains(&visit.site)) {
             return Err(super::model::unsupported(
                 &self.body.span,
                 "an allocation detached from its source site",

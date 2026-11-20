@@ -6,7 +6,7 @@
 //! Records describe executable effects, excluding erased proof-state updates.
 
 use crate::ast::*;
-use crate::messages::Span;
+use crate::messages::{AstId, Span};
 use crate::resource::memory::heap::{OwnerPath, OwnerSlot};
 use std::collections::{HashMap, HashSet};
 
@@ -307,7 +307,7 @@ pub(in super::super) struct Checked {
     /// Caller-side lifetime mappings published after a template is committed.
     pub(in super::super) call_origins: HashMap<u64, CallOrigins>,
     /// Constructor visits for fixed heap objects and logical vector backings.
-    pub(in super::super) allocation_visits: HashMap<u64, super::super::accounting::AllocationVisit>,
+    pub(in super::super) allocation_visits: HashMap<u64, super::super::workers::SourceVisit<AstId>>,
     /// Additional borrowed-input and operation-derived lifetime identities.
     regions: usize,
     /// Ordered writes let operation-local loans distinguish mutation from reads.
@@ -354,14 +354,7 @@ impl Checked {
                 }
                 _ => continue,
             };
-            if !fresh
-                || occurrence.site.anchor != *site
-                || occurrence.actor != actor
-                || occurrence
-                    .coordinates
-                    .iter()
-                    .any(|(_, ordinal)| !matches!(&*ordinal.typ, TypX::Int(_)))
-            {
+            if !fresh || occurrence.site.anchor != *site || !occurrence.valid_for(actor) {
                 return Err(super::super::model::unsupported(
                     span,
                     "an invalid synchronization occurrence binder",
