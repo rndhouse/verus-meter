@@ -14,8 +14,7 @@
 - Compiler-generated bookkeeping, ABI padding, allocator metadata, spare capacity chosen by the allocator or library, and erased proof state are outside the budget.
 - A reference held in a struct field costs the modeled size of that reference. Following it to read a field adds no copy of the pointee.
 
-## How does this apply to iteration?
+## Specific rules
 
-- In a borrowed loop, accessing the current item adds no charge for the implicit iterator, its bookkeeping, or the reference supplied just to visit the item.
-- Storing the item or its reference in an output collection charges the destination slot. A consuming loop can also keep the input's backing and unvisited payloads live.
-- The verifier currently charges hidden iteration storage. The [audit](../todo/audit-and-correct-source-accounting.md) tracks the correction.
+- [Collections](collections/README.md)
+- [Iteration](iteration.md)
