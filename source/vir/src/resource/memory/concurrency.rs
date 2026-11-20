@@ -121,6 +121,9 @@ pub struct Evidence {
     /// Exact native call points for source operations, including identity-erased
     /// calls. An absent binding cannot support an executable memory effect.
     native_sites: std::collections::BTreeMap<AstId, sites::Binding>,
+    /// Unambiguous constructor/acquire sites with native result-projection evidence.
+    pub synchronization_sites:
+        std::collections::BTreeMap<AstId, sites::Binding<super::synchronization::Operation>>,
 }
 
 impl Evidence {

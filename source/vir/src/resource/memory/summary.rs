@@ -20,8 +20,9 @@ impl BodyEffects {
         &self,
         actor: Option<super::workers::WorkerId>,
     ) -> Result<(), VirErr> {
+        let intervals = self.ownership.interval_binders(&self.body.span, actor)?;
         for phase in self.points.iter() {
-            phase.validate(&self.ownership, actor)?;
+            phase.validate(&intervals)?;
         }
         Ok(())
     }

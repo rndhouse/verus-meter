@@ -21,29 +21,46 @@ pub(super) fn resolve(
     functions: &[Function],
     evidence: &mut CompilerEvidence,
 ) {
-    for call in sites::calls(function, modes, functions, &evidence.concurrency, true) {
-        let Some(source) = crate::spans::from_raw_span(&call.span.raw_span) else { continue };
-        let Some(graph) = evidence.graph(&call.scope) else { continue };
-        let points: Vec<_> = graph.blocks.iter().enumerate().filter_map(|(block, node)| {
-            if crate::spans::from_raw_span(&node.span.raw_span) == Some(source)
-                && matches!(node.terminator, Terminator::Call { call: Call::Concurrent(operation), .. } if operation == call.operation)
-            {
-                Some(Point { block, statement: node.statements.len() })
-            } else { None }
-        }).collect();
-        if let [point] = points.as_slice() {
-            evidence.concurrency.record_native_site(
-                call.id,
-                Binding {
-                    anchor: call.anchor,
-                    scope: call.scope,
-                    point: *point,
-                    operation: call.operation,
-                    iterations: call.iterations,
-                },
-            );
+    let calls = sites::all_calls(function, modes, functions, &evidence.concurrency);
+    for call in calls.concurrent {
+        if let Some(binding) = bind(evidence, &call, |native| match native {
+            Call::Concurrent(operation) => Some(*operation),
+            _ => None,
+        }) {
+            evidence.concurrency.record_native_site(call.id, binding);
         }
     }
+    for call in calls.synchronization {
+        if let Some(binding) = bind(evidence, &call, |native| match native {
+            Call::Primitive(operation) => Some(*operation),
+            _ => None,
+        }) {
+            evidence.concurrency.synchronization_sites.insert(call.id, binding);
+        }
+    }
+}
+
+fn bind<T: Copy + Eq>(
+    evidence: &CompilerEvidence,
+    call: &sites::Call<T>,
+    resolved: impl Fn(&Call) -> Option<T>,
+) -> Option<Binding<T>> {
+    let source = crate::spans::from_raw_span(&call.span.raw_span)?;
+    let graph = evidence.graph(&call.scope)?;
+    let mut points = graph.blocks.iter().enumerate().filter_map(|(index, block)| {
+        let Terminator::Call { call: native, .. } = &block.terminator else { return None };
+        (resolved(native) == Some(call.operation)
+            && crate::spans::from_raw_span(&block.span.raw_span) == Some(source))
+        .then_some(Point { block: index, statement: block.statements.len() })
+    });
+    let point = points.next()?;
+    points.next().is_none().then(|| Binding {
+        anchor: call.anchor,
+        scope: call.scope.clone(),
+        point,
+        operation: call.operation,
+        iterations: call.iterations.clone(),
+    })
 }
 
 /// Explain binding coverage only when the user explicitly requests tracing.

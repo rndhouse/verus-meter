@@ -80,6 +80,9 @@ impl Trace<'_> {
                 guard.typ = value.typ.clone();
                 Some(Value::Owner(guard))
             }
+            Operation::MutexNew { payload, slot, .. } => {
+                self.construct(value, vec![(payload, slot)], 0)
+            }
             Operation::MutexLock { receiver, .. } => {
                 self.value(&receiver)?;
                 // The lock result owns a release effect. There is no separate

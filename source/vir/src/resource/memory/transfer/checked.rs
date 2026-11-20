@@ -123,12 +123,18 @@ pub(in super::super) struct WorkerPublication {
 pub(in super::super) enum Operation {
     /// A proved-success Result extraction moves its release responsibility.
     GuardExtract { source: Expr },
+    /// The protected root retains its constructor occurrence independently of moves.
+    MutexNew {
+        payload: Expr,
+        slot: Option<OwnerSlot>,
+        instance: super::super::synchronization::Instance,
+        occurrence: super::super::synchronization::local::Occurrence,
+    },
     /// A normal blocking acquisition owns a guard in either Result variant.
     MutexLock {
         receiver: Expr,
         interval: super::super::synchronization::local::Interval,
-        actor: Option<super::super::workers::WorkerId>,
-        coordinates: Vec<(u64, Expr)>,
+        occurrence: super::super::synchronization::local::Occurrence,
     },
     /// A finite iterator operation accepted by its layout and operation adapter.
     Iterator(crate::resource::memory::iterators::Operation),
@@ -310,14 +316,40 @@ impl Checked {
         self.operations.values().any(|op| matches!(op, Operation::MutexLock { .. }))
     }
 
-    pub(in super::super) fn binds_interval(
+    /// Validate native construction and acquisition binders once per body.
+    pub(in super::super) fn interval_binders(
         &self,
-        id: super::super::synchronization::local::Interval,
-        worker: Option<super::super::workers::WorkerId>,
-    ) -> bool {
-        self.operations.values().any(|op| matches!(op,
-            Operation::MutexLock { interval, actor, coordinates, .. }
-                if *interval == id && *actor == worker && coordinates.iter().all(|(_, ordinal)| matches!(&*ordinal.typ, TypX::Int(_)))))
+        span: &crate::messages::Span,
+        actor: Option<super::super::workers::WorkerId>,
+    ) -> Result<std::collections::BTreeSet<super::super::synchronization::local::Interval>, VirErr>
+    {
+        let mut instances = std::collections::BTreeSet::new();
+        let mut intervals = std::collections::BTreeSet::new();
+        for (site, operation) in &self.operations {
+            let (occurrence, fresh) = match operation {
+                Operation::MutexNew { instance, occurrence, .. } => {
+                    (occurrence, instances.insert(*instance))
+                }
+                Operation::MutexLock { interval, occurrence, .. } => {
+                    (occurrence, intervals.insert(*interval))
+                }
+                _ => continue,
+            };
+            if !fresh
+                || occurrence.site.anchor != *site
+                || occurrence.actor != actor
+                || occurrence
+                    .coordinates
+                    .iter()
+                    .any(|(_, ordinal)| !matches!(&*ordinal.typ, TypX::Int(_)))
+            {
+                return Err(super::super::model::unsupported(
+                    span,
+                    "an invalid synchronization occurrence binder",
+                ));
+            }
+        }
+        Ok(intervals)
     }
 
     /// Local construction outside the actor's repeatable loops.

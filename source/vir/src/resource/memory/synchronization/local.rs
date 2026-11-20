@@ -21,6 +21,15 @@ pub(in super::super) struct Interval {
     pub(in super::super) acquisition: Acquisition,
 }
 
+/// Dynamic visits to one checked native constructor or acquisition. Worker
+/// publication coordinates precede the enclosing loops of the actor itself.
+#[derive(Clone)]
+pub(in super::super) struct Occurrence {
+    pub(in super::super) site: super::super::concurrency::sites::Binding<Operation>,
+    pub(in super::super) actor: Option<super::super::workers::WorkerId>,
+    pub(in super::super) coordinates: Vec<(u64, Expr)>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in super::super) enum Owned {
     Mutex(Instance),
@@ -55,6 +64,34 @@ impl Owner {
 }
 
 impl Analysis<'_> {
+    fn synchronization_occurrence(&self, expr: &Expr, op: Operation) -> Result<Occurrence, VirErr> {
+        let site = self
+            .concurrency
+            .synchronization_sites
+            .get(&expr.span.id)
+            .filter(|site| site.operation == op && site.anchor == expr.span.id)
+            .ok_or_else(|| {
+                unsupported(
+                    &expr.span,
+                    "a synchronization effect without its executable primitive call",
+                )
+            })?;
+        let local = self.local_occurrences(&expr.span)?;
+        if !local.iter().map(|(site, _)| *site).eq(site.iterations.iter().map(|visit| visit.site)) {
+            return Err(unsupported(
+                &expr.span,
+                "a synchronization site without its local loop occurrence",
+            ));
+        }
+        let mut coordinates = self
+            .current_worker
+            .and_then(|actor| self.growth.worker_occurrences.get(&actor))
+            .cloned()
+            .unwrap_or_default();
+        coordinates.extend(local);
+        Ok(Occurrence { site: site.clone(), actor: self.current_worker, coordinates })
+    }
+
     fn mutex_receiver(&self, argument: &Expr) -> Option<Instance> {
         match &argument.x {
             ExprX::ReadPlace(place, _) => {
@@ -137,9 +174,11 @@ impl Analysis<'_> {
                 };
                 self.transitions.operation(
                     &expr.span,
-                    checked::Operation::Aggregate {
-                        fields: vec![(argument.clone(), slot)],
-                        tag: 0,
+                    checked::Operation::MutexNew {
+                        payload: argument.clone(),
+                        slot,
+                        instance,
+                        occurrence: self.synchronization_occurrence(expr, operation)?,
                     },
                 );
 
@@ -158,8 +197,7 @@ impl Analysis<'_> {
                     checked::Operation::MutexLock {
                         receiver: argument.clone(),
                         interval,
-                        coordinates: self.local_occurrences(&expr.span)?,
-                        actor: self.current_worker,
+                        occurrence: self.synchronization_occurrence(expr, operation)?,
                     },
                 );
                 Ok(Some(Owner {
@@ -176,8 +214,7 @@ impl crate::resource::memory::accounting::Point {
     /// Only checked source binders in this actor can constrain its footprint.
     pub(in super::super) fn validate(
         &self,
-        checked: &crate::resource::memory::transfer::Checked,
-        actor: Option<crate::resource::memory::workers::WorkerId>,
+        intervals: &std::collections::BTreeSet<Interval>,
     ) -> Result<(), VirErr> {
         let changed = match self.condition.boundary {
             Boundary::Wait(interval) | Boundary::Release(interval) => Some(interval),
@@ -190,7 +227,7 @@ impl crate::resource::memory::accounting::Point {
                 .iter()
                 .copied()
                 .chain(changed)
-                .any(|interval| !checked.binds_interval(interval, actor))
+                .any(|interval| !intervals.contains(&interval))
         {
             return Err(unsupported(
                 &self.span,

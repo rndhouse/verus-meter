@@ -33,7 +33,7 @@ pub enum LoopPart {
 
 /// One executable source operation before functional identity erasure.
 #[derive(Clone)]
-pub struct Call {
+pub struct Call<T = Operation> {
     /// Native call identity; erased calls can share an accounting anchor.
     pub id: AstId,
     /// Source expression retained for generated proof obligations.
@@ -43,7 +43,7 @@ pub struct Call {
     /// Actual function/closure body whose graph contains the call.
     pub scope: Fun,
     /// Resolved primitive, independent of source spelling or specifications.
-    pub operation: Operation,
+    pub operation: T,
     /// Enclosing local loop regions, from outermost to innermost. A closure
     /// body starts a new local context; its parent's visits belong to its
     /// invocation identity, not to the child's local iteration counters.
@@ -52,7 +52,7 @@ pub struct Call {
 
 /// An exact compiler point, not an assumed operation count or completion fact.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Binding {
+pub struct Binding<T = Operation> {
     /// Surviving source expression where accounting obligations attach.
     pub anchor: AstId,
     /// Function-local graph namespace, distinct from a thread occurrence.
@@ -60,9 +60,18 @@ pub struct Binding {
     /// Terminator point in the original drop-elaborated control graph.
     pub point: super::super::synchronization::flow::Point,
     /// Primitive executed at that point.
-    pub operation: Operation,
+    pub operation: T,
     /// Local repeated-region binders required by this source operation.
     pub iterations: Vec<Iteration>,
+}
+
+/// Source sites collected together under one control-flow and erasure policy.
+#[derive(Default)]
+pub struct Calls {
+    /// Thread and shared-ownership operations.
+    pub concurrent: Vec<Call>,
+    /// Native synchronization operations, with the same exact source namespace.
+    pub synchronization: Vec<Call<super::super::synchronization::Operation>>,
 }
 
 /// Collect runtime operations using the same erasure boundaries as accounting.
@@ -75,7 +84,17 @@ pub fn calls(
     evidence: &Evidence,
     include_closure_bodies: bool,
 ) -> Vec<Call> {
-    collect(function, &modes.var_modes, functions, evidence, include_closure_bodies)
+    collect(function, &modes.var_modes, functions, evidence, include_closure_bodies).concurrent
+}
+
+/// Include all executable primitive calls when resolving their compiler points.
+pub fn all_calls(
+    function: &Function,
+    modes: &crate::resolution_inference::ResolutionInfo,
+    functions: &[Function],
+    evidence: &Evidence,
+) -> Calls {
+    collect(function, &modes.var_modes, functions, evidence, true)
 }
 
 fn collect(
@@ -84,7 +103,7 @@ fn collect(
     functions: &[Function],
     evidence: &Evidence,
     include_closure_bodies: bool,
-) -> Vec<Call> {
+) -> Calls {
     struct Collect<'a> {
         modes: &'a HashMap<VarIdent, Mode>,
         functions: &'a [Function],
@@ -93,12 +112,12 @@ fn collect(
         iterations: Vec<Iteration>,
         include_closures: bool,
         seen: BTreeSet<AstId>,
-        calls: Vec<Call>,
+        calls: Calls,
     }
     impl Collect<'_> {
         fn record(&mut self, id: AstId, anchor: AstId, span: &Span, operation: Operation) {
             if self.seen.insert(id) {
-                self.calls.push(Call {
+                self.calls.concurrent.push(Call {
                     id,
                     anchor,
                     span: span.clone(),
@@ -168,6 +187,19 @@ fn collect(
                         operation,
                     );
                 }
+                if let Some(ResourceIntrinsic::Synchronization(operation)) =
+                    attrs.resource_intrinsic
+                    && self.seen.insert(expression.span.id)
+                {
+                    self.calls.synchronization.push(Call {
+                        id: expression.span.id,
+                        anchor: expression.span.id,
+                        scope: self.scope.clone(),
+                        span: expression.span.clone(),
+                        iterations: self.iterations.clone(),
+                        operation,
+                    });
+                }
                 if let Some(callee) = self.functions.iter().find(|callee| callee.x.name == *target)
                 {
                     if callee.x.mode != Mode::Exec {
@@ -208,7 +240,7 @@ fn collect(
         iterations: vec![],
         include_closures: include_closure_bodies,
         seen: BTreeSet::new(),
-        calls: vec![],
+        calls: Calls::default(),
     };
     if let Some(body) = &function.x.body {
         let _ = collect.visit_expr(body);
@@ -222,7 +254,7 @@ pub(in super::super) fn validate(
     functions: &[Function],
     evidence: &super::super::synchronization::CompilerEvidence,
 ) -> Result<(), VirErr> {
-    for call in collect(function, modes, functions, &evidence.concurrency, false) {
+    for call in collect(function, modes, functions, &evidence.concurrency, false).concurrent {
         if !bound(&call, evidence) {
             return Err(super::super::model::unsupported(
                 &call.span,
@@ -248,7 +280,7 @@ pub(in super::super) fn validate_workers(
             evidence.concurrency.closures.get(id).map(|closure| closure.function.clone())
         })
         .collect();
-    for call in collect(function, modes, functions, &evidence.concurrency, true) {
+    for call in collect(function, modes, functions, &evidence.concurrency, true).concurrent {
         if scopes.contains(&call.scope) && !bound(&call, evidence) {
             return Err(super::super::model::unsupported(
                 &call.span,
