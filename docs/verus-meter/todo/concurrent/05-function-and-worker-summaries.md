@@ -62,31 +62,60 @@ VIR memory unit tests, 47 resource examples and 133 upstream function and closur
 One VIR test and one upstream test are marked ignored. Formatting and the affected Clippy
 checks passed.
 
+## Shared mutex payloads in `b8e289e04`
+
+A fixed worker can now use its captured `Arc<Mutex<T>>` even while another actor owns
+an alias. At the first owning access through a live guard, the verifier binds the
+payload type, allocation root and acquisition to the worker’s source operation. A
+guard borrow in a helper uses that same state. At release, the worker records its
+outgoing allocation tree, logical vector length, reservation and allocation origins.
+A worker can move the guard through nested helpers to a helper that drops it. This
+preserves the payload when the calls leave it untouched. The native lock result still
+determines which paths own a guard. At first access and release, Verus checks that the
+allocation tree describes exactly the bytes entering or leaving the worker’s account.
+
+The executable regressions in
+`source/rust_verify_test/tests/resource/memory/synchronization/shared_payloads.rs`
+exercise two workers pushing and popping, a guard-taking helper, reversed joins and two
+independent mutexes of the same type. For a shared `Box<[u8; 32]>`, the worker’s
+current-storage check is exact at 73 bytes outside the guard and 81 inside. Both
+one-byte-short checks fail. A worker that replaces a shared vector of unknown length
+with an empty vector and pushes one 32-byte box passes a 105-byte check under the guard
+and fails at 104.
+These are current-storage bounds at the source assertions. The discarded input can still
+contribute to an earlier peak.
+
+Validation passed all 1,201 memory integration tests, including 58 synchronization tests,
+88 VIR memory unit tests, 47 resource examples and 133 upstream function and closure
+tests. One VIR test and one upstream test are marked ignored. Formatting and the
+affected Clippy checks passed.
+
 ## Remaining shared payload work
 
-Two workers can hold strong handles to the same mutex while acquiring it in either order.
-Today a worker knows the mutex identity and its strong-handle count. It has no description
-of the contents another holder could leave behind. A two-worker program that pushes and
-pops from the same vector is therefore rejected at the first protected write even with a
-4,096-byte allowance.
-
-- [ ] At each acquiring outcome, bind the current contents to the canonical root and guard
-  interval, including worker and loop occurrence. Carry allocation origins, logical
-  length, reservation and owned elements. Guard moves and helper calls reuse that binding.
-  A poisoned result owns the acquisition. `WouldBlock` opens none.
-- [ ] Use checked operations and ownership templates to describe the contents before and
-  after a write. Keep old and new allocations charged while they coexist. When a pop moves
-  an allocation into a result, connect its caller-side ownership path to the generating
-  exit and forest projection. It can survive unlock and the final drop of the mutex.
-- [ ] Publish the updated contents at release. A subsequent acquisition of the same root
-  reads the state left by the previous holder. Different roots remain independent. Worker
-  checkpoints currently get imported backing costs at publication in
-  `source/vir/src/resource/memory/shared/phases.rs`. Mutable backing needs its cost at
-  the checkpoint. Join transfers results and strong handles. Replaying writes in join
-  order would lose legal updates.
-- [ ] Test two outstanding writers with distinguishable legal outcomes, reversed joins,
-  direct and factored operations, a retained popped box, and a one-byte-short local bound.
-  Until the effects are available, reject use of stale contents.
+- [x] Bind supported owning accesses in fixed workers to the actual captured mutex,
+  guard and occurrence. Keep borrow, pop, replacement and release effects tied to
+  executable operations. Reject a projected child supplied as the whole cell.
+- [x] Count fixed-shape contents once at worker checkpoints. Reject use of an earlier
+  vector size at a worker checkpoint, in the owning actor after join, or on unique
+  extraction after a peer update. Join order supplies no ordering between writes.
+- [ ] Expose the initial protected state and each checked release as alternatives for
+  the next acquisition of the same root. Preserve source conditions, occurrence
+  identities and allocation origins across proof scopes. Express the outgoing tree in
+  terms of the incoming tree and checked inputs so a caller can instantiate the relation
+  without referring to another worker’s local proof variables. Include the unchanged state
+  on paths that never modify the payload. A vector input is currently arbitrary at
+  each acquisition. The two-worker push/pop program still cannot prove its 4,096-byte
+  allowance. Test both possible acquisition orders and preserve the transient cost
+  while a replacement and the value it displaces coexist. TODO 07 owns the proof
+  that all permitted interleavings satisfy the total bound.
+- [ ] Connect a popped allocation returned from a worker to the incoming element it
+  selected. Check the empty and nonempty outcomes and a one-byte-short bound after it
+  escapes the guard. A later observation or extraction of dynamic contents must use
+  the state at that point.
+- [ ] Carry these transformations through helpers that both change contents and
+  consume the guard, multiple access paths under one acquisition, and loop-selected
+  shared roots. Indexed backing reservations still require a consistent ownership
+  relation for the selected occurrence. Keep unsupported cases explicit.
 
 05 supplies the body-checked transitions. 06 supplies the verified protocol and permit
 contracts. 07 proves that the global bound covers the allowed orderings.
