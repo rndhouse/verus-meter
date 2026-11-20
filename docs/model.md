@@ -12,6 +12,10 @@ contract syntax, heap ownership, loops, and expected failures.
 - `value_size(T)` measures inline storage, excluding separate allocations;
   `ref_size(&T)` measures a reference, excluding its pointee. Both also accept
   binding names.
+- `return_size(helper)` measures the inline size of one result using the named
+  function's declared return type. The function needs no resource contract.
+  For example, a `u16` result takes two bytes and a `Vec<u16>` result counts
+  the vector handle. The query never calls the helper.
 - `peak(helper(arguments))` queries the helper's declared allowance for those
   arguments, without executing it. `peak(helper)` takes its maximum allowance.
 - `assert(peak(memory) <= bound)` checks the peak so far;

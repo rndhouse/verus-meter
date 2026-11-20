@@ -149,8 +149,9 @@ impl Printer {
                 self.expr(&Expr::Call(call.clone()), FixupContext::NONE);
                 self.word(")");
             }
-            ResourceExpr::Peak(_, _, function) => {
-                self.word("peak(");
+            ResourceExpr::Peak(name, _, function) | ResourceExpr::ReturnSize(name, _, function) => {
+                self.ident(name);
+                self.word("(");
                 self.expr_path(function);
                 self.word(")");
             }

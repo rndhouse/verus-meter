@@ -143,6 +143,7 @@ impl<'a> Extractor<'a> {
                 let size = self.size(name, ty, env)?;
                 Ok(self.retain_size(size).tokens)
             }
+            ResourceExpr::ReturnSize(_, _, function) => Ok(self.return_size(function)?.tokens),
             ResourceExpr::PeakCall(_, _, call) => self.peak_call(call, env),
             ResourceExpr::Peak(..) => Err(error(
                 budget,
@@ -193,6 +194,44 @@ impl<'a> Extractor<'a> {
         };
         Ok(super::super::memory::runtime::size(name, ty))
     }
+
+    /// Use the source declaration for arity only. Rust resolves the function item
+    /// and its actual output (including aliases and borrowed results) at the site.
+    fn return_size(&mut self, target: &verus_syn::ExprPath) -> verus_syn::Result<Binding> {
+        let same_scope = || {
+            error(target, "runtime return_size requires a function in the same verus item scope")
+        };
+        if target.qself.is_some()
+            || target.path.leading_colon.is_some()
+            || target.path.segments.len() != 1
+        {
+            return Err(same_scope());
+        }
+        let name = target.path.segments[0].ident.unraw().to_string();
+        let function = self.functions.get(&name).ok_or_else(same_scope)?;
+        if !super::attributes::configuration(&function.attrs).is_empty()
+            || !matches!(function.sig.mode, FnMode::Exec(_) | FnMode::Default)
+            || function.sig.inputs.iter().any(|arg| arg.tracked.is_some())
+            || matches!(function.sig.output, ReturnType::Type(_, Some(_), _, _))
+            || function.sig.unsafety.is_some()
+            || function.sig.abi.is_some()
+        {
+            return Err(error(
+                target,
+                "runtime return_size requires an unconditional safe Rust exec function with executable parameters and result",
+            ));
+        }
+        let args: Vec<_> =
+            (0..function.sig.inputs.len()).map(|index| quote::format_ident!("A{index}")).collect();
+        let witness = quote!(::verus_meter_runtime::return_bytes({
+            const fn output_type<#(#args,)* R>(_: fn(#(#args),*) -> R) -> ::core::marker::PhantomData<R> {
+                ::core::marker::PhantomData
+            }
+            output_type
+        }(#target)));
+        Ok(self.retain_size(quote!(::verus_meter_runtime::Expression::constant(#witness))))
+    }
+
     fn expression(&mut self, expr: &Expr, env: &Environment) -> verus_syn::Result<Binding> {
         let integer = quote!(::verus_meter_runtime::Expression);
         let boolean = quote!(::verus_meter_runtime::BooleanExpression);
@@ -369,6 +408,13 @@ impl<'a> Extractor<'a> {
         let name = path.path.get_ident().ok_or_else(|| {
             error(call, "runtime spec helpers must be named in the same verus item scope")
         })?;
+        if name == "return_size" {
+            let ResourceExpr::ReturnSize(_, _, target) = verus_syn::parse2(call.to_token_stream())?
+            else {
+                return Err(error(call, "return_size expects a named function"));
+            };
+            return self.return_size(&target);
+        }
         if ResourceExpr::is_size_query(name) {
             let ResourceExpr::Size(query, _, ty) = verus_syn::parse2(call.to_token_stream())?
             else {

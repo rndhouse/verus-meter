@@ -6047,6 +6047,12 @@ impl Debug for Lite<syn::ResourceExpr> {
                 formatter.field(Lite(_v2));
                 formatter.finish()
             }
+            syn::ResourceExpr::ReturnSize(_v0, _v1, _v2) => {
+                let mut formatter = formatter.debug_tuple("ResourceExpr::ReturnSize");
+                formatter.field(Lite(_v0));
+                formatter.field(Lite(_v2));
+                formatter.finish()
+            }
             syn::ResourceExpr::Peak(_v0, _v1, _v2) => {
                 let mut formatter = formatter.debug_tuple("ResourceExpr::Peak");
                 formatter.field(Lite(_v0));

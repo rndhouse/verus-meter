@@ -4569,6 +4569,13 @@ where
                 f.fold_type(_binding_2),
             )
         }
+        crate::ResourceExpr::ReturnSize(_binding_0, _binding_1, _binding_2) => {
+            crate::ResourceExpr::ReturnSize(
+                f.fold_ident(_binding_0),
+                _binding_1,
+                f.fold_expr_path(_binding_2),
+            )
+        }
         crate::ResourceExpr::Peak(_binding_0, _binding_1, _binding_2) => {
             crate::ResourceExpr::Peak(
                 f.fold_ident(_binding_0),

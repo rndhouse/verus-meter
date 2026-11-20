@@ -36,6 +36,29 @@ pub trait ReferenceSize: sealed::Reference {
     const BYTES: u64;
 }
 
+/// Inferred category for a return type. This trait stays inside the private
+/// layout module so only the existing sealed size implementations supply bytes.
+pub trait ReturnSize<const REFERENCE: bool> {
+    /// Result bytes under the shared source model.
+    const BYTES: u64;
+}
+
+impl<T: ValueSize> ReturnSize<false> for T {
+    const BYTES: u64 = <T as ValueSize>::BYTES;
+}
+
+impl<T: ReferenceSize> ReturnSize<true> for T {
+    const BYTES: u64 = <T as ReferenceSize>::BYTES;
+}
+
+/// Read a function result's inline layout without constructing the result.
+#[doc(hidden)]
+pub const fn return_bytes<T: ReturnSize<REFERENCE>, const REFERENCE: bool>(
+    _: core::marker::PhantomData<T>,
+) -> u64 {
+    T::BYTES
+}
+
 mod sealed {
     pub trait Value {}
 

@@ -666,6 +666,7 @@ fn verus_item_to_vir<'tcx, 'a>(
                     | SpecItem::ResourceRefSizeValue
                     | SpecItem::ResourceValueSizeValue
                     | SpecItem::ResourceRefSizeType
+                    | SpecItem::ResourceReturnSize
                     | SpecItem::ResourceValueSizeType
                     | SpecItem::ResourcePeak
                     | SpecItem::ResourcePeakCall
@@ -977,12 +978,18 @@ fn verus_item_to_vir<'tcx, 'a>(
                 SpecItem::ResourceValueSizeValue
                 | SpecItem::ResourceRefSizeValue
                 | SpecItem::ResourceRefSizeType
+                | SpecItem::ResourceReturnSize
                 | SpecItem::ResourceValueSizeType => {
                     // Size operands supply a type, not a value. Erase the whole
                     // call: basic checks would revisit ghost locals whose uses
                     // are intentionally absent from VIR and mode checking.
                     record_call(bctx, expr, ResolvedCall::MiscEraseAbsolutely);
-                    let typ = bctx.mid_ty_to_vir(expr.span, &node_substs.type_at(0))?;
+                    let (typ, query) = crate::resource::memory::budget::size_operand(
+                        bctx,
+                        expr.span,
+                        *spec_item,
+                        node_substs.type_at(0),
+                    )?;
                     let target = CallTarget::Fun(
                         vir::ast::CallTargetKind::Static,
                         Arc::new(FunX { path: bctx.ctxt.def_id_to_vir_path(f) }),
@@ -992,16 +999,7 @@ fn verus_item_to_vir<'tcx, 'a>(
                             autospec: AutospecUsage::Final,
                             const_var: false,
                             assume_external_allowed: false,
-                            resource_intrinsic: Some(
-                                if matches!(
-                                    spec_item,
-                                    SpecItem::ResourceRefSizeType | SpecItem::ResourceRefSizeValue
-                                ) {
-                                    vir::ast::ResourceIntrinsic::RefSize
-                                } else {
-                                    vir::ast::ResourceIntrinsic::ValueSize
-                                },
-                            ),
+                            resource_intrinsic: Some(query),
                         },
                     );
                     mk_expr(ExprX::Call {

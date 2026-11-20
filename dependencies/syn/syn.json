@@ -6431,6 +6431,17 @@
             "syn": "Type"
           }
         ],
+        "ReturnSize": [
+          {
+            "proc_macro2": "Ident"
+          },
+          {
+            "group": "Paren"
+          },
+          {
+            "syn": "ExprPath"
+          }
+        ],
         "Peak": [
           {
             "proc_macro2": "Ident"

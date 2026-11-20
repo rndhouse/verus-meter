@@ -385,3 +385,29 @@ fn main() {
     succeeds(&output);
     succeeds(&Command::new(executable).output().unwrap());
 }
+
+#[test]
+#[ignore = "requires prepared verifier and runtime bundle; see runtime README"]
+fn return_layouts_follow_the_function_signature_without_calling_it() {
+    let source = r#"
+use vstd::prelude::*;
+type Sum = u16;
+verus! {
+    fn output_type(n: u8) -> Sum requires n > 0 { n as u16 }
+    fn view(bytes: &[u8], _: bool) -> &[u8] { bytes }
+    fn buffer() -> Vec<u32> { Vec::new() }
+    spec fn borrowed_bytes() -> nat { return_size(view) }
+    #[queryable_peak_memory]
+    fn queried() resources peak(memory) <= return_size(output_type) + borrowed_bytes() + return_size(buffer) {
+        assert(return_size(output_type) + borrowed_bytes() + return_size(buffer) == 42);
+    }
+}
+fn main() {
+    assert_eq!(queried::peak_memory_bound().unwrap().to_u64(), Ok(42));
+}
+"#;
+    let directory = tempfile::tempdir().unwrap();
+    let (output, executable) = compile(source, directory.path());
+    succeeds(&output);
+    succeeds(&Command::new(executable).output().unwrap());
+}

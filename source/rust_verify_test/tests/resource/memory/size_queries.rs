@@ -80,3 +80,51 @@ test_verify_one_file! {
         proof fn sizes() { let n = value_size(Borrowed); }
     } => Err(err) => assert_vir_error_msg(err, "reference or decorated struct fields")
 }
+
+test_verify_one_file! {
+    #[test] return_size_uses_the_instantiated_signature verus_code! {
+        use vstd::prelude::*;
+        type Sum = u16;
+        mod packet {
+            use vstd::prelude::*;
+            pub fn checksum(byte: u8) -> super::Sum requires byte > 0 { byte as u16 }
+        }
+        fn identity<T>(value: T) -> T { value }
+        fn view(bytes: &[u8]) -> &[u8] { bytes }
+        fn no_result() {}
+        spec fn bytes() -> nat { return_size(packet::checksum) }
+        proof fn layouts() {
+            assert(bytes() == value_size(Sum));
+            assert(return_size(identity::<Vec<u16>>) == value_size(Vec<u16>));
+            assert(return_size(view) == ref_size(&[u8]));
+            assert(return_size(no_result) == 0);
+        }
+        fn section() resources peak(memory) <= return_size(packet::checksum) {
+            resources peak(memory) <= return_size(packet::checksum) {
+                let x = 1u16;
+                assert(current(memory) <= return_size(packet::checksum));
+            }
+        }
+        fn by_count(count: u32)
+            requires count > 0,
+            resources peak(memory) <= value_size(count) + count * return_size(packet::checksum)
+        {
+            let result = 1u16;
+        }
+    } => Ok(())
+}
+
+test_verify_one_file! {
+    #[test] return_size_checks_the_budget verus_code! {
+        fn byte() -> u8 { 0 }
+        fn exceeds() resources peak(memory) <= return_size(byte) {
+            let x = 0u16;
+        }
+    } => Err(err) => assert_vir_error_msg(err, "peak 2 bytes exceeds budget 1 byte")
+}
+
+test_verify_one_file! {
+    #[test] return_size_rejects_nonfunctions verus_code! {
+        proof fn sizes(x: u32) { let n = return_size(x); }
+    } => Err(err) => assert_vir_error_msg(err, "return_size expects a named function")
+}

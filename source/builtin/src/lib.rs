@@ -205,6 +205,14 @@ pub fn resource_ref_size_type<T: ?Sized>() -> u64 {
     unimplemented!()
 }
 
+/// Erased marker selecting a named function's result layout from its signature.
+#[cfg(verus_keep_ghost)]
+#[rustc_diagnostic_item = "verus::verus_builtin::resource_return_size"]
+#[verifier::spec]
+pub fn resource_return_size<F>(_function: &F) -> u64 {
+    unimplemented!()
+}
+
 /// Erased query for a helper's declared budget, without executing the helper.
 #[cfg(verus_keep_ghost)]
 #[rustc_diagnostic_item = "verus::verus_builtin::resource_peak"]

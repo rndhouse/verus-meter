@@ -5,10 +5,44 @@ use crate::util::err_span;
 use crate::verus_items::{SpecItem, VerusItem};
 use rustc_ast::LitKind;
 use rustc_hir::{BinOpKind, Expr, ExprKind};
-use rustc_middle::ty::TyKind;
+use rustc_middle::ty::{Ty, TyKind, TypingEnv};
 use vir::ast::VirErr;
 use vir::def::Spanned;
 use vir::resource::memory::{BudgetExpr, BudgetExprX};
+
+/// Resolve the layout operand once for both budget clauses and ordinary proofs.
+/// A function item supplies its instantiated output type, with no call edge.
+pub(crate) fn size_operand<'tcx>(
+    bctx: &BodyCtxt<'tcx>,
+    span: rustc_span::Span,
+    item: SpecItem,
+    operand: Ty<'tcx>,
+) -> Result<(vir::ast::Typ, vir::ast::ResourceIntrinsic), VirErr> {
+    use vir::ast::ResourceIntrinsic::{RefSize, ValueSize};
+    let (typ, query) = match item {
+        SpecItem::ResourceReturnSize => {
+            let TyKind::FnDef(id, args) = operand.kind() else {
+                return err_span(span, "return_size expects a named function");
+            };
+            let tcx = bctx.ctxt.tcx;
+            let args = crate::rust_to_vir_base::fn_def_args(*args, span)?;
+            let sig = tcx
+                .try_normalize_erasing_regions(
+                    TypingEnv::post_analysis(tcx, bctx.fun_id),
+                    tcx.fn_sig(*id).instantiate(tcx, args),
+                )
+                .map_err(|_| {
+                    crate::util::err_span_bare(span, "cannot resolve the return_size result type")
+                })?;
+            let output = sig.output().skip_binder();
+            (output, if matches!(output.kind(), TyKind::Ref(..)) { RefSize } else { ValueSize })
+        }
+        SpecItem::ResourceRefSizeType | SpecItem::ResourceRefSizeValue => (operand, RefSize),
+        SpecItem::ResourceValueSizeType | SpecItem::ResourceValueSizeValue => (operand, ValueSize),
+        _ => unreachable!(),
+    };
+    Ok((bctx.mid_ty_to_vir(span, &typ)?, query))
+}
 
 /// Translate a memory allowance into a formula the memory checker can reason about.
 ///
@@ -112,6 +146,7 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
                 Some(VerusItem::Spec(
                     SpecItem::ResourceValueSizeValue
                     | SpecItem::ResourceRefSizeValue
+                    | SpecItem::ResourceReturnSize
                     | SpecItem::ResourcePeak,
                 )) if args.len() == 1 => {
                     let ExprKind::AddrOf(_, _, value) = args[0].kind else {
@@ -148,19 +183,16 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
                 _ => {
                     return err_span(
                         expr.span,
-                        "only value_size, ref_size, and peak queries are allowed in resource budgets",
+                        "only value_size, ref_size, return_size, and peak queries are allowed in resource budgets",
                     );
                 }
             };
-            if matches!(
-                item,
-                Some(VerusItem::Spec(
-                    SpecItem::ResourceRefSizeType | SpecItem::ResourceRefSizeValue
-                ))
-            ) {
-                BudgetExprX::RefSize(bctx.mid_ty_to_vir(expr.span, &typ)?)
-            } else {
-                BudgetExprX::ValueSize(bctx.mid_ty_to_vir(expr.span, &typ)?)
+            let Some(VerusItem::Spec(item)) = item else { unreachable!() };
+            let (typ, query) = size_operand(bctx, expr.span, *item, typ)?;
+            match query {
+                vir::ast::ResourceIntrinsic::RefSize => BudgetExprX::RefSize(typ),
+                vir::ast::ResourceIntrinsic::ValueSize => BudgetExprX::ValueSize(typ),
+                _ => unreachable!(),
             }
         }
         _ => return err_span(expr.span, "unsupported resource budget expression"),

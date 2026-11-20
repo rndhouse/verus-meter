@@ -3596,6 +3596,13 @@ impl Debug for crate::ResourceExpr {
                 formatter.field(v2);
                 formatter.finish()
             }
+            crate::ResourceExpr::ReturnSize(v0, v1, v2) => {
+                let mut formatter = formatter.debug_tuple("ReturnSize");
+                formatter.field(v0);
+                formatter.field(v1);
+                formatter.field(v2);
+                formatter.finish()
+            }
             crate::ResourceExpr::Peak(v0, v1, v2) => {
                 let mut formatter = formatter.debug_tuple("Peak");
                 formatter.field(v0);

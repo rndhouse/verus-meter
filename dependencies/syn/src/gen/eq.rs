@@ -2522,6 +2522,10 @@ impl PartialEq for crate::ResourceExpr {
                 crate::ResourceExpr::Size(other0, _, other2),
             ) => self0 == other0 && self2 == other2,
             (
+                crate::ResourceExpr::ReturnSize(self0, _, self2),
+                crate::ResourceExpr::ReturnSize(other0, _, other2),
+            ) => self0 == other0 && self2 == other2,
+            (
                 crate::ResourceExpr::Peak(self0, _, self2),
                 crate::ResourceExpr::Peak(other0, _, other2),
             ) => self0 == other0 && self2 == other2,

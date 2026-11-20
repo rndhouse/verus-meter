@@ -7,7 +7,7 @@ mod expression;
 mod layout;
 
 #[doc(hidden)]
-pub use layout::{ReferenceSize, ValueSize};
+pub use layout::{ReferenceSize, ValueSize, return_bytes};
 
 #[doc(hidden)]
 pub use expression::{

@@ -258,6 +258,8 @@ ast_enum! {
         Mul(Box<ResourceExpr>, Token![*], Box<ResourceExpr>),
         /// A model-size query, preserving its written name.
         Size(Ident, token::Paren, Type),
+        /// Inline size of the declared result of a named function.
+        ReturnSize(Ident, token::Paren, ExprPath),
         Peak(Ident, token::Paren, ExprPath),
         PeakCall(Ident, token::Paren, ExprCall),
         If(Token![if], Box<Expr>, token::Brace, Box<ResourceExpr>, Token![else], token::Brace, Box<ResourceExpr>),
@@ -1536,10 +1538,9 @@ pub mod parsing {
         // Verus, rather than the parser, checks that the target is a spec function.
         let ahead = input.fork();
         let path = ahead.parse::<ExprPath>()?;
-        let query = path
-            .path
-            .get_ident()
-            .is_some_and(|name| ResourceExpr::is_size_query(name) || name == "peak");
+        let query = path.path.get_ident().is_some_and(|name| {
+            ResourceExpr::is_size_query(name) || name == "return_size" || name == "peak"
+        });
         if !query && ahead.peek(token::Paren) {
             let function: ExprPath = input.parse()?;
             let mut function = Expr::Path(function);
@@ -1560,11 +1561,11 @@ pub mod parsing {
             }
         }
         let name: Ident = input.parse()?;
-        if !ResourceExpr::is_size_query(&name) && name != "peak" {
+        if !ResourceExpr::is_size_query(&name) && name != "return_size" && name != "peak" {
             if input.peek(token::Paren) {
                 return Err(Error::new(
                     name.span(),
-                    "expected value_size(type/parameter), ref_size(reference), or peak(function)",
+                    "expected value_size(type/parameter), ref_size(reference), return_size(function), or peak(function)",
                 ));
             }
             return Ok(ResourceExpr::Quantity(name));
@@ -1573,6 +1574,12 @@ pub mod parsing {
         let paren = parenthesized!(content in input);
         let expr = if ResourceExpr::is_size_query(&name) {
             ResourceExpr::Size(name, paren, content.parse()?)
+        } else if name == "return_size" {
+            let function = content.parse::<ExprPath>()?;
+            if !content.is_empty() {
+                return Err(content.error("return_size expects a named function"));
+            }
+            ResourceExpr::ReturnSize(name, paren, function)
         } else {
             match content.parse::<Expr>()? {
                 Expr::Path(function) => ResourceExpr::Peak(name, paren, function),
@@ -2679,7 +2686,8 @@ mod printing {
                     name.to_tokens(tokens);
                     paren.surround(tokens, |tokens| call.to_tokens(tokens));
                 }
-                ResourceExpr::Peak(name, paren, function) => {
+                ResourceExpr::Peak(name, paren, function)
+                | ResourceExpr::ReturnSize(name, paren, function) => {
                     name.to_tokens(tokens);
                     paren.surround(tokens, |tokens| function.to_tokens(tokens));
                 }

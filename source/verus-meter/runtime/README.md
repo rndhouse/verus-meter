@@ -43,7 +43,10 @@ verification semantics are unchanged.
 
 `value_size` supports native integer and Boolean types, unit, fixed integer
 arrays, and the standard `Vec`, `Box`, and supported `Option` handles. `ref_size`
-supports references to sized values and slices. Rust resolves aliases and type
+supports references to sized values and slices. `return_size(helper)` uses
+those same layouts for the result of a named, unconditional safe Rust exec
+function in the same `verus!` item scope. It reads the signature without
+calling the function. Rust resolves aliases and type
 identity through hidden size traits; no ABI `size_of` is used. Primitive widths,
 array arithmetic, and reference widths come from `verus_meter_model`, shared with
 the existing verifier layouts. Custom structs and other types have no runtime

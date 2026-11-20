@@ -71,6 +71,9 @@ pub(in crate::syntax) fn lower_budget(
         ResourceExpr::PeakCall(_, _, call) => {
             quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_peak_call(#call))
         }
+        ResourceExpr::ReturnSize(_, _, function) => {
+            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_return_size(&#function))
+        }
         ResourceExpr::Peak(_, _, function) => {
             quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_peak(&#function))
         }
@@ -89,7 +92,9 @@ impl Visitor {
         let Expr::Path(path) = &*call.func else {
             return false;
         };
-        if !path.path.get_ident().is_some_and(verus_syn::ResourceExpr::is_size_query) {
+        if !path.path.is_ident("return_size")
+            && !path.path.get_ident().is_some_and(verus_syn::ResourceExpr::is_size_query)
+        {
             return false;
         }
         let span = expr.span();
