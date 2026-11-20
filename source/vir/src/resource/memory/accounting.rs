@@ -573,18 +573,20 @@ impl Accounting {
     }
     /// Compose a section's unrestricted total allowance without assigning it
     /// a fictitious allocation kind or retaining it after the section exits.
-    pub(super) fn section_allowance(&mut self, span: &Span, bytes: u64) -> Result<(), VirErr> {
-        let live = self
-            .live()
-            .checked_add(bytes)
-            .ok_or_else(|| unsupported(span, "storage totals exceeding u64"))?;
-        if u128::from(live) > self.report.peak {
-            self.report.peak = live.into();
-            self.peak_span = span.clone();
+    pub(super) fn section_allowance(&mut self, span: &Span, allowance: Expr) -> Result<(), VirErr> {
+        if let Some(bytes) = contracts::constant(&allowance) {
+            let live = self
+                .live()
+                .checked_add(bytes)
+                .ok_or_else(|| unsupported(span, "storage totals exceeding u64"))?;
+            if u128::from(live) > self.report.peak {
+                self.report.peak = live.into();
+                self.peak_span = span.clone();
+            }
         }
         for path in self.paths.clone() {
             let cost = Self::path_expression(&path, span)
-                .add(span, Footprint::allowance(contracts::literal(span, bytes)));
+                .add(span, Footprint::allowance(allowance.clone()));
             self.record_point(span, cost, &path);
         }
         Ok(())
@@ -831,7 +833,7 @@ mod tests {
         let s = span();
         let mut storage = Accounting::new(&s, 100);
         storage.reserve_value(&s, MemoryKind::host_local(), 8).unwrap();
-        storage.section_allowance(&s, 80).unwrap();
+        storage.section_allowance(&s, contracts::literal(&s, 80)).unwrap();
         assert_eq!(selected(&storage, MemorySelection::All), 88);
         assert_eq!(selected(&storage, MemorySelection::kind(MemoryKind::new("device.0.vram"))), 80);
         assert_eq!(storage.live(), 8);

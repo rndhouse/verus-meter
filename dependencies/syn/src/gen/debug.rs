@@ -3628,6 +3628,14 @@ impl Debug for crate::ResourceExpr {
                 formatter.field(v6);
                 formatter.finish()
             }
+            crate::ResourceExpr::Length(v0, v1, v2, v3) => {
+                let mut formatter = formatter.debug_tuple("Length");
+                formatter.field(v0);
+                formatter.field(v1);
+                formatter.field(v2);
+                formatter.field(v3);
+                formatter.finish()
+            }
         }
     }
 }

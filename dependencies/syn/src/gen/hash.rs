@@ -3224,6 +3224,11 @@ impl Hash for crate::ResourceExpr {
                 v3.hash(state);
                 v6.hash(state);
             }
+            crate::ResourceExpr::Length(v0, _, v2, _) => {
+                state.write_u8(11u8);
+                v0.hash(state);
+                v2.hash(state);
+            }
         }
     }
 }

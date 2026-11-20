@@ -179,14 +179,13 @@ fn argument_free_query_needs_an_envelope() {
 }
 
 #[test]
-fn section_still_requires_a_fixed_budget() {
-    rejects(
+fn section_can_use_a_verified_spec_budget() {
+    verifies(
         "section",
         r#"
         spec fn bytes() -> nat { 16 }
         fn f() resources peak(memory) <= 16 { resources peak(memory) <= bytes() { let a = [0u32; 4]; } }
     "#,
-        "section and checkpoint bounds remain fixed",
     );
 }
 

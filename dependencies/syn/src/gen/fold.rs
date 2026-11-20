@@ -4609,6 +4609,14 @@ where
                 Box::new(f.fold_resource_expr(*_binding_6)),
             )
         }
+        crate::ResourceExpr::Length(_binding_0, _binding_1, _binding_2, _binding_3) => {
+            crate::ResourceExpr::Length(
+                f.fold_ident(_binding_0),
+                _binding_1,
+                f.fold_ident(_binding_2),
+                _binding_3,
+            )
+        }
     }
 }
 pub fn fold_return_pat<F>(f: &mut F, node: crate::ReturnPat) -> crate::ReturnPat

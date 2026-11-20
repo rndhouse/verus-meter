@@ -2,11 +2,101 @@ use crate::common::*;
 use crate::verify_one_file;
 
 test_verify_one_file! {
-    #[test] runtime_section_bound_is_rejected verus_code! {
+    #[test] parent_must_cover_even_an_empty_symbolic_section verus_code! {
         fn f(n: u64) resources peak(memory) <= value_size(n) {
             resources peak(memory) <= n {}
         }
-    } => Err(err) => assert_vir_error_msg(err, "immutable Boolean or native integer input parameters")
+    } => Err(err) => assert_vir_error_msg(err, "conditional memory budget exceeded")
+}
+
+test_verify_one_file! {
+    #[test] slice_length_section_composes_with_result_size_and_callee_peak verus_code! {
+        use vstd::prelude::*;
+        fn checksum(byte: u8) -> u16 resources peak(memory) <= value_size(byte) + value_size(u16) {
+            byte as u16
+        }
+        fn run(packed: &[u8], limit: u32)
+            requires packed.len() <= limit,
+            resources peak(memory) <= ref_size(packed) + value_size(limit)
+                + limit * return_size(checksum) + peak(checksum),
+        {
+            resources peak(memory) <= packed.len() * return_size(checksum) + peak(checksum) {
+                if packed.len() > 0 {
+                    let result = checksum(0);
+                }
+            }
+        }
+    } => Ok(())
+}
+
+test_verify_one_file! {
+    #[test] empty_input_section_has_zero_allowance verus_code! {
+        use vstd::prelude::*;
+        fn run(packed: &[u8]) requires packed.len() == 0, resources peak(memory) <= 64 {
+            resources peak(memory) <= packed.len() { let scratch = 0u8; }
+        }
+    } => Err(err) => assert_vir_error_msg(err, "conditional memory budget exceeded")
+}
+
+test_verify_one_file! {
+    #[test] section_snapshots_the_entry_length_before_the_vector_changes verus_code! {
+        use vstd::prelude::*;
+        fn run() resources peak(memory) <= 128 {
+            let mut bytes = Vec::<u8>::with_capacity(1);
+            resources peak(memory) <= bytes.len() {
+                bytes.push(1);
+                let scratch = 0u8;
+            }
+        }
+    } => Err(err) => assert_vir_error_msg(err, "conditional memory budget exceeded")
+}
+
+test_verify_one_file! {
+    #[test] vector_length_survives_a_shrink_inside_a_nested_section verus_code! {
+        use vstd::prelude::*;
+        fn run() resources peak(memory) <= value_size(Vec<u8>) + 1 + value_size(Option<u8>) {
+            let mut bytes = Vec::<u8>::with_capacity(1);
+            bytes.push(1);
+            resources peak(memory) <= value_size(Option<u8>) {
+                resources peak(memory) <= bytes.len() * value_size(Option<u8>) {
+                    let removed = bytes.pop();
+                }
+            }
+        }
+    } => Ok(())
+}
+
+test_verify_one_file! {
+    #[test] user_defined_len_cannot_supply_a_section_length verus_code! {
+        struct Packet { size: u8 }
+        impl Packet { fn len(&self) -> usize { self.size as usize } }
+        fn run(packet: Packet) resources peak(memory) <= 64 {
+            resources peak(memory) <= packet.len() {}
+        }
+    } => Err(err) => assert_vir_error_msg(err, "section length requires a named executable slice or vector")
+}
+
+test_verify_one_file! {
+    #[test] bound_local_is_read_at_each_section_entry verus_code! {
+        use vstd::prelude::*;
+        fn run() resources peak(memory) <= 64 {
+            let mut count = 0u8;
+            while count < 2 invariant count <= 2, decreases 2 - count, {
+                resources peak(memory) <= count {
+                    count += 1;
+                    if count > 1 { let scratch = 0u8; }
+                }
+            }
+        }
+    } => Ok(())
+}
+
+test_verify_one_file! {
+    #[test] overflowing_section_allowance_rejects_even_without_allocations verus_code! {
+        fn run(n: u64) resources peak(memory) <= 18446744073709551615u64 {
+            resources peak(memory) <= n * 2 {}
+        }
+    } => Err(err) => assert_any_vir_error_msg(err, "memory budget arithmetic exceeds u64")
 }
 
 #[test]

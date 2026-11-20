@@ -40,7 +40,10 @@ pub(super) fn predicate(expr: &Expr, allowed: &HashSet<VarIdent>) -> Result<Expr
         _ => None,
     };
     if let Some(name) = variable {
-        if allowed.contains(name) {
+        // A widening cast can give the observation its mathematical integer
+        // type before substitution. Section scopes also admit collection
+        // names for length queries, so keep predicates themselves scalar.
+        if allowed.contains(name) && matches!(&*expr.typ, TypX::Bool | TypX::Int(_)) {
             return Ok(SpannedTyped::new(&expr.span, &expr.typ, ExprX::Var(name.clone())));
         }
         return Err(error(
@@ -296,6 +299,7 @@ pub(super) fn lower(
 ) -> Result<Expr, VirErr> {
     let x = match &expr.x {
         BudgetExprX::Quantity(value) => return quantity(value, allowed),
+        BudgetExprX::Length(value) => return collection_length(value, allowed),
         BudgetExprX::SpecCall(value) => {
             let value = super::resolve_size_expression(value, layouts)?;
             return super::spec_budget::validate(&value, allowed, functions);
@@ -337,6 +341,41 @@ pub(super) fn lower(
         ),
     };
     Ok(simplify(&SpannedTyped::new(&expr.span, &int_typ(), x)))
+}
+
+/// Keep a length observation pure when the section marker is erased. Only a
+/// standard length operation on an admitted binding may enter its proof formula.
+fn collection_length(expr: &Expr, allowed: &HashSet<VarIdent>) -> Result<Expr, VirErr> {
+    let invalid =
+        || error(&expr.span, "section length requires a named executable slice or vector");
+    let (receiver, vector_types) = match &expr.x {
+        ExprX::Call {
+            target: CallTarget::Fun(CallTargetKind::Static, _, types, _, attrs),
+            args,
+            post_args: None,
+            body: None,
+        } => {
+            let [receiver] = args.as_slice() else { return Err(invalid()) };
+            match attrs.resource_intrinsic {
+                Some(ResourceIntrinsic::SliceLen) => (receiver, None),
+                Some(ResourceIntrinsic::VecLen) => (receiver, Some(types)),
+                _ => return Err(invalid()),
+            }
+        }
+        ExprX::Unary(UnaryOp::Length(ArrayKind::Slice), receiver) => (receiver, None),
+        _ => return Err(invalid()),
+    };
+    if !super::iterators::receiver(receiver).is_some_and(|name| allowed.contains(&name)) {
+        return Err(invalid());
+    }
+    let value = super::projections::spec_value(receiver)?;
+    if let Some(types) = vector_types {
+        Ok(super::vectors::length(&expr.span, types.clone(), value))
+    } else if matches!(expr.x, ExprX::Unary(..)) {
+        Ok(expr.new_x(ExprX::Unary(UnaryOp::Length(ArrayKind::Slice), value)))
+    } else {
+        super::iterators::slice_length(&expr.span, value).ok_or_else(invalid)
+    }
 }
 
 /// Allocation extents can use pure native arithmetic over admitted observations.

@@ -47,7 +47,7 @@ fn memory_query_type_round_trip() {
 #[test]
 fn argument_specific_budget_round_trip() {
     let file = verus_syn::parse_file(
-        "fn f(flag: bool) { resources peak(memory) <= value_size(flag) + peak(module::helper(!flag, 4u32,)) + return_size(module::helper) { resources peak(memory) <= peak(helper(false)) {} } }",
+        "fn f(flag: bool) { resources peak(memory) <= value_size(flag) + peak(module::helper(!flag, 4u32,)) + packed.len() * return_size(module::helper) { resources peak(memory) <= peak(helper(false)) {} } }",
     ).unwrap();
     let pretty = prettyplease::unparse(&file);
     let reparsed = verus_syn::parse_file(&pretty).unwrap();

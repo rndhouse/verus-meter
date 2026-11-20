@@ -120,6 +120,10 @@ impl Printer {
                 self.word(" }");
             }
             ResourceExpr::Literal(n) => self.word(n.to_string()),
+            ResourceExpr::Length(receiver, ..) => {
+                self.ident(receiver);
+                self.word(".len()");
+            }
             ResourceExpr::Quantity(n) => self.word(n.to_string()),
             ResourceExpr::SpecCall(call) => {
                 self.expr(&Expr::Call(call.clone()), FixupContext::NONE)

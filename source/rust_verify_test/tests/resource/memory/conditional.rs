@@ -209,14 +209,18 @@ test_verify_one_file! {
 
 test_verify_one_file! {
     #[test] conditional_sections_are_not_silently_maximized verus_code! {
-        fn f(flag: bool) resources peak(memory) <= 1 { resources peak(memory) <= if flag { 0 } else { 1 } {} }
-    } => Err(err) => assert_vir_error_msg(err, "conditional memory bounds currently require a function contract")
+        fn f(flag: bool) resources peak(memory) <= value_size(flag) + value_size(u8) {
+            resources peak(memory) <= if flag { 0 } else { value_size(u8) } {
+                let scratch = 0u8;
+            }
+        }
+    } => Err(err) => assert_vir_error_msg(err, "conditional memory budget exceeded")
 }
 
 test_verify_one_file! {
     #[test] conditional_checkpoints_are_not_silently_maximized verus_code! {
         fn f(flag: bool) resources peak(memory) <= 1 { assert(peak(memory) <= if flag { 1 } else { 0 }); }
-    } => Err(err) => assert_vir_error_msg(err, "conditional memory bounds currently require a function contract")
+    } => Err(err) => assert_vir_error_msg(err, "memory checkpoints currently require a fixed bound")
 }
 
 test_verify_one_file! {

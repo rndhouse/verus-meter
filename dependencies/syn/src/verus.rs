@@ -263,6 +263,8 @@ ast_enum! {
         Peak(Ident, token::Paren, ExprPath),
         PeakCall(Ident, token::Paren, ExprCall),
         If(Token![if], Box<Expr>, token::Brace, Box<ResourceExpr>, Token![else], token::Brace, Box<ResourceExpr>),
+        /// Entry length of a named collection in a section allowance.
+        Length(Ident, Token![.], Ident, token::Paren),
     }
 }
 
@@ -1561,6 +1563,19 @@ pub mod parsing {
             }
         }
         let name: Ident = input.parse()?;
+        if input.peek(Token![.]) {
+            let dot = input.parse()?;
+            let method: Ident = input.parse()?;
+            if method != "len" {
+                return Err(Error::new(method.span(), "expected len() in memory budget"));
+            }
+            let args;
+            let paren = parenthesized!(args in input);
+            if !args.is_empty() {
+                return Err(args.error("len() takes no arguments"));
+            }
+            return Ok(ResourceExpr::Length(name, dot, method, paren));
+        }
         if !ResourceExpr::is_size_query(&name) && name != "return_size" && name != "peak" {
             if input.peek(token::Paren) {
                 return Err(Error::new(
@@ -2664,6 +2679,12 @@ mod printing {
                 }
                 ResourceExpr::Literal(n) => n.to_tokens(tokens),
                 ResourceExpr::Quantity(n) => n.to_tokens(tokens),
+                ResourceExpr::Length(name, dot, method, paren) => {
+                    name.to_tokens(tokens);
+                    dot.to_tokens(tokens);
+                    method.to_tokens(tokens);
+                    paren.surround(tokens, |_| {});
+                }
                 ResourceExpr::SpecCall(call) => call.to_tokens(tokens),
                 ResourceExpr::Paren(paren, expr) => {
                     paren.surround(tokens, |tokens| expr.to_tokens(tokens));

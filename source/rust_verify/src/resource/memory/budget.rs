@@ -106,12 +106,14 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
                         return err_span(expr.span, "expected a memory quantity name");
                     };
                     let ghost = BodyCtxt { in_ghost: true, ..bctx.clone() };
-                    let value =
+                    let observation =
                         crate::rust_to_vir_expr::expr_to_vir(&ghost, value)?.to_spec_expr(&ghost);
-                    return Ok(Spanned::new(
-                        bctx.ctxt.spans.to_air_span(expr.span),
-                        BudgetExprX::Quantity(value),
-                    ));
+                    let node = if matches!(value.kind, ExprKind::MethodCall(..)) {
+                        BudgetExprX::Length(observation)
+                    } else {
+                        BudgetExprX::Quantity(observation)
+                    };
+                    return Ok(Spanned::new(bctx.ctxt.spans.to_air_span(expr.span), node));
                 }
                 Some(VerusItem::Spec(SpecItem::ResourcePeakCall)) if args.len() == 1 => {
                     let ExprKind::Call(function, arguments) = args[0].kind else {

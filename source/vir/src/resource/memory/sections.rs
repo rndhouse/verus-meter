@@ -2,7 +2,8 @@
 
 use super::accounting::{Accounting, CheckKind, Obligation};
 use super::analysis::Analysis;
-use super::budget::{BudgetExpr, evaluate_body_budget};
+use super::budget::{BudgetExpr, evaluate_envelope};
+use super::contracts;
 use crate::ast::*;
 use crate::messages::Span;
 
@@ -36,10 +37,30 @@ impl Analysis<'_> {
         stmts: &[Stmt],
         tail: &Option<Expr>,
     ) -> Result<(), VirErr> {
-        let budget = evaluate_body_budget(budget, self.budgets, self.functions, self.layouts)?;
+        let envelope = evaluate_envelope(budget, self.budgets, self.functions, self.layouts)?;
+        let allowed = self
+            .var_modes
+            .iter()
+            .filter(|(_, mode)| **mode == Mode::Exec)
+            .map(|(name, _)| name.clone())
+            .collect();
+        let formula =
+            contracts::lower(budget, &allowed, self.budgets, self.functions, self.layouts)?;
+        let bound = if contracts::constant(&formula).is_some() {
+            formula
+        } else {
+            // Re-entering this section takes a fresh snapshot. Its body, its
+            // loops, and its parent must all use the same entry allowance.
+            super::symbolic::range_checks(
+                &formula,
+                &crate::ast_util::mk_bool(contract_span, true),
+                self.growth.before.entry(contract_span.id).or_default(),
+            );
+            self.allocation_snapshot(contract_span, formula)
+        };
         // Enclosing storage and earlier peaks belong to the parent. Keep the
         // mode environment and call graph shared, since this is still its code.
-        let parent = std::mem::replace(&mut self.storage, Accounting::new(contract_span, budget));
+        let parent = std::mem::replace(&mut self.storage, Accounting::new(contract_span, envelope));
         // An enclosing loop must not add its previous iteration's peak to a
         // child checkpoint: the child starts fresh each time it is entered.
         let parent_slots = self.slots.clone();
@@ -64,8 +85,7 @@ impl Analysis<'_> {
             .section_owners
             .extend(self.heap.owners.keys().chain(self.heap.borrowed.keys()).cloned());
         self.growth.protected_elements.extend(self.heap.element_states());
-        let outer_bound =
-            std::mem::replace(&mut self.bound, super::contracts::literal(contract_span, budget));
+        let outer_bound = std::mem::replace(&mut self.bound, bound.clone());
         let first_exit = self.flow.exits.len();
         self.block_contents(expr, stmts, tail)?;
         self.heap.unprotect(protection.clone());
@@ -91,23 +111,24 @@ impl Analysis<'_> {
         self.checkpoints = parent_checkpoints;
         let retained = section.live_storage();
         let report = section.finish_section(contract_span);
-        let bound = super::contracts::literal(contract_span, budget);
         self.obligations.extend(report.cost_points.iter().map(|(span, cost)| Obligation {
             span: span.clone(),
             cost: cost.clone(),
             bound: super::footprint::MemoryBudget::total(bound.clone()),
             kind: CheckKind::Section,
         }));
+        let allowance = contracts::constant(&bound)
+            .map_or_else(|| "entry-dependent".into(), |n| format!("{n} bytes"));
         self.storage.event(
             contract_span,
             format!(
-                "checked section: local peak {} bytes, declared bound {} bytes",
-                report.peak, budget,
+                "checked section: local fixed-cost peak {} bytes, declared bound {allowance}",
+                report.peak,
             ),
         );
         // The parent relies on the declared contract, including slack, rather
         // than the implementation's measured peak. Siblings reuse this allowance.
-        self.storage.section_allowance(contract_span, budget)?;
+        self.storage.section_allowance(contract_span, bound)?;
         for edge in &mut self.flow.exits[first_exit..] {
             let local = std::mem::replace(&mut edge.state.storage, self.storage.clone());
             edge.state.storage.retain_section_storage(&local.into_live_storage(), &edge.span)?;

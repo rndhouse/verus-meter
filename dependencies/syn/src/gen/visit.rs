@@ -4615,6 +4615,12 @@ where
             skip!(_binding_5);
             v.visit_resource_expr(&**_binding_6);
         }
+        crate::ResourceExpr::Length(_binding_0, _binding_1, _binding_2, _binding_3) => {
+            v.visit_ident(_binding_0);
+            skip!(_binding_1);
+            v.visit_ident(_binding_2);
+            skip!(_binding_3);
+        }
     }
 }
 pub fn visit_return_pat<'ast, V>(v: &mut V, node: &'ast crate::ReturnPat)

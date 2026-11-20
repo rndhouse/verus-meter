@@ -2589,6 +2589,14 @@ impl Clone for crate::ResourceExpr {
                     v6.clone(),
                 )
             }
+            crate::ResourceExpr::Length(v0, v1, v2, v3) => {
+                crate::ResourceExpr::Length(
+                    v0.clone(),
+                    v1.clone(),
+                    v2.clone(),
+                    v3.clone(),
+                )
+            }
         }
     }
 }

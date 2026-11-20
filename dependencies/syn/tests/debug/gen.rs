@@ -6072,6 +6072,12 @@ impl Debug for Lite<syn::ResourceExpr> {
                 formatter.field(Lite(_v6));
                 formatter.finish()
             }
+            syn::ResourceExpr::Length(_v0, _v1, _v2, _v3) => {
+                let mut formatter = formatter.debug_tuple("ResourceExpr::Length");
+                formatter.field(Lite(_v0));
+                formatter.field(Lite(_v2));
+                formatter.finish()
+            }
         }
     }
 }

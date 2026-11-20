@@ -33,6 +33,9 @@ pub(in crate::syntax) fn lower_budget(
             quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_spec_budget(#call))
         }
         ResourceExpr::Literal(n) => n.to_token_stream(),
+        ResourceExpr::Length(..) => {
+            quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_quantity(&#expr))
+        }
         ResourceExpr::Quantity(n) => {
             quote_spanned_builtin!(builtin, expr.span() => #builtin::resource_quantity(&#n))
         }

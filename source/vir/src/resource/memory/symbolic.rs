@@ -126,7 +126,7 @@ pub(super) fn obligation(check: &Obligation) -> Option<Stmt> {
 
 // Formula arithmetic is mathematical, but every evaluated sum/product must
 // still fit the model's u64 range. Conditional arms retain their own guards.
-fn range_checks(expr: &Expr, guard: &Expr, checks: &mut Vec<Stmt>) {
+pub(super) fn range_checks(expr: &Expr, guard: &Expr, checks: &mut Vec<Stmt>) {
     let span = &expr.span;
     match &expr.x {
         ExprX::If(condition, yes, Some(no)) => {

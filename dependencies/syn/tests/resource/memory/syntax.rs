@@ -81,6 +81,8 @@ fn malformed_resource_clauses_are_rejected() {
         "fn f() resources peak(memory) <= peak(x.field) {}",
         "fn f() resources peak(memory) <= peak(object.make()) {}",
         "fn f() resources peak(memory) <= peak() {}",
+        "fn f() resources peak(memory) <= packed.len(1) {}",
+        "fn f() resources peak(memory) <= packed.pop() {}",
         "fn f() resources peak(memory) <= return_size(f()) {}",
         "fn f() resources peak(memory) <= return_size(f, g) {}",
         "fn f() resources peak(memory) <= value_size() {}",
@@ -110,6 +112,7 @@ fn resource_clause_ends_where_clause() {
 fn expressive_budgets_round_trip() {
     for budget in [
         "BUDGET",
+        "packed.len() * return_size(checksum) + peak(checksum)",
         "budgets::workspace(flag, n as nat)",
         "budgets::formula(4)(n as nat)",
         "value_size(n) + workspace(n) * 2",

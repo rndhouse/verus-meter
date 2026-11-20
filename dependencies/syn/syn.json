@@ -6492,6 +6492,20 @@
               "syn": "ResourceExpr"
             }
           }
+        ],
+        "Length": [
+          {
+            "proc_macro2": "Ident"
+          },
+          {
+            "token": "Dot"
+          },
+          {
+            "proc_macro2": "Ident"
+          },
+          {
+            "group": "Paren"
+          }
         ]
       }
     },

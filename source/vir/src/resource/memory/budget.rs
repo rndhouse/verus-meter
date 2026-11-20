@@ -27,6 +27,8 @@ pub enum BudgetExprX {
     Quantity(Expr),
     /// A numeric spec call retained for ordinary Verus proof obligations.
     SpecCall(Expr),
+    /// A resolved method whose receiver is observed at section entry.
+    Length(Expr),
 }
 
 struct Resolver<'a> {
@@ -65,7 +67,9 @@ impl Resolver<'_> {
             BudgetExprX::If(_, then_budget, else_budget) => {
                 Ok(self.expr(then_budget)?.max(self.expr(else_budget)?))
             }
-            BudgetExprX::Quantity(_) | BudgetExprX::SpecCall(_) => Ok(u64::MAX),
+            BudgetExprX::Quantity(_) | BudgetExprX::SpecCall(_) | BudgetExprX::Length(_) => {
+                Ok(u64::MAX)
+            }
             BudgetExprX::Literal(n) => Ok(*n),
             BudgetExprX::ValueSize(typ) => self.layouts.value_size(typ, &expr.span),
             BudgetExprX::RefSize(typ) => self.layouts.ref_size(typ, &expr.span),
@@ -156,27 +160,22 @@ pub(super) fn resolve(
     Ok(resolver.resolved)
 }
 
-/// Body budget formulas refer to already resolved function contracts. Their
+/// Checkpoint budget formulas refer to already resolved function contracts. Their
 /// references do not add executable calls or introduce new contract cycles.
-pub(super) fn evaluate_body_budget(
+pub(super) fn checkpoint_budget(
     expr: &BudgetExpr,
     budgets: &HashMap<Fun, u64>,
     functions: &HashMap<Fun, Function>,
     layouts: &Layouts,
 ) -> Result<u64, VirErr> {
     if is_conditional(expr) {
-        return Err(error(
-            &expr.span,
-            "conditional memory bounds currently require a function contract; section and checkpoint bounds remain fixed",
-        ));
+        return Err(error(&expr.span, "memory checkpoints currently require a fixed bound"));
     }
     // Resolve even rejected formulas so cycles and overflow cannot hide in them.
     evaluate_envelope(expr, budgets, functions, layouts)?;
     let bound = super::contracts::lower(expr, &HashSet::new(), budgets, functions, layouts)?;
-    super::contracts::constant(&bound).ok_or_else(|| error(
-        &expr.span,
-        "conditional memory bounds currently require a function contract; section and checkpoint bounds remain fixed",
-    ))
+    super::contracts::constant(&bound)
+        .ok_or_else(|| error(&expr.span, "memory checkpoints currently require a fixed bound"))
 }
 
 // Inspect the written formula, not argument-free queries into other contracts.
@@ -200,7 +199,7 @@ pub(super) fn evaluate_envelope(
 /// Runtime quantities need proof-checked bounds rather than a finite envelope.
 pub(super) fn runtime(expr: &BudgetExpr, functions: &HashMap<Fun, Function>) -> bool {
     match &expr.x {
-        BudgetExprX::Quantity(_) | BudgetExprX::SpecCall(_) => true,
+        BudgetExprX::Quantity(_) | BudgetExprX::SpecCall(_) | BudgetExprX::Length(_) => true,
         BudgetExprX::Add(a, b) | BudgetExprX::Mul(a, b) => {
             runtime(a, functions) || runtime(b, functions)
         }

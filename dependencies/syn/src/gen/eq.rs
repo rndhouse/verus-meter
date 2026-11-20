@@ -2537,6 +2537,10 @@ impl PartialEq for crate::ResourceExpr {
                 crate::ResourceExpr::If(_, self1, _, self3, _, _, self6),
                 crate::ResourceExpr::If(_, other1, _, other3, _, _, other6),
             ) => self1 == other1 && self3 == other3 && self6 == other6,
+            (
+                crate::ResourceExpr::Length(self0, _, self2, _),
+                crate::ResourceExpr::Length(other0, _, other2, _),
+            ) => self0 == other0 && self2 == other2,
             _ => false,
         }
     }

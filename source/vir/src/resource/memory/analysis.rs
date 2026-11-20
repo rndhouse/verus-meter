@@ -395,7 +395,7 @@ impl Analysis<'_> {
                 ));
             }
             ExprX::ResourceAssertCurrent(budget) => {
-                let budget = super::budget::evaluate_body_budget(
+                let budget = super::budget::checkpoint_budget(
                     budget,
                     self.budgets,
                     self.functions,
@@ -414,7 +414,7 @@ impl Analysis<'_> {
                 return Ok(0);
             }
             ExprX::ResourceAssert(budget) => {
-                let budget = super::budget::evaluate_body_budget(
+                let budget = super::budget::checkpoint_budget(
                     budget,
                     self.budgets,
                     self.functions,
