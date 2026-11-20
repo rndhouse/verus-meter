@@ -21,6 +21,7 @@ when useful; keep raw logs and build output in ignored disposable locations.
 
 This is a Verus fork. Read `README.md`, `BUILD.md`, and
 `docs/model.md` for the memory contract semantics and supported scope.
+For memory accounting work, follow the [agreed accounting rules](docs/verus-meter/accounting/README.md).
 The Cargo workspace is `source/`; run workspace commands there with the pinned
 toolchain in `rust-toolchain.toml`.
 
