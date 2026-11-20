@@ -205,22 +205,6 @@ pub fn resource_ref_size_type<T: ?Sized>() -> u64 {
     unimplemented!()
 }
 
-/// Erased marker measuring loop body state from a collection binding.
-#[cfg(verus_keep_ghost)]
-#[rustc_diagnostic_item = "verus::verus_builtin::resource_for_loop_size_value"]
-#[verifier::spec]
-pub fn resource_for_loop_size_value<T: ?Sized>(_value: &T) -> u64 {
-    unimplemented!()
-}
-
-/// Erased marker measuring loop body state from a collection type.
-#[cfg(verus_keep_ghost)]
-#[rustc_diagnostic_item = "verus::verus_builtin::resource_for_loop_size_type"]
-#[verifier::spec]
-pub fn resource_for_loop_size_type<T: ?Sized>() -> u64 {
-    unimplemented!()
-}
-
 /// Erased query for a helper's declared budget, without executing the helper.
 #[cfg(verus_keep_ghost)]
 #[rustc_diagnostic_item = "verus::verus_builtin::resource_peak"]

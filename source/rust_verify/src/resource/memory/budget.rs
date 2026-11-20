@@ -107,14 +107,11 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
                     ));
                 }
                 Some(VerusItem::Spec(
-                    SpecItem::ResourceValueSizeType
-                    | SpecItem::ResourceRefSizeType
-                    | SpecItem::ResourceForLoopSizeType,
+                    SpecItem::ResourceValueSizeType | SpecItem::ResourceRefSizeType,
                 )) if args.is_empty() => substitutions.type_at(0),
                 Some(VerusItem::Spec(
                     SpecItem::ResourceValueSizeValue
                     | SpecItem::ResourceRefSizeValue
-                    | SpecItem::ResourceForLoopSizeValue
                     | SpecItem::ResourcePeak,
                 )) if args.len() == 1 => {
                     let ExprKind::AddrOf(_, _, value) = args[0].kind else {
@@ -151,19 +148,19 @@ pub(crate) fn lower<'tcx>(bctx: &BodyCtxt<'tcx>, expr: &Expr<'tcx>) -> Result<Bu
                 _ => {
                     return err_span(
                         expr.span,
-                        "only value_size, ref_size, for_loop_size, and peak queries are allowed in resource budgets",
+                        "only value_size, ref_size, and peak queries are allowed in resource budgets",
                     );
                 }
             };
-            let typ = bctx.mid_ty_to_vir(expr.span, &typ)?;
-            match item {
+            if matches!(
+                item,
                 Some(VerusItem::Spec(
-                    SpecItem::ResourceRefSizeType | SpecItem::ResourceRefSizeValue,
-                )) => BudgetExprX::RefSize(typ),
-                Some(VerusItem::Spec(
-                    SpecItem::ResourceForLoopSizeType | SpecItem::ResourceForLoopSizeValue,
-                )) => BudgetExprX::ForLoopSize(typ),
-                _ => BudgetExprX::ValueSize(typ),
+                    SpecItem::ResourceRefSizeType | SpecItem::ResourceRefSizeValue
+                ))
+            ) {
+                BudgetExprX::RefSize(bctx.mid_ty_to_vir(expr.span, &typ)?)
+            } else {
+                BudgetExprX::ValueSize(bctx.mid_ty_to_vir(expr.span, &typ)?)
             }
         }
         _ => return err_span(expr.span, "unsupported resource budget expression"),

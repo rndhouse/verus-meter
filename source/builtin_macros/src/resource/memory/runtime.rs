@@ -7,8 +7,6 @@ use verus_syn::{Ident, Type};
 pub(in crate::syntax::resource) fn size(name: &Ident, ty: &Type) -> TokenStream {
     let bytes = if name == "value_size" {
         quote!(<#ty as ::verus_meter_runtime::ValueSize>::BYTES)
-    } else if name == "for_loop_size" {
-        quote!(<#ty as ::verus_meter_runtime::ForLoopSize>::BYTES)
     } else {
         quote!(<#ty as ::verus_meter_runtime::ReferenceSize>::BYTES)
     };

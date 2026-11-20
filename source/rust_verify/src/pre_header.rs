@@ -168,10 +168,8 @@ fn is_header_verus_item(verus_item: &VerusItem) -> bool {
             | SpecItem::ResourceSpecBudget
             | SpecItem::ResourceQuantity
             | SpecItem::ResourceRefSizeValue
-            | SpecItem::ResourceForLoopSizeValue
             | SpecItem::ResourceValueSizeValue
             | SpecItem::ResourceRefSizeType
-            | SpecItem::ResourceForLoopSizeType
             | SpecItem::ResourceValueSizeType
             | SpecItem::ResourcePeak
             | SpecItem::ResourcePeakCall

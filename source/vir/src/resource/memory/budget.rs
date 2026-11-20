@@ -19,8 +19,6 @@ pub enum BudgetExprX {
     ValueSize(Typ),
     /// Storage occupied by a reference, excluding its referent.
     RefSize(Typ),
-    /// Inline state retained during the body of a shared collection loop.
-    ForLoopSize(Typ),
     Function(Fun),
     Add(BudgetExpr, BudgetExpr),
     Mul(BudgetExpr, BudgetExpr),
@@ -71,9 +69,6 @@ impl Resolver<'_> {
             BudgetExprX::Literal(n) => Ok(*n),
             BudgetExprX::ValueSize(typ) => self.layouts.value_size(typ, &expr.span),
             BudgetExprX::RefSize(typ) => self.layouts.ref_size(typ, &expr.span),
-            BudgetExprX::ForLoopSize(typ) => {
-                super::iterators::for_loop_size(self.layouts, typ, &expr.span)
-            }
             BudgetExprX::Function(name) => {
                 let n = self.function(name, &expr.span)?;
                 let formula = super::contracts::function_bound(

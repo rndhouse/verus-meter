@@ -267,7 +267,7 @@ ast_enum! {
 impl ResourceExpr {
     /// Whether an unqualified call takes a size-query type or binding as its operand.
     pub fn is_size_query(name: &Ident) -> bool {
-        name == "value_size" || name == "ref_size" || name == "for_loop_size"
+        name == "value_size" || name == "ref_size"
     }
 }
 
@@ -1564,7 +1564,7 @@ pub mod parsing {
             if input.peek(token::Paren) {
                 return Err(Error::new(
                     name.span(),
-                    "expected value_size(type/parameter), ref_size(reference), for_loop_size(source), or peak(function)",
+                    "expected value_size(type/parameter), ref_size(reference), or peak(function)",
                 ));
             }
             return Ok(ResourceExpr::Quantity(name));

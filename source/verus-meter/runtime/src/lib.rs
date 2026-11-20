@@ -7,7 +7,7 @@ mod expression;
 mod layout;
 
 #[doc(hidden)]
-pub use layout::{ForLoopSize, ReferenceSize, ValueSize};
+pub use layout::{ReferenceSize, ValueSize};
 
 #[doc(hidden)]
 pub use expression::{

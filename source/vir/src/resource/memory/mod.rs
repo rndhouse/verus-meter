@@ -263,17 +263,11 @@ fn resolve_size_expression(expr: &Expr, layouts: &layout::Layouts) -> Result<Exp
 
 fn resolve_size_node(expr: &Expr, layouts: &layout::Layouts) -> Result<Expr, VirErr> {
     if let ExprX::Call { target: CallTarget::Fun(_, _, types, _, attrs), .. } = &expr.x {
-        if let Some(
-            query @ (ResourceIntrinsic::ValueSize
-            | ResourceIntrinsic::RefSize
-            | ResourceIntrinsic::ForLoopSize),
-        ) = attrs.resource_intrinsic
+        if let Some(query @ (ResourceIntrinsic::ValueSize | ResourceIntrinsic::RefSize)) =
+            attrs.resource_intrinsic
         {
             let bytes = match query {
                 ResourceIntrinsic::ValueSize => layouts.value_size(&types[0], &expr.span)?,
-                ResourceIntrinsic::ForLoopSize => {
-                    iterators::for_loop_size(layouts, &types[0], &expr.span)?
-                }
                 ResourceIntrinsic::RefSize => layouts.ref_size(&types[0], &expr.span)?,
                 _ => unreachable!(),
             };

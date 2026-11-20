@@ -12,10 +12,6 @@ contract syntax, heap ownership, loops, and expected failures.
 - `value_size(T)` measures inline storage, excluding separate allocations;
   `ref_size(&T)` measures a reference, excluding its pointee. Both also accept
   binding names.
-- `for_loop_size(source)` measures the inline loop state live during the body of
-  `for item in source` over a shared slice or vector reference. It accepts a
-  binding or type. Include body locals, callee peaks and owned buffers separately.
-  Setup and advancement can have their own peaks, even for an empty body.
 - `peak(helper(arguments))` queries the helper's declared allowance for those
   arguments, without executing it. `peak(helper)` takes its maximum allowance.
 - `assert(peak(memory) <= bound)` checks the peak so far;

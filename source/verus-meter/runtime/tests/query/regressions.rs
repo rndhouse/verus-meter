@@ -385,26 +385,3 @@ fn main() {
     succeeds(&output);
     succeeds(&Command::new(executable).output().unwrap());
 }
-
-#[test]
-#[ignore = "requires prepared verifier and runtime bundle; see runtime README"]
-fn borrowed_loop_state_matches_the_verified_allowance() {
-    let source = r#"
-use vstd::prelude::*;
-type Packed<'a> = &'a [u8];
-verus! {
-    spec fn slice_state() -> nat { for_loop_size(Packed) }
-    #[queryable_peak_memory]
-    fn queried() resources peak(memory) <= slice_state() + for_loop_size(&Vec<u16>) {
-        assert(slice_state() + for_loop_size(&Vec<u16>) == 88);
-    }
-}
-fn main() {
-    assert_eq!(queried::peak_memory_bound().unwrap().to_u64(), Ok(88));
-}
-"#;
-    let directory = tempfile::tempdir().unwrap();
-    let (output, executable) = compile(source, directory.path());
-    succeeds(&output);
-    succeeds(&Command::new(executable).output().unwrap());
-}

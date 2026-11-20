@@ -122,7 +122,6 @@ fn expressive_budgets_round_trip() {
         "1 + 2 * 3 + (4 + 5) * 6",
         "value_size((x))",
         "ref_size(buffer) + value_size(Buffer)",
-        "for_loop_size(blocks) + for_loop_size(&Vec<Block>)",
         "ref_size(&mut [u32]) + ref_size(&'a Buffer)",
         "peak(helper(false))",
         "peak(module::helper(count <= 4, !flag)) + peak(empty())",

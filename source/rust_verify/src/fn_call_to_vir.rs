@@ -664,10 +664,8 @@ fn verus_item_to_vir<'tcx, 'a>(
                     | SpecItem::ResourceSpecBudget
                     | SpecItem::ResourceQuantity
                     | SpecItem::ResourceRefSizeValue
-                    | SpecItem::ResourceForLoopSizeValue
                     | SpecItem::ResourceValueSizeValue
                     | SpecItem::ResourceRefSizeType
-                    | SpecItem::ResourceForLoopSizeType
                     | SpecItem::ResourceValueSizeType
                     | SpecItem::ResourcePeak
                     | SpecItem::ResourcePeakCall
@@ -978,9 +976,7 @@ fn verus_item_to_vir<'tcx, 'a>(
                 }
                 SpecItem::ResourceValueSizeValue
                 | SpecItem::ResourceRefSizeValue
-                | SpecItem::ResourceForLoopSizeValue
                 | SpecItem::ResourceRefSizeType
-                | SpecItem::ResourceForLoopSizeType
                 | SpecItem::ResourceValueSizeType => {
                     // Size operands supply a type, not a value. Erase the whole
                     // call: basic checks would revisit ghost locals whose uses
@@ -996,16 +992,16 @@ fn verus_item_to_vir<'tcx, 'a>(
                             autospec: AutospecUsage::Final,
                             const_var: false,
                             assume_external_allowed: false,
-                            resource_intrinsic: Some(match spec_item {
-                                SpecItem::ResourceRefSizeType | SpecItem::ResourceRefSizeValue => {
+                            resource_intrinsic: Some(
+                                if matches!(
+                                    spec_item,
+                                    SpecItem::ResourceRefSizeType | SpecItem::ResourceRefSizeValue
+                                ) {
                                     vir::ast::ResourceIntrinsic::RefSize
-                                }
-                                SpecItem::ResourceForLoopSizeType
-                                | SpecItem::ResourceForLoopSizeValue => {
-                                    vir::ast::ResourceIntrinsic::ForLoopSize
-                                }
-                                _ => vir::ast::ResourceIntrinsic::ValueSize,
-                            }),
+                                } else {
+                                    vir::ast::ResourceIntrinsic::ValueSize
+                                },
+                            ),
                         },
                     );
                     mk_expr(ExprX::Call {
