@@ -286,8 +286,44 @@ impl Analysis<'_> {
                             self.record_immutable_binding(&binding.name, &binding.typ);
                         }
                         locals.push((stmt.span.clone(), binding.name.clone()));
-                        let value = if let Some(init) = init {
-                            self.produce_place(init, &binding.typ, binding.copy, &stmt.span)?
+                        let from_iterator = init.as_ref().is_some_and(|source| {
+                            matches!(&source.x, PlaceX::Local(name)
+                                    if self.growth.iterator_item_slots.contains(name)
+                                    && self.growth.implicit_collection_loop_slots.contains(name))
+                        });
+                        // An immutable borrowed pattern just visits the existing
+                        // element. A binding of a consumed value provides storage.
+                        let item_view = from_iterator
+                            && binding.user_mut == Some(false)
+                            && matches!(&*binding.typ, TypX::Decorate(TypDecoration::Ref, None, _));
+                        let value = if item_view
+                            || self.growth.implicit_collection_loop_slots.contains(&binding.name)
+                        {
+                            if let Some(init) = init {
+                                if self.layouts.owner(&binding.typ)
+                                    && matches!(init.x, PlaceX::Local(_))
+                                {
+                                    let moved = self.produce_place(
+                                        init,
+                                        &binding.typ,
+                                        binding.copy,
+                                        &stmt.span,
+                                    )?;
+                                    self.release_value(moved, &stmt.span);
+                                } else {
+                                    self.initialize(init, &binding.typ)?;
+                                }
+                            }
+                            super::lifetime::Value::unit()
+                        } else if let Some(init) = init {
+                            let value =
+                                self.produce_place(init, &binding.typ, binding.copy, &stmt.span)?;
+                            if from_iterator && !binding.copy {
+                                self.release_value(value, &stmt.span);
+                                self.fresh_value(&stmt.span, &binding.typ)?
+                            } else {
+                                value
+                            }
                         } else {
                             self.fresh_value(&stmt.span, &binding.typ)?
                         };
@@ -354,7 +390,10 @@ impl Analysis<'_> {
             return self.expr(&copied);
         }
         match &expr.x {
-            ExprX::UnaryOpr(UnaryOpr::LoopIsolationBoundary(_), inner) => return self.expr(inner),
+            ExprX::UnaryOpr(UnaryOpr::LoopIsolationBoundary(_), inner) => {
+                self.record_collection_loop_header(inner);
+                return self.expr(inner);
+            }
             ExprX::NeverToAny(inner) => return self.expr(inner),
             ExprX::Return(value) => {
                 self.exit(expr, super::control::Target::Return, value.as_ref())?;
@@ -553,7 +592,9 @@ impl Analysis<'_> {
                     return Err(unsupported(&expr.span, "this compound assignment"));
                 }
                 if let PlaceX::Local(name) = &place.x {
-                    if self.slots.get(name).is_none_or(|v| v.bytes == 0) {
+                    if self.growth.implicit_collection_loop_slots.contains(name) {
+                        self.initialize_expr(rhs)?;
+                    } else if self.slots.get(name).is_none_or(|v| v.bytes == 0) {
                         let value = self.produce(rhs)?;
                         self.slots.insert(name.clone(), value);
                     } else {

@@ -3,7 +3,6 @@
 
 use super::analysis::Analysis;
 use super::contracts;
-use super::footprint::Charge;
 use super::heap::Owner;
 use super::layout::AllocationLayout;
 use super::model::unsupported;
@@ -53,10 +52,9 @@ impl Analysis<'_> {
         };
         let source_value = self.take_value(place)?;
         let mut source = self.move_owner(place)?;
-        let allocation = Charge { kind: source.kind.clone(), amount: amount.clone() };
-        // The model permits a length-sized replacement even if an allocator
-        // could shrink in place. Old and new backing storage overlap only here.
-        self.storage.replacement_peak(&expr.span, &allocation)?;
+        // The conversion consumes the vector's reservation and transfers its
+        // children. Only the length-sized backing remains after the operation.
+        let kind = source.kind.clone();
         self.release_value(source_value, &expr.span);
         let mut elements = source.elements.take();
         if let Some(elements) = &mut elements {
@@ -68,7 +66,7 @@ impl Analysis<'_> {
         }
         self.release_owner(source, &expr.span);
         let id = super::accounting::Accounting::fresh_allocation();
-        self.storage.set_allocation(id, allocation.kind.clone(), amount.clone());
+        self.storage.set_allocation(id, kind.clone(), amount.clone());
         self.storage.record_live(&expr.span)?;
         self.transitions.operation(
             &expr.span,
@@ -80,7 +78,7 @@ impl Analysis<'_> {
         );
         Ok(Some(Owner {
             geometry: Some(len),
-            kind: allocation.kind,
+            kind,
             elements,
             dynamic: Some(id),
             extent: Some(amount),

@@ -133,6 +133,8 @@ pub(super) struct Growth {
     pub(super) iterator_heads: HashMap<u64, (Expr, Expr)>,
     /// Late-initialized scratch slots in checked wrapper dispatches.
     pub(super) iterator_item_slots: std::collections::HashSet<VarIdent>,
+    /// Generated collection loop slots. Ownership is tracked independently.
+    pub(super) implicit_collection_loop_slots: std::collections::HashSet<VarIdent>,
     /// Source loop binders surrounding a construction. Their dynamic occurrence
     /// substitutions are required before repeated environments can be published.
     pub(super) loop_regions: Vec<crate::messages::AstId>,

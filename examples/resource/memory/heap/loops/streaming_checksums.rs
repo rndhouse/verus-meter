@@ -7,9 +7,6 @@ verus! {
 const BLOCK_BYTES: usize = 128;
 type Block = [u8; BLOCK_BYTES];
 
-// The borrowed loop retains its source, iterator, and two item references.
-type ByteIter<'a> = core::slice::Iter<'a, u8>;
-
 // Add the bytes in one block. The maximum partial sum is 255 times the number of bytes read.
 fn checksum(block: &Block) -> u16
     resources peak(memory) <= 51,
@@ -28,14 +25,12 @@ fn checksum(block: &Block) -> u16
 fn checksums(input: [u8; 2]) -> Vec<u16>
     resources peak(memory) <= value_size(input) + ref_size(&[u8]) + value_size(Vec<u16>)
         + value_size(Block) + 2 * return_size(checksum)
-        + ref_size(&[u8]) + value_size(ByteIter) + 2 * ref_size(&u8)
         + peak(checksum),
 {
     let packed: &[u8] = &input;
     let mut sums = Vec::new();
 
     resources peak(memory) <= value_size(Block) + 2 * return_size(checksum)
-        + ref_size(&[u8]) + value_size(ByteIter) + 2 * ref_size(&u8)
         + peak(checksum)
     {
         for byte in packed {

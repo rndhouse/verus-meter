@@ -147,11 +147,59 @@ pub(super) fn prepare(
     Ok(function)
 }
 
-fn strip(value: &Expr) -> &Expr {
+pub(super) fn strip(value: &Expr) -> &Expr {
     match &value.x {
         ExprX::Block(statements, Some(tail)) if statements.is_empty() => strip(tail),
         ExprX::NeverToAny(inner) => strip(inner),
         _ => value,
+    }
+}
+
+/// The header destinations introduced by the macro for a collection loop.
+/// Match the connected compiler-resolved calls under the isolation boundary.
+/// The source expression is still evaluated normally into the first destination.
+fn collection_header(block: &Expr) -> Option<[Option<VarIdent>; 3]> {
+    let ExprX::Block(statements, _) = &block.x else { return None };
+    let [source, iterator, wrapper, ..] = statements.as_slice() else { return None };
+    fn declaration(stmt: &Stmt) -> Option<(&PatternBinding, &Place)> {
+        let StmtX::Decl { pattern, init: Some(init), .. } = &stmt.x else { return None };
+        let PatternX::Var(binding) = &pattern.x else { return None };
+        Some((binding, init))
+    }
+    fn takes(init: &Place, op: ResourceIntrinsic, binding: &PatternBinding) -> bool {
+        let PlaceX::Temporary(expr) = &init.x else { return false };
+        let ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), args, .. } = &strip(expr).x
+        else {
+            return false;
+        };
+        attrs.resource_intrinsic == Some(op)
+            && matches!(args.as_slice(), [arg] if iterators::receiver(arg).as_ref() == Some(&binding.name))
+    }
+    let (source, _) = declaration(source)?;
+    let (iterator, into) = declaration(iterator)?;
+    let (wrapper, wrap) = declaration(wrapper)?;
+    let kind = iterators::kind(&iterator.typ)?;
+    if !matches!(kind, iterators::Kind::Slice | iterators::Kind::Vector)
+        || iterators::wrapper_element_kind(&wrapper.typ) != Some(kind)
+        || !takes(into, ResourceIntrinsic::IteratorInto, source)
+        || !takes(wrap, ResourceIntrinsic::IteratorWrap, iterator)
+    {
+        return None;
+    }
+    // The consuming loop still evaluates the original vector as an owner,
+    // including its handle before the transfer to the iterator.
+    Some([
+        (kind == iterators::Kind::Slice).then(|| source.name.clone()),
+        Some(iterator.name.clone()),
+        Some(wrapper.name.clone()),
+    ])
+}
+
+impl super::analysis::Analysis<'_> {
+    pub(super) fn record_collection_loop_header(&mut self, block: &Expr) {
+        if let Some(slots) = collection_header(block) {
+            self.growth.implicit_collection_loop_slots.extend(slots.into_iter().flatten());
+        }
     }
 }
 
@@ -182,6 +230,17 @@ impl ForLoop {
     /// Identify the scratch slot used by the checked successful arm.
     pub(super) fn item_slot(&self) -> Option<&VarIdent> {
         self.item_slot.as_ref()
+    }
+
+    /// The generated match binding and scratch slot that pass the current item.
+    pub(super) fn implicit_item_slots(&self) -> impl Iterator<Item = &VarIdent> {
+        let PatternX::Var(binding) = &self.binding.x else { unreachable!() };
+        let implicit = iterators::collection_next(&self.next);
+        [Some(&binding.name), self.item_slot()].into_iter().flatten().filter(move |_| implicit)
+    }
+
+    pub(super) fn consumed_item_type(&self) -> Option<&Typ> {
+        iterators::consuming_next(&self.next).then_some(&self.binding.typ)
     }
 
     /// The symbolic successful visit subsumes the dispatch's ownership patterns.

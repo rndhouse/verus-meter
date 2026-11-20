@@ -187,7 +187,7 @@ fn breaking_out_of_a_section_keeps_the_vectors_new_backing() {
 
 #[test]
 fn splitting_a_streaming_loop_retains_the_staged_blocks() {
-    const STREAMING_PEAK: u64 = 178;
+    const STREAMING_PEAK: u64 = 130;
     const STAGED_PEAK: u64 = 674;
     let stream = "for byte in packed {
         let block = [*byte; 128];

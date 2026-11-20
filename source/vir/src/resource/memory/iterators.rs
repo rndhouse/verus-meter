@@ -91,14 +91,15 @@ pub(super) fn size(
 
 /// A native consuming iterator or the Verus wrapper that moves it into a loop.
 pub(super) fn owns_vector_storage(typ: &Typ) -> bool {
-    match kind(typ) {
-        Some(Kind::Vector) => true,
-        Some(Kind::Wrapper) => {
-            let TypX::Datatype(_, types, _) = &**typ else { unreachable!() };
-            types.first().is_some_and(|inner| kind(inner) == Some(Kind::Vector))
-        }
-        _ => false,
+    kind(typ) == Some(Kind::Vector) || wrapper_element_kind(typ) == Some(Kind::Vector)
+}
+
+pub(super) fn wrapper_element_kind(typ: &Typ) -> Option<Kind> {
+    if kind(typ) != Some(Kind::Wrapper) {
+        return None;
     }
+    let TypX::Datatype(_, types, _) = &**typ else { unreachable!() };
+    kind(types.first()?)
 }
 
 fn kind_of_source(typ: &Typ, span: &Span) -> Result<Kind, VirErr> {
@@ -117,21 +118,29 @@ pub(super) fn receiver(value: &Expr) -> Option<VarIdent> {
     path.is_empty().then_some(name)
 }
 
-/// Only the compiler-identified wrapper's transient next result may expose
-/// a shared-reference Option to the memory checker.
-pub(super) fn shared_next(value: &Expr) -> Option<&Typ> {
+fn next_kind(value: &Expr) -> Option<Kind> {
     let ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), args, .. } = &value.x else {
         return None;
     };
     let [source] = args.as_slice() else { return None };
-    let source = super::paths::referent(&source.typ);
-    if attrs.resource_intrinsic != Some(ResourceIntrinsic::IteratorNext)
-        || kind(source) != Some(Kind::Wrapper)
-    {
+    if attrs.resource_intrinsic != Some(ResourceIntrinsic::IteratorNext) {
         return None;
     }
-    let TypX::Datatype(_, types, _) = &**source else { return None };
-    if kind(types.first()?) != Some(Kind::Slice) {
+    wrapper_element_kind(super::paths::referent(&source.typ))
+}
+
+pub(super) fn collection_next(value: &Expr) -> bool {
+    matches!(next_kind(value), Some(Kind::Slice | Kind::Vector))
+}
+
+pub(super) fn consuming_next(value: &Expr) -> bool {
+    next_kind(value) == Some(Kind::Vector)
+}
+
+/// Only the compiler-identified wrapper's transient next result may expose
+/// a shared-reference Option to the memory checker.
+pub(super) fn shared_next(value: &Expr) -> Option<&Typ> {
+    if next_kind(value) != Some(Kind::Slice) {
         return None;
     }
     let TypX::Datatype(_, types, _) = &*value.typ else { return None };
@@ -324,14 +333,25 @@ impl Analysis<'_> {
                 "iterator operation result",
             )?;
         }
-        // Earlier arguments remain live while later arguments execute, including
-        // calls with temporary heap storage. Release them only after evaluation.
-        let mut values = Vec::new();
-        for argument in args.iter() {
-            values.push(self.produce(argument)?);
-        }
-        for (argument, value) in args.iter().zip(values) {
-            self.release_value(value, &argument.span);
+        // These single-argument calls use a generated borrow or an already
+        // evaluated view. Validate the input without creating a new slot.
+        let implicit_advance =
+            collection_next(expr) && self.growth.iterator_heads.contains_key(&expr.span.id);
+        let borrowed_input = op == IteratorInto
+            && kind(&expr.typ) == Some(Kind::Slice)
+            && receiver(source)
+                .is_some_and(|name| self.growth.implicit_collection_loop_slots.contains(&name));
+        if implicit_advance || borrowed_input {
+            self.initialize_expr(super::for_loops::strip(source))?;
+        } else {
+            // Earlier arguments remain live while later arguments execute.
+            let mut values = Vec::new();
+            for argument in args.iter() {
+                values.push(self.produce(argument)?);
+            }
+            for (argument, value) in args.iter().zip(values) {
+                self.release_value(value, &argument.span);
+            }
         }
         if op == IteratorNext && self.layouts.owner(&expr.typ) {
             self.result_owner = Some(self.extract_iterator_element(expr, source)?);

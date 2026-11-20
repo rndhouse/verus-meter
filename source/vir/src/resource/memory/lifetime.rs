@@ -170,6 +170,7 @@ impl Analysis<'_> {
             return self.produce(&copied);
         }
         if let ExprX::UnaryOpr(UnaryOpr::LoopIsolationBoundary(_), inner) = &expr.x {
+            self.record_collection_loop_header(inner);
             return self.produce(inner);
         }
         if let ExprX::NeverToAny(inner) = &expr.x {

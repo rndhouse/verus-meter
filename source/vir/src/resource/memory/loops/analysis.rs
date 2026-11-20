@@ -144,6 +144,9 @@ impl Analysis<'_> {
             if let Some(name) = iterator.item_slot() {
                 self.growth.iterator_item_slots.insert(name.clone());
             }
+            self.growth
+                .implicit_collection_loop_slots
+                .extend(iterator.implicit_item_slots().cloned());
         }
         self.discard(&record.body)?;
         if let Some(iterator) = &record.iterator {
@@ -326,6 +329,27 @@ impl Analysis<'_> {
                     "memory budget exceeded for the consuming iterator and its loop body",
                 )
             }));
+        }
+        if let Some(iterator) = &record.iterator
+            && let Some(item) = iterator.consumed_item_type()
+            && self.layouts.owner(item)
+        {
+            // A successful advance transfers existing payloads. The source
+            // binding adds only its inline slot to the loop-head footprint.
+            let span = &record.span;
+            let bytes = contracts::literal(span, self.layouts.size(item, span)?);
+            let cost = contracts::add(span, live.clone(), bytes);
+            let fits = crate::ast_util::mk_ineq(span, &cost, &self.bound, InequalityOp::Le);
+            let has_item = crate::ast_util::mk_ineq(
+                span,
+                &iterator.position,
+                &iterator.length,
+                InequalityOp::Lt,
+            );
+            self.growth.loops.entry(span.id).or_default().push(metadata::expr::purpose(
+                crate::ast_util::mk_implies(span, &has_item, &fits),
+                "memory budget exceeded for the consuming loop item binding",
+            ));
         }
         let candidate =
             crate::ast_util::mk_ineq(&expr.span, &entry_heap, &self.bound, InequalityOp::Le);

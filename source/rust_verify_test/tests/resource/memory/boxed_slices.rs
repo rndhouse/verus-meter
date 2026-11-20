@@ -1,7 +1,7 @@
 use super::support::{rejects, verifies};
 
 #[test]
-fn conversion_counts_overlap_and_retains_only_length() {
+fn conversion_releases_the_reservation_and_keeps_one_backing() {
     let code = "fn f() resources peak(memory) <= BOUND {
         let mut v = Vec::<u32>::with_capacity(4);
         v.push(7);
@@ -10,8 +10,15 @@ fn conversion_counts_overlap_and_retains_only_length() {
         assert(b[0] == 7);
         let scratch = [0u8;32];
     }";
-    verifies("boxed_slice_overlap", &code.replace("BOUND", "60"));
-    rejects("boxed_slice_overlap_short", &code.replace("BOUND", "59"), "memory budget exceeded");
+    let handles_and_reservation =
+        "value_size(Vec<u32>) + value_size(Box<[u32]>) + value_size([u32; 4])";
+    verifies("boxed_slice_one_backing", &code.replace("BOUND", handles_and_reservation));
+    // Both handles and the reserved slots give a 56-byte peak.
+    rejects(
+        "boxed_slice_one_backing_short",
+        &code.replace("BOUND", "55"),
+        "memory budget exceeded",
+    );
 }
 
 #[test]
@@ -108,17 +115,19 @@ fn unbounded_conversion_is_rejected() {
 }
 
 #[test]
-fn conversion_keeps_callers_input_live_during_replacement() {
+fn conversion_charges_the_incoming_backing_through_a_helper() {
     let code = "fn freeze(v: Vec<u32>) -> Box<[u32]>
-            requires v.len() == 1, resources peak(memory) <= 44 { v.into_boxed_slice() }
+            requires v.len() == 1,
+            resources peak(memory) <= value_size(Vec<u32>) + value_size(Box<[u32]>),
+        { v.into_boxed_slice() }
         fn f() resources peak(memory) <= BOUND {
             let mut v = Vec::<u32>::with_capacity(20); v.push(1);
             let b = freeze(v);
         }";
-    verifies("boxed_slice_input_overlap", &code.replace("BOUND", "124"));
+    verifies("boxed_slice_input_backing", &code.replace("BOUND", "120"));
     rejects(
-        "boxed_slice_input_overlap_short",
-        &code.replace("BOUND", "123"),
+        "boxed_slice_input_backing_short",
+        &code.replace("BOUND", "119"),
         "memory budget exceeded",
     );
 }

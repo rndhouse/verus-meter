@@ -1,6 +1,4 @@
 // Turn a growable collection into a fixed-length buffer within a memory budget.
-//
-// Conversion needs room for both buffers until the original is released.
 
 use vstd::prelude::*;
 
@@ -8,12 +6,12 @@ verus! {
 
 // Produce a fixed-length buffer containing the selected values.
 //
-// Conversion allows for both handles, the vector's four reserved elements, and
-// the two elements copied into the boxed slice before the old buffer is released.
+// The input reservation determines the backing peak. The returned slice
+// retains only its two elements.
 fn pack() -> (b: Box<[u32]>)
     ensures b.len() == 2, b[0] == 7, b[1] == 9,
     resources peak(memory) <= value_size(Vec<u32>) + value_size(Box<[u32]>)
-        + value_size([u32; 4]) + value_size([u32; 2]),
+        + value_size([u32; 4]),
 {
     let mut v = Vec::<u32>::with_capacity(4);
     v.push(7);

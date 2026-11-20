@@ -458,6 +458,37 @@ fn borrowed_vector_cleanup_preserves_backing_and_owned_children() {
 }
 
 #[test]
+fn borrowed_iteration_charges_a_reference_only_when_stored() {
+    let source = r#"
+        fn visit(slice: &[u8], vector: &Vec<u8>) resources peak(memory) <= 64 {
+            resources peak(memory) <= 0 {
+                for item in slice {
+                    assert(*item <= u8::MAX);
+                }
+                for item in vector {
+                    assert(*item <= u8::MAX);
+                }
+            }
+            resources peak(memory) <= BOUND {
+                for item in slice {
+                    let stored = item;
+                    assert(*stored <= u8::MAX);
+                }
+            }
+        }
+    "#;
+    super::support::verifies(
+        "borrowed_iteration_stored_reference",
+        &source.replace("BOUND", "ref_size(&u8)"),
+    );
+    super::support::rejects(
+        "borrowed_iteration_stored_reference_short",
+        &source.replace("BOUND", "0"),
+        "memory budget exceeded",
+    );
+}
+
+#[test]
 fn consuming_vector_break_keeps_only_the_selected_owner() {
     let source = r#"
         fn early_exit() resources peak(memory) <= 256 {
@@ -492,8 +523,8 @@ fn consuming_vector_retains_spare_backing_through_the_last_visit() {
             blocks.push(Box::new([7u8; 16]));
             for block in blocks {
                 assert(block[0] == 7);
-                // Iterator, four reserved slots, yielded handle, and payload.
-                assert(current(memory) <= 88);
+                // Four reserved slots, yielded handle, and payload.
+                assert(current(memory) <= 56);
                 break;
             }
             assert(current(memory) <= 0);
@@ -502,7 +533,7 @@ fn consuming_vector_retains_spare_backing_through_the_last_visit() {
     super::support::verifies("consuming_vector_last", source);
     super::support::rejects(
         "consuming_vector_last_short",
-        &source.replace("<= 88", "<= 87"),
+        &source.replace("<= 56", "<= 55"),
         "conditional memory budget exceeded",
     );
 }

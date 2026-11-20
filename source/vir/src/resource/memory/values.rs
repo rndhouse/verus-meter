@@ -145,7 +145,9 @@ impl Analysis<'_> {
                 if self.var_modes.get(&binding.name) != Some(&Mode::Exec) {
                     return Err(unsupported(&pattern.span, "non-executable Option bindings"));
                 }
-                let bytes = if shared_next
+                let bytes = if self.growth.implicit_collection_loop_slots.contains(&binding.name) {
+                    0
+                } else if shared_next
                     .is_some_and(|item| crate::ast_util::types_equal(item, &binding.typ))
                 {
                     self.layouts.ref_size(&binding.typ, &pattern.span)?
@@ -246,7 +248,11 @@ impl Analysis<'_> {
         };
         let mut option_owner = None;
         let scratch = if let PlaceX::Temporary(value) = &scrutinee.x {
-            let bytes = if let Some(item) = shared_next {
+            let bytes = if super::iterators::collection_next(value)
+                && self.growth.iterator_heads.contains_key(&value.span.id)
+            {
+                0
+            } else if let Some(item) = shared_next {
                 1 + self.layouts.ref_size(item, &scrutinee.span)?
             } else {
                 self.layouts.size(&scrutinee.typ, &scrutinee.span)?
