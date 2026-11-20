@@ -5,21 +5,21 @@ Bring the verifier into line with the [source accounting policy](../accounting/R
 ## What needs checking?
 
 - [ ] Inventory the operations the verifier accepts, starting from frontend intrinsics and executable expression handling. Cover inline values and temporaries, borrowing and copying, owning containers, iteration, and calls. Group operations only when their storage effects agree.
-- [ ] For each family, identify the source event that creates a charge, its size, who keeps it live, and what transfers or releases it. Distinguish the documented effect of a library operation from executable user code run during that operation.
-- [ ] Compare the rule with direct execution, helper and loop summaries, regressions, runnable examples, and user-facing docs. Check the same ownership effect across a helper boundary and a section boundary.
+- [ ] Apply shared principles across families. Identify what creates each charge, its size, who keeps it live, and what transfers or releases it. Add a detail page only when an operation needs its own accounting decision.
+- [ ] Check library operations against their documented effects and executable user code against the source rules. Compare direct execution with helper, loop, and section accounting, then check the examples and docs.
 - [ ] For missing operation support or ownership information, check the diagnostic with a generous budget. A missing rule must never silently grant zero cost.
 - [ ] Record each discrepancy with a reproducer, the expected charge, and its resolution. Update the accounting page when a policy decision changes. Keep validation evidence with the fix in Git.
 
 ## First corrections and controls
 
 - [ ] **Borrowed iteration.** Remove charges for implicit iterator state and the reference used only to visit an item. Show that storing the item still costs a slot and consuming iteration still retains the input backing and unvisited payloads.
-- [ ] **Streaming versus staging.** Verify the single checksum loop for a variable input length with one result slot per input plus the checksum allowance. Under the identical bound, show a budget violation for the split loop that retains a second collection. Check the reason for failure and isolate loop-length inference if the streaming proof still fails.
+- [ ] **Streaming versus staging.** Check both versions under the same variable-length budget. One result slot per input plus the checksum allowance should cover the streaming loop. The split loop should exceed it because the staged bytes stay live. If the verifier still needs help proving one push per input, track that separately as loop-inference work.
 - [ ] **Consuming conversion versus explicit replacement.** The boxed-slice conversion currently checks overlap with a possible internal replacement. Remove that charge. Keep a negative test where user code, directly or in a helper, creates a second buffer while the original is live. [Conversion implementation](../../../source/vir/src/resource/memory/boxed_slices.rs)
 - [ ] **Reservation versus private growth.** Use the committed vector rule in `fc76adae3` as a control. Exercise pushes below and beyond a reservation, removal back to the reservation, and growth through a borrowed helper. [Vector rules](../accounting/which-bytes-count/collections/vectors.md)
 - [ ] **Move versus duplication.** Moving an owning buffer must fit with one backing. Creating an independent copy while the first is live must require both. For clone operations, check the specific operation's ownership semantics and support status.
 
 ## When is the audit complete?
 
-- [ ] Every supported family has a documented rule and checked implementation. Every discrepancy has a resolution and a regression. Distinguish committed fixes from pending edits.
-- [ ] For each correction, independently derive the expected bytes and check a fitting case and a budget violation. Include a one-byte-short check where the peak is known exactly. An unsupported-operation or solver diagnostic cannot stand in for a budget violation.
+- [ ] Check every supported family against the applicable rule and record how each accounting discrepancy was resolved. Distinguish committed fixes from pending edits.
+- [ ] Derive the expected bytes independently and reuse existing tests or examples to check them. Add a test only when existing coverage misses a distinction that matters, such as an internal resize versus two explicitly live buffers. For a known exact peak, a budget one byte below it should fail on the budget check.
 - [ ] Verify affected examples and run the repository's focused memory checks against the rebuilt verifier. Preserve earlier results against the revision they tested. The previous correctness and test reviews remain available in Git at `fc76adae3`.
