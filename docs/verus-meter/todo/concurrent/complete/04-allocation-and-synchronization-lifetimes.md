@@ -23,50 +23,54 @@ This task owns local lifetime attribution and its proof obligations. 03 already
 connects actual worker bodies, completion/join and symbolic ownership populations;
 05 owns general interprocedural composition of the relationships added here.
 
-## Implementation progress
+## Completion evidence
 
-- `124573f58` preserves a local mutex's existing payload tree through construction, moves and destruction. The nested `Vec<Box<_>>` regression verifies 113 live bytes, rejects 112, and verifies zero after drop.
-- `05a87684b` and `aaa964dae` attach acquisition conditions to the same source observations that generate byte obligations. They preserve the canonical instance across captured strong aliases and bind each construction and acquisition to its executable site and occurrence coordinates.
-- `004620490` covers implicit capture cleanup with all potentially surviving storage. The struct tests distinguish declaration order from initializer order. `56847f669` confines this rule to source structs.
-- `1ee98ed5f` checks the success, poison and non-acquiring failure arms of native mutex operations. The focused synchronization suite passed all 18 tests at that checkpoint. The global interference proof remains a dependency of a total concurrent bound.
+Implemented on `feature/concurrent-symbolic-analysis` through `61c7eac2d`. The checked effects carry the same source observations used for byte obligations. Fixed allocations keep their source constructor and worker or loop visit through transfers. Runtime collections retain their existing element-forest descriptors.
+
+- `124573f58` preserves the owned payload of a local mutex. The nested vector example verifies at 113 bytes, rejects 112, and verifies zero after drop.
+- `05a87684b`, `aaa964dae`, and `1ee98ed5f` connect acquisition and release to the actual mutex instance, including captured aliases, poisoning, and non-acquiring try-lock outcomes. Dropping a 64-byte buffer before unlock leaves 10 modeled bytes at release. Reversing those operations leaves 82.
+- `004620490` and `56847f669` account for the declaration order of struct fields and all permitted closure capture cleanup orders. Conditional returns, nested sections and repeated acquisitions retain their own observations.
+- `61c7eac2d` checks guarded replacement, vector growth beyond a reservation, and removal of an owned element. Dropping the guard and mutex leaves 73 bytes in the popped option. A claim of 72 fails. A separate handoff test checks that a spawned worker owes all 72 bytes of a captured box in either unlock/join order. A claim of 71 fails.
+
+The implementation passed all 1,175 resource memory tests, including 33 synchronization cases, plus 88 VIR memory unit tests, 47 resource examples and 606 upstream regressions. General helper substitution, guard returns and updates to an owning payload shared across workers belong to 05. Verification of a total concurrent bound using these local relationships belongs to 07.
 
 ## Work
 
-- [ ] Attach synchronization conditions to simultaneous allocation/value footprints
+- [x] Attach synchronization conditions to simultaneous allocation/value footprints
   while preserving sizes, explicit reservations and input ownership.
   Keep the complete footprint of an acquired interval, not one allowance per object.
-- [ ] Establish contained lifetimes for allocations created after acquisition and
+- [x] Establish contained lifetimes for allocations created after acquisition and
   released before unlock. Include supported branches, loops, explicit drops,
   implicit scope exits, replacements and early exits.
-- [ ] Cover every permitted order of implicit closure-capture destruction; Rust
+- [x] Cover every permitted order of implicit closure-capture destruction; Rust
   leaves this order unspecified. Neither capture indices nor one compiler-selected
   cleanup sequence can establish exclusion. Retain ordering where source rules
   define it, including explicit drops and struct-field destruction.
-- [ ] Track allocations created before locking or surviving release as independent
+- [x] Track allocations created before locking or surviving release as independent
   live storage. Moving a buffer to a result, collection or shared owner preserves
   its charge and invalidates any unjustified containment claim.
-- [ ] Distinguish each acquisition lifetime. Reacquisition cannot repair the gap
+- [x] Distinguish each acquisition lifetime. Reacquisition cannot repair the gap
   during which escaped storage was alive without the guard.
-- [ ] Export these relationships through the existing checked effect interface,
+- [x] Export these relationships through the existing checked effect interface,
   preserving allocation, instance, acquisition and worker-occurrence identities.
   A release changes the conditions on surviving storage, not its ownership or byte
   charge. Do not assume another worker stops while local effects are analyzed.
-- [ ] Preserve each live payload's charge across ownership transfers and past its
+- [x] Preserve each live payload's charge across ownership transfers and past its
   last read. Track a collection's slots separately from payloads its elements own. For a
   guarded vector, a push uses a reserved slot or adds one occupied slot. A pop
   reduces the slot charge down to the explicit reservation. If it returns a box,
   track the payload until its modeled lifetime ends, including across unlock.
-- [ ] Charge both buffers when source code constructs a replacement while the old
+- [x] Charge both buffers when source code constructs a replacement while the old
   buffer is live. A resize internal to `Vec::push` adds no intermediate charge.
-  Apply the [vector rules](../../accounting/which-bytes-count/collections/vectors.md)
+  Apply the [vector rules](../../../accounting/which-bytes-count/collections/vectors.md)
   at the call.
-- [ ] Account collectively for several buffers and any supported concurrent work
+- [x] Account collectively for several buffers and any supported concurrent work
   associated with one guard. Borrowing or sharing a guard must not duplicate its
   per-holder allowance.
-- [ ] Generate the necessary coverage/lifetime proof obligations and protect model
+- [x] Generate the necessary coverage/lifetime proof obligations and protect model
   state from user writes. Integrate with Verus proof contexts without keeping an
   atomic invariant open around arbitrary allocations.
-- [ ] Diagnose invalid lifetime relationships at the relevant allocation, transfer
+- [x] Diagnose invalid lifetime relationships at the relevant allocation, transfer
   or release. Legal escaping allocations must still work with a sufficient bound
   once composition is integrated; do not forbid escape to manufacture precision.
 
@@ -94,12 +98,12 @@ regressions, preserving existing sequential lifetime tests.
 
 Use `docs/verus-meter/concurrent-model.md` for graph and coverage semantics:
 
-- [ ] Maintain disjoint byte attribution with additional guard conditions retained
+- [x] Maintain disjoint byte attribution with additional guard conditions retained
   as constraints. Release must reclassify surviving regions, not delete them.
-- [ ] Cover every supported cleanup edge, protected-payload replacement and
+- [x] Cover every supported cleanup edge, protected-payload replacement and
   source-level construction transient. Detect missing compiler drop information rather than
   substituting last-use estimates.
-- [ ] Translate every transition-review case assigned to local lifetime accounting
+- [x] Translate every transition-review case assigned to local lifetime accounting
   into regression obligations; preserve acquisition-family freshness in loops.
 
 ## Starting points
