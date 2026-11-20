@@ -107,9 +107,10 @@ fn collecting_a_relay_selects_its_own_capture_from_two_visits() {
         crate::verify_one_file("two_relays", program.clone(), &[]).unwrap_err(),
         GLOBAL,
     );
-    assert_vir_error_msgs(
+    let short =
         crate::verify_one_file("two_relays_short", program.replace("<= 246", "<= 245"), &[])
-            .unwrap_err(),
-        &["conditional memory budget exceeded", GLOBAL],
-    );
+            .unwrap_err();
+    let checkpoint = crate::common::relevant_error_span(&short.errors[0].spans);
+    assert!(checkpoint.text.iter().any(|line| line.text.contains("current(memory) <= 245")));
+    assert_vir_error_msgs(short, &["conditional memory budget exceeded", GLOBAL]);
 }

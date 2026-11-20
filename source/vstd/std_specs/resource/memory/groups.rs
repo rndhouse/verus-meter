@@ -10,9 +10,9 @@ use super::removal::{partition_remove, remove_add, remove_prefix};
 #[cfg(verus_keep_ghost)]
 use super::selection::{
     contains_add, contains_prefix, contains_runtime, contains_without, lookup_add, lookup_empty,
-    lookup_prefix, lookup_push, lookup_runtime, lookup_subtree, lookup_without, partition_without,
-    select_add, select_empty, select_prefix, select_push, select_replacement, select_runtime,
-    singleton_prefix, skip_prefix,
+    lookup_prefix, lookup_push, lookup_runtime, lookup_subtree, partition_without, select_add,
+    select_empty, select_prefix, select_push, select_replacement, select_runtime, singleton_prefix,
+    skip_prefix,
 };
 #[cfg(verus_keep_ghost)]
 use super::views::{
@@ -69,7 +69,6 @@ pub broadcast group group_metadata_algebra {
 /// Keep these rules separate from ordinary finite element transfers.
 pub broadcast group group_metadata_loop_algebra {
     select_push,
-    lookup_without,
     lookup_prefix,
     select_runtime,
     contains_add,

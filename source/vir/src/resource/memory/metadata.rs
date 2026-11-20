@@ -284,6 +284,10 @@ impl Analysis<'_> {
             ];
             if self.growth.loop_depth > 0 {
                 groups.push(expr::function("group_metadata_loop_algebra"));
+                // Inspect earlier slots while checking the loop body. Revealing
+                // this rewrite at loop entry would also expand old removals in
+                // the caller's byte checkpoints after the loop.
+                groups.push(expr::function("lookup_without"));
             }
             for group in groups {
                 let activation = SpannedTyped::new(
