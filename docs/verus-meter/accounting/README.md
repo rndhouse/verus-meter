@@ -9,5 +9,5 @@ These pages record our design agreement about the memory bound Verus Meter shoul
 ## Rules
 
 - [Which bytes count?](which-bytes-count/README.md) covers values, allocations, reservations, and library boundaries.
-- [When do bytes count?](when-bytes-count.md) covers ownership, moves, and release.
-- [How is peak calculated?](how-peak-is-calculated.md) covers overlap across branches, loops, calls, and sections.
+- [When do bytes count?](when-bytes-count/README.md) covers ownership, moves, and release.
+- [How is peak calculated?](peak-calc/README.md) covers overlap across branches, loops, calls, and sections.
