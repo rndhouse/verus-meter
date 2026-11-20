@@ -10,6 +10,11 @@ Bring the verifier into line with the [source accounting policy](../accounting/R
 - [ ] For missing operation support or ownership information, check the diagnostic with a generous budget. A missing rule must never silently grant zero cost.
 - [ ] Record each discrepancy with a reproducer, the expected charge, and its resolution. Update the accounting page when a policy decision changes. Keep validation evidence with the fix in Git.
 
+## Review through examples
+
+- As each correction is validated, update its checklist item with the commit and links to every example changed. Flag those diffs for review while the audit is in progress.
+- Show the before-and-after budget or verification result and name the storage that explains the difference. If an existing example demonstrates the correction as written, link it and report the result under its original budget.
+
 ## First corrections and controls
 
 - [ ] **Borrowed iteration.** Remove charges for implicit iterator state and the reference used only to visit an item. Show that storing the item still costs a slot and consuming iteration still retains the input backing and unvisited payloads.
