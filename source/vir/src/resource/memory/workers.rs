@@ -100,6 +100,12 @@ pub(super) struct Workers {
 }
 
 impl Workers {
+    /// A worker checkpoint may still observe a published backing until the
+    /// executable join consumes its handle, including a delegated child's claim.
+    pub(super) fn shares_root(&self, root: super::shared::RootId) -> bool {
+        self.records.values().any(|worker| worker.entry_shared.may_observe(root))
+    }
+
     fn running(&self, actor: WorkerId) -> bool {
         self.active == Some(actor)
             || self.records.get(&actor).is_some_and(|worker| matches!(worker.stage, Stage::Running))

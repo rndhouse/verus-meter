@@ -67,7 +67,23 @@ impl Analysis<'_> {
         // A leaf return can be selected from an internal runtime forest. Use
         // its inferred descriptor whenever the caller supplies complete owners.
         // Incoming partial views still use their checked native interface.
-        if !required {
+        // A guard borrow has no executable Vec place that a post-call length
+        // expression can re-read. Use the checked transformation of its entry
+        // forest, including pushes into already reserved slots.
+        use super::super::synchronization::local::View;
+        let protected_write = summary.modified_parameters.iter().any(|&index| {
+            let typ = &function.x.params[index].x.typ;
+            match self.synchronization_view(&args[index]) {
+                Some(View::Payload(_)) => self.layouts.vector(super::super::paths::referent(typ)),
+                Some(View::Guard(_) | View::Mutex(_)) => self
+                    .layouts
+                    .mutable_guard_payload(typ)
+                    .or_else(|| self.layouts.mutex_payload(super::super::paths::referent(typ)))
+                    .is_some_and(|payload| self.layouts.vector(payload)),
+                None => false,
+            }
+        });
+        if !required && !protected_write {
             let mut types = vec![function.x.outer_ret.x.typ.clone()];
             let mut observes_geometry = false;
             while let Some(typ) = types.pop() {
@@ -92,7 +108,8 @@ impl Analysis<'_> {
                 if !self.layouts.owner(typ) {
                     continue;
                 }
-                let precise = super::super::paths::expr(argument, typ)
+                let precise = self
+                    .call_location(argument, typ)
                     .and_then(|(name, path)| {
                         if self.heap.borrowed.contains_key(&name)
                             || self.growth.section_owners.contains(&name)
@@ -127,7 +144,7 @@ impl Analysis<'_> {
             if !self.layouts.owner(typ) {
                 continue;
             }
-            let Some((name, path)) = super::super::paths::expr(argument, typ) else {
+            let Some((name, path)) = self.call_location(argument, typ) else {
                 return Err(unsupported(
                     &value.span,
                     "a runtime ownership argument without a tracked owner; bind the argument first",
@@ -474,9 +491,13 @@ impl Analysis<'_> {
                 .layouts
                 .borrowed_owner(&function.x.params[index].x.typ)
                 .expect("mutable owner parameter");
-            let (name, path) = super::super::paths::expr(&args[index], typ).ok_or_else(|| {
+            let (name, path) = self.call_location(&args[index], typ).ok_or_else(|| {
                 unsupported(&value.span, "a transferred parameter without a tracked owner")
             })?;
+            let through_guard = matches!(
+                self.synchronization_view(&args[index]),
+                Some(super::super::synchronization::local::View::Payload(_))
+            );
             let borrowed_root = self.heap.borrowed.contains_key(&name);
             let mut old = if path.is_empty() {
                 if self.heap.owners.contains_key(&name) {
@@ -493,9 +514,21 @@ impl Analysis<'_> {
                 .children
                 .keys()
                 .any(|(parameter, _)| *parameter == index);
-            let predicted =
+            let mut predicted =
                 self.adopt_transfer_node(&value.span, node, prepared.view, zero, prepared.ordered)?;
             let mut owner = if replacement {
+                // The checked child effect replaces protected contents. Its
+                // enclosing mutex, including the domain's canonical shared root,
+                // is still the very same executable object.
+                if self.layouts.synchronization_parameter(&function.x.params[index].x.typ).is_some()
+                {
+                    predicted.synchronization = old.synchronization;
+                    if let Some(child) =
+                        predicted.children.get_mut(&super::super::heap::OwnerSlot::Contents)
+                    {
+                        self.protect_vector_length(value, child);
+                    }
+                }
                 self.release_owner(old, &value.span);
                 predicted
             } else {
@@ -531,8 +564,10 @@ impl Analysis<'_> {
                 &mut owner,
                 &mut prepared.origins,
             )?;
-            let source = super::super::projections::spec_value(&args[index])?;
-            self.bind_collection_sources(&value.span, &mut owner, typ, source)?;
+            if !through_guard {
+                let source = super::super::projections::spec_value(&args[index])?;
+                self.bind_collection_sources(&value.span, &mut owner, typ, source)?;
+            }
             if path.is_empty() {
                 if borrowed_root {
                     self.heap.borrowed.insert(name, owner);
@@ -599,7 +634,18 @@ impl Analysis<'_> {
         if let (Some(id), Some(next)) = (old.vector, predicted.vector) {
             let location = (parameter, path.clone());
             let grows = summary.allocations.retained.contains_key(&location);
-            if grows || summary.vectors.removals.contains(&location) {
+            let protected = self.growth.vectors[id].protected_length.clone();
+            if let Some(counter) = &protected {
+                let length = predicted.geometry.clone().ok_or_else(|| {
+                    unsupported(span, "a protected vector update without its checked exit length")
+                })?;
+                self.growth
+                    .after
+                    .entry(span.id)
+                    .or_default()
+                    .push(super::super::symbolic::assign(span, counter, length));
+            }
+            if grows || protected.is_some() || summary.vectors.removals.contains(&location) {
                 let source = self.growth.vectors[next].clone();
                 let length = old.source.as_ref().map(|_| self.owner_length(span, old));
                 let state = &mut self.growth.vectors[id];

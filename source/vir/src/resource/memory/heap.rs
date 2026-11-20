@@ -249,14 +249,17 @@ impl Heap {
         (std::mem::take(&mut self.protected), std::mem::take(&mut self.partitions))
     }
     pub(super) fn root(&self, name: &VarIdent) -> Option<&Owner> {
-        self.owners.get(name).or_else(|| self.borrowed.get(name))
+        self.owners
+            .get(name)
+            .or_else(|| self.borrowed.get(name))
+            .or_else(|| self.shared.backing_at(name))
     }
 
     pub(super) fn root_mut(&mut self, name: &VarIdent) -> Option<&mut Owner> {
         if self.owners.contains_key(name) {
             self.owners.get_mut(name)
         } else {
-            self.borrowed.get_mut(name)
+            self.borrowed.get_mut(name).or_else(|| self.shared.backing_at_mut(name))
         }
     }
 

@@ -41,8 +41,8 @@ pub(in super::super) fn validate(
             .x
             .params
             .get(*index)
-            .and_then(|parameter| layouts.borrowed_owner(&parameter.x.typ));
-        if typ.is_none_or(|typ| !crate::ast_util::types_equal(typ, &node.typ)) {
+            .and_then(|parameter| layouts.borrowed_descriptor(&parameter.x.typ));
+        if typ.as_ref().is_none_or(|typ| !crate::ast_util::types_equal(typ, &node.typ)) {
             return Err(error(
                 &function.span,
                 "internal memory analysis inconsistency: borrowed ownership type differs",
@@ -165,6 +165,7 @@ mod tests {
         };
         let mut summary = FunctionSummary {
             effects: None,
+            synchronized_result: None,
             modified_parameters: Default::default(),
             transfer_required: false,
             transfer: None,

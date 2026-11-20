@@ -59,7 +59,12 @@ impl Analysis<'_> {
         self.storage.enter_section(&parent);
         let mut synchronized = parent.holding_any();
         crate::ast_visitor::expr_visitor_check(expr, &mut |_, value| {
-            if let ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), .. } = &value.x {
+            if let ExprX::Call { target: CallTarget::Fun(_, target, _, _, attrs), .. } = &value.x {
+                synchronized |= self
+                    .summaries
+                    .get(target)
+                    .and_then(|s| s.effects.as_ref())
+                    .is_some_and(|effects| effects.ownership.locks_mutex());
                 synchronized |= matches!(attrs.resource_intrinsic, Some(ResourceIntrinsic::Synchronization(op)) if op.acquisition_contract().is_some());
             }
             Ok::<(), VirErr>(())

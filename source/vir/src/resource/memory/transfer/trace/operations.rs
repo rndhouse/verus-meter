@@ -76,7 +76,14 @@ impl Trace<'_> {
         use checked::Operation;
         match operation {
             Operation::GuardBorrow { source, .. } => {
-                self.value(&source)?;
+                match &source.x {
+                    ExprX::BorrowMut(place) | ExprX::TwoPhaseBorrowMut(place) => {
+                        self.place_effects(place)?
+                    }
+                    _ => {
+                        self.value(&source)?;
+                    }
+                }
                 Some(Value::Unknown)
             }
             Operation::GuardExtract { source } => {

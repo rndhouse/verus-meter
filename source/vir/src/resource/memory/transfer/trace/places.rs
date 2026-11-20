@@ -12,7 +12,17 @@ use crate::resource::memory::{
 impl Trace<'_> {
     /// Evaluate index operands used by a checked source ownership projection.
     fn indices_expr(&mut self, value: &Expr, result: &mut HashMap<u64, Expr>) -> Option<()> {
-        if let Some(args) = paths::vector_index(value) {
+        if matches!(value.x, ExprX::Call { .. })
+            && matches!(
+                self.checked.operation_at(&value.span),
+                Some(checked::Operation::GuardBorrow { .. })
+            )
+        {
+            // A projection through a native guard also evaluates that borrow.
+            // The checked location supplies the cell, and the executable
+            // operand supplies its witness on this path.
+            self.value(value)?;
+        } else if let Some(args) = paths::vector_index(value) {
             self.indices_expr(&args[0], result)?;
             result.insert(value.span.id, self.scalar(&args[1])?);
         } else {
@@ -209,7 +219,7 @@ impl Trace<'_> {
     }
 
     /// Evaluate a place's temporary and index effects without moving its owner.
-    fn place_effects(&mut self, place: &Place) -> Option<()> {
+    pub(super) fn place_effects(&mut self, place: &Place) -> Option<()> {
         match &place.x {
             PlaceX::Temporary(value) => {
                 self.value(value)?;

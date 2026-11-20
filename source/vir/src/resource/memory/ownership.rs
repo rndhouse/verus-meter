@@ -276,7 +276,8 @@ impl Analysis<'_> {
         for ((index, child_path), effect) in
             self.summaries[&callee.x.name].allocations.children.clone()
         {
-            let (name, mut path) = super::paths::expr(&args[index], &callee.x.params[index].x.typ)
+            let (name, mut path) = self
+                .call_location(&args[index], &callee.x.params[index].x.typ)
                 .ok_or_else(|| unsupported(&expr.span, "an aliased child replacement argument"))?;
             path.extend(child_path.iter().cloned());
             if !super::paths::indexed(&path) {
@@ -290,7 +291,18 @@ impl Analysis<'_> {
                 .ok_or_else(|| unsupported(&expr.span, "a replacement without a live child"))?;
             self.release_owner(old, &expr.span);
             let mut typ = super::paths::referent(&callee.x.params[index].x.typ).clone();
-            for slot in &child_path {
+            let mut slots = child_path.iter();
+            if let Some(payload) = self.layouts.mutable_guard_payload(&callee.x.params[index].x.typ)
+            {
+                if slots.next() != Some(&super::heap::OwnerSlot::Contents) {
+                    return Err(unsupported(
+                        &expr.span,
+                        "a guard mutation outside its protected payload",
+                    ));
+                }
+                typ = payload.clone();
+            }
+            for slot in slots {
                 typ =
                     self.layouts.owned_children(&typ, &expr.span)?.remove(slot).ok_or_else(
                         || unsupported(&expr.span, "an unknown replacement child type"),

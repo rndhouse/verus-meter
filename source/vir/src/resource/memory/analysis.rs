@@ -760,6 +760,7 @@ pub(super) fn check(
         &analysis.bound,
         &modes.var_modes,
     )?;
+    let interface = analysis.bind_synchronization_inputs(function);
     let mut input_vectors = HashMap::new();
     let worker_parameter = layouts.worker_parameter(function);
     for (index, param) in f.params.iter().enumerate() {
@@ -768,7 +769,8 @@ pub(super) fn check(
             if !param.x.user_mut {
                 analysis.record_immutable_binding(&param.x.name, &param.x.typ);
             }
-            let borrowed = layouts.borrowed_owner(&param.x.typ);
+            let descriptor = layouts.borrowed_descriptor(&param.x.typ);
+            let borrowed = descriptor.as_ref();
             if borrowed.is_some() && param.x.user_mut {
                 return Err(unsupported(
                     &param.span,
@@ -786,6 +788,7 @@ pub(super) fn check(
                     &capacities,
                     worker_parameter == Some(index),
                 )?;
+                analysis.bind_protected_input(&mut owner, index, &interface, &body.span);
                 if worker_parameter == Some(index) {
                     analysis.transitions.worker_parameter =
                         Some((index, owner.vector.expect("worker vector input")));
@@ -816,6 +819,7 @@ pub(super) fn check(
             }
             let mut value = analysis.fresh_value(&param.span, &param.x.typ)?;
             value.parameter = Some(index);
+            value.synchronization_view = interface.input_view(index);
             analysis.slots.insert(param.x.name.clone(), value);
         }
     }
@@ -837,15 +841,9 @@ pub(super) fn check(
 
     let result = analysis.produce(body)?;
     analysis.check_indexed_exits(&body.span);
+    analysis.drop_guard_parameters(function, &interface);
     let result = analysis.finish_returns(&function.span, result)?;
-    if analysis.storage.holding_any() {
-        // Acquisitions in supported function interfaces must end here. General
-        // guard-return summaries will need an explicit outgoing binder.
-        return Err(unsupported(
-            &function.span,
-            "an acquisition surviving without a checked outgoing guard",
-        ));
-    }
+    let synchronized_result = analysis.finish_synchronization_interface(function, &interface)?;
     if !analysis.heap.temporaries.is_empty() || !analysis.evaluations.is_empty() {
         return Err(unsupported(&function.span, "unclosed compiler receiver-temporary scopes"));
     }
@@ -919,6 +917,7 @@ pub(super) fn check(
                 analysis.calls,
                 None,
             )?;
+            effects.validate_call_points(summaries)?;
             return Ok(Some(FunctionAnalysis {
                 report,
                 summary: None,
@@ -939,6 +938,7 @@ pub(super) fn check(
         .points()
         .iter()
         .map(|p| super::lifetime::Profile {
+            condition: p.condition.clone(),
             cost: p
                 .cost
                 .map(&function.span, &|value| {
@@ -950,6 +950,8 @@ pub(super) fn check(
         })
         .collect::<Vec<_>>();
     let result_owner = analysis.result_owner.take();
+    analysis.transitions.returned =
+        analysis.storage.returned_storage(result_owner.as_ref(), &analysis.growth.elements);
     analysis.record_output_origins(function, result_owner.as_ref());
     let (returned, returned_capacities) = super::ownership::summarize(
         function,
@@ -981,6 +983,7 @@ pub(super) fn check(
     }
     let inferred = if incomplete.is_some() {
         profiles.push(super::lifetime::Profile {
+            condition: Default::default(),
             cost: super::footprint::Footprint::allowance(analysis.bound.clone()),
             result: false,
             inputs: (0..analysis.input_paths.len()).collect(),
@@ -1014,13 +1017,23 @@ pub(super) fn check(
         bound: super::footprint::MemoryBudget::total(bound.clone()),
         kind: CheckKind::Function,
     }));
+    let modified_parameters =
+        super::transfer::modified_parameters(&function.x.params, layouts, &analysis.transitions);
+    let payloads = function
+        .x
+        .params
+        .iter()
+        .enumerate()
+        .filter_map(|(index, param)| layouts.borrowed_owner(&param.x.typ).map(|_| index))
+        .collect();
+    analysis
+        .transitions
+        .distinct_payload_inputs
+        .extend(interface.require_distinct_payloads(&payloads, &modified_parameters));
     let summary = super::summary::FunctionSummary {
         effects: None,
-        modified_parameters: super::transfer::modified_parameters(
-            &function.x.params,
-            layouts,
-            &analysis.transitions,
-        ),
+        synchronized_result,
+        modified_parameters,
         transfer_required: super::transfer::requires_summary(
             function,
             layouts,
@@ -1090,6 +1103,7 @@ pub(super) fn check(
         analysis.calls,
         None,
     )?;
+    effects.validate_call_points(summaries)?;
     let summary_has_lock = effects.ownership.locks_mutex();
     summary.effects = Some(effects.clone());
     super::transfer::validate(function, layouts, &summary)?;

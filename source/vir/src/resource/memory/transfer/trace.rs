@@ -195,7 +195,8 @@ pub(super) fn summarize(
         if parameter.x.mode != Mode::Exec {
             continue;
         }
-        let typ = layouts.borrowed_owner(&parameter.x.typ).unwrap_or(&parameter.x.typ);
+        let descriptor = layouts.borrowed_descriptor(&parameter.x.typ);
+        let typ = descriptor.as_ref().unwrap_or(&parameter.x.typ);
         let value = if layouts.owner(typ) {
             let memory = trace.symbol(&parameter.span, Input::Forest(index), expr::memory_type());
             let memory = trace
@@ -253,7 +254,7 @@ pub(super) fn summarize(
     }
     let mut borrowed = BTreeMap::new();
     for (index, parameter) in function.x.params.iter().enumerate() {
-        if matches!(&*parameter.x.typ, TypX::MutRef(_))
+        if layouts.borrowed_owner(&parameter.x.typ).is_some()
             && trace.state.written.contains(&parameter.x.name)
         {
             let Value::Owner(node) = trace

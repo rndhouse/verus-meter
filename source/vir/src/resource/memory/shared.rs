@@ -272,6 +272,12 @@ impl SharedRoots {
         Ok(())
     }
 
+    pub(super) fn may_observe(&self, root: RootId) -> bool {
+        self.has_strong(root)
+            || self.held_payloads.contains(&root)
+            || self.selections.values().any(|alias| alias.roots.contains(&root))
+    }
+
     pub(super) fn allocation_ids(&self) -> impl Iterator<Item = RootId> + '_ {
         self.roots.keys().chain(&self.held_payloads).copied()
     }
@@ -309,6 +315,50 @@ impl SharedRoots {
     pub(super) fn payload(&self, id: RootId) -> Option<&Owner> {
         let Backing::Owned(backing) = &self.roots.get(&id)?.storage else { return None };
         backing.children.get(&OwnerSlot::Contents)
+    }
+
+    /// The regular ownership path operations can address a canonical Arc backing
+    /// by its private root binder. Rust values and handles cannot forge this place.
+    pub(super) fn protected_root(
+        &self,
+        instance: super::synchronization::Instance,
+    ) -> Option<(RootId, VarIdent)> {
+        self.roots.iter().find_map(|(&id, root)| {
+            (root.mutex == Some(instance) && matches!(root.storage, Backing::Owned(_))).then(|| {
+                (
+                    id,
+                    VarIdent(
+                        std::sync::Arc::new("$memory_arc_backing".into()),
+                        VarIdentDisambiguate::VirTemp(id.0),
+                    ),
+                )
+            })
+        })
+    }
+
+    fn root_binder(name: &VarIdent) -> Option<RootId> {
+        if name.0.as_str() == "$memory_arc_backing"
+            && let VarIdentDisambiguate::VirTemp(id) = name.1
+        {
+            Some(RootId(id))
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn backing_at(&self, name: &VarIdent) -> Option<&Owner> {
+        let Backing::Owned(owner) = &self.roots.get(&Self::root_binder(name)?)?.storage else {
+            return None;
+        };
+        Some(owner)
+    }
+
+    pub(super) fn backing_at_mut(&mut self, name: &VarIdent) -> Option<&mut Owner> {
+        let Backing::Owned(owner) = &mut self.roots.get_mut(&Self::root_binder(name)?)?.storage
+        else {
+            return None;
+        };
+        Some(owner)
     }
 
     /// A peer may take over charged bytes only within the frame that owns its result.
@@ -408,6 +458,40 @@ impl SharedRoots {
             return Err(unsupported(span, "worker completion with unaccounted strong handles"));
         }
         Ok(())
+    }
+
+    /// Transfer the canonical tree when the closure actually captured *every*
+    /// strong handle to its protected owning payload. Other domains, selected
+    /// aliases and indexed populations can retain ownership independently.
+    /// The entry observation kept by the worker still names its original root.
+    pub(super) fn take_exclusive_protected(
+        &mut self,
+        captured: &mut Self,
+        reservations: &mut Self,
+        excluded: &BTreeSet<RootId>,
+    ) {
+        for (id, input) in &mut captured.roots {
+            let Some(root) = self.roots.get(id) else { continue };
+            let Backing::Owned(tree) = &root.storage else { continue };
+            let protected_owner = tree.children.get(&OwnerSlot::Contents).is_some_and(|mutex| {
+                mutex.mutex_instance().is_some()
+                    && mutex.children.contains_key(&OwnerSlot::Contents)
+            });
+            if !protected_owner
+                || root.strong != input.strong
+                || root.strong == 0
+                || !matches!(input.storage, Backing::Imported { entry } if entry == input.strong)
+                || tree.references() != References::None
+                || !tree.inputs().is_empty()
+                || excluded.contains(id)
+                || self.held_payloads.contains(id)
+                || self.selections.values().any(|alias| alias.roots.contains(id))
+            {
+                continue;
+            }
+            *input = self.roots.remove(id).expect("checked exclusive root");
+            reservations.roots.remove(id);
+        }
     }
 
     /// Apply a fixed worker's checked entry-to-exit ownership relation at join.

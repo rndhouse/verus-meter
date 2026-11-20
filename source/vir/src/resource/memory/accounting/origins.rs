@@ -139,6 +139,89 @@ impl super::Live {
     }
 }
 
+/// Disjoint storage at the fixed ownership paths of one reaching return. A
+/// dynamic ID can name a forest charge. Its constituents are interpreted by
+/// the checked transfer template, never as one fresh executable allocation.
+#[derive(Clone, Default)]
+pub(in super::super) struct ReturnedStorage {
+    nodes: BTreeMap<super::super::heap::OwnerPath, BTreeSet<ReturnedRegion>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ReturnedRegion {
+    Fixed(FixedOrigin),
+    Dynamic(u64),
+    Input(usize),
+}
+
+impl Accounting {
+    /// Preserve branch alternatives instead of attributing an adopted result
+    /// to a single constructor chosen from several return edges.
+    pub(in super::super) fn returned_storage(
+        &self,
+        owner: Option<&Owner>,
+        elements: &[super::super::elements::ElementState],
+    ) -> Vec<ReturnedStorage> {
+        let Some(owner) = owner else { return Vec::new() };
+        self.paths
+            .iter()
+            .map(|path| {
+                let mut output = ReturnedStorage::default();
+                owner.visit_paths(&mut Vec::new(), &mut |location, node| {
+                    let mut regions = BTreeSet::new();
+                    if let Some(origin) = node.fixed_role.and_then(|role| path.owned.get(&role)) {
+                        regions.insert(ReturnedRegion::Fixed(*origin));
+                    }
+                    if let Some(input) = node.input {
+                        regions.insert(ReturnedRegion::Input(input));
+                    }
+                    if let Some(id) = node.dynamic.filter(|id| path.dynamic.contains_key(id)) {
+                        regions.insert(ReturnedRegion::Dynamic(id));
+                    }
+                    if let Some(children) = &node.elements {
+                        regions.extend(children.inputs.iter().copied().map(ReturnedRegion::Input));
+                        regions.extend(
+                            children
+                                .states
+                                .values()
+                                .map(|id| elements[*id].id)
+                                .filter(|id| path.dynamic.contains_key(id))
+                                .map(ReturnedRegion::Dynamic),
+                        );
+                    }
+                    output.nodes.insert(location.clone(), regions);
+                });
+                output
+            })
+            .collect()
+    }
+}
+
+impl ReturnedStorage {
+    /// A caller may materialize a summary charge and split its forest. Its
+    /// structural result path must exist in the callee's checked output or
+    /// have an explicit projected node in a checked runtime forest.
+    pub(in super::super) fn validate_against(
+        &self,
+        callee: &[Self],
+        has_template: bool,
+        span: &Span,
+    ) -> Result<(), VirErr> {
+        for (path, regions) in &self.nodes {
+            if !regions.is_empty()
+                && !callee.iter().any(|output| output.nodes.contains_key(path))
+                && !has_template
+            {
+                return Err(super::unsupported(
+                    span,
+                    "a returned charge without its helper output path",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,6 +253,17 @@ mod tests {
             assert_eq!(contracts::constant(&phase.cost.total()), Some(32));
             assert_eq!(phase.fixed_origins.len(), 1);
             assert_eq!(phase.fixed_origins.first().unwrap().identity, original);
+        }
+        let returned = Owner { fixed_role: Some(role), bytes: 32, ..Owner::default() };
+        let outputs = left.returned_storage(Some(&returned), &[]);
+        assert_eq!(outputs.len(), 2);
+        for (output, original) in outputs.iter().zip([role, other]) {
+            let [ReturnedRegion::Fixed(source)] =
+                output.nodes[&Vec::new()].iter().collect::<Vec<_>>()[..]
+            else {
+                panic!("each returned box has one source allocation");
+            };
+            assert_eq!(source.identity, original);
         }
         left.release_owned(&span(4), Some(role), MemoryKind::host_heap(), 32, "merged result");
         left.check_transferred(&span(4)).unwrap();

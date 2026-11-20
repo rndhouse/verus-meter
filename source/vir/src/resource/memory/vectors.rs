@@ -195,7 +195,8 @@ impl Analysis<'_> {
             return Err(unsupported(&arg.span, "this vector receiver"));
         }
         let state = self.vector_argument(arg, typ, &[])?;
-        let location = super::paths::expr(arg, typ)
+        let location = self
+            .call_location(arg, typ)
             .ok_or_else(|| unsupported(&arg.span, "a vector without a checked location"))?;
         let value = if super::paths::vector_index(arg).is_some() {
             self.discard(arg)?;
@@ -236,7 +237,7 @@ impl Analysis<'_> {
         typ: &Typ,
         child: &[super::heap::OwnerSlot],
     ) -> Result<usize, VirErr> {
-        let (name, mut path) = super::paths::expr(arg, typ).ok_or_else(|| {
+        let (name, mut path) = self.call_location(arg, typ).ok_or_else(|| {
             unsupported(&arg.span, "vector operations outside a named owner or parameter")
         })?;
         path.extend_from_slice(child);

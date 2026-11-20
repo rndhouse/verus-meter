@@ -17,14 +17,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// The charged allocations reached by following uniquely owned children.
 #[derive(Default)]
-struct Allocations {
-    roles: BTreeMap<MemoryKind, BTreeSet<u64>>,
-    fixed: BTreeMap<MemoryKind, u64>,
-    dynamic: BTreeSet<u64>,
+pub(super) struct Allocations {
+    pub(super) roles: BTreeMap<MemoryKind, BTreeSet<u64>>,
+    pub(super) fixed: BTreeMap<MemoryKind, u64>,
+    pub(super) dynamic: BTreeSet<u64>,
 }
 
 impl Allocations {
-    fn owned(
+    pub(super) fn owned(
         owner: Option<&Owner>,
         element_states: &[ElementState],
         span: &Span,

@@ -81,8 +81,7 @@ impl Analysis<'_> {
                 .borrowed_owner(&function.x.params[*index].x.typ)
                 .unwrap_or(&function.x.params[*index].x.typ);
             if sources.is_empty() {
-                if let Some((name, path)) = crate::resource::memory::paths::expr(&args[*index], typ)
-                {
+                if let Some((name, path)) = self.call_location(&args[*index], typ) {
                     let root = self.heap.root(&name).unwrap();
                     if let Some((depth, input)) = (0..path.len()).rev().find_map(|depth| {
                         // Fixed nodes have independent regions. Only runtime

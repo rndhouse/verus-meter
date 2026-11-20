@@ -144,11 +144,58 @@ impl Layouts {
         matches!(&**typ, TypX::Datatype(name, _, _) if Some(name) == self.vector.as_ref())
     }
 
+    pub(super) fn synchronization_parameter(
+        &self,
+        typ: &Typ,
+    ) -> Option<super::synchronization::parameters::Parameter> {
+        super::synchronization::parameters::parameter_type(typ, &self.synchronization_types)
+    }
+
+    pub(super) fn synchronization_result(&self, typ: &Typ) -> bool {
+        super::synchronization::parameters::result_payload(typ, &self.synchronization_types)
+            .is_some()
+    }
+
+    /// A borrowed native guard provides access to a separately owned mutex payload.
+    pub(super) fn mutable_guard_payload<'t>(&self, typ: &'t Typ) -> Option<&'t Typ> {
+        let TypX::MutRef(inner) = &**typ else { return None };
+        let TypX::Datatype(name, args, _) = &**inner else { return None };
+        (self.synchronization_types.get(name)
+            == Some(&super::synchronization::LibraryType::MutexGuard))
+        .then(|| args.first())
+        .flatten()
+    }
+
     pub(super) fn borrowed_owner<'t>(&self, typ: &'t Typ) -> Option<&'t Typ> {
         let inner = super::paths::referent(typ);
         (matches!(&**typ, TypX::MutRef(_) | TypX::Decorate(TypDecoration::Ref, None, _))
+            && (!super::synchronization::parameters::borrowed_view(
+                typ,
+                &self.synchronization_types,
+            ) || self
+                .mutex_payload(inner)
+                .or_else(|| self.mutable_guard_payload(typ))
+                .is_some_and(|payload| self.owner(payload)))
             && self.owner(inner))
         .then_some(inner)
+    }
+
+    /// Ownership templates for a mutable guard borrow describe the native
+    /// mutex tree the guard grants access to. The guard's runtime layout and
+    /// destructor remain independent of that tree.
+    pub(super) fn borrowed_descriptor(&self, typ: &Typ) -> Option<Typ> {
+        let inner = self.borrowed_owner(typ)?;
+        if let Some(payload) = self.mutable_guard_payload(typ) {
+            let mutex = self.synchronization_types.iter().find_map(|(name, kind)| {
+                (*kind == super::synchronization::LibraryType::Mutex).then_some(name)
+            })?;
+            return Some(std::sync::Arc::new(TypX::Datatype(
+                mutex.clone(),
+                std::sync::Arc::new(vec![payload.clone()]),
+                std::sync::Arc::default(),
+            )));
+        }
+        Some(inner.clone())
     }
 
     /// Resolved handle payload and whether this is the native standard API.

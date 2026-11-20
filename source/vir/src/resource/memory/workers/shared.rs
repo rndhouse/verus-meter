@@ -5,6 +5,7 @@
 mod carried;
 mod collections;
 mod deferred;
+mod protected;
 use deferred::Deferred;
 mod jobs;
 mod occurrences;
@@ -130,6 +131,12 @@ impl Analysis<'_> {
             return Err(unsupported(
                 span,
                 "retaining a collector with outstanding shared reservations in an indexed slot",
+            ));
+        }
+        if execution.entry.shared.owned().next().is_some() {
+            return Err(unsupported(
+                span,
+                "indexing a worker with an exclusively transported protected payload",
             ));
         }
         let returned = execution.returned_arc_root();

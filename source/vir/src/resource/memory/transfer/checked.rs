@@ -228,6 +228,10 @@ pub(in super::super) enum Operation {
     /// Apply an already checked helper, including its resolved borrowed places.
     Call {
         target: Fun,
+        /// Caller-side return charge identities indexed by the same paths as
+        /// the callee's exit alternatives. Moves keep their previous identity.
+        returned: Vec<super::super::accounting::ReturnedStorage>,
+        synchronization: Option<Box<super::super::synchronization::helpers::Call>>,
         /// Instantiated workspace contract; incoming allocations stay external.
         budget: Expr,
         args: Exprs,
@@ -274,6 +278,12 @@ pub(in super::super) enum Kind {
 
 #[derive(Default)]
 pub(in super::super) struct Checked {
+    /// Charged result paths on each reaching normal exit, before transport.
+    pub(in super::super) returned: Vec<super::super::accounting::ReturnedStorage>,
+    /// Incoming guard and mutex binders come from executable formal parameters.
+    pub(in super::super) synchronization_inputs: super::super::synchronization::parameters::Inputs,
+    /// Pairs of formal mutex instances whose ownership updates require separate trees.
+    pub(in super::super) distinct_payload_inputs: std::collections::BTreeSet<(usize, usize)>,
     /// Incoming regions moved into a private carried allocation. The closed
     /// consumer keeps the caller's full input charged through its return.
     pub(in super::super) carried_inputs: HashSet<usize>,
@@ -326,7 +336,12 @@ pub(in super::super) struct Checked {
 
 impl Checked {
     pub(in super::super) fn locks_mutex(&self) -> bool {
-        self.operations.values().any(|op| matches!(op, Operation::MutexLock { .. }))
+        self.synchronization_inputs.has_guards()
+            || self.operations.values().any(|op| match op {
+                Operation::MutexLock { .. } => true,
+                Operation::Call { synchronization: Some(call), .. } => call.has_intervals(),
+                _ => false,
+            })
     }
 
     /// Validate native construction and acquisition binders once per body.
@@ -337,10 +352,14 @@ impl Checked {
     ) -> Result<std::collections::BTreeSet<super::super::synchronization::local::Interval>, VirErr>
     {
         let mut instances = std::collections::BTreeSet::new();
-        let mut intervals = std::collections::BTreeSet::new();
+        let mut intervals = self.synchronization_inputs.intervals();
         let mut attempts = std::collections::BTreeSet::new();
         for (site, operation) in &self.operations {
             let (occurrence, fresh) = match operation {
+                Operation::Call { synchronization: Some(call), .. } => {
+                    call.validate(*site, actor, &mut intervals, &mut attempts, span)?;
+                    continue;
+                }
                 Operation::MutexNew { instance, occurrence, .. } => {
                     (occurrence, instances.insert(*instance))
                 }
@@ -462,7 +481,10 @@ impl Checked {
             Operation::Push { receiver, .. } | Operation::Remove { receiver, .. } => {
                 self.mutations.push(receiver.location.clone());
             }
-            Operation::Call { borrowed, modified, .. } => {
+            Operation::Call { borrowed, modified, synchronization, .. } => {
+                if let Some(call) = synchronization {
+                    self.distinct_payload_inputs.extend(&call.distinct_inputs);
+                }
                 for index in modified {
                     if let Some(place) = borrowed.get(index) {
                         self.mutations.push(place.location.clone());

@@ -149,7 +149,6 @@ impl Analysis<'_> {
 
     pub(super) fn analyze_worker(&mut self, actor: WorkerId, span: &Span) -> Result<(), VirErr> {
         let mut entry = self.heap.workers.enter(actor, span)?;
-        let entry_descriptor = entry.clone();
         let definition = entry.definition.clone();
         let TypX::AnonymousClosure(_, result_type, _, id) = &*definition.typ else {
             return Err(unsupported(span, "worker analysis without a concrete definition"));
@@ -171,6 +170,15 @@ impl Analysis<'_> {
         super::super::control::validate(&body, &self.var_modes)?;
         let at_fork = self.storage.worker_frame(span, super::states::Phase::Fork, |cost| cost);
         let mut storage = self.storage.take_storage(&entry.storage, &self.growth, span)?;
+        self.transfer_protected_captures(
+            actor,
+            span,
+            &body,
+            result_type,
+            &mut entry,
+            &mut storage,
+        )?;
+        let entry_descriptor = entry.clone();
         let (body_workers, tags) =
             self.heap.workers.body_scope(actor, entry.storage.owner.as_ref(), span)?;
         for tag in tags {
@@ -240,7 +248,9 @@ impl Analysis<'_> {
             bound: self.bound.clone(),
         };
         worker.transitions.collection_claims = collection_entries;
-        worker.heap.shared = entry.shared.clone();
+        let mut shared = entry.shared.clone();
+        shared.map_owned(|owner| worker.enter_worker_owner(owner, &body.span))?;
+        worker.heap.shared = shared;
         worker.heap.workers = body_workers;
         worker.growth.runtime_classification |=
             super::super::transfer::required(&signature, worker.layouts)?;
@@ -410,6 +420,8 @@ impl Analysis<'_> {
             Some(actor),
             span,
         )?;
+        worker.transitions.returned =
+            worker.storage.returned_storage(result.owner.as_ref(), &worker.growth.elements);
         let mut retained = worker.storage.take_storage(&result, &worker.growth, span)?;
         let backing = Storage {
             typ: crate::ast_util::unit_typ(),

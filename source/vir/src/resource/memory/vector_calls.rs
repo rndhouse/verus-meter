@@ -91,10 +91,9 @@ impl Analysis<'_> {
         }
         let worker_parameter = summary.worker_parameter();
         for (index, child) in &summary.vectors.removals.clone() {
-            let (name, mut path) =
-                super::paths::expr(&args[*index], &callee.x.params[*index].x.typ).ok_or_else(
-                    || unsupported(&expr.span, "removal through an aliased collection"),
-                )?;
+            let (name, mut path) = self
+                .call_location(&args[*index], &callee.x.params[*index].x.typ)
+                .ok_or_else(|| unsupported(&expr.span, "removal through an aliased collection"))?;
             path.extend(child.iter().cloned());
             self.forget_collection_length(&name, &path);
             // The checked worker transformation installs the exact survivors.
@@ -134,7 +133,8 @@ impl Analysis<'_> {
             if self.layouts.borrowed_owner(typ).is_none() {
                 continue;
             }
-            let (name, mut location) = super::paths::expr(&args[index], typ)
+            let (name, mut location) = self
+                .call_location(&args[index], typ)
                 .ok_or_else(|| unsupported(c, "a mutable vector without a tracked owner"))?;
             location.extend_from_slice(&path);
             let owner = self

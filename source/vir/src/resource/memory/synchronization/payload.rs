@@ -77,25 +77,60 @@ impl Analysis<'_> {
         if !self.storage.holds_interval(interval) {
             return Err(unsupported(span, "a protected borrow outside its live acquisition"));
         }
-        // Canonical owning roots are disjoint. Imported Arc backing requires
-        // a shared mutation summary before this local view can be used there.
+        let (name, mut path) = self.mutex_root(interval.instance).ok_or_else(|| {
+            unsupported(span, "a guard borrow without a unique local protected payload")
+        })?;
+        path.push(OwnerSlot::Contents);
+        Ok((name, path))
+    }
+
+    /// A mutex reference or a strong alias names the same persistent descriptor.
+    /// An imported worker view cannot read the publishing actor's private ledger.
+    fn mutex_root(&self, instance: super::Instance) -> Option<paths::LocalPath> {
         let mut roots = Vec::new();
-        for (name, root) in &self.heap.owners {
+        for (name, root) in self.heap.owners.iter().chain(&self.heap.borrowed) {
             root.visit_paths(&mut Vec::new(), &mut |path, owner| {
-                if owner.mutex_instance() == Some(interval.instance) {
-                    let mut path = path.clone();
-                    path.push(OwnerSlot::Contents);
-                    roots.push((name.clone(), path));
+                if owner.mutex_instance() == Some(instance) {
+                    roots.push((name.clone(), path.clone()));
                 }
             });
         }
-        let [location] = roots.as_slice() else {
-            return Err(unsupported(
-                span,
-                "a guard borrow without a unique local protected payload",
-            ));
-        };
-        Ok(location.clone())
+        if let Some((root, name)) = self.heap.shared.protected_root(instance) {
+            if self.heap.workers.shares_root(root)
+                || self.growth.section_shared.contains(&root)
+                || self.growth.indexed_shared.contains_key(&root)
+                || self.growth.occurrence_peers.contains_key(&root)
+                || self.growth.peer_results.contains_key(&root)
+            {
+                return None;
+            }
+            roots.push((name, vec![OwnerSlot::Contents]));
+        }
+        let [location] = roots.as_slice() else { return None };
+        Some(location.clone())
+    }
+
+    /// Bind a helper's ownership path through the actual mutex even when the
+    /// argument is an immutable reference alias or a native Arc dereference.
+    pub(in super::super) fn call_location(
+        &self,
+        arg: &Expr,
+        typ: &Typ,
+    ) -> Option<paths::LocalPath> {
+        if self.layouts.mutex_payload(paths::referent(typ)).is_some()
+            && let Some(View::Mutex(instance)) = self.synchronization_view(arg)
+        {
+            return self.mutex_root(instance);
+        }
+        if self.layouts.mutable_guard_payload(&arg.typ).is_some()
+            && let Some(View::Guard(interval)) = self.synchronization_view(arg)
+        {
+            return self.mutex_root(interval.instance);
+        }
+        if let Some(View::Payload(interval)) = self.synchronization_view(arg) {
+            return self.local_payload(interval, &arg.span).ok();
+        }
+        paths::expr(arg, typ)
     }
 
     pub(in super::super) fn protected_vector(

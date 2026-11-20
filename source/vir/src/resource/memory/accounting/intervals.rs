@@ -10,6 +10,77 @@ use crate::resource::memory::{
 use crate::{ast::VirErr, messages::Span};
 
 impl Accounting {
+    /// The formal guard already exists when execution enters this function.
+    pub(in super::super) fn enter_guard(&mut self, interval: Interval) {
+        for path in &mut self.paths {
+            path.held.insert(interval);
+        }
+    }
+
+    pub(in super::super) fn check_exit_intervals(
+        &self,
+        span: &Span,
+        borrowed: &std::collections::BTreeSet<Interval>,
+        result: Option<super::super::synchronization::local::Owned>,
+    ) -> Result<(), VirErr> {
+        use super::super::synchronization::local::Owned;
+        for path in &self.paths {
+            let mut expected = borrowed.clone();
+            match result {
+                Some(Owned::Guard(id)) => {
+                    expected.insert(id);
+                }
+                Some(Owned::Attempt(id)) if path.held.contains(&id) => {
+                    expected.insert(id);
+                }
+                _ => {}
+            }
+            if expected != path.held {
+                return Err(unsupported(
+                    span,
+                    "an acquisition surviving without a checked outgoing guard",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Commit a checked synchronous exit. Caller-only acquisitions survive the call.
+    pub(in super::super) fn commit_call_intervals(
+        &mut self,
+        span: &Span,
+        call: &super::super::synchronization::helpers::Call,
+        result: Option<super::super::synchronization::local::Owned>,
+    ) -> Result<(), VirErr> {
+        use super::super::synchronization::local::Owned;
+        let mut acquired = Vec::new();
+        for path in &mut self.paths {
+            for id in call.consumed() {
+                path.held.remove(&id);
+            }
+            if let Some(Owned::Guard(id)) = result {
+                if path.held.iter().any(|held| held.instance == id.instance && *held != id) {
+                    return Err(unsupported(
+                        span,
+                        "a returned guard conflicting with a held mutex",
+                    ));
+                }
+                path.held.insert(id);
+            } else if let Some(Owned::Attempt(id)) = result
+                && !path.held.iter().any(|held| held.instance == id.instance)
+            {
+                let mut success = path.clone();
+                success.held.insert(id);
+                acquired.push(success);
+            }
+        }
+        if self.paths.len() + acquired.len() > 1024 {
+            return Err(unsupported(span, "more than 1024 helper-exit ownership alternatives"));
+        }
+        self.paths.extend(acquired);
+        Ok(())
+    }
+
     /// Destruction can only release these existing owners. Before visiting
     /// the children in any implementation order, cover their combined storage
     /// with every potentially ending acquisition removed from the condition.

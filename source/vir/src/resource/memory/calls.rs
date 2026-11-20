@@ -6,16 +6,6 @@ use super::model::{eligible, slice, unsupported};
 use crate::ast::*;
 
 impl Analysis<'_> {
-    /// Check the committed call state after pending ownership effects settle.
-    pub(super) fn check_committed_memory(&mut self, span: &crate::messages::Span) {
-        let cost = self
-            .storage
-            .live_expression(span)
-            .map(span, &|amount| Ok::<_, VirErr>(self.growth.after_value(span, amount)))
-            .unwrap();
-        self.storage.call_cost(span, cost, &Default::default(), &Default::default(), true);
-    }
-
     fn call(
         &mut self,
         expr: &Expr,
@@ -58,7 +48,6 @@ impl Analysis<'_> {
         )
         .unwrap_or_else(|_| super::contracts::literal(&expr.span, envelope));
         let argument_revision = self.growth.revision();
-        let mut parameters = 0u64;
         let mut values = vec![None; args.len()];
         let mut transferred = vec![None; args.len()];
         for (index, (arg, param)) in args.iter().zip(callee.x.params.iter()).enumerate() {
@@ -70,13 +59,12 @@ impl Analysis<'_> {
             }
             let value = if let ExprX::TwoPhaseBorrowMut(place) = &arg.x {
                 self.borrow(place, &arg.typ)?;
-                self.fresh_value(&arg.span, &arg.typ)?
+                let mut value = self.fresh_value(&arg.span, &arg.typ)?;
+                value.synchronization_view = self.synchronization_place(place);
+                value
             } else {
                 self.produce(arg)?
             };
-            parameters = parameters
-                .checked_add(value.bytes)
-                .ok_or_else(|| unsupported(&expr.span, "parameter storage exceeding u64"))?;
             values[index] = Some(value);
             if self.layouts.owner(&param.x.typ) {
                 transferred[index] = Some(
@@ -92,6 +80,13 @@ impl Analysis<'_> {
                 "vector allocation changes inside call arguments; bind the arguments first",
             ));
         }
+        let synchronization = super::synchronization::helpers::Call::instantiate(
+            self,
+            expr,
+            summary,
+            &values,
+            &transferred,
+        )?;
         // Match the callee's provenance IDs to disjoint caller allocation nodes.
         let mut nodes = std::collections::HashMap::new();
         for (parameter, owner) in transferred.into_iter().enumerate() {
@@ -111,22 +106,6 @@ impl Analysis<'_> {
             return Err(unsupported(&expr.span, "unmatched input allocation nodes"));
         }
         let c = &expr.span;
-        let mut base = self.storage.live_expression(c).remove(
-            c,
-            MemoryKind::host_local(),
-            super::contracts::literal(c, parameters),
-        );
-        let mut input_costs = vec![Footprint::zero(c); transferred.len()];
-        let mut external_inputs = std::collections::HashSet::new();
-        for (index, owner) in transferred.iter().enumerate() {
-            if let Some(owner) = owner {
-                for (kind, cost) in self.owner_charges(c, owner) {
-                    base = base.remove(c, kind.clone(), cost.clone());
-                    input_costs[index] = input_costs[index].add(c, Footprint::charge(kind, cost));
-                }
-                external_inputs.extend(owner.inputs());
-            }
-        }
         let forwarded = summary.return_parameter.and_then(|i| values[i].clone());
         for value in values.into_iter().flatten() {
             self.release_value(value, c);
@@ -154,52 +133,64 @@ impl Analysis<'_> {
         let credit = super::contracts::literal(c, if destination { result_size } else { 0 });
         // Contract slack remains available to the caller. Input allocations are
         // accounted separately using their checked lifetimes in the body.
-        let allowance = base.add(
-            c,
-            Footprint::allowance(bound.clone()).remove(c, MemoryKind::host_local(), credit.clone()),
-        );
-        self.storage.call_cost(c, allowance, &external_inputs, &result_ids, true);
-        let profiles = &self.summaries[target].profiles;
-        for point in profiles {
+        let frames =
+            self.storage.call_frames(c, &transferred, &self.growth.elements, &result_ids)?;
+        let allowance =
+            Footprint::allowance(bound.clone()).remove(c, MemoryKind::host_local(), credit.clone());
+        let allowance_condition =
+            synchronization.as_ref().map(|call| call.allowance(&summary.profiles));
+        for frame in &frames {
+            frame.observe(
+                &mut self.storage,
+                c,
+                allowance.clone(),
+                None,
+                &result_ids,
+                None,
+                allowance_condition.as_ref().zip(synchronization.as_deref()),
+            )?;
+        }
+        for (index, point) in summary.profiles.iter().enumerate() {
             let cost = point
                 .cost
                 .map(c, &|cost| super::contracts::substitute(cost, callee, args, &call_scalars))
-                .unwrap_or_else(|_| Footprint::allowance(bound.clone()));
-            let mut cost = cost.limit(c, bound.clone());
-            let mut excluded = external_inputs.clone();
-            for index in &point.inputs {
-                let input_cost = input_costs
-                    .get(*index)
-                    .or_else(|| transfer.as_ref().and_then(|transfer| transfer.regions.get(index)))
-                    .ok_or_else(|| unsupported(c, "an input lifetime without a precise region"))?;
-                cost = cost.add(c, input_cost.clone());
-                if let Some(Some(owner)) = transferred.get(*index) {
-                    for input in owner.inputs() {
-                        excluded.remove(&input);
-                    }
+                .unwrap_or_else(|_| Footprint::allowance(bound.clone()))
+                .limit(c, bound.clone());
+            let cost = if point.result {
+                cost.remove(c, MemoryKind::host_local(), credit.clone())
+            } else {
+                cost
+            };
+            let condition = synchronization.as_ref().map(|call| call.condition(&point.condition));
+            let results = point.result.then_some(&result_ids);
+            for frame in &frames {
+                frame.observe(
+                    &mut self.storage,
+                    c,
+                    cost.clone(),
+                    Some((&point.inputs, transfer.as_ref())),
+                    results.unwrap_or(&Default::default()),
+                    Some(index),
+                    condition.as_ref().zip(synchronization.as_deref()),
+                )?;
+            }
+        }
+        // The callee phases already describe destruction of moved-in guards.
+        // Retiring their old caller storage must not execute the destructor again.
+        if let Some(call) = &synchronization {
+            for owner in transferred.iter_mut().flatten() {
+                if let Some(super::synchronization::local::Owned::Guard(id)) = owner.synchronization
+                    && call.consumed().any(|consumed| consumed == id)
+                {
+                    owner.synchronization = None;
                 }
             }
-            if point.result {
-                cost = cost.remove(c, MemoryKind::host_local(), credit.clone());
-            }
-            let included = transfer
-                .as_ref()
-                .map(|prepared| {
-                    point
-                        .inputs
-                        .iter()
-                        .filter_map(|id| prepared.origins.peaks.get(id).copied())
-                        .collect()
-                })
-                .unwrap_or_default();
-            self.storage.call_cost_with_inputs(
-                c,
-                base.add(c, cost),
-                &excluded,
-                &included,
-                &result_ids,
-                point.result,
-            );
+        }
+        let result_sync = synchronization
+            .as_ref()
+            .and_then(|call| summary.synchronized_result.map(|owner| call.result(owner)));
+        if let Some(call) = &synchronization {
+            self.storage.commit_call_intervals(c, call, result_sync)?;
         }
         let mut replaced_inputs = Vec::new();
         if let Some(transfer) = transfer {
@@ -212,15 +203,22 @@ impl Analysis<'_> {
             self.result_owner =
                 self.complete_ownership_call(expr, callee, args, &mut transferred)?;
         }
+        if let Some(sync) = result_sync {
+            self.result_owner
+                .as_mut()
+                .ok_or_else(|| unsupported(c, "missing synchronization result owner"))?
+                .synchronization = Some(sync);
+        }
         self.record_element_updates(c)?;
-        self.check_committed_memory(c);
+        self.storage.record_call_exit(c, &self.growth);
         self.produced = result;
         let retained = if destination { 0 } else { result_size };
         let mut borrowed = std::collections::HashMap::new();
         for (index, (arg, parameter)) in args.iter().zip(callee.x.params.iter()).enumerate() {
             if parameter.x.mode == Mode::Exec {
-                if let Some(typ) = self.layouts.borrowed_owner(&parameter.x.typ) {
-                    let location = super::paths::expr(arg, typ)
+                if let Some(typ) = self.layouts.borrowed_descriptor(&parameter.x.typ) {
+                    let location = self
+                        .call_location(arg, &typ)
                         .ok_or_else(|| unsupported(&arg.span, "this borrowed owner argument"))?;
                     borrowed.insert(
                         index,
@@ -239,6 +237,10 @@ impl Analysis<'_> {
             super::transfer::checked::Operation::Call {
                 budget: bound.clone(),
                 target: target.clone(),
+                returned: self
+                    .storage
+                    .returned_storage(self.result_owner.as_ref(), &self.growth.elements),
+                synchronization,
                 args: args.clone(),
                 borrowed,
                 replaced_inputs,

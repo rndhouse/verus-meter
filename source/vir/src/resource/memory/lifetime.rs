@@ -61,6 +61,8 @@ impl Value {
 
 #[derive(Clone)]
 pub(super) struct Profile {
+    /// Acquisitions on the same source path as this cost and input lifetime.
+    pub(super) condition: super::synchronization::local::Condition,
     pub(super) cost: super::footprint::Footprint,
     pub(super) result: bool,
     pub(super) inputs: std::collections::HashSet<usize>,

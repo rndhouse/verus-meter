@@ -49,6 +49,7 @@ impl BodyEffects {
                 starts.insert(id);
             }
         }
+        starts.extend(self.ownership.synchronization_inputs.intervals());
         if starts != intervals {
             return Err(super::model::unsupported(
                 &self.body.span,
@@ -57,6 +58,55 @@ impl BodyEffects {
         }
         Ok(())
     }
+    pub(super) fn validate_call_points(
+        &self,
+        summaries: &std::collections::HashMap<Fun, FunctionSummary>,
+    ) -> Result<(), VirErr> {
+        for (target, span) in &self.calls {
+            let Some(super::transfer::checked::Operation::Call { returned, .. }) =
+                self.ownership.operation_at(span)
+            else {
+                return Err(super::model::unsupported(
+                    span,
+                    "a helper dependency without its source operation",
+                ));
+            };
+            let summary = summaries
+                .get(target)
+                .ok_or_else(|| super::model::unsupported(span, "missing helper summary"))?;
+            let callee = summary
+                .effects
+                .as_ref()
+                .ok_or_else(|| super::model::unsupported(span, "missing helper body effects"))?;
+            for alternative in returned {
+                alternative.validate_against(
+                    &callee.ownership.returned,
+                    summary.transfer.is_some(),
+                    span,
+                )?;
+            }
+        }
+        for point in self.points.iter() {
+            if let Some(index) = point.call_point {
+                let Some(super::transfer::checked::Operation::Call { target, .. }) =
+                    self.ownership.operation_at(&point.span)
+                else {
+                    return Err(super::model::unsupported(
+                        &point.span,
+                        "a memory observation without its helper call",
+                    ));
+                };
+                if !summaries.get(target).is_some_and(|callee| index < callee.profiles.len()) {
+                    return Err(super::model::unsupported(
+                        &point.span,
+                        "a memory observation without its checked helper profile",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Every consumed helper must retain its verified source effects. A function
     /// contract alone cannot discharge worker cleanup or panic-free dependencies.
     pub(super) fn validate(
@@ -71,6 +121,7 @@ impl BodyEffects {
                 ));
             }
         }
+        self.validate_call_points(summaries)?;
         // Accounting chose the semantics; validate that every effect still has
         // its original source site in this ordered body before exporting it.
         use super::transfer::checked::Kind;
@@ -130,6 +181,8 @@ pub(super) struct FunctionSummary {
     /// The checked body remains available to asynchronous and later synchronized
     /// composition; existing synchronous calls still use the interfaces below.
     pub(super) effects: Option<Arc<BodyEffects>>,
+    /// The checked synchronization owner transferred by a native result or guard return.
+    pub(super) synchronized_result: Option<super::synchronization::local::Owned>,
     /// Borrowed owner roots changed by checked operations, including logical
     /// length changes that retain the same allocation and reservation.
     pub(super) modified_parameters: std::collections::BTreeSet<usize>,

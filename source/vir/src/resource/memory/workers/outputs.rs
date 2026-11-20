@@ -201,6 +201,14 @@ impl Analysis<'_> {
                 old.backing.kind,
                 self.growth.vectors[state].backing.bytes.clone(),
             );
+            if let Some(length) = old.protected_length {
+                let length = self.allocation_snapshot(span, length);
+                let next = &mut self.growth.vectors[state];
+                next.protected_length = Some(length.clone());
+                next.local_constructor = old.local_constructor;
+                next.minimum = old.minimum;
+                owner.geometry = Some(length);
+            }
             owner.vector = Some(state);
             owner.capacity = Some(old.capacity);
         }

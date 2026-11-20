@@ -7,6 +7,7 @@
 //! are unsupported; byte bounds cannot substitute for ownership effects.
 
 mod calls;
+pub(super) use calls::Prepared;
 pub(super) mod checked;
 mod consistency;
 pub(super) mod effects;
@@ -227,7 +228,7 @@ pub(super) fn required(
         .iter()
         .filter(|parameter| parameter.x.mode == Mode::Exec)
         .map(|parameter| {
-            layouts.borrowed_owner(&parameter.x.typ).unwrap_or(&parameter.x.typ).clone()
+            layouts.borrowed_descriptor(&parameter.x.typ).unwrap_or_else(|| parameter.x.typ.clone())
         })
         .collect();
     types.push(function.x.outer_ret.x.typ.clone());

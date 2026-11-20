@@ -13,7 +13,9 @@ use std::collections::HashMap;
 use vir_macros::ToDebugSNode;
 
 pub mod flow;
+pub(super) mod helpers;
 pub(super) mod local;
+pub(super) mod parameters;
 mod patterns;
 mod payload;
 
@@ -613,12 +615,25 @@ fn reject_unaccounted_inner(
         shared: if shared_accounted { SharedCheck::Input } else { SharedCheck::Evidence },
     };
     for parameter in function.x.params.iter().filter(|p| p.x.mode == Mode::Exec) {
-        check.runtime_type(&parameter.x.typ, &parameter.span)?;
+        let typ = if shared_accounted
+            && let Some((_, payload)) = parameters::parameter(&parameter.x.typ, types)
+        {
+            payload
+        } else {
+            &parameter.x.typ
+        };
+        check.runtime_type(typ, &parameter.span)?;
     }
     if shared_accounted {
         check.shared = SharedCheck::Output;
     }
-    check.runtime_type(&function.x.outer_ret.x.typ, &function.span)?;
+    let result = &function.x.outer_ret.x.typ;
+    let result = if shared_accounted {
+        parameters::result_payload(result, types).unwrap_or(result)
+    } else {
+        result
+    };
+    check.runtime_type(result, &function.span)?;
     if shared_accounted {
         check.shared = SharedCheck::Local;
     }

@@ -9,8 +9,10 @@ use crate::messages::{Span, note};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+mod calls;
 mod intervals;
 mod origins;
+pub(super) use origins::ReturnedStorage;
 mod sections;
 mod transport;
 pub(super) use transport::SharedBackingCharges;
@@ -218,6 +220,9 @@ impl Live {
 
 #[derive(Clone)]
 pub(super) struct Point {
+    /// Call site and callee profile behind this composed observation. The callee
+    /// keeps its own constructors, branches and loop binders in the checked graph.
+    pub(super) call_point: Option<usize>,
     section_entry: Option<Arc<[super::synchronization::local::Interval]>>,
     pub(super) span: Span,
     pub(super) condition: Condition,
@@ -236,6 +241,7 @@ impl Point {
     fn from_live(span: &Span, cost: Footprint, path: &Live, boundary: Boundary) -> Self {
         Self {
             span: span.clone(),
+            call_point: None,
             cost,
             condition: Condition { held: path.held.iter().copied().collect(), boundary },
             section_entry: path.section_entry.clone(),
@@ -583,46 +589,12 @@ impl Accounting {
             self.record_point(span, Footprint::allowance(cost.clone()), &path);
         }
     }
-    pub(super) fn call_cost(
-        &mut self,
-        span: &Span,
-        cost: Footprint,
-        excluded_inputs: &HashSet<usize>,
-        result_ids: &HashSet<u64>,
-        result_live: bool,
-    ) {
-        self.call_cost_with_inputs(
-            span,
-            cost,
-            excluded_inputs,
-            &HashSet::new(),
-            result_ids,
-            result_live,
-        );
-    }
-
-    /// Add the callee's partitioned original regions only at this peak witness.
-    /// They replace the consumed input identities without changing live owners.
-    pub(super) fn call_cost_with_inputs(
-        &mut self,
-        span: &Span,
-        cost: Footprint,
-        excluded_inputs: &HashSet<usize>,
-        included_inputs: &HashSet<usize>,
-        result_ids: &HashSet<u64>,
-        result_live: bool,
-    ) {
-        for mut path in self.paths.clone() {
-            for input in excluded_inputs {
-                path.inputs.remove(input);
-            }
-            path.inputs.extend(included_inputs.iter().copied());
-            if !result_live {
-                for id in result_ids {
-                    path.values.remove(id);
-                }
-            }
-            self.record_point(span, cost.clone(), &path);
+    /// Evaluate the committed descriptor updates on each reaching path, keeping
+    /// its byte expression paired with the acquisitions held on that path.
+    pub(super) fn record_call_exit(&mut self, span: &Span, growth: &super::growth::Growth) {
+        for path in self.paths.clone() {
+            let cost = path.footprint_with(span, |amount| growth.after_value(span, amount));
+            self.record_point(span, cost, &path);
         }
     }
     /// Compose a section's unrestricted total allowance without assigning it
