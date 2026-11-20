@@ -230,10 +230,14 @@ impl Analysis<'_> {
         arms: &Arms,
         new_value: bool,
     ) -> Result<(), VirErr> {
-        if self.layouts.result_payloads(&scrutinee.typ).is_some() {
+        let lock_result = self
+            .layouts
+            .result_payloads(&scrutinee.typ)
+            .is_some_and(|(ok, err)| self.layouts.guard_owner(ok) && self.layouts.guard_owner(err));
+        if self.layouts.result_payloads(&scrutinee.typ).is_some() && !lock_result {
             return self.worker_result_match(expr, scrutinee, arms, new_value);
         }
-        if !self.layouts.option(&scrutinee.typ) {
+        if !self.layouts.option(&scrutinee.typ) && !lock_result {
             return Err(unsupported(&expr.span, "matches other than by-value Option matches"));
         }
         if !super::model::diverging(&expr.typ) {
@@ -347,13 +351,19 @@ impl Analysis<'_> {
             self.restore_branch(&entry);
             let arm_exits = self.flow.exits.len();
             let mut slots = Vec::new();
-            self.option_pattern(
-                &arm.x.pattern,
-                &scrutinee.typ,
-                &mut slots,
-                option_owner.clone(),
-                shared_next,
-            )?;
+            if lock_result {
+                if !self.lock_result_pattern(&arm.x.pattern, option_owner.clone(), &mut slots)? {
+                    continue;
+                }
+            } else {
+                self.option_pattern(
+                    &arm.x.pattern,
+                    &scrutinee.typ,
+                    &mut slots,
+                    option_owner.clone(),
+                    shared_next,
+                )?;
+            }
             // Bindings exist throughout the arm, including its guard/body.
             for (name, bytes) in &slots {
                 let id = self.storage.reserve_value(

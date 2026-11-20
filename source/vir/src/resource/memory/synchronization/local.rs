@@ -34,6 +34,17 @@ pub(in super::super) struct Occurrence {
 pub(in super::super) enum Owned {
     Mutex(Instance),
     Guard(Interval),
+    /// A try-lock Result or Err value owns the acquisition only on acquiring paths.
+    Attempt(Interval),
+}
+
+impl Owned {
+    pub(in super::super) fn interval(self) -> Option<Interval> {
+        match self {
+            Self::Guard(interval) | Self::Attempt(interval) => Some(interval),
+            Self::Mutex(_) => None,
+        }
+    }
 }
 
 /// Entering a potentially blocking acquire and ending an acquisition are
@@ -41,6 +52,7 @@ pub(in super::super) enum Owned {
 #[derive(Clone, Copy, Default)]
 pub(in super::super) enum Boundary {
     Wait(Interval),
+    Attempt(Interval),
     #[default]
     Live,
     Release(Interval),
@@ -184,14 +196,15 @@ impl Analysis<'_> {
 
                 Ok(Some(owner))
             }
-            Operation::MutexLock => {
+            Operation::MutexLock | Operation::MutexTryLock => {
                 let instance = self.mutex_receiver(argument).ok_or_else(|| {
                     unsupported(&expr.span, "a lock without a checked mutex instance")
                 })?;
                 self.discard(argument)?;
                 let interval =
                     Interval { instance, acquisition: Acquisition(Accounting::fresh_allocation()) };
-                self.storage.acquire_interval(&expr.span, interval)?;
+                let contract = operation.acquisition_contract().expect("native lock");
+                self.storage.acquire_interval(&expr.span, interval, contract)?;
                 self.transitions.operation(
                     &expr.span,
                     checked::Operation::MutexLock {
@@ -201,7 +214,11 @@ impl Analysis<'_> {
                     },
                 );
                 Ok(Some(Owner {
-                    synchronization: Some(Owned::Guard(interval)),
+                    synchronization: Some(if contract.may_block() {
+                        Owned::Guard(interval)
+                    } else {
+                        Owned::Attempt(interval)
+                    }),
                     ..Owner::default()
                 }))
             }
@@ -217,7 +234,9 @@ impl crate::resource::memory::accounting::Point {
         intervals: &std::collections::BTreeSet<Interval>,
     ) -> Result<(), VirErr> {
         let changed = match self.condition.boundary {
-            Boundary::Wait(interval) | Boundary::Release(interval) => Some(interval),
+            Boundary::Wait(interval)
+            | Boundary::Attempt(interval)
+            | Boundary::Release(interval) => Some(interval),
             Boundary::Live | Boundary::UnorderedCleanup => None,
         };
         if changed.is_some_and(|interval| self.condition.held.contains(&interval))
@@ -245,6 +264,7 @@ impl Condition {
         footprint: &crate::resource::memory::Footprint,
     ) -> Option<VirErrAs> {
         let phase = match self.boundary {
+            Boundary::Attempt(_) => "before a mutex acquisition attempt",
             Boundary::Wait(_) => "while waiting for the mutex",
             Boundary::Release(_) => "at mutex release",
             Boundary::UnorderedCleanup => "during unordered capture or aggregate cleanup",

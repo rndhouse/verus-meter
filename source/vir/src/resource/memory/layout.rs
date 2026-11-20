@@ -187,7 +187,9 @@ impl Layouts {
         let TypX::Datatype(name, args, _) = &**typ else { return false };
         match self.synchronization_types.get(name) {
             Some(LibraryType::MutexGuard) => true,
-            Some(LibraryType::PoisonError) => args.first().is_some_and(|typ| self.guard_owner(typ)),
+            Some(LibraryType::PoisonError | LibraryType::TryLockError) => {
+                args.first().is_some_and(|typ| self.guard_owner(typ))
+            }
             _ => false,
         }
     }

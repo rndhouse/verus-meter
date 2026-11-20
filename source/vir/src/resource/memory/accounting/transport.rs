@@ -159,6 +159,7 @@ impl Accounting {
         self.paths.iter().all(|path| {
             path.fixed.values().all(|bytes| *bytes == 0)
                 && path.dynamic.is_empty()
+                && path.held.is_empty()
                 && path.values.iter().all(|(id, charge)| charge.amount == 0 || slots.contains(id))
                 && path.inputs.is_subset(inputs)
         })

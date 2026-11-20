@@ -14,6 +14,7 @@ use vir_macros::ToDebugSNode;
 
 pub mod flow;
 pub(super) mod local;
+mod patterns;
 
 /// Compiler-identified synchronization operations, independent of source names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToDebugSNode)]
@@ -497,6 +498,7 @@ fn reject_unaccounted_inner(
                                     LibraryType::Mutex
                                         | LibraryType::MutexGuard
                                         | LibraryType::PoisonError
+                                        | LibraryType::TryLockError
                                 ))
                     }) {
                         return Err(super::model::unsupported(
@@ -549,7 +551,10 @@ fn reject_unaccounted_inner(
                 && let Some(ResourceIntrinsic::Synchronization(operation)) =
                     attrs.resource_intrinsic
                 && !(self.shared == SharedCheck::Local
-                    && matches!(operation, Operation::MutexNew | Operation::MutexLock))
+                    && matches!(
+                        operation,
+                        Operation::MutexNew | Operation::MutexLock | Operation::MutexTryLock
+                    ))
             {
                 return Err(super::model::unsupported(
                     &expr.span,

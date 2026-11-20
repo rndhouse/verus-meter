@@ -250,10 +250,17 @@ impl Analysis<'_> {
         let mut owner = self.result_owner.take().ok_or_else(|| {
             unsupported(&expr.span, "Result extraction without checked outcome ownership")
         })?;
-        if matches!(
-            owner.synchronization,
-            Some(super::super::synchronization::local::Owned::Guard(_))
-        ) {
+        if let Some(interval) =
+            owner.synchronization.and_then(super::super::synchronization::local::Owned::interval)
+        {
+            if !self.storage.select_interval(interval, true) {
+                return Err(unsupported(
+                    &expr.span,
+                    "an unwrap that cannot own a mutex acquisition",
+                ));
+            }
+            owner.synchronization =
+                Some(super::super::synchronization::local::Owned::Guard(interval));
             // The ordinary Result::unwrap precondition must prove Ok at this
             // site. Either original variant held this same acquisition.
             self.transitions.operation(
@@ -333,10 +340,11 @@ impl Analysis<'_> {
             self.heap.root(&name).and_then(|owner| owner.at(&path)).ok_or_else(|| {
                 unsupported(&expr.span, "Result predicate without a live outcome")
             })?;
-        if !matches!(
-            owner.synchronization,
-            Some(super::super::synchronization::local::Owned::Guard(_))
-        ) {
+        if owner
+            .synchronization
+            .and_then(super::super::synchronization::local::Owned::interval)
+            .is_none()
+        {
             self.checked_result(owner, &expr.span)?;
         }
         self.discard(source)?;

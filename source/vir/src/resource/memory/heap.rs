@@ -612,12 +612,14 @@ impl Analysis<'_> {
     ) -> Result<(), VirErr> {
         let mut shared = false;
         owner.visit(&mut |node| {
-            shared |=
-                matches!(node.synchronization, Some(super::synchronization::local::Owned::Guard(_)))
-                    || matches!(node.selected_worker, Some(SelectedWorker::Parameter))
-                    || node.shared.is_some()
-                    || node.closure.is_some()
-                    || node.worker.is_some()
+            shared |= node
+                .synchronization
+                .and_then(super::synchronization::local::Owned::interval)
+                .is_some()
+                || matches!(node.selected_worker, Some(SelectedWorker::Parameter))
+                || node.shared.is_some()
+                || node.closure.is_some()
+                || node.worker.is_some()
         });
         if shared {
             // Forest records retain identity links, but the population consumer
@@ -675,7 +677,9 @@ impl Analysis<'_> {
         inputs: bool,
         proofs: &mut Vec<Stmt>,
     ) {
-        if let Some(super::synchronization::local::Owned::Guard(interval)) = owner.synchronization {
+        if let Some(interval) =
+            owner.synchronization.and_then(super::synchronization::local::Owned::interval)
+        {
             self.storage.release_interval(span, interval);
         }
         if owner.selected_worker.is_some() {

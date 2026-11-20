@@ -242,9 +242,18 @@ pub(in super::super) enum Operation {
 /// Pattern ownership decisions made while checking the actual match arm.
 #[derive(Clone)]
 pub(in super::super) enum Pattern {
+    /// The source tag chooses an acquiring or non-acquiring arm. An unsplit
+    /// try-lock error preserves both possibilities.
+    LockOutcome {
+        interval: super::super::synchronization::local::Interval,
+        acquired: Option<bool>,
+    },
     Bind(VarIdent),
     Absent,
-    Present { payload: Typ, pattern: crate::ast::Pattern },
+    Present {
+        payload: Typ,
+        pattern: crate::ast::Pattern,
+    },
 }
 
 /// Categories keep a place's move distinct from a surrounding operation at
@@ -325,12 +334,18 @@ impl Checked {
     {
         let mut instances = std::collections::BTreeSet::new();
         let mut intervals = std::collections::BTreeSet::new();
+        let mut attempts = std::collections::BTreeSet::new();
         for (site, operation) in &self.operations {
             let (occurrence, fresh) = match operation {
                 Operation::MutexNew { instance, occurrence, .. } => {
                     (occurrence, instances.insert(*instance))
                 }
                 Operation::MutexLock { interval, occurrence, .. } => {
+                    if occurrence.site.operation
+                        == super::super::synchronization::Operation::MutexTryLock
+                    {
+                        attempts.insert(*interval);
+                    }
                     (occurrence, intervals.insert(*interval))
                 }
                 _ => continue,
@@ -346,6 +361,17 @@ impl Checked {
                 return Err(super::super::model::unsupported(
                     span,
                     "an invalid synchronization occurrence binder",
+                ));
+            }
+        }
+        for pattern in self.patterns.values() {
+            if let Pattern::LockOutcome { interval, acquired } = pattern
+                && (!intervals.contains(interval)
+                    || *acquired != Some(true) && !attempts.contains(interval))
+            {
+                return Err(super::super::model::unsupported(
+                    span,
+                    "a lock pattern incompatible with its native acquisition",
                 ));
             }
         }

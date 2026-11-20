@@ -321,3 +321,41 @@ fn waiting_and_reacquisition_retain_live_allocations() {
         131,
     );
 }
+
+#[test]
+fn native_result_arms_transfer_only_the_guard_they_own() {
+    let source = r#"
+        fn f() resources peak(memory) <= 1000 {
+            let m = std::sync::Mutex::new(0u8);
+            match m.try_lock() {
+                Ok(guard) => { OK drop(guard); }
+                Err(std::sync::TryLockError::Poisoned(poison)) => { POISON drop(poison); }
+                Err(std::sync::TryLockError::WouldBlock) => { let later = m.lock(); drop(later); }
+            };
+        }
+    "#;
+    for (case, ok, poison, expected) in [
+        ("would_block_holds_nothing", "", "", "mutex intervals awaiting global"),
+        ("success_holds_guard", "let again = m.lock();", "", "reentrant blocking acquisition"),
+        ("poison_holds_guard", "", "let again = m.lock();", "reentrant blocking acquisition"),
+    ] {
+        rejects(case, &source.replace("OK", ok).replace("POISON", poison), expected);
+    }
+}
+
+#[test]
+fn a_blocking_lock_keeps_its_acquisition_in_the_error_arm() {
+    rejects(
+        "poisoned_blocking_lock",
+        r#"
+        fn f() resources peak(memory) <= 1000 {
+            let m = std::sync::Mutex::new(0u8);
+            match m.lock() {
+                Ok(guard) => { drop(guard); }
+                Err(poison) => { let again = m.lock(); drop(poison); }
+            };
+        }
+    "#,
+        "reentrant blocking acquisition",
+    );
+}
