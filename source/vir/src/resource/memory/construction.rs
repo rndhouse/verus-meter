@@ -198,6 +198,10 @@ impl Analysis<'_> {
             )?;
         }
         let mut owner = super::heap::Owner::default();
+        if matches!(expr.x, ExprX::Ctor(Dt::Path(_), ..)) && !self.layouts.option(&expr.typ) {
+            owner.declared_fields =
+                Some(self.layouts.struct_variant(&expr.typ, &expr.span)?.fields.clone());
+        }
         let mut transitions = Vec::new();
         for (index, field) in fields.into_iter().enumerate() {
             let mut owned_slot = None;

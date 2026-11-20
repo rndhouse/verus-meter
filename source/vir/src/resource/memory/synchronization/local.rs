@@ -35,6 +35,8 @@ pub(in super::super) enum Boundary {
     #[default]
     Live,
     Release(Interval),
+    /// Complete pre-cleanup storage under every source-permitted field order.
+    UnorderedCleanup,
 }
 
 #[derive(Clone, Default)]
@@ -179,7 +181,7 @@ impl crate::resource::memory::accounting::Point {
     ) -> Result<(), VirErr> {
         let changed = match self.condition.boundary {
             Boundary::Wait(interval) | Boundary::Release(interval) => Some(interval),
-            Boundary::Live => None,
+            Boundary::Live | Boundary::UnorderedCleanup => None,
         };
         if changed.is_some_and(|interval| self.condition.held.contains(&interval))
             || self
@@ -208,6 +210,7 @@ impl Condition {
         let phase = match self.boundary {
             Boundary::Wait(_) => "while waiting for the mutex",
             Boundary::Release(_) => "at mutex release",
+            Boundary::UnorderedCleanup => "during unordered capture or aggregate cleanup",
             Boundary::Live => return None,
         };
         let cost = crate::resource::memory::contracts::constant(&footprint.total())

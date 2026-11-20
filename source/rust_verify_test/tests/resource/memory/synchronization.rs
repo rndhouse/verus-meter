@@ -170,26 +170,15 @@ fn releasing_a_lock_result_preserves_exactly_the_scratch_still_live() {
     ] {
         let source = format!(
             r#"
-            use vstd::prelude::*;
-            verus! {{
                 fn f() resources peak(memory) <= 1000 {{
                     let m = std::sync::Mutex::new(1u8);
                     let held = m.lock();
                     let scratch = Box::new([0u8; 64]);
                     {cleanup}
                 }}
-            }}
         "#
         );
-        let result = crate::verify_one_file(name, source, &["--trace"]).unwrap_err();
-        crate::common::assert_vir_error_msg(result.clone(), "mutex intervals awaiting global");
-        assert!(
-            result.notes.iter().any(|note| note
-                .message
-                .contains(&format!("memory at mutex release: {live} live bytes"))),
-            "{:?}",
-            result.notes
-        );
+        boundary(name, &source, "at mutex release", live);
     }
 }
 
@@ -245,5 +234,90 @@ fn the_lock_contract_preserves_the_unwrap_precondition() {
         errors.errors.iter().any(|d| d.message.contains("precondition")),
         "{:?}",
         errors.errors
+    );
+}
+
+/// Inspect the same source observations used for byte obligations. Whole
+/// concurrent verification still requires global interference coverage.
+fn boundary(case: &str, program: &str, phase: &str, live: u64) {
+    let result = crate::verify_one_file(
+        case,
+        format!("use vstd::prelude::*; verus! {{ {program} }}"),
+        &["--trace"],
+    )
+    .unwrap_err();
+    crate::common::assert_vir_error_msg(result.clone(), "mutex intervals awaiting global");
+    let expected = format!("memory {phase}: {live} live bytes");
+    assert!(result.notes.iter().any(|note| note.message == expected), "{:?}", result.notes);
+}
+
+#[test]
+fn guard_field_destruction_uses_declaration_order() {
+    let program = r#"
+        struct Pair<'a> { FIELDS }
+        fn f() resources peak(memory) <= 1000 {
+            let m = std::sync::Mutex::new(0u8);
+            let result = m.lock();
+            if result.is_err() { return; }
+            let guard = result.unwrap();
+            let pair = Pair { a: Box::new([0u8; 64]), z: guard };
+            drop(pair);
+        }
+    "#;
+    let guard = "z: std::sync::MutexGuard<'a, u8>";
+    let scratch = "a: Box<[u8; 64]>";
+    for (case, fields, live) in [
+        ("guard_field_first", format!("{guard}, {scratch}"), 74),
+        ("scratch_field_first", format!("{scratch}, {guard}"), 10),
+    ] {
+        boundary(case, &program.replace("FIELDS", &fields), "at mutex release", live);
+    }
+}
+
+#[test]
+fn closure_capture_destruction_covers_either_order() {
+    let program = r#"
+        fn f() resources peak(memory) <= 1000 {
+            let m = std::sync::Mutex::new(0u8);
+            let held = m.lock();
+            let scratch = Box::new([0u8; 64]);
+            let closure = move || { BODY };
+            drop(closure);
+        }
+    "#;
+    for (case, body) in [
+        ("guard_first_capture", "drop(held); drop(scratch);"),
+        ("scratch_first_capture", "drop(scratch); drop(held);"),
+    ] {
+        boundary(
+            case,
+            &program.replace("BODY", body),
+            "during unordered capture or aggregate cleanup",
+            74,
+        );
+    }
+}
+
+#[test]
+fn waiting_and_reacquisition_retain_live_allocations() {
+    // The second Result destination (9) coexists with the mutex (10), both
+    // source Box handles (16), and both allocations (96) during the call.
+    boundary(
+        "scratch_before_reacquire",
+        r#"
+        fn f() resources peak(memory) <= 1000 {
+            let m = std::sync::Mutex::new(0u8);
+            let first = m.lock();
+            let a = Box::new([0u8; 64]);
+            let b = Box::new([0u8; 32]);
+            drop(first);
+            let second = m.lock();
+            drop(a);
+            drop(b);
+            drop(second);
+        }
+    "#,
+        "while waiting for the mutex",
+        131,
     );
 }

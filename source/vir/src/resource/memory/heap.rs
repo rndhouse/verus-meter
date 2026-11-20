@@ -81,6 +81,8 @@ pub(super) struct Owner {
     /// Separately owned allocations beneath fields or a box payload. Their inline
     /// handles are already included in the containing value/allocation layout.
     pub(super) children: BTreeMap<OwnerSlot, Owner>,
+    /// Declared struct fields, independent of initializer and ownership-map order.
+    pub(super) declared_fields: Option<crate::ast::Fields>,
     /// Runtime child allocations, aggregated independently of element storage.
     pub(super) elements: Option<super::elements::Elements>,
     /// Memory kind charged for the owned allocation, independently of its handle.
@@ -115,6 +117,7 @@ impl Default for Owner {
             geometry: None,
             geometry_known: true,
             children: BTreeMap::new(),
+            declared_fields: None,
             elements: None,
             kind: MemoryKind::host_heap(),
             bytes: 0,
@@ -715,12 +718,19 @@ impl Analysis<'_> {
             }
             return;
         }
-        if inputs {
-            for input in owner.inputs() {
-                self.storage.release_input(input);
+        // Caller-owned regions must remain in intermediate release observations.
+        let ending_inputs = inputs.then(|| owner.inputs());
+        let mut children = owner.children;
+        if let Some(fields) = owner.declared_fields {
+            for field in fields.iter() {
+                if let Some(child) = children.remove(&OwnerSlot::Field(field.name.clone())) {
+                    self.destroy_owner(child, span, false, proofs);
+                }
             }
         }
-        for child in owner.children.into_values() {
+        // Covers source closures and aggregate summaries without a proved field order.
+        self.storage.cover_unordered_cleanup(span, children.values());
+        for child in children.into_values() {
             self.destroy_owner(child, span, false, proofs);
         }
         if let Some(elements) = owner.elements {
@@ -746,6 +756,11 @@ impl Analysis<'_> {
             self.storage.release_dynamic(id);
         }
         self.storage.release(span, owner.kind, owner.bytes, "drop heap object");
+        if let Some(inputs) = ending_inputs {
+            for input in inputs {
+                self.storage.release_input(input);
+            }
+        }
     }
 
     pub(super) fn heap_expr(&mut self, expr: &Expr) -> Result<Option<u64>, VirErr> {

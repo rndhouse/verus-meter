@@ -321,7 +321,7 @@ impl Analysis<'_> {
             let exit = exit.unwrap_or(&body.span).clone();
             if worker.flow.reachable {
                 capture_cleanup.push(CaptureCleanup {
-                    exit,
+                    exit: exit.clone(),
                     owners: inputs
                         .iter()
                         .filter_map(|input| {
@@ -333,6 +333,14 @@ impl Analysis<'_> {
                         })
                         .collect(),
                 });
+            }
+            if !entry.invocation.cleans_up_after_body() {
+                // Moving capture owners into the body creates no source drop order
+                // for the fields that remain at its implicit return cleanup.
+                worker.storage.cover_unordered_cleanup(
+                    &exit,
+                    inputs.iter().filter_map(|input| worker.heap.owners.get(&input.name)),
+                );
             }
             let mut cleanup = entry.clone();
             for input in &inputs {
