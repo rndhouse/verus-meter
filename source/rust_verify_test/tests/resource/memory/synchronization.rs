@@ -27,12 +27,32 @@ fn tracked_guards_are_not_runtime_memory_roots() {
 }
 
 #[test]
-fn runtime_mutex_is_not_accepted_without_lifetime_coverage() {
+fn mutex_construction_keeps_the_owned_payload_until_drop() {
+    let source = r#"
+        fn f() resources peak(memory) <= 1000 {
+            let mut input = Vec::<Box<[u8; 64]>>::with_capacity(2);
+            input.push(Box::new([0u8; 64]));
+            let mutex = std::sync::Mutex::new(input);
+            let moved = mutex;
+            assert(current(memory) <= LIVE);
+            drop(moved);
+            assert(current(memory) <= 0);
+        }
+    "#;
+    // Mutex state and poison flag (9), Vec handle (24), two reserved slots
+    // (16), and the single boxed payload (64).
+    verifies("mutex_payload_live", &source.replace("LIVE", "113"));
+    rejects("mutex_payload_short", &source.replace("LIVE", "112"), "memory budget exceeded");
+}
+
+#[test]
+fn constructing_a_mutex_does_not_establish_an_acquisition() {
     rejects(
-        "mutex_coverage",
+        "mutex_acquisition_coverage",
         r#"
         fn f() resources peak(memory) <= 1000 {
             let m = std::sync::Mutex::new(1u64);
+            let guard = m.lock();
         }
     "#,
         "before concurrent lifetime accounting is available",

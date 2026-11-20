@@ -269,7 +269,12 @@ impl Analysis<'_> {
         if let Some(elements) = &mut owner.elements {
             elements.source = Some((typ.clone(), value.clone()));
         }
-        if self.layouts.option(typ) || owner.closure.is_some() {
+        // A mutex payload has no unguarded source projection. Its backing
+        // remains in the owner tree with the observations taken at construction.
+        if self.layouts.mutex_payload(typ).is_some()
+            || self.layouts.option(typ)
+            || owner.closure.is_some()
+        {
             return Ok(());
         }
         for (slot, child_type) in self.layouts.owned_children(typ, span)? {

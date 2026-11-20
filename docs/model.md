@@ -18,4 +18,5 @@ Verus Meter verifies upper bounds on peak source-level memory for supported Rust
 ## What can I verify today?
 
 - Supported cases include concrete values, arrays, structs, options, boxes, vectors, boxed slices, selected loops, and safe nongeneric helpers in the same crate with an acyclic call graph. Support depends on the operation and the ownership facts available. [Executable examples](../examples/resource/memory/README.md)
+- Constructing a local standard mutex charges its inline state and payload. Moving it transfers the payload's existing allocations, and dropping it releases the allocations it still owns.
 - Local worker and ownership checks exist. A total concurrent peak still requires a global overlap proof. [Concurrent specification](verus-meter/concurrent-model.md)

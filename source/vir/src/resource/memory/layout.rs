@@ -167,6 +167,19 @@ impl Layouts {
         matches!(&**typ, TypX::Datatype(name, _, _) if Some(name) == self.option.as_ref())
     }
 
+    /// The native mutex stores its payload inline. Owning descendants remain
+    /// under Contents when the mutex moves or enters a shared allocation.
+    pub(super) fn mutex_payload<'t>(&self, typ: &'t Typ) -> Option<&'t Typ> {
+        let TypX::Datatype(name, args, _) = &**typ else { return None };
+        if self.synchronization_types.get(name) == Some(&super::synchronization::LibraryType::Mutex)
+            && let [payload] = args.as_slice()
+        {
+            Some(payload)
+        } else {
+            None
+        }
+    }
+
     /// Only the compiler-identified standard Result carries primitive outcomes.
     pub(super) fn result_payloads<'t>(&self, typ: &'t Typ) -> Option<(&'t Typ, &'t Typ)> {
         let TypX::Datatype(name, args, _) = &**typ else { return None };
@@ -205,7 +218,7 @@ impl Layouts {
     }
 
     fn owner_inner(&self, typ: &Typ, visiting: &mut HashSet<Dt>) -> bool {
-        if self.result_payloads(typ).is_some() {
+        if self.mutex_payload(typ).is_some() || self.result_payloads(typ).is_some() {
             return true;
         }
         if self.join_handle(typ).is_some() || super::iterators::owns_vector_storage(typ) {
@@ -379,7 +392,11 @@ impl Layouts {
             // beneath each strong handle's structural path.
             return Ok(children);
         }
-        if self.option(typ) {
+        if let Some(payload) = self.mutex_payload(typ) {
+            if self.owner(payload) {
+                children.insert(OwnerSlot::Contents, payload.clone());
+            }
+        } else if self.option(typ) {
             let payload = self.option_payload(typ, span)?;
             if self.owner(payload) {
                 children.insert(OwnerSlot::Contents, payload.clone());

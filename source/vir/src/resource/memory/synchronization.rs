@@ -488,7 +488,10 @@ fn reject_unaccounted_inner(
                     {
                         return Ok(());
                     }
-                    if self.types.get(name).is_some_and(|kind| *kind != LibraryType::Result) {
+                    if self.types.get(name).is_some_and(|kind| {
+                        *kind != LibraryType::Result
+                            && !(self.shared == SharedCheck::Local && *kind == LibraryType::Mutex)
+                    }) {
                         return Err(super::model::unsupported(
                             span,
                             "runtime synchronization values before concurrent lifetime accounting is available",
@@ -538,6 +541,7 @@ fn reject_unaccounted_inner(
             if let ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), .. } = &expr.x
                 && let Some(ResourceIntrinsic::Synchronization(operation)) =
                     attrs.resource_intrinsic
+                && !(self.shared == SharedCheck::Local && operation == Operation::MutexNew)
             {
                 return Err(super::model::unsupported(
                     &expr.span,
