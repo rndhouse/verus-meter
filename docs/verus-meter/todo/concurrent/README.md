@@ -60,6 +60,11 @@ verified guarantees; custom implementations expose Verus-proved guarantees.
 Neither requires users to maintain allocation counters or distribute byte credits.
 Always connect those guarantees to executable storage lifetimes.
 
+Use the [source memory accounting rules](../../accounting/README.md) for every
+task. Each supported library operation contributes its documented storage
+effects. Synchronization constrains which modeled bytes can be live together.
+Callers can derive bounds without knowing the library's private allocation strategy.
+
 Compiler-derived capture, move and cleanup facts are compatible with the source
 memory model. Normalize useful frontend evidence without requiring a particular
 generated closure-wrapper shape or charging physical compiler implementation

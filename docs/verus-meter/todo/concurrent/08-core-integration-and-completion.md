@@ -27,6 +27,13 @@ or the first time tests are written.
 - [ ] Ensure acceptance tests mutate executable allocation and synchronization code
   without manually changing accounting ghosts. Verify that invalid tight bounds
   fail and legal retained storage succeeds with sufficient allowance.
+- [ ] Pair two end-to-end cases using the same mutex. In one, four workers each
+  create and drop scratch before unlocking. Allow one worker's scratch in the
+  total bound. In the other, each worker pushes an owning element into a shared
+  vector created with zero reservation. Verify a total bound derived from the
+  modeled slots, payloads and other live storage, with no private resize
+  allowance. After all joins, check current storage with all four slots and
+  payloads still live. A bound allowing only one retained element must fail there.
 - [ ] Document the supported source-memory guarantee, contract/proof usage,
   primitive trust boundary, scope restrictions and useful diagnostics. Clearly
   distinguish source bytes from physical RAM, allocator overhead and OS stacks.

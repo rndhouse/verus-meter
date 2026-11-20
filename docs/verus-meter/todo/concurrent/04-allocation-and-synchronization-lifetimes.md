@@ -26,7 +26,7 @@ connects actual worker bodies, completion/join and symbolic ownership population
 ## Work
 
 - [ ] Attach synchronization conditions to simultaneous allocation/value footprints
-  while preserving the existing accounting of sizes, capacity and input ownership.
+  while preserving sizes, explicit reservations and input ownership.
   Keep the complete footprint of an acquired interval, not one allowance per object.
 - [ ] Establish contained lifetimes for allocations created after acquisition and
   released before unlock. Include supported branches, loops, explicit drops,
@@ -44,8 +44,15 @@ connects actual worker bodies, completion/join and symbolic ownership population
   preserving allocation, instance, acquisition and worker-occurrence identities.
   A release changes the conditions on surviving storage, not its ownership or byte
   charge. Do not assume another worker stops while local effects are analyzed.
-- [ ] Maintain conservation across ownership transfers and preserve old/new overlap
-  during replacement or reallocation. Logical removal and last use are not release.
+- [ ] Preserve each live payload's charge across ownership transfers and past its
+  last read. Track a collection's slots separately from payloads its elements own. For a
+  guarded vector, a push uses a reserved slot or adds one occupied slot. A pop
+  reduces the slot charge down to the explicit reservation. If it returns a box,
+  track the payload until its modeled lifetime ends, including across unlock.
+- [ ] Charge both buffers when source code constructs a replacement while the old
+  buffer is live. A resize internal to `Vec::push` adds no intermediate charge.
+  Apply the [vector rules](../../accounting/which-bytes-count/collections/vectors.md)
+  at the call.
 - [ ] Account collectively for several buffers and any supported concurrent work
   associated with one guard. Borrowing or sharing a guard must not duplicate its
   per-holder allowance.
@@ -69,8 +76,9 @@ instantiated by 05 without reconstructing lifetimes from aggregate byte bounds.
 ## Validation
 
 Test contained scratch, allocation before locking, early release, escaping owners,
-conditional drop, repeated acquisition, multiple buffers, reallocation overlap
-and guard aliases. Include mutations adding a real allocation with no proof-code
+conditional drop, repeated acquisition, multiple buffers, and guard aliases.
+Check explicit replacement overlap, a push beyond the reservation, and a popped
+payload that survives unlock. Include mutations adding a real allocation with no proof-code
 change. Check local relationships/obligations now; TODOs 07–08 must test their
 resulting total bounds. Run the README's memory checks and affected drop/ownership
 regressions, preserving existing sequential lifetime tests.
@@ -82,7 +90,7 @@ Use `docs/verus-meter/concurrent-model.md` for graph and coverage semantics:
 - [ ] Maintain disjoint byte attribution with additional guard conditions retained
   as constraints. Release must reclassify surviving regions, not delete them.
 - [ ] Cover every supported cleanup edge, protected-payload replacement and
-  construction transient. Detect missing compiler drop information rather than
+  source-level construction transient. Detect missing compiler drop information rather than
   substituting last-use estimates.
 - [ ] Translate every transition-review case assigned to local lifetime accounting
   into regression obligations; preserve acquisition-family freshness in loops.

@@ -167,7 +167,8 @@ edge kinds have these rules:
 | Event | Accounting and synchronization effect |
 | --- | --- |
 | Allocate/construct | Add fresh storage and check its simultaneous cost, including inputs still alive |
-| Replace/reallocate | Check old and new overlap before retiring the old identity |
+| Replace an owned value | Count old and new storage together whenever their modeled lifetimes overlap |
+| Grow a collection | Apply the operation's documented storage effect. A vector push can add an occupied slot and transfer payload ownership. Its private resize adds no charge. |
 | Move/send between covered owners | Change destination; no deallocation or second payload charge |
 | Acquire | While waiting, retain existing frame/captures; create a fresh acquisition only on an acquiring outcome |
 | Release/drop guard | End that acquisition at actual release; surviving allocations move to an unprotected/otherwise justified class and remain charged |
@@ -222,7 +223,9 @@ This local phase rule is stronger than merely labeling an allocation site “und
 lock”: it covers its entire live interval, including every helper/exit/transfer.
 A buffer born before acquire is unrestricted before acquire; a buffer escaping
 unlock remains unrestricted afterward. Both can verify with an adequate total
-bound. Construction and reallocation transients obey the same rule.
+bound. Storage created during construction or replacement follows the same
+lifetime rule. Supported library operations expose the effects defined by the
+[source memory accounting rules](accounting/README.md).
 
 ## Summary and custom-proof interfaces
 
@@ -333,7 +336,7 @@ These cases are semantic acceptance requirements and test obligations for 02–0
 | Borrow/share the guard into supported work | Same acquisition; no duplicate allowance; illegal Send remains rejected |
 | Return/move buffer through helper | Same allocation ID; exit descriptor retains its charge even after release |
 | Complete worker before join | Completion cell and result remain live; parent and other workers can overlap them |
-| Replace lock-protected owning payload | Old/new overlap checked; shared root updated once, not copied into each worker |
+| Replace lock-protected owning payload | Count distinct payloads while both are live and update the shared root once |
 | Fail try-acquire | No acquisition witness; already-live storage remains |
 
 ## Implementation ownership

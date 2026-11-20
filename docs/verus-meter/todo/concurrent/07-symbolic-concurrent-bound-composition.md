@@ -20,9 +20,11 @@ must work through the normal compiler analysis for standard and custom protocols
   `min(n, k) * b` under the required per-holder/capacity/lifetime conditions.
   Zero workers contribute zero scratch. Include all other storage in total bounds.
 - [ ] Preserve conditions through branches, calls, worker overlap and sequential
-  reuse. Check intermediate allocation/reallocation peaks and blocked storage,
-  not merely synchronization endpoints. Whole-call peaks cannot replace phase
-  information when a tight proof depends on it.
+  reuse. Check storage held while blocked and every modeled intermediate peak,
+  including two explicitly created buffers whose lifetimes overlap. For a
+  guarded push, compose the vector's documented slot and payload charges.
+  Its private resize contributes no additional peak. Preserve phase information
+  when a tight proof depends on it.
 - [ ] Integrate assertions with the existing symbolic proof generation and range
   policy. Keep memory metadata erased and generated checks verified. Solver failure
   or timeout must not become an assumed bound.
