@@ -23,6 +23,13 @@ This task owns local lifetime attribution and its proof obligations. 03 already
 connects actual worker bodies, completion/join and symbolic ownership populations;
 05 owns general interprocedural composition of the relationships added here.
 
+## Implementation progress
+
+- `124573f58` preserves a local mutex's existing payload tree through construction, moves and destruction. The nested `Vec<Box<_>>` regression verifies 113 live bytes, rejects 112, and verifies zero after drop.
+- `05a87684b` and `aaa964dae` attach acquisition conditions to the same source observations that generate byte obligations. They preserve the canonical instance across captured strong aliases and bind each construction and acquisition to its executable site and occurrence coordinates.
+- `004620490` covers implicit capture cleanup with all potentially surviving storage. The struct tests distinguish declaration order from initializer order. `56847f669` confines this rule to source structs.
+- `1ee98ed5f` checks the success, poison and non-acquiring failure arms of native mutex operations. The focused synchronization suite passed all 18 tests at that checkpoint. The global interference proof remains a dependency of a total concurrent bound.
+
 ## Work
 
 - [ ] Attach synchronization conditions to simultaneous allocation/value footprints
