@@ -258,8 +258,9 @@ it. The outer join can recover the resulting scalar or buffer size through the
 collecting worker's summary. A worker can also take ownership of the whole
 vector and drain it. In supported loops the publishing worker supplies the
 description of the captured collection, and the receiving worker proves its
-remaining length and membership after each pop. Dropping a collection with an
-outstanding handle fails the local proof. A worker may return the remaining
+remaining length and membership after each pop. The same rule applies when
+the source writes out the final joins individually. Dropping a collection
+with an outstanding handle fails the local proof. A worker may return the remaining
 vector to another thread that owns its join handle. The receiving thread
 uses the snapshot taken when that worker was spawned, including which
 workers its result contains. Its local checks cover the returned vector's
@@ -383,11 +384,14 @@ worker and its backing against the stored publication.
 
 A deferred charge first discovered inside a reusable body still needs an empty
 ledger on re-entry if earlier points in that body had no such charge. A fixed
-worker can receive the carrying result and drop or return it. The publisher
-retains the charge through the join and checks the original allocation visit
-when its last returned alias drops. Putting this receiving worker back into a
-handle vector requires a separate ownership relation. The global concurrent
-peak proof is still required.
+worker can receive the carrying result and drop or return it. Its handle can
+also move into a second vector when the receiver takes the entire local group
+of strong handles to that result. Other workers can still own their shares.
+The publisher retains the backing under the original allocation visit. A pop
+and join of the second vector retires the receiver's share if the worker
+consumed it. If the worker returns the `Arc`, its last local drop retires
+that share. Splitting this local group across separate indexed receivers
+requires a proof of how the reservations split and is currently rejected.
 
 At a worker's `current(memory)` checkpoint the verifier can reconcile directly
 identified strong handles with the publisher's ownership at spawn. A worker
@@ -453,13 +457,12 @@ resource-contracted code until concurrent allocation coverage and bound checking
 are connected. Native functional specifications assume neither acquisition
 success nor a protected payload invariant. The
 [concurrent TODOs](verus-meter/todo/concurrent/README.md) track the remaining requirements.
-Worker-local obligations are checked, but a required global diagnostic still
-rejects every concurrent memory contract and prevents exporting it. These local
-checks are necessary inequalities, not a sum of thread peaks or a simultaneous
-memory theorem. General population and handle/helper interfaces, global
-shared-lifetime composition, synchronization containment and the simultaneous
-envelope still require the remaining concurrent interfaces.
-Detaching a worker is rejected.
+A passing worker checkpoint establishes a local byte inequality for the
+represented ownership and lifecycle state. The verifier still rejects every
+concurrent memory contract and prevents its export, including in compilation
+and no-verification modes. Accepting a total peak requires proving which
+allocation lifetimes overlap across workers, including those constrained by
+guards or permits. Detaching a worker is rejected.
 
 ## Concurrent extension specification
 

@@ -87,7 +87,11 @@ impl Analysis<'_> {
         Ok(extents.into_iter().reduce(|a, b| contracts::add(span, a, b)).expect("outer backing"))
     }
 
-    fn transfer_occurrence_backing(&mut self, span: &Span, backing: Owner) -> Result<Expr, VirErr> {
+    pub(super) fn transfer_occurrence_backing(
+        &mut self,
+        span: &Span,
+        backing: Owner,
+    ) -> Result<Expr, VirErr> {
         use crate::resource::memory::footprint::MemoryKind;
         let charges = self.owner_charges(span, &backing);
         let upper = self.owner_upper(span, &backing);

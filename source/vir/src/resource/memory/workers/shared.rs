@@ -132,19 +132,6 @@ impl Analysis<'_> {
                 "retaining a collector with outstanding shared reservations in an indexed slot",
             ));
         }
-        // A fixed receiver imports this finite handle. Its publisher retains
-        // the original visit's backing and applies the receiver's exit counts
-        // at join. An indexed receiver would need that visit in every slot.
-        if worker
-            .entry_shared
-            .allocation_ids()
-            .any(|root| self.growth.peer_results.contains_key(&root))
-        {
-            return Err(unsupported(
-                span,
-                "indexing a forwarded Arc with outstanding allocation peers",
-            ));
-        }
         let returned = execution.returned_arc_root();
         if (!execution.shared.is_empty()
             && !returned.is_some_and(|id| worker.entry_shared.has_strong(id)))
@@ -159,6 +146,16 @@ impl Analysis<'_> {
         let mut carried = None;
         let single = imports.len() == 1;
         for (root, count, backing) in imports {
+            if let Some(role) = self.growth.peer_results.get(&root).cloned() {
+                if !single || self.heap.shared.has_strong(root) {
+                    return Err(unsupported(
+                        span,
+                        "indexing only part of a forwarded Arc ownership group",
+                    ));
+                }
+                self.index_forwarded_peer(span, actor, forest, root, backing, role)?;
+                continue;
+            }
             if !self.transitions.owns_fixed_root(root) {
                 if !single || !self.growth.shared_occurrences.contains_key(&root) {
                     return Err(unsupported(

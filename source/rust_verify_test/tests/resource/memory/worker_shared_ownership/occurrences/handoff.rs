@@ -1,6 +1,8 @@
 //! Retain a backing after its carrying handle ends. Only peers from the same
 //! executable allocation visit can discharge that backing.
 
+mod relay;
+
 use super::{DROP_VECTORS, GLOBAL, PRODUCT, peer_program};
 use crate::common::{assert_vir_error_msg, assert_vir_error_msgs};
 
@@ -66,19 +68,6 @@ fn a_forwarded_carrier_keeps_its_original_visit() {
     assert_vir_error_msgs(
         check("forwarded_wrong_visit", consumed.replace("<= 214", "<= 213")),
         &["conditional memory budget exceeded", GLOBAL],
-    );
-
-    let indexed = consumed.replace(
-        "relay.join().unwrap();",
-        r#"
-        let mut forwarded = Vec::with_capacity(1);
-        forwarded.push(relay);
-        forwarded.pop().unwrap().join().unwrap();
-    "#,
-    );
-    assert_vir_error_msg(
-        check("forwarded_into_indexed_receiver", indexed),
-        "indexing a forwarded Arc with outstanding allocation peers",
     );
 
     let returned = program.replace(

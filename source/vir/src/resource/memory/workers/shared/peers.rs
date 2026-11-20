@@ -1,6 +1,7 @@
 //! Source-checked reservations for independently retained workers that share one allocation visit.
 use super::*;
 
+mod forwarded;
 mod nested;
 
 /// One received Arc may be the charged owner or a peer, depending on the
@@ -130,10 +131,13 @@ impl Analysis<'_> {
         span: &Span,
         occurrence: &Occurrence,
     ) -> Result<Option<PeerResult>, VirErr> {
+        // A forwarded capture names a joined result locally. Its reservation
+        // still belongs to the original constructor, even in a second vector.
         let sites: BTreeSet<_> = occurrence
             .templates
             .iter()
-            .filter_map(|actor| self.growth.occurrence_roots.get(actor).copied())
+            .filter_map(|actor| self.growth.occurrence_roots.get(actor))
+            .map(|root| self.growth.peer_results.get(root).map_or(*root, |role| role.site))
             .collect();
         if !sites.iter().any(|site| self.growth.occurrence_peers.contains_key(site)) {
             return Ok(None);
@@ -215,10 +219,13 @@ impl Analysis<'_> {
         let mut identity = None;
         for actor in &occurrence.templates {
             let execution = &self.growth.worker_executions[actor];
+            let captured_root = self.growth.occurrence_roots.get(actor).copied();
             let mut path = None;
             if let Some(captures) = &execution.entry.storage.owner {
                 captures.visit_paths(&mut Vec::new(), &mut |slots, node| {
-                    if node.shared.and_then(StrongLink::known) == Some(role.site) {
+                    if captured_root.is_some()
+                        && node.shared.and_then(StrongLink::known) == captured_root
+                    {
                         path = Some(expr::path(
                             span,
                             slots.iter().map(|s| self.layouts.metadata_slot(s)),
@@ -252,7 +259,12 @@ impl Analysis<'_> {
                         vec![occurrence.record.clone(), expr::path(span, actor.descriptor())],
                         crate::ast_util::bool_typ(),
                     );
-                    select(span, family, visit, previous)
+                    let identity_type = visit.typ.clone();
+                    SpannedTyped::new(
+                        span,
+                        &identity_type,
+                        ExprX::If(family, visit, Some(previous)),
+                    )
                 }
             });
         }
