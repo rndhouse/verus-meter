@@ -151,10 +151,10 @@ fn extraction_keeps_new_charges_separate_from_original_input_regions() {
             let result = take(v); AFTER
         }";
     // The call allowance can overlap the original 24-byte outer buffer. The
-    // new 128-byte child buffer must not also appear in an input region. After
+    // new 32-byte child slot must not also appear in an input region. After
     // the call, that buffer remains owned by the returned 24-byte vector.
     for (name, after, bound) in
-        [("new_charges_during", "", 432), ("new_charges_after", "let scratch = [0u8;512];", 664)]
+        [("new_charges_during", "", 432), ("new_charges_after", "let scratch = [0u8;512];", 568)]
     {
         let code = code.replace("AFTER", after);
         verifies(name, &code.replace("BOUND", &bound.to_string()));
@@ -296,7 +296,7 @@ fn owned_pop_keeps_new_allocations_separate_from_input_regions() {
             let child = Vec::<[u8;32]>::new(); v.push(child);
             let result = take(v); AFTER
         }";
-    for (name, after, bound) in [("during", "", 433), ("after", "let scratch = [0u8;512];", 665)] {
+    for (name, after, bound) in [("during", "", 433), ("after", "let scratch = [0u8;512];", 569)] {
         let code = code.replace("AFTER", after);
         verifies(name, &code.replace("BOUND", &bound.to_string()));
         rejects(

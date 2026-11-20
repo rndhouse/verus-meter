@@ -16,8 +16,8 @@ fn incoming_indexed_mutation_preserves_selected_and_sibling_allocations() {
             v[0].push(8); v[1].push(8);
             let scratch = [0u8;200];
         }";
-    verifies("incoming_index", &code.replace("BOUND", "320"));
-    rejects("incoming_index_short", &code.replace("BOUND", "319"), "memory budget exceeded");
+    verifies("incoming_index", &code.replace("BOUND", "312"));
+    rejects("incoming_index_short", &code.replace("BOUND", "311"), "memory budget exceeded");
 }
 
 #[test]

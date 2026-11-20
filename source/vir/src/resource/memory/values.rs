@@ -168,8 +168,8 @@ impl Analysis<'_> {
                     self.bind_collection_sources(&pattern.span, &mut owner, &binding.typ, value)?;
                     self.heap.owners.insert(binding.name.clone(), owner);
                 }
-                if binding.user_mut == Some(false) && super::contracts::scalar(&binding.typ) {
-                    self.stable_scalars.insert(binding.name.clone());
+                if binding.user_mut == Some(false) {
+                    self.record_immutable_binding(&binding.name, &binding.typ);
                 }
                 Ok(())
             }

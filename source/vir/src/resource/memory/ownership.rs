@@ -323,7 +323,6 @@ impl Analysis<'_> {
         path: &mut super::heap::OwnerPath,
     ) -> Result<Owner, VirErr> {
         let OwnerCall { expr, callee, args, .. } = *call;
-        let mut replacement = None;
         let mut owner = match summary {
             ReturnedOwner::Input { index, replacement, addition, .. } => {
                 let owner = call.transferred[*index].take().ok_or_else(|| {
@@ -361,9 +360,7 @@ impl Analysis<'_> {
             ReturnedOwner::Replaced { allocation, .. } => {
                 let allocation =
                     allocations::instantiate(allocation, callee, args, &self.stable_scalars)?;
-                let owner = self.returned_owner(expr, &allocation, true)?;
-                replacement = Some(allocation);
-                owner
+                self.returned_owner(expr, &allocation, true)?
             }
         };
         if let ReturnedOwner::Input { children, .. } | ReturnedOwner::Node { children, .. } =
@@ -394,7 +391,7 @@ impl Analysis<'_> {
             .get(path)
             .map(|capacity| contracts::substitute(capacity, callee, args, &self.stable_scalars))
             .transpose()?;
-        self.attach_vector_result(&expr.span, typ, &mut owner, capacity, replacement)?;
+        self.attach_vector_result(&expr.span, typ, &mut owner, capacity)?;
         if self.layouts.cardinality(typ) && owner.source.is_none() && owner.geometry.is_none() {
             owner.geometry_known = false;
         }

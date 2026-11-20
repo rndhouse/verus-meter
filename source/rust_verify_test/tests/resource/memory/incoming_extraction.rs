@@ -89,15 +89,15 @@ fn removal_transfers_new_charges_out_of_the_incoming_parent() {
             let child = Vec::<u32>::new(); v.push(child);
             let result = take(&mut v, 0); drop(v); let scratch = [0u8;256];
         }";
-    verifies("local_charges", &code.replace("HELPER", "56").replace("BOUND", "296"));
+    verifies("local_charges", &code.replace("HELPER", "44").replace("BOUND", "284"));
     rejects(
         "local_charges_short",
-        &code.replace("HELPER", "56").replace("BOUND", "295"),
+        &code.replace("HELPER", "44").replace("BOUND", "283"),
         "memory budget exceeded",
     );
     rejects(
         "local_charges_helper_short",
-        &code.split("fn f()").next().unwrap().replace("HELPER", "55"),
+        &code.split("fn f()").next().unwrap().replace("HELPER", "43"),
         "memory budget exceeded",
     );
 }
@@ -235,15 +235,15 @@ fn pop_transfers_new_charges_out_of_the_incoming_parent() {
             let child = Vec::<u32>::new(); v.push(child);
             let result = take(&mut v); drop(v); let scratch = [0u8;256];
         }";
-    verifies("pop_local_charges", &code.replace("HELPER", "49").replace("BOUND", "297"));
+    verifies("pop_local_charges", &code.replace("HELPER", "37").replace("BOUND", "285"));
     rejects(
         "pop_local_charges_short",
-        &code.replace("HELPER", "49").replace("BOUND", "296"),
+        &code.replace("HELPER", "37").replace("BOUND", "284"),
         "memory budget exceeded",
     );
     rejects(
         "pop_local_charges_helper_short",
-        &code.split("fn f()").next().unwrap().replace("HELPER", "48"),
+        &code.split("fn f()").next().unwrap().replace("HELPER", "36"),
         "memory budget exceeded",
     );
 }

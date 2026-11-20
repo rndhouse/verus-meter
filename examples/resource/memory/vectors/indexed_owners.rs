@@ -15,12 +15,11 @@ struct Row {
 // Grow one row while preserving the other rows' memory allowances.
 //
 // The caller keeps paying for the row's original allocation. This helper's
-// allowance covers its reference and a possible replacement buffer. The
-// model's minimum u32 buffer holds four elements.
+// allowance covers its reference and one additional slot.
 fn add(row: &mut Row)
     requires old(row).cells.len() <= 1,
     ensures final(row).cells.len() == old(row).cells.len() + 1,
-    resources peak(memory) <= ref_size(row) + value_size([u32; 4]),
+    resources peak(memory) <= ref_size(row) + value_size(u32),
 {
     row.cells.push(7);
 }

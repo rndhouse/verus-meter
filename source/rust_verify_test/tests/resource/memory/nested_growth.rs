@@ -7,9 +7,9 @@ fn nested_growth_counts_enclosing_and_sibling_allocations() {
             let mut p = Box::new(P { v: Vec::with_capacity(1), sibling: Box::new([0u8;16]) });
             p.v.push(1); p.v.push(2);
         }";
-    // Box handle 8, payload 32, sibling 16, original buffer 4, replacement 16.
-    verifies("nested_overlap", &code.replace("BOUND", "76"));
-    rejects("nested_overlap_short", &code.replace("BOUND", "75"), "memory budget exceeded");
+    // Box handle 8, payload 32, sibling 16, two u32 slots 8.
+    verifies("nested_overlap", &code.replace("BOUND", "64"));
+    rejects("nested_overlap_short", &code.replace("BOUND", "63"), "memory budget exceeded");
 }
 
 #[test]
@@ -35,8 +35,8 @@ fn leaf_helpers_update_only_the_selected_sibling() {
             let mut p = P { a: Vec::new(), b: Vec::with_capacity(10) };
             append(&mut p.a); let scratch = [0u8;32];
         }";
-    verifies("nested_leaf_effect", &code.replace("BOUND", "144"));
-    rejects("nested_leaf_effect_short", &code.replace("BOUND", "143"), "memory budget exceeded");
+    verifies("nested_leaf_effect", &code.replace("BOUND", "124"));
+    rejects("nested_leaf_effect_short", &code.replace("BOUND", "123"), "memory budget exceeded");
 }
 
 #[test]
@@ -49,10 +49,10 @@ fn composite_borrowed_helpers_preserve_child_effects() {
         fn f() resources peak(memory) <= BOUND {
             let mut p = P { v: Vec::new() }; relay(&mut p); let scratch = [0u8;32];
         }";
-    verifies("nested_composite_effect", &code.replace("BOUND", "88"));
+    verifies("nested_composite_effect", &code.replace("BOUND", "60"));
     rejects(
         "nested_composite_effect_short",
-        &code.replace("BOUND", "87"),
+        &code.replace("BOUND", "59"),
         "memory budget exceeded",
     );
 }
@@ -67,10 +67,10 @@ fn returned_input_retains_descendant_changes() {
         fn f() resources peak(memory) <= BOUND {
             let p = P { v: Vec::new() }; let q = wrap(p); let scratch = [0u8;80];
         }";
-    verifies("nested_returned_effect", &code.replace("BOUND", "128"));
+    verifies("nested_returned_effect", &code.replace("BOUND", "116"));
     rejects(
         "nested_returned_effect_short",
-        &code.replace("BOUND", "127"),
+        &code.replace("BOUND", "115"),
         "memory budget exceeded",
     );
 }
@@ -178,9 +178,9 @@ fn sibling_growth_effects_accumulate_across_helpers() {
             let mut p = P { a: Vec::new(), b: Vec::new() }; append(&mut p);
             let scratch = [0u8;40];
         }";
-    // Each child retains the helper's conservative 40-byte upper bound.
-    verifies("nested_two_effects", &code.replace("BOUND", "168"));
-    rejects("nested_two_effects_short", &code.replace("BOUND", "167"), "memory budget exceeded");
+    // Each child retains one four-byte slot.
+    verifies("nested_two_effects", &code.replace("BOUND", "96"));
+    rejects("nested_two_effects_short", &code.replace("BOUND", "95"), "memory budget exceeded");
 }
 
 #[test]
@@ -205,10 +205,9 @@ fn small_composite_handle_cannot_hide_retained_growth() {
             let p = P { v: Box::new(Vec::new()) }; let q = append(p);
             let scratch = [0u8;32];
         }";
-    // The parameter's inline handle is 8, so a 16-byte replacement fits its
-    // 24-byte budget and must remain charged when the composite is returned.
-    verifies("small_composite_growth", &code.replace("BOUND", "80"));
-    rejects("small_composite_growth_short", &code.replace("BOUND", "79"), "memory budget exceeded");
+    // The returned boxed vector carries the four-byte slot added by the helper.
+    verifies("small_composite_growth", &code.replace("BOUND", "68"));
+    rejects("small_composite_growth_short", &code.replace("BOUND", "67"), "memory budget exceeded");
 }
 
 #[test]

@@ -202,8 +202,8 @@ fn implicit_box_dereferences_keep_the_allocation_around_a_growing_child() {
         v[0].push(1); v[0].push(2);
         let scratch = [0u8;64];
     }";
-    verifies("boxed_element_growth", &code.replace("BOUND", "136"));
-    rejects("boxed_element_growth_short", &code.replace("BOUND", "135"), "memory budget exceeded");
+    verifies("boxed_element_growth", &code.replace("BOUND", "128"));
+    rejects("boxed_element_growth_short", &code.replace("BOUND", "127"), "memory budget exceeded");
 }
 
 #[test]

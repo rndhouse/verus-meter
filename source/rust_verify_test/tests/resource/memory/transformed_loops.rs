@@ -123,7 +123,7 @@ fn growing_each_child_preserves_its_original_capacity() {
         let scratch = [0u8;4096];
     }";
     for (name, selection, bound) in [
-        ("grown_child", "", 4136),
+        ("grown_child", "", 4124),
         ("spare_capacity", "let first = result.pop(); drop(first);", 4152),
     ] {
         let code = code.replace(
@@ -219,8 +219,8 @@ fn helper_growth_uses_its_checked_allocation_allowance() {
         let mut result = make(); let selected = result.pop().unwrap(); drop(result);
         let scratch = [0u8;4096];
     }";
-    verifies("helper_growth", &code.replace("BOUND", "4136"));
-    rejects("helper_growth_short", &code.replace("BOUND", "4135"), "memory budget exceeded");
+    verifies("helper_growth", &code.replace("BOUND", "4124"));
+    rejects("helper_growth_short", &code.replace("BOUND", "4123"), "memory budget exceeded");
 }
 
 #[test]

@@ -536,39 +536,28 @@ impl Trace<'_> {
             }
             match effect {
                 Effect::Identity { .. } => {}
-                Effect::TemporarySlot { element, pop_site, .. } => {
+                Effect::TemporarySlot { pop_site, .. } => {
                     self.loop_progress.get_mut(&span.id)?.local_pops.insert(*pop_site);
-                    // A positive number of visits needs room for exactly one
-                    // extra slot. Pop keeps the resulting backing and capacity.
-                    let (cap, retained, _) = growth::push_transition(
-                        span,
-                        capacity.clone(),
-                        bytes.clone(),
-                        length.clone(),
-                        *element,
-                        false,
-                    );
-                    let visited = mk_ineq(span, &expr::integer(span, 0), count, InequalityOp::Lt);
-                    node.memory = with_root(
-                        span,
-                        node.memory,
-                        choice(span, visited.clone(), retained, bytes),
-                        choice(span, visited, cap, capacity),
-                        length,
-                        self.layouts.owning_elements(&node.typ),
-                    );
+                    // A paired push and pop restores the entry charge.
                 }
                 Effect::PopBlock { amount, .. } => {
                     let removed = contracts::multiply(span, count.clone(), amount.clone());
                     let final_length = contracts::maximum(
                         span,
                         expr::integer(span, 0),
-                        contracts::subtract(span, length, removed),
+                        contracts::subtract(span, length.clone(), removed),
                     );
                     node.memory = with_root(
                         span,
                         take(span, node.memory, final_length.clone()),
-                        bytes,
+                        growth::resize_bytes(
+                            span,
+                            bytes,
+                            capacity.clone(),
+                            length,
+                            final_length.clone(),
+                            self.layouts.vector_element(&node.typ, span).ok()?,
+                        ),
                         capacity,
                         final_length,
                         self.layouts.owning_elements(&node.typ),
@@ -617,6 +606,7 @@ impl Trace<'_> {
                         node.memory,
                         capacity,
                         bytes,
+                        property(span, initial.memory.clone(), "length"),
                         final_length,
                         *element,
                         *grow,
@@ -652,6 +642,7 @@ impl Trace<'_> {
                         node.memory,
                         capacity,
                         bytes,
+                        property(span, initial.memory.clone(), "length"),
                         final_length,
                         *element,
                         *grow,
@@ -977,26 +968,16 @@ fn append_root(
     memory: Expr,
     capacity: Expr,
     bytes: Expr,
+    old_length: Expr,
     length: Expr,
     element: u64,
     grow: bool,
     owns_children: bool,
 ) -> Expr {
-    let (capacity, retained) = if grow {
-        let replacement = contracts::multiply(
-            span,
-            contracts::literal(span, element),
-            growth::grown_capacity(span, length.clone(), element),
-        );
-        let retained = choice(
-            span,
-            mk_ineq(span, &length, &capacity, InequalityOp::Le),
-            bytes.clone(),
-            contracts::maximum(span, bytes, replacement),
-        );
-        (contracts::maximum(span, capacity, length.clone()), retained)
+    let retained = if grow {
+        growth::resize_bytes(span, bytes, capacity.clone(), old_length, length.clone(), element)
     } else {
-        (capacity, bytes)
+        bytes
     };
     with_root(span, memory, retained, capacity, length, owns_children)
 }

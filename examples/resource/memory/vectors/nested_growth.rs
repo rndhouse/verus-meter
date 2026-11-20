@@ -16,13 +16,13 @@ struct Buffers {
 // Add a value while preserving the other buffer's contents and reservation.
 //
 // The caller accounts for the existing buffers. The helper allows for its
-// reference and the minimum four-element buffer used when a u32 vector grows.
+// reference and one additional u32 slot.
 fn append(buffers: &mut Buffers)
     requires old(buffers).values.len() == 0,
     ensures
         final(buffers).values@ == seq![7u32],
         final(buffers).spare@ == old(buffers).spare@,
-    resources peak(memory) <= ref_size(buffers) + value_size([u32; 4]),
+    resources peak(memory) <= ref_size(buffers) + value_size(u32),
 {
     buffers.values.push(7);
 }

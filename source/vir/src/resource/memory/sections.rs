@@ -8,27 +8,6 @@ use crate::ast::*;
 use crate::messages::Span;
 
 impl Analysis<'_> {
-    /// A replacement belongs to every active section around its owner. Capture
-    /// the possible new buffer before the operation mutates the vector length.
-    pub(super) fn record_section_replacement(
-        &mut self,
-        span: &Span,
-        id: usize,
-        replacement: &Expr,
-    ) {
-        if let Some(scopes) = self.growth.section_backings.get(&id) {
-            for local in scopes {
-                let retained =
-                    super::allocations::retained_bytes(span, local.clone(), replacement.clone());
-                self.growth
-                    .updates
-                    .entry(span.id)
-                    .or_default()
-                    .push(super::symbolic::assign(span, local, retained));
-            }
-        }
-    }
-
     pub(super) fn section(
         &mut self,
         expr: &Expr,
@@ -56,7 +35,23 @@ impl Analysis<'_> {
                 &crate::ast_util::mk_bool(contract_span, true),
                 self.growth.before.entry(contract_span.id).or_default(),
             );
-            self.allocation_snapshot(contract_span, formula)
+            let immutable = |name: &VarIdent| {
+                self.stable_scalars.contains(name) || self.growth.immutable_slices.contains(name)
+            };
+            let mut stable = true;
+            crate::ast_visitor::expr_visitor_check(&formula, &mut |_, term| {
+                // Lowering a collection length keeps its receiver as a read
+                // of the Rust place. A mutable vector must retain its snapshot.
+                stable &= match &term.x {
+                    ExprX::Var(name) => immutable(name),
+                    ExprX::ReadPlace(place, _) => {
+                        matches!(&place.x, PlaceX::Local(name) if immutable(name))
+                    }
+                    _ => true,
+                };
+                Ok::<(), VirErr>(())
+            })?;
+            if stable { formula } else { self.allocation_snapshot(contract_span, formula) }
         };
         // Enclosing storage and earlier peaks belong to the parent. Keep the
         // mode environment and call graph shared, since this is still its code.
@@ -70,14 +65,11 @@ impl Analysis<'_> {
         vectors.sort_unstable();
         vectors.dedup();
         for &id in &vectors {
-            let zero = super::contracts::literal(contract_span, 0);
-            let local = self.allocation_snapshot(contract_span, zero);
-            self.growth.section_backings.entry(id).or_default().push(local.clone());
-            let backing = &self.growth.vectors[id].backing;
-            // Both the section's replacement bound and the owner's full backing
-            // bound apply. The latter also carries the owner's loop invariants.
-            let bytes = super::contracts::minimum(contract_span, local, backing.bytes.clone());
-            self.storage.set_allocation(backing.id, backing.kind.clone(), bytes);
+            let backing = self.growth.vectors[id].backing.clone();
+            let entry = self.allocation_snapshot(contract_span, backing.bytes.clone());
+            self.growth.section_backings.entry(id).or_default().push(entry.clone());
+            let bytes = super::growth::section_bytes(contract_span, backing.bytes, entry);
+            self.storage.set_allocation(backing.id, backing.kind, bytes);
         }
         let protected_elements = self.growth.protected_elements.clone();
         let section_shared = self.growth.section_shared.clone();

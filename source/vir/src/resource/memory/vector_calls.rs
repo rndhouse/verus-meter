@@ -29,19 +29,15 @@ pub(super) fn summarize_result(
     bound: &Expr,
 ) -> Result<(Option<Expr>, Option<Charge<Expr>>), VirErr> {
     let Some(owner) = owner else { return Ok((None, None)) };
-    if let Some(id) = owner.vector {
-        if growth.vectors[id].backing.changed {
-            return Ok((
-                owner.input.is_none().then(|| contracts::literal(&function.span, 0)),
-                Some(Charge {
-                    kind: owner.kind.clone(),
-                    amount: super::growth::retained_bound(&growth.vectors[id], function, bound),
-                }),
-            ));
-        }
-    }
+    let retained = owner.vector.and_then(|id| {
+        let state = &growth.vectors[id];
+        state.backing.changed.then(|| Charge {
+            kind: owner.kind.clone(),
+            amount: super::growth::retained_bound(state, function, bound),
+        })
+    });
     if owner.input.is_some() {
-        return Ok((None, None));
+        return Ok((None, retained));
     }
     if let Some(capacity) = &owner.capacity {
         let inputs = contracts::inputs(function);
@@ -55,10 +51,12 @@ pub(super) fn summarize_result(
             Ok::<(), VirErr>(())
         })?;
         if !in_scope {
-            return Ok((Some(contracts::literal(&function.span, 0)), None));
+            // A complete transfer descriptor can still carry the construction
+            // observation. A native summary cannot grant or release these slots.
+            return Ok((None, retained));
         }
     }
-    Ok((owner.capacity.clone(), None))
+    Ok((owner.capacity.clone(), retained))
 }
 
 impl Analysis<'_> {
@@ -127,11 +125,77 @@ impl Analysis<'_> {
         args: &Exprs,
     ) -> Result<(), VirErr> {
         let c = &expr.span;
-        for ((index, path), bound) in &self.summaries[&callee.x.name].allocations.retained.clone() {
-            let id = self.vector_argument(&args[*index], &callee.x.params[*index].x.typ, path)?;
-            let bound =
-                super::allocations::instantiate(bound, callee, args, &self.allocation_scalars())?;
-            self.retain_vector_growth(c, id, bound)?;
+        let summary = &self.summaries[&callee.x.name];
+        let retained = summary.allocations.retained.clone();
+        let paths: std::collections::BTreeSet<_> =
+            retained.keys().chain(summary.vectors.removals.iter()).cloned().collect();
+        for (index, path) in paths {
+            let typ = &callee.x.params[index].x.typ;
+            if self.layouts.borrowed_owner(typ).is_none() {
+                continue;
+            }
+            let (name, mut location) = super::paths::expr(&args[index], typ)
+                .ok_or_else(|| unsupported(c, "a mutable vector without a tracked owner"))?;
+            location.extend_from_slice(&path);
+            let owner = self
+                .heap
+                .root(&name)
+                .and_then(|root| root.at(&location))
+                .ok_or_else(|| unsupported(c, "a mutable vector without a tracked owner"))?;
+            let id = owner
+                .vector
+                .ok_or_else(|| unsupported(c, "a mutable vector without slot metadata"))?;
+            let length = owner.source.as_ref().map(|_| self.owner_length(c, owner));
+            let bound = retained
+                .get(&(index, path))
+                .map(|bound| {
+                    super::allocations::instantiate(bound, callee, args, &self.allocation_scalars())
+                })
+                .transpose()?;
+            let state = &self.growth.vectors[id];
+            if let Some(length) = length {
+                // The executable call supplies the final length. For an incoming
+                // allocation only changes above its caller-owned entry charge
+                // belong to this frame.
+                let next = if state.local_constructor {
+                    super::growth::slots_bytes(
+                        c,
+                        state.minimum.clone(),
+                        length.clone(),
+                        state.element,
+                    )
+                } else {
+                    let state = state.clone();
+                    let entry = self.allocation_snapshot(c, length.clone());
+                    super::growth::resize_bytes(
+                        c,
+                        state.backing.bytes.clone(),
+                        state.funded_slots(c),
+                        entry,
+                        length.clone(),
+                        state.element,
+                    )
+                };
+                let prior = self.growth.vectors[id].backing.bytes.clone();
+                let prior = self.allocation_snapshot(c, prior);
+                let allowance =
+                    bound.as_ref().map_or_else(|| contracts::literal(c, 0), |b| b.amount.clone());
+                let next = contracts::minimum(c, next, contracts::add(c, prior, allowance));
+                let state = &mut self.growth.vectors[id];
+                self.growth.after.entry(c.id).or_default().push(super::symbolic::assign(
+                    c,
+                    &state.backing.bytes,
+                    next,
+                ));
+                state.removals += 1;
+                state.sequence_length = Some(length);
+                if bound.is_some() {
+                    state.backing.changed = true;
+                    state.pushes += 1;
+                }
+            } else if let Some(bound) = bound {
+                self.retain_vector_growth(c, id, bound)?;
+            }
         }
         Ok(())
     }
@@ -144,17 +208,17 @@ impl Analysis<'_> {
         typ: &Typ,
         owner: &mut Owner,
         capacity: Option<Expr>,
-        replacement: Option<Charge<Expr>>,
     ) -> Result<(), VirErr> {
         if !self.layouts.vector(typ) {
-            if replacement.is_some() {
-                return Err(unsupported(span, "a replacement effect without a container adapter"));
-            }
             return Ok(());
         }
         if owner.vector.is_none() {
-            let capacity = capacity
-                .ok_or_else(|| unsupported(span, "a returned vector without a capacity summary"))?;
+            let capacity = capacity.ok_or_else(|| {
+                unsupported(
+                    span,
+                    "a returned vector whose explicit reservation cannot be established",
+                )
+            })?;
             let amount = owner.extent.clone().ok_or_else(|| {
                 unsupported(span, "a returned allocation without a byte-size summary")
             })?;
@@ -180,9 +244,6 @@ impl Analysis<'_> {
                 owner.kind.clone(),
                 self.growth.vectors[id].backing.bytes.clone(),
             );
-        }
-        if let Some(replacement) = replacement {
-            self.retain_vector_growth(span, owner.vector.unwrap(), replacement)?;
         }
         Ok(())
     }

@@ -64,10 +64,10 @@ fn repeated_fixed_owners_cover_growth_and_zero_iterations() {
         fn f() resources peak(memory) <= BOUND {
             let v = make(COUNT); let scratch = [0u8;200]; drop(v);
         }";
-    verifies("repeated_fixed", &code.replace("COUNT", "2").replace("BOUND", "320"));
+    verifies("repeated_fixed", &code.replace("COUNT", "2").replace("BOUND", "304"));
     rejects(
         "repeated_fixed_short",
-        &code.replace("COUNT", "2").replace("BOUND", "319"),
+        &code.replace("COUNT", "2").replace("BOUND", "303"),
         "memory budget exceeded",
     );
     verifies("repeated_empty", &code.replace("COUNT", "0").replace("BOUND", "224"));

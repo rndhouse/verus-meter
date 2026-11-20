@@ -2,7 +2,7 @@
 //!
 //! A reservation lower bound and a retained-byte upper bound are deliberately
 //! distinct. Borrowed inputs need not expose their allocation size: the caller
-//! keeps paying for that allocation while the callee pays for replacement buffers.
+//! keeps paying for entry storage while the callee funds additional slots.
 
 use super::contracts;
 use super::symbolic::assign;
@@ -17,8 +17,11 @@ pub(super) struct VectorState {
     /// A local constructor starts with exact slots and bytes in this model.
     /// Call summaries and borrowed inputs can carry independent bounds.
     pub(super) local_constructor: bool,
-    /// Guaranteed reserved element slots, including occupied slots.
+    /// Guaranteed explicitly reserved element slots.
     pub(super) capacity: Expr,
+    /// Slots occupied by a parameter on entry are already funded by its caller.
+    /// This private accounting baseline never promises a reservation to callees.
+    pub(super) entry_length: Option<Expr>,
     /// Initial reservation remains a lower bound because supported operations never shrink.
     pub(super) minimum: Expr,
     /// A uniform reservation candidate inherited from a runtime ownership class.
@@ -26,14 +29,13 @@ pub(super) struct VectorState {
     pub(super) uniform_minimum: Option<Expr>,
     /// Direct pushes require length-dependent loop bounds; helper effects have stable bounds.
     pub(super) pushes: usize,
-    /// Scratch snapshot prevents a transition from reading its own updated state.
-    pub(super) next_capacity: Expr,
+    /// Scheduled mutations that can decrease this backing across a loop.
+    pub(super) removals: usize,
     /// Inline model size of one element, excluding its owned allocations.
     pub(super) element: u64,
     /// An inferred entry reservation whose no-growth uses are checked by Verus.
     pub(super) reserved: bool,
-    /// While a sequence only appends, its logical length bounds every direct
-    /// replacement made so far. Removal invalidates this optional bound.
+    /// Logical length used to bound retained slot charges in loop proofs.
     pub(super) sequence_length: Option<Expr>,
     /// Removal permanently disables append-only length bounds, including after
     /// later pushes and across branches analyzed in either order.
@@ -181,8 +183,9 @@ pub(super) struct Growth {
     pub(super) after: HashMap<u64, Vec<Stmt>>,
     /// Inductive resource invariants generated for each loop.
     pub(super) loops: HashMap<u64, Vec<Expr>>,
-    /// For each enclosing vector, the replacement bytes retained since entry
-    /// to each active section, outermost first. Its owner keeps the full backing.
+    /// Immutable shared-slice bindings whose lengths stay fixed through a section.
+    pub(super) immutable_slices: std::collections::HashSet<VarIdent>,
+    /// Backing charge on entry to each active section, outermost first.
     pub(super) section_backings: HashMap<usize, Vec<Expr>>,
 }
 
@@ -190,85 +193,102 @@ pub(super) fn select(span: &Span, condition: Expr, yes: Expr, no: Expr) -> Expr 
     SpannedTyped::new(span, &int_typ(), ExprX::If(condition, yes, Some(no)))
 }
 
-/// Explicit source-model growth policy. Allocator rounding and metadata are
-/// excluded, as for with_capacity. Count both buffers during replacement.
-pub(super) fn grown_capacity(span: &Span, length: Expr, element: u64) -> Expr {
-    let minimum = if element == 1 {
-        8
-    } else if element <= 1024 {
-        4
-    } else {
-        1
-    };
-    contracts::maximum(
+/// Source-visible element storage. A push does not change the reservation,
+/// and an empty vector still owns the slots requested by its constructor.
+pub(super) fn slots_bytes(span: &Span, reservation: Expr, length: Expr, element: u64) -> Expr {
+    contracts::multiply(
         span,
-        contracts::literal(span, minimum),
-        contracts::maximum(
-            span,
-            contracts::multiply(span, contracts::literal(span, 2), length.clone()),
-            contracts::add(span, length, contracts::literal(span, 1)),
-        ),
+        contracts::maximum(span, reservation, length),
+        contracts::literal(span, element),
     )
 }
 
-/// The shared source-model transition for one append. Byte bounds and reserved
-/// slots stay distinct; exact allocation bounds can expose additional spare room.
-pub(super) fn push_transition(
+/// A push inside the explicit reservation leaves the charge untouched.
+pub(super) fn push_bytes(
     span: &Span,
-    capacity: Expr,
     bytes: Expr,
+    reservation: Expr,
     length: Expr,
     element: u64,
-    exact_allowed: bool,
-) -> (Expr, Expr, Expr) {
-    let room = mk_ineq(span, &length, &capacity, InequalityOp::Lt);
-    let grown = grown_capacity(span, length.clone(), element);
-    let extra = select(
+) -> Expr {
+    select(
         span,
-        room.clone(),
-        contracts::literal(span, 0),
-        contracts::multiply(span, contracts::literal(span, element), grown.clone()),
-    );
-    let retained = super::allocations::retained_bytes(span, bytes.clone(), extra.clone());
-    let mut lower = contracts::maximum(
-        span,
-        capacity.clone(),
-        contracts::add(span, length, contracts::literal(span, 1)),
-    );
-    if exact_allowed && element != 0 {
-        let exact = mk_eq(
-            span,
-            &bytes,
-            &contracts::multiply(span, capacity.clone(), contracts::literal(span, element)),
-        );
-        let exact_lower = select(span, room, capacity, grown);
-        lower = select(span, exact, exact_lower, lower);
+        mk_ineq(span, &length, &reservation, InequalityOp::Lt),
+        bytes.clone(),
+        contracts::add(span, bytes, contracts::literal(span, element)),
+    )
+}
+
+/// Removing a slot releases bytes only above the reservation. A partial
+/// descriptor can reach zero before the caller's separately owned storage.
+pub(super) fn pop_bytes(
+    span: &Span,
+    bytes: Expr,
+    reservation: Expr,
+    length: Expr,
+    element: u64,
+) -> Expr {
+    if element == 0 || contracts::constant(&bytes) == Some(0) {
+        return bytes;
     }
-    (lower, retained, extra)
+    let remainder = contracts::subtract(span, bytes.clone(), contracts::literal(span, element));
+    select(
+        span,
+        mk_ineq(span, &length, &reservation, InequalityOp::Le),
+        bytes,
+        contracts::maximum(span, contracts::literal(span, 0), remainder),
+    )
+}
+
+/// Update a descriptor that can exclude caller-owned storage. Apply just the
+/// change in occupied slots above the reservation. A removal cannot release
+/// bytes belonging to an enclosing owner.
+pub(super) fn resize_bytes(
+    span: &Span,
+    bytes: Expr,
+    reservation: Expr,
+    old_len: Expr,
+    new_len: Expr,
+    element: u64,
+) -> Expr {
+    let before = slots_bytes(span, reservation.clone(), old_len, element);
+    let after = slots_bytes(span, reservation, new_len, element);
+    contracts::maximum(
+        span,
+        contracts::literal(span, 0),
+        contracts::add(span, bytes, contracts::subtract(span, after, before)),
+    )
+}
+
+/// A section owns the increase above its entry charge. The difference is
+/// also bounded by the current backing in an isolated loop proof.
+pub(super) fn section_bytes(span: &Span, current: Expr, entry: Expr) -> Expr {
+    let increase = contracts::subtract(span, current.clone(), entry);
+    contracts::maximum(
+        span,
+        contracts::literal(span, 0),
+        contracts::minimum(span, current, increase),
+    )
 }
 
 impl VectorState {
-    /// Only an append beyond the initial reservation can allocate. The most recent
-    /// replacement used a length at most one less than the current length.
+    pub(super) fn funded_slots(&self, span: &Span) -> Expr {
+        match &self.entry_length {
+            Some(entry) => contracts::maximum(span, self.capacity.clone(), entry.clone()),
+            None => self.capacity.clone(),
+        }
+    }
+
     pub(super) fn appended_bytes(&self, span: &Span, length: &Expr, floor: Expr) -> Expr {
-        let replacement = select(
-            span,
-            mk_ineq(span, length, &self.minimum, InequalityOp::Le),
-            contracts::literal(span, 0),
-            contracts::multiply(
-                span,
-                contracts::literal(span, self.element),
-                grown_capacity(
-                    span,
-                    contracts::subtract(span, length.clone(), contracts::literal(span, 1)),
-                    self.element,
-                ),
-            ),
-        );
+        let slots = slots_bytes(span, self.minimum.clone(), length.clone(), self.element);
+        // This already includes the local constructor's original reservation.
+        if self.local_constructor && contracts::constant(&floor) == Some(0) {
+            return slots;
+        }
         contracts::maximum(
             span,
-            self.backing.initial_bytes.clone(),
-            contracts::maximum(span, floor, replacement),
+            contracts::maximum(span, self.backing.initial_bytes.clone(), floor),
+            slots,
         )
     }
 }
@@ -429,7 +449,6 @@ impl Growth {
         };
         let lower = variable("capacity");
         let upper = variable("bytes");
-        let next_capacity = variable("next_capacity");
         let next_bytes = variable("next_bytes");
         self.before.entry(span.id).or_default().extend([
             assign(span, &lower, capacity.clone()),
@@ -439,9 +458,10 @@ impl Growth {
             local_constructor: false,
             capacity: lower,
             minimum: capacity,
+            entry_length: None,
             uniform_minimum: None,
             pushes: 0,
-            next_capacity,
+            removals: 0,
             element,
             reserved: false,
             sequence_length: None,
@@ -473,9 +493,21 @@ impl Growth {
         for id in ids {
             let state = &self.vectors[*id];
             let zero = contracts::literal(span, 0);
-            result.push(mk_ineq(span, &state.minimum, &state.capacity, InequalityOp::Le));
+            result.push(if state.local_constructor {
+                mk_eq(span, &state.minimum, &state.capacity)
+            } else {
+                mk_ineq(span, &state.minimum, &state.capacity, InequalityOp::Le)
+            });
             result.push(mk_ineq(span, &zero, &state.capacity, InequalityOp::Le));
             result.push(mk_ineq(span, &zero, &state.backing.bytes, InequalityOp::Le));
+            if state.local_constructor {
+                result.push(mk_ineq(
+                    span,
+                    &state.backing.initial_bytes,
+                    &state.backing.bytes,
+                    InequalityOp::Le,
+                ));
+            }
             let mut in_scope = true;
             let _: Result<(), VirErr> =
                 crate::ast_visitor::expr_visitor_check(&state.backing.floor, &mut |_, expr| {
@@ -486,66 +518,14 @@ impl Growth {
                 });
             // A helper may use a scalar declared inside this loop. Its expression
             // cannot escape into the header; the checked function budget is a
-            // sound, in-scope bound for the live replacement instead.
+            // sound, in-scope bound for the retained storage.
             let floor = if in_scope { state.backing.floor.clone() } else { fallback.clone() };
-            let upper = contracts::maximum(
-                span,
-                floor.clone(),
-                contracts::multiply(
-                    span,
-                    contracts::literal(span, state.element),
-                    grown_capacity(span, state.capacity.clone(), state.element),
-                ),
-            );
-            // Section-relative allocation checks need the capacity relation
-            // when proving overlap with the growing buffers of enclosing owners.
-            if !self.section_backings.is_empty()
-                && state.local_constructor
-                && state.append_only
-                && state.pushes > 0
-                && contracts::constant(&floor) == Some(0)
-                && state.element != 0
-            {
-                // Direct appends preserve exact modeled capacity. Any replacement
-                // provides at least the policy's first buffer, so induction must
-                // not charge another allocation on the very next small append.
-                let bytes = contracts::multiply(
-                    span,
-                    contracts::literal(span, state.element),
-                    state.capacity.clone(),
-                );
-                result.push(mk_eq(span, &state.backing.bytes, &bytes));
-                let small = mk_ineq(
-                    span,
-                    &state.capacity,
-                    &grown_capacity(span, zero.clone(), state.element),
-                    InequalityOp::Lt,
-                );
-                result.push(mk_implies(
-                    span,
-                    &small,
-                    &mk_eq(span, &state.backing.bytes, &state.backing.initial_bytes),
-                ));
-            }
             let upper = if let Some(length) = &state.sequence_length {
-                // If all appends still fit the original reservation, none of
-                // them charged a section. Helpers may have retained their own
-                // replacement bound independently of the append count.
-                if let Some(scopes) = self.section_backings.get(id) {
-                    let within = mk_ineq(span, length, &state.minimum, InequalityOp::Le);
-                    for local in scopes {
-                        result.push(mk_implies(
-                            span,
-                            &within,
-                            &mk_ineq(span, local, &floor, InequalityOp::Le),
-                        ));
-                    }
-                }
                 state.appended_bytes(span, length, floor)
             } else if state.pushes == 0 {
                 contracts::maximum(span, state.backing.initial_bytes.clone(), floor)
             } else {
-                upper
+                fallback.clone()
             };
             result.push(mk_ineq(span, &state.backing.bytes, &upper, InequalityOp::Le));
         }
@@ -563,7 +543,8 @@ impl super::analysis::Analysis<'_> {
         if let Some((snapshot, commit)) =
             self.growth.vectors[id].backing.retain(span, &replacement)?
         {
-            self.record_section_replacement(span, id, &replacement.amount);
+            self.growth.vectors[id].pushes += 1;
+            self.growth.vectors[id].sequence_length = None;
             self.growth.updates.entry(span.id).or_default().push(snapshot);
             self.growth.after.entry(span.id).or_default().push(commit);
         }
@@ -605,22 +586,14 @@ pub(crate) fn resolution_modes(
     });
 }
 
-/// Every replacement is created while its receiver handle is live. If even the
-/// smallest replacement cannot fit, a successful body proof establishes that
-/// no replacement occurred. This preserves precise summaries for small helpers.
+/// An additional slot must fit alongside its receiver. A smaller checked
+/// allowance establishes that the helper added no backing charge.
 pub(super) fn retained_bound(state: &VectorState, function: &Function, bound: &Expr) -> Expr {
     if state.element == 0 {
         return contracts::literal(&function.span, 0);
     }
     if let (Some(handle), Some(budget)) = (state.backing.input_bytes, contracts::constant(bound)) {
-        let minimum = contracts::constant(&grown_capacity(
-            &function.span,
-            contracts::literal(&function.span, 0),
-            state.element,
-        ))
-        .unwrap();
-        if u128::from(budget) < u128::from(minimum) * u128::from(state.element) + u128::from(handle)
-        {
+        if u128::from(budget) < u128::from(state.element) + u128::from(handle) {
             return contracts::literal(&function.span, 0);
         }
     }

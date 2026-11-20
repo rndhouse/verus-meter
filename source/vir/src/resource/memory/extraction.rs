@@ -96,24 +96,7 @@ impl Analysis<'_> {
                 } else {
                     None
                 };
-                if let Some(removal) = &pop {
-                    // Observed length is a sound capacity lower bound even for
-                    // incoming storage whose capacity was initially unknown.
-                    // Pop keeps the backing, so restoring removed children can
-                    // reuse those slots without inventing a replacement charge.
-                    let capacity = self.growth.vectors[state].capacity.clone();
-                    let length = super::contracts::add(
-                        &source.span,
-                        removal.index.clone(),
-                        metadata::integer(&source.span, 1),
-                    );
-                    let lower = super::contracts::maximum(&source.span, capacity.clone(), length);
-                    self.growth
-                        .after
-                        .entry(source.span.id)
-                        .or_default()
-                        .push(super::symbolic::assign(&source.span, &capacity, lower));
-                }
+                self.remove_vector_slot(&source.span, state, &typ, value.clone());
                 let tag = pop.as_ref().and_then(|removal| removal.tag.clone());
                 let (name, path) = super::paths::expr(receiver, &typ).unwrap();
                 let elements = self
@@ -179,6 +162,39 @@ impl Analysis<'_> {
                                 elements.records.clone(),
                                 removal.path(&source.span),
                                 metadata::integer(&source.span, root.serial()),
+                            ],
+                        ));
+                    }
+                }
+                if optional
+                    && let ExprX::Var(forest) = &elements.records.x
+                    && let Some(families) = self.growth.forest_families.get(forest)
+                    && families.len() > 1
+                    && self
+                        .growth
+                        .indexed_shared
+                        .values()
+                        .any(|claims| claims.population.uniform_weight(families.iter()).is_none())
+                {
+                    // The selected family's weight is needed again when a joined
+                    // result releases its Arc. Instantiate the pop law on the
+                    // pre-pop forest while the occupied prefix is still available.
+                    let last = removal.length.clone();
+                    let path = metadata::push(
+                        &source.span,
+                        metadata::path(&source.span, []),
+                        last.clone(),
+                    );
+                    let proofs = self.growth.before.entry(source.span.id).or_default();
+                    for family in families {
+                        proofs.push(metadata::lemma(
+                            &source.span,
+                            "worker_family_count_pop",
+                            vec![
+                                elements.records.clone(),
+                                path.clone(),
+                                last.clone(),
+                                metadata::path(&source.span, family.descriptor()),
                             ],
                         ));
                     }

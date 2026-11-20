@@ -26,7 +26,7 @@ pub(super) struct Heap {
     /// map directly, so its iteration order becomes part of the solver input.
     pub(super) owners: BTreeMap<VarIdent, Owner>,
     /// Borrowed inputs use the same structural paths as owned inputs. Original
-    /// allocations remain charged to the caller; replacements are charged here.
+    /// allocations remain charged to the caller; additional slots are charged here.
     pub(super) borrowed: BTreeMap<VarIdent, Owner>,
     protected: HashSet<VarIdent>,
     /// Loops may partition ownership while retaining enclosing owner slots.
@@ -383,7 +383,7 @@ impl Analysis<'_> {
 
     /// Mirror the input's structure without charging its original allocations.
     /// Each node receives independent lifetime provenance; vector states count
-    /// only replacements made here. The caller retains every original charge.
+    /// only additional slots funded here. The caller retains the entry charge.
     /// Runtime descendants use an initially empty local-charge forest: absence
     /// means no allocation was made here, not that the executable child is absent.
     pub(super) fn input_owner(

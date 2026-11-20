@@ -30,10 +30,8 @@ length of a named slice or vector. For example, a section can declare
 fresh snapshot of its allowance. The enclosing scope pays that allowance
 alongside its own live storage. Checkpoints still require fixed bounds.
 
-A vector created outside a section can grow inside it. The section
-pays for each replacement while the vector's owner retains its buffer on exit.
-A push that fits the existing capacity adds no backing charge. If the section
-replaces a buffer it allocated earlier, both buffers count at replacement.
+A section that grows an enclosing vector pays for the additional slots live
+above its entry charge. The vector's owner keeps paying for those slots on exit.
 See [contract examples](../examples/resource/memory/README.md#contracts).
 
 ## Runtime queries (prototype)
@@ -80,10 +78,13 @@ runtime storage.
 - An owning `Option` match must bind each present owner to move it. Wildcards
   over owning values are unsupported because ignoring a value does not drop it;
   a named binding such as `Some(_value)` establishes an ordinary value lifetime.
-- Heap backing counts even when a collection's logical length is smaller than
-  its capacity. Child allocations count separately from their handles.
-- Reallocation and replacement include overlapping old and new storage. Vector
-  growth follows the model's allocation policy, not a system-allocator guarantee.
+- For a vector, backing costs `max(requested_slots, len) * value_size(T)`.
+  `Vec::new()` requests zero slots and `Vec::with_capacity(n)` requests
+  `n`. Removing an element releases its slot down to that reservation.
+  Child allocations count separately from their handles.
+- Allocator-selected spare capacity and internal reallocation during a push
+  are outside the source model. Distinct allocations explicitly created by
+  the program count together while both are live.
 - Calls compose the callee's declared budget with caller storage that remains
   live, including retained incoming allocations. Declared slack still counts.
 - Loop iterations can reuse released storage; retained allocations accumulate.
@@ -140,11 +141,12 @@ models are not yet provided.
 ### Allocation sizes across calls
 
 A vector reservation records the capacity at the allocation site. Moving the
-vector carries that backing charge, and a growing push updates it under the
-model's allocation policy. A helper returning two buffers with capacities
-selected by the same flag can preserve both selections through a forwarding
-call. A caller can prove their combined charge for either flag and the
-individual charge after extracting one buffer.
+vector carries its reservation and the charge for its occupied slots. A returned
+vector needs its explicit reservation in the helper summary or transfer
+descriptor. A helper returning two buffers with capacities selected by the same
+flag can preserve both selections through a forwarding call. A caller can prove
+their combined charge for either flag and the individual charge after extracting
+one buffer.
 
 For a counted loop that only updates local observations, the checker can infer
 the final value of a scalar or shared slice length overwritten on every
@@ -164,7 +166,7 @@ and the loop or helper call where inference lost the relationship.
 
 ## Synchronization size queries
 
-The `source-values-v40-64` model supports type-only sizes for standard `Mutex<T>`,
+The `source-values-v41-64` model supports type-only sizes for standard `Mutex<T>`,
 `MutexGuard<T>`, poison/try-lock wrappers and `Result<T, E>` with supported concrete
 payload layouts. A mutex occupies nine source-state bytes plus its inline payload;
 a guard occupies an eight-byte reference. A poison wrapper occupies its payload,
@@ -379,7 +381,7 @@ after the join produces the handle.
 A publication loop can also join one worker immediately and leave its peers in
 a vector. The next iteration starts with their backings still charged. If the
 joined handle passes through a vector slot, popping it restores the length and
-retains any capacity allocated by the push. The verifier checks the selected
+restores the entry slot charge. The verifier checks the selected
 worker and its backing against the stored publication.
 
 A deferred charge first discovered inside a reusable body still needs an empty

@@ -146,6 +146,9 @@ struct Charge {
     backing: Option<(Expr, Expr)>,
     /// Executable occupied length and its immutable loop-entry observation.
     length: (Expr, Expr),
+    /// Minimum backing needed for occupied slots beyond caller-funded storage.
+    /// Paired transfers use this checked lower bound to restore their entry charge.
+    unfunded_bytes: Option<Expr>,
     /// Current capacity, its entry snapshot, and inline size for append proofs.
     reservation: Option<(Expr, Expr, u64)>,
 }

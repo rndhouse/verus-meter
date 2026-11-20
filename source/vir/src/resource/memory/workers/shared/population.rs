@@ -54,7 +54,10 @@ impl Population {
 
     /// A collection length describes strong claims only if all of its possible
     /// publications capture the same multiplicity of this particular root.
-    fn uniform_weight<'a>(&self, families: impl Iterator<Item = &'a WorkerId>) -> Option<u64> {
+    pub(in crate::resource::memory) fn uniform_weight<'a>(
+        &self,
+        families: impl Iterator<Item = &'a WorkerId>,
+    ) -> Option<u64> {
         let mut weights = families.map(|id| self.weights.get(id).copied().unwrap_or(0));
         let first = weights.next()?;
         weights.all(|w| w == first).then_some(first)

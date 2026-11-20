@@ -82,14 +82,12 @@ pub(in super::super) enum Effect {
         element: u64,
         grow: bool,
     },
-    /// A push followed by a pop restores the children and length. Any growth
-    /// needed for the temporary slot survives both operations.
+    /// A push followed by a pop restores the children, length, and slot charge.
     TemporarySlot {
         /// Source pop whose selected child was just appended on this visit.
         pop_site: u64,
         location: Location,
         typ: Typ,
-        element: u64,
     },
     /// Checked operations restore this role's complete entry forest.
     Identity {

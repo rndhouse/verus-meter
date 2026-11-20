@@ -14,16 +14,15 @@ fn insertion_transfers_child_storage_once() {
 }
 
 #[test]
-fn outer_growth_replaces_handles_not_child_allocations() {
+fn outer_growth_counts_new_handles_and_preserves_child_allocations() {
     let code = "fn f() resources peak(memory) <= BOUND {
         let mut v = Vec::<Box<[u8;16]>>::with_capacity(1);
         let a = Box::new([0u8;16]); v.push(a);
         let b = Box::new([0u8;16]); v.push(b);
     }";
-    // 24-byte vector handle, old 8-byte buffer, replacement 32-byte buffer,
-    // and 32 bytes owned by the two elements.
-    verifies("element_overlap", &code.replace("BOUND", "96"));
-    rejects("element_overlap_short", &code.replace("BOUND", "95"), "memory budget exceeded");
+    // Vector handle, two eight-byte slots, and two 16-byte child allocations.
+    verifies("element_overlap", &code.replace("BOUND", "72"));
+    rejects("element_overlap_short", &code.replace("BOUND", "71"), "memory budget exceeded");
 }
 
 #[test]
@@ -306,8 +305,8 @@ fn growing_children_are_charged_before_insertion() {
         let mut child = Vec::<u32>::new(); child.push(1); outer.push(child);
         let scratch = [0u8;32];
     }";
-    verifies("grown_element", &code.replace("BOUND", "96"));
-    rejects("grown_element_short", &code.replace("BOUND", "95"), "memory budget exceeded");
+    verifies("grown_element", &code.replace("BOUND", "84"));
+    rejects("grown_element_short", &code.replace("BOUND", "83"), "memory budget exceeded");
 }
 
 #[test]

@@ -49,7 +49,7 @@ are included only where needed for memory verification.
 - [Reserved capacity](vectors/vectors.rs): prove that every addition fits the reservation.
 - [Borrowing vectors](vectors/vector_helpers.rs): let helpers use an existing reservation.
 - [Returning vectors](vectors/vector_returns.rs): preserve a reservation when returning a buffer.
-- [Growing vectors](vectors/vector_growth.rs): budget for old and replacement buffers together.
+- [Growing vectors](vectors/vector_growth.rs): budget for the vector handle and its occupied or explicitly reserved slots.
 - [Nested growth](vectors/nested_growth.rs): grow related buffers independently.
 - [Owning collections](vectors/owning_collections.rs): include allocations owned by the elements.
 - [Helper collections](vectors/helper_collections.rs): retain child reservations through counted construction and reuse them after a call.

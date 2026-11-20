@@ -1,7 +1,6 @@
 // rust_verify/tests/example.rs expect-errors --- Intentionally requires unbudgeted growth.
 // Shows why growing a collection needs an allowance beyond its original reservation.
 //
-// The budget must cover the old and replacement buffers simultaneously.
 // This budget only covers the original buffer, so verification rejects growth.
 
 use vstd::prelude::*;
@@ -18,7 +17,7 @@ fn main()
     let mut values = Vec::<u32>::with_capacity(1);
     values.push(10);
 
-    // The replacement allocation exceeds the memory budget at this push.
+    // The second occupied slot exceeds the memory budget at this push.
     values.push(20);
 }
 

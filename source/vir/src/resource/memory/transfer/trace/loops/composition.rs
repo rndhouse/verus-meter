@@ -106,7 +106,7 @@ fn temporary_slots(effects: Vec<Effect>, selections: &HashMap<VarIdent, Selectio
     let mut output = Vec::new();
     let mut iter = effects.into_iter().peekable();
     while let Some(push) = iter.next() {
-        if let Effect::Append { location, typ, grow, element, original, .. } = &push
+        if let Effect::Append { location, typ, grow, original, .. } = &push
             && let Some(Effect::Pop { location: next, token: Some(token), .. }) = iter.peek()
             && location.0 == next.0
             && location.1 == next.1
@@ -123,7 +123,6 @@ fn temporary_slots(effects: Vec<Effect>, selections: &HashMap<VarIdent, Selectio
                     pop_site: selected.site,
                     location: location.clone(),
                     typ: typ.clone(),
-                    element: *element,
                 }
             } else {
                 Effect::Identity { location: location.clone(), typ: typ.clone() }

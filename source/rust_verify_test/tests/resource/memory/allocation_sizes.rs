@@ -146,7 +146,7 @@ fn slice_rebinding_keeps_the_zero_and_positive_visit_sizes() {
 }
 
 #[test]
-fn last_write_sizes_the_allocation_until_a_push_replaces_its_backing() {
+fn last_write_sets_the_reservation_and_push_funds_one_slot() {
     let code = allowances(
         r#"
         fn build(visits: u8) -> (out: Vec<Vec<u8>>)
@@ -178,9 +178,9 @@ fn last_write_sizes_the_allocation_until_a_push_replaces_its_backing() {
         {
             let out = build(visits);
             // One input and two vector handles use 49 bytes. The three backing sizes
-            // are seven, eight (a push into an empty reservation), and one.
+            // are seven, one (the pushed slot), and one.
             if visits == 0 { assert(current(memory) <= 56); }
-            if visits == 1 { assert(current(memory) <= 57); }
+            if visits == 1 { assert(current(memory) <= 50); }
             if visits == 2 { assert(current(memory) <= 50); }
         }
     "#,
@@ -188,7 +188,10 @@ fn last_write_sizes_the_allocation_until_a_push_replaces_its_backing() {
     verifies("last_write_charge", &code);
     rejects(
         "grown_backing_short",
-        &code.replace("<= 57", "<= 56"),
+        &code.replace(
+            "visits == 1 { assert(current(memory) <= 50",
+            "visits == 1 { assert(current(memory) <= 49",
+        ),
         "conditional memory budget exceeded",
     );
 }

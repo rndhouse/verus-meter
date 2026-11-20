@@ -131,7 +131,7 @@ pub(super) fn infer(
         requirements: HashMap::new(),
     };
     if let Some(body) = &function.x.body {
-        inference.walk(body, &lengths)?;
+        inference.walk(body, &lengths, false)?;
     }
     Ok(inference.requirements)
 }
@@ -162,6 +162,7 @@ impl Inference<'_> {
         &mut self,
         body: &Expr,
         lengths: &HashMap<super::paths::LocalPath, Expr>,
+        repeated: bool,
     ) -> Result<(), VirErr> {
         let mut lengths = lengths.clone();
         let modes = self.modes;
@@ -179,12 +180,12 @@ impl Inference<'_> {
                     let before = std::mem::take(&mut self.requirements);
                     let mut branch = lengths.clone();
                     branch.extend(bounds(condition, &self.vectors, &self.scalars));
-                    if let Err(err) = self.walk(yes, &branch) {
+                    if let Err(err) = self.walk(yes, &branch, repeated) {
                         return VisitorControlFlow::Stop(err);
                     }
                     let yes = std::mem::take(&mut self.requirements);
                     if let Some(no) = no {
-                        if let Err(err) = self.walk(no, &lengths) {
+                        if let Err(err) = self.walk(no, &lengths, repeated) {
                             return VisitorControlFlow::Stop(err);
                         }
                     }
@@ -207,7 +208,7 @@ impl Inference<'_> {
                 if let ExprX::Loop { cond: Some(cond), body, .. } = &expr.x {
                     let mut local = lengths.clone();
                     local.extend(bounds(cond, &self.vectors, &self.scalars));
-                    return match self.walk(body, &local) {
+                    return match self.walk(body, &local, true) {
                         Ok(()) => VisitorControlFlow::Return,
                         Err(err) => VisitorControlFlow::Stop(err),
                     };
@@ -226,29 +227,22 @@ impl Inference<'_> {
                                 Ok(n) => n,
                                 Err(e) => return VisitorControlFlow::Stop(e),
                             };
-                            let worst_length = contracts::subtract(
-                                &expr.span,
-                                required.clone(),
-                                contracts::literal(&expr.span, 1),
-                            );
-                            let replacement =
-                                super::growth::grown_capacity(&expr.span, worst_length, element);
                             // Select a candidate strategy, not a memory guarantee.
                             // Normal accounting still checks all locals, retained
                             // buffers, and dynamic budget expressions.
                             let fits = element == 0
-                                || match (
-                                    contracts::constant(self.bound),
-                                    contracts::constant(&replacement),
-                                ) {
-                                    (Some(budget), Some(capacity)) => {
-                                        u128::from(capacity) * u128::from(element)
+                                || contracts::constant(self.bound).is_none_or(|budget| {
+                                    let slots = if repeated {
+                                        contracts::constant(required)
+                                    } else {
+                                        Some(1)
+                                    };
+                                    slots.is_some_and(|n| {
+                                        u128::from(n) * u128::from(element)
                                             + u128::from(self.parameters)
                                             <= u128::from(budget)
-                                    }
-                                    (None, _) => true,
-                                    _ => false,
-                                };
+                                    })
+                                });
                             if !fits {
                                 merge(&mut self.requirements, name.clone(), required.clone());
                             }

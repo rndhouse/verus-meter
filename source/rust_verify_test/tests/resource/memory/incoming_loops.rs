@@ -68,7 +68,7 @@ fn indexed_incoming_updates_compose_direct_and_delegated_loops() {
         let scratch = [0u8;4096];
     }";
     for operation in ["grow", "delegate"] {
-        for (index, bound) in [(0, 4136), (1, 4152)] {
+        for (index, bound) in [(0, 4128), (1, 4152)] {
             let code = code.replace("OPERATION", operation).replace("INDEX", &index.to_string());
             verifies(operation, &code.replace("BOUND", &bound.to_string()));
             rejects(

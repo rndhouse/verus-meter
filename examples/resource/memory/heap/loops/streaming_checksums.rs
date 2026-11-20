@@ -24,17 +24,17 @@ fn checksum(block: &Block) -> u16
     sum
 }
 
-// The first push reserves four result slots, enough for both checksums.
+// The output contains one checksum per input byte.
 fn checksums(input: [u8; 2]) -> Vec<u16>
     resources peak(memory) <= value_size(input) + ref_size(&[u8]) + value_size(Vec<u16>)
-        + value_size(Block) + 4 * return_size(checksum)
+        + value_size(Block) + 2 * return_size(checksum)
         + ref_size(&[u8]) + value_size(ByteIter) + 2 * ref_size(&u8)
         + peak(checksum),
 {
     let packed: &[u8] = &input;
     let mut sums = Vec::new();
 
-    resources peak(memory) <= value_size(Block) + 4 * return_size(checksum)
+    resources peak(memory) <= value_size(Block) + 2 * return_size(checksum)
         + ref_size(&[u8]) + value_size(ByteIter) + 2 * ref_size(&u8)
         + peak(checksum)
     {

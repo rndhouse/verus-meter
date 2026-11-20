@@ -70,12 +70,10 @@ test_verify_one_file! {
 }
 
 test_verify_one_file! {
-    #[test] unbounded_borrowed_growth_exceeds_fixed_budget verus_code! {
+    #[test] borrowed_push_needs_one_slot_at_any_input_length verus_code! {
         use vstd::prelude::*;
-        // Without a length restriction or an inferred reservation, growth can
-        // overlap arbitrarily large backing. Even a generous fixed bound fails.
-        fn append(v: &mut Vec<u32>) resources peak(memory) <= 10000 { v.push(1); }
-    } => Err(err) => assert_vir_error_msg(err, "conditional memory budget exceeded")
+        fn append(v: &mut Vec<u32>) resources peak(memory) <= ref_size(v) + value_size(u32) { v.push(1); }
+    } => Ok(())
 }
 
 test_verify_one_file! {

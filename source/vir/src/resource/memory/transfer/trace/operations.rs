@@ -260,17 +260,7 @@ impl Trace<'_> {
                     && self.loop_roots.as_ref().is_some_and(|roots| !roots.contains(&location.0))
                 {
                     if let Some(actual) = allocation {
-                        let candidate = contracts::multiply(
-                            span,
-                            contracts::literal(span, element),
-                            growth::grown_capacity(
-                                span,
-                                self.loop_size_ceiling
-                                    .clone()
-                                    .unwrap_or_else(|| expr::integer(span, 0)),
-                                element,
-                            ),
-                        );
+                        let candidate = contracts::literal(span, element);
                         self.loop_allocations.push((span.clone(), actual, candidate));
                     }
                 }
@@ -285,27 +275,10 @@ impl Trace<'_> {
                 } else {
                     expr::empty(span, expr::record_type())
                 };
-                let (capacity, bytes) = if grow {
-                    let complete = self.complete_for(span, std::slice::from_ref(&bytes));
-                    let (lower, _, _) = growth::push_transition(
-                        span,
-                        capacity.clone(),
-                        bytes.clone(),
-                        length.clone(),
-                        element,
-                        false,
-                    );
-                    let (capacity, bytes, _) = growth::push_transition(
-                        span,
-                        capacity,
-                        bytes,
-                        length.clone(),
-                        element,
-                        true,
-                    );
-                    (choice(span, complete, capacity, lower), bytes)
+                let bytes = if grow {
+                    growth::push_bytes(span, bytes, capacity.clone(), length.clone(), element)
                 } else {
-                    (capacity, bytes)
+                    bytes
                 };
                 if let Value::Owner(child) = child {
                     let path = expr::push(span, expr::path(span, []), length.clone());
@@ -410,11 +383,19 @@ impl Trace<'_> {
                 } else {
                     removal.tag.clone()
                 };
+                let capacity = property(span, node.memory.clone(), "capacity");
+                let bytes = growth::pop_bytes(
+                    span,
+                    property(span, node.memory.clone(), "bytes"),
+                    capacity.clone(),
+                    property(span, node.memory.clone(), "length"),
+                    self.layouts.vector_element(&receiver.typ, span).ok()?,
+                );
                 let next = with_root(
                     span,
                     partition.remaining,
-                    property(span, node.memory.clone(), "bytes"),
-                    property(span, node.memory.clone(), "capacity"),
+                    bytes,
+                    capacity,
                     removal.length,
                     self.layouts.owning_elements(&node.typ),
                 );

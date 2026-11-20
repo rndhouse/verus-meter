@@ -34,25 +34,25 @@ fn buffer_growth_snapshots_and_commits_cover_execution_contexts() {
             "",
             "let mut values = Vec::<u32>::with_capacity(1);
             values.push(1); values.push(2);",
-            44,
+            32,
         ),
         (
             "committed",
             "",
             "let mut values = Vec::<u32>::with_capacity(1);
             values.push(1); values.push(2);
-            assert(current(memory) <= 40);
+            assert(current(memory) <= 32);
             let scratch = [0u8;128];",
-            168,
+            160,
         ),
         (
             "branch",
             "grow: bool",
             "let mut values = Vec::<u32>::with_capacity(1);
             values.push(1); if grow { values.push(2); }
-            assert(current(memory) <= 41);
+            assert(current(memory) <= 33);
             let scratch = [0u8;128];",
-            169,
+            161,
         ),
         (
             "loop",
@@ -64,11 +64,11 @@ fn buffer_growth_snapshots_and_commits_cover_execution_contexts() {
             {
                 let mut values = Vec::<u32>::with_capacity(1);
                 values.push(1); values.push(2);
-                assert(current(memory) <= 41);
+                assert(current(memory) <= 33);
                 let scratch = [0u8;128];
                 i += 1;
             };",
-            169,
+            161,
         ),
         (
             "field",
@@ -77,14 +77,12 @@ fn buffer_growth_snapshots_and_commits_cover_execution_contexts() {
                 values: Vec::<u32>::with_capacity(1), tag: Box::new([0u8;16]),
             };
             data.values.push(1); data.values.push(2);
-            assert(current(memory) <= 64);
+            assert(current(memory) <= 56);
             let scratch = [0u8;128];",
-            192,
+            184,
         ),
     ] {
-        // Growth overlaps the old 4-byte buffer with a new 16-byte buffer.
-        // Afterwards the 24-byte handle retains 16 bytes, alongside scratch.
-        // A Boolean/counter adds one; Data adds its 8-byte handle and 16-byte tag.
+        // The two live u32 slots cost eight bytes beyond the vector handle.
         let code = format!(
             "struct Data {{ values: Vec<u32>, tag: Box<[u8;16]> }}
             fn f({parameter}) resources peak(memory) <= BOUND {{ {body} }}"
@@ -94,9 +92,8 @@ fn buffer_growth_snapshots_and_commits_cover_execution_contexts() {
 }
 
 #[test]
-fn helper_commit_retains_the_declared_replacement_bound() {
-    // The helper's 24-byte replacement bound remains charged in the caller:
-    // vector handle 24 + retained replacement bound 24 + scratch 128 = 176.
+fn helper_commit_retains_the_two_occupied_slots() {
+    // Vector handle, eight bytes for the two slots, and 128 bytes of scratch.
     check_peak(
         "proof_state_helper_commit",
         "fn append(values: &mut Vec<u32>)
@@ -107,10 +104,10 @@ fn helper_commit_retains_the_declared_replacement_bound() {
         fn f() resources peak(memory) <= BOUND {
             let mut values = Vec::<u32>::with_capacity(1); values.push(1);
             append(&mut values);
-            assert(current(memory) <= 48);
+            assert(current(memory) <= 32);
             let scratch = [0u8;128];
         }",
-        176,
+        160,
     );
 }
 
@@ -122,10 +119,10 @@ fn section_commit_uses_its_local_ledger() {
             resources peak(memory) <= BOUND {
                 let mut values = Vec::<u32>::with_capacity(1);
                 values.push(1); values.push(2);
-                assert(current(memory) <= 40);
+                assert(current(memory) <= 32);
                 let scratch = [0u8;128];
             }
         }",
-        168,
+        160,
     );
 }

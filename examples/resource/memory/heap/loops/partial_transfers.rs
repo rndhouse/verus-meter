@@ -20,16 +20,14 @@ struct Queues {
     destination: Vec<Buffer>,
 }
 
-// Cover the input struct, counters, and extracted handles. The helper also
-// allows for overlapping old and replacement destination storage because
-// callers need not reserve it in advance.
+// Cover the input struct, counters, extracted handles and four destination slots.
 // The caller keeps paying for the input allocations during the transfer.
 spec fn transfer_budget() -> nat {
     let state = value_size(Queues);
     let counters = 2 * value_size(usize);
     let extracted = 2 * value_size(Buffer);
-    let replacement = (2 * 4) * value_size(Buffer);
-    state + counters + extracted + 2 * replacement
+    let destination_slots = 4 * value_size(Buffer);
+    state + counters + extracted + destination_slots
 }
 
 // Move two whole children per iteration, for zero, one, or two batches.

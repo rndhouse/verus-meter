@@ -1,21 +1,16 @@
 // Grow a vector while proving that its memory use stays within budget.
 //
-// Growth may need room for old and replacement buffers at the same time.
-// The contract allows for that overlap as values are added, including by helpers.
-
 use vstd::prelude::*;
 
 verus! {
 
 // Build the requested number of values within a growing memory allowance.
 //
-// The model's minimum u32 vector buffer holds four elements. Allow two such
-// buffers of fixed headroom, plus another per requested value, to cover
-// replacement overlap and conservative loop accounting.
+// Each value occupies one u32 slot.
 fn build(n: usize)
     requires n <= 8,
     resources peak(memory) <= value_size(n) + value_size(Vec<u32>)
-        + 2 * value_size([u32; 4]) + n * value_size([u32; 4]),
+        + n * value_size(u32),
 {
     let mut values = Vec::<u32>::new();
     while values.len() < n
@@ -30,21 +25,20 @@ fn build(n: usize)
 // Let a helper grow a borrowed vector within a checked allowance.
 //
 // The caller accounts for existing storage; the helper allows for its reference
-// and one minimum four-element buffer.
+// and one additional u32 slot.
 fn append_to_empty(values: &mut Vec<u32>)
     requires old(values).len() == 0,
     ensures final(values).len() == 1 && final(values)[0] == 7,
-    resources peak(memory) <= ref_size(values) + value_size([u32; 4]),
+    resources peak(memory) <= ref_size(values) + value_size(u32),
 {
     values.push(7);
 }
 
 // Continue adding values after a helper has grown the vector.
 //
-// Allow for the vector handle, the helper's budget, and another minimum buffer
-// of growth headroom for subsequent work.
+// The helper call is the peak while the vector handle is live.
 fn use_helper()
-    resources peak(memory) <= value_size(Vec<u32>) + peak(append_to_empty) + value_size([u32; 4]),
+    resources peak(memory) <= value_size(Vec<u32>) + peak(append_to_empty),
 {
     let mut values = Vec::<u32>::new();
     append_to_empty(&mut values);

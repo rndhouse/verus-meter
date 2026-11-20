@@ -137,8 +137,8 @@ fn changed_children_can_be_removed_and_restored_repeatedly() {
         let mut result = make(); let selected = result.pop().unwrap(); drop(result);
         let scratch = [0u8;4096];
     }";
-    verifies("changed_restoration", &code.replace("BOUND", "4136"));
-    rejects("changed_restoration_short", &code.replace("BOUND", "4135"), "memory budget exceeded");
+    verifies("changed_restoration", &code.replace("BOUND", "4128"));
+    rejects("changed_restoration_short", &code.replace("BOUND", "4127"), "memory budget exceeded");
 }
 
 #[test]
@@ -306,10 +306,10 @@ fn indexed_helpers_compose_completed_recurrences() {
         let mut result = make(); let selected = result.pop().unwrap(); drop(result);
         let scratch = [0u8;4096];
     }";
-    verifies("indexed_recurrent_helper", &code.replace("BOUND", "4136"));
+    verifies("indexed_recurrent_helper", &code.replace("BOUND", "4132"));
     rejects(
         "indexed_recurrent_helper_short",
-        &code.replace("BOUND", "4135"),
+        &code.replace("BOUND", "4131"),
         "memory budget exceeded",
     );
 }

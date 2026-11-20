@@ -1,4 +1,4 @@
-//! Vector reservations and conservative replacement-buffer accounting.
+//! Explicit vector reservations and storage for occupied element slots.
 
 use super::analysis::Analysis;
 use super::contracts;
@@ -221,6 +221,107 @@ impl Analysis<'_> {
             })
     }
 
+    /// Snapshot the new backing before the receiver changes length and publish it
+    /// after the operation, including when the vector lives in an enclosing scope.
+    fn commit_vector_bytes(&mut self, span: &crate::messages::Span, id: usize, next: Expr) {
+        let backing = &self.growth.vectors[id].backing;
+        self.growth.updates.entry(span.id).or_default().push(super::symbolic::assign(
+            span,
+            &backing.next_bytes,
+            next,
+        ));
+        self.growth.after.entry(span.id).or_default().push(super::symbolic::assign(
+            span,
+            &backing.bytes,
+            backing.next_bytes.clone(),
+        ));
+    }
+
+    fn add_vector_slot(
+        &mut self,
+        span: &crate::messages::Span,
+        id: usize,
+        len: Expr,
+    ) -> Result<Expr, VirErr> {
+        let state = &self.growth.vectors[id];
+        let backing = &state.backing;
+        let reservation = state.funded_slots(span);
+        let next = super::growth::push_bytes(
+            span,
+            backing.bytes.clone(),
+            reservation.clone(),
+            len.clone(),
+            state.element,
+        );
+        let extra = super::growth::push_bytes(
+            span,
+            contracts::literal(span, 0),
+            reservation,
+            len,
+            state.element,
+        );
+        if let Some(entry) =
+            self.growth.section_backings.get(&id).and_then(|entries| entries.last())
+        {
+            // Regrowing slots removed since entry can fit the entry charge.
+            let charge = |bytes| super::growth::section_bytes(span, bytes, entry.clone());
+            self.storage.set_allocation(backing.id, backing.kind.clone(), charge(next.clone()));
+            self.storage.record_live(span)?;
+            self.storage.set_allocation(
+                backing.id,
+                backing.kind.clone(),
+                charge(backing.bytes.clone()),
+            );
+        } else {
+            self.storage.replacement_peak(
+                span,
+                &Charge { kind: backing.kind.clone(), amount: extra.clone() },
+            )?;
+        }
+        self.commit_vector_bytes(span, id, next);
+        let state = &mut self.growth.vectors[id];
+        state.backing.changed = true;
+        state.pushes += 1;
+        Ok(extra)
+    }
+
+    pub(super) fn remove_vector_slot(
+        &mut self,
+        span: &crate::messages::Span,
+        id: usize,
+        typ: &Typ,
+        vector: Expr,
+    ) {
+        let TypX::Datatype(_, types, _) = &**typ else { unreachable!() };
+        let len = length(span, types.clone(), vector);
+        let state = &self.growth.vectors[id];
+        if !state.backing.changed
+            && !state.loop_backing
+            && (state.local_constructor
+                || contracts::constant(&state.backing.initial_bytes) == Some(0))
+        {
+            return;
+        }
+        let next = if state.local_constructor {
+            // The post-pop extent is determined by the original reservation
+            // and the surviving length. A pop can only reduce the entry charge.
+            let remaining = contracts::subtract(span, len, contracts::literal(span, 1));
+            let extent =
+                super::growth::slots_bytes(span, state.minimum.clone(), remaining, state.element);
+            contracts::minimum(span, state.backing.bytes.clone(), extent)
+        } else {
+            super::growth::pop_bytes(
+                span,
+                state.backing.bytes.clone(),
+                state.funded_slots(span),
+                len,
+                state.element,
+            )
+        };
+        self.commit_vector_bytes(span, id, next);
+        self.growth.vectors[id].removals += 1;
+    }
+
     pub(super) fn vector_expr(&mut self, expr: &Expr) -> Result<Option<u64>, VirErr> {
         let ExprX::Call {
             target: CallTarget::Fun(CallTargetKind::Static, fun, _, _, attrs),
@@ -287,9 +388,9 @@ impl Analysis<'_> {
             let TypX::Datatype(_, types, _) = &*typ else { unreachable!() };
             // Read the current logical length at the push, so ordinary branches,
             // preconditions and loop invariants can establish available room.
-            let len = length(&expr.span, types.clone(), vector);
+            let len = length(&expr.span, types.clone(), vector.clone());
             let element_length = len.clone();
-            if state.append_only {
+            if state.append_only || state.local_constructor {
                 self.growth.vectors[state_id].sequence_length = Some(len.clone());
             }
             let revision = self.growth.revision();
@@ -312,40 +413,7 @@ impl Analysis<'_> {
                 self.checks.push((expr.span.clone(), room));
                 self.storage.record_live(&expr.span)?;
             } else {
-                let (lower, retained, extra) = super::growth::push_transition(
-                    &expr.span,
-                    capacity,
-                    state.backing.bytes.clone(),
-                    len,
-                    state.element,
-                    state.backing.input_bytes.is_none(),
-                );
-                allocation = Some(extra.clone());
-                // Reserve the replacement before releasing the old buffer. A lower
-                // bound may underestimate real capacity, so this can overcount growth.
-                self.storage.replacement_peak(
-                    &expr.span,
-                    &Charge { kind: state.backing.kind.clone(), amount: extra.clone() },
-                )?;
-                self.record_section_replacement(&expr.span, state_id, &extra);
-                self.growth.updates.entry(expr.span.id).or_default().extend([
-                    super::symbolic::assign(&expr.span, &state.next_capacity, lower),
-                    super::symbolic::assign(&expr.span, &state.backing.next_bytes, retained),
-                ]);
-                self.growth.after.entry(expr.span.id).or_default().extend([
-                    super::symbolic::assign(
-                        &expr.span,
-                        &state.backing.bytes,
-                        state.backing.next_bytes.clone(),
-                    ),
-                    super::symbolic::assign(
-                        &expr.span,
-                        &state.capacity,
-                        state.next_capacity.clone(),
-                    ),
-                ]);
-                self.growth.vectors[state_id].backing.changed = true;
-                self.growth.vectors[state_id].pushes += 1;
+                allocation = Some(self.add_vector_slot(&expr.span, state_id, len)?);
             }
             if let Some(mut child) = child {
                 let (name, path) = super::paths::expr(receiver, &typ).unwrap();
@@ -396,6 +464,9 @@ impl Analysis<'_> {
         } else if args.len() != 1 {
             return Err(unsupported(&expr.span, "this vector operation"));
         }
+        if matches!(intrinsic, Some(ResourceIntrinsic::VecPop | ResourceIntrinsic::VecRemove)) {
+            self.remove_vector_slot(&expr.span, state_id, &typ, vector);
+        }
         let location = super::paths::expr(receiver, &typ).expect("checked vector receiver");
         let receiver = super::transfer::checked::Place {
             source: receiver.clone(),
@@ -427,7 +498,7 @@ impl Analysis<'_> {
         if let Some(operation) = operation {
             self.transitions.operation(&expr.span, operation);
         }
-        // Push accounts for replacement storage above. A discarded pop result creates
+        // Push accounts for additional slot storage above. A discarded pop result creates
         // no declared slot; a bound Option result uses its caller-provided destination.
         Ok(0)
     }

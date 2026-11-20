@@ -116,7 +116,16 @@ impl Analysis<'_> {
                 let state = self.growth.vectors[id].clone();
                 (state.capacity.clone(), self.loop_snapshot(span, &state.capacity), state.element)
             });
+            let unfunded_bytes = vector.and_then(|id| {
+                let state = &self.growth.vectors[id];
+                state.entry_length.as_ref().map(|_| {
+                    let unfunded =
+                        contracts::subtract(span, length.clone(), state.funded_slots(span));
+                    contracts::multiply(span, contracts::literal(span, state.element), unfunded)
+                })
+            });
             charges.push(Charge {
+                unfunded_bytes,
                 location,
                 current,
                 entry,
@@ -201,6 +210,14 @@ impl Loop {
                     .any(|transfer| transfer.source == role && transfer.target == role)
                 {
                     if let Some((bytes, entry)) = &self.charges[role].backing {
+                        if let Some(unfunded) = &self.charges[role].unfunded_bytes {
+                            candidates.push(crate::ast_util::mk_ineq(
+                                &self.span,
+                                unfunded,
+                                bytes,
+                                InequalityOp::Le,
+                            ));
+                        }
                         candidates.push(crate::ast_util::mk_ineq(
                             &self.span,
                             bytes,
@@ -239,16 +256,13 @@ impl Charge {
         else {
             return Vec::new();
         };
-        let replacement = contracts::multiply(
-            span,
-            contracts::literal(span, *element),
-            crate::resource::memory::growth::grown_capacity(span, self.length.0.clone(), *element),
-        );
+        let occupied =
+            contracts::multiply(span, contracts::literal(span, *element), self.length.0.clone());
         let upper = crate::resource::memory::growth::select(
             span,
             crate::ast_util::mk_ineq(span, &self.length.0, initial, InequalityOp::Le),
             entry.clone(),
-            contracts::maximum(span, entry.clone(), replacement),
+            contracts::maximum(span, entry.clone(), occupied),
         );
         vec![
             crate::ast_util::mk_ineq(span, initial, capacity, InequalityOp::Le),

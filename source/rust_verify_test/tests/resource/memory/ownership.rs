@@ -92,10 +92,10 @@ fn vector_factory_lifetime() {
     );
 }
 #[test]
-fn incoming_vector_push_requires_bounded_growth() {
+fn incoming_vector_push_requires_one_slot() {
     rejects(
         "input_vec_push",
-        "fn f(mut v: Vec<u32>) resources peak(memory) <= 100 { v.push(7); }",
+        "fn f(mut v: Vec<u32>) resources peak(memory) <= value_size(Vec<u32>) + value_size([u8; 3]) { v.push(7); }",
         "memory budget exceeded",
     );
 }

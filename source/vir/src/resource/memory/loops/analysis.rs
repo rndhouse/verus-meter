@@ -60,6 +60,7 @@ impl Analysis<'_> {
                 (
                     *id,
                     self.growth.vectors[*id].pushes,
+                    self.growth.vectors[*id].removals,
                     self.growth.vectors[*id].backing.floor.clone(),
                 )
             })
@@ -335,24 +336,27 @@ impl Analysis<'_> {
         self.heap.unprotect(protection.clone());
         record.regions = self.finish_loop_inputs(&expr.span, loop_inputs)?;
         let mut frame_invariants = Vec::new();
-        for (id, pushes, floor) in vector_entry {
+        for (id, pushes, removals, floor) in vector_entry {
             let state = self.growth.vectors[id].clone();
             if state.pushes == pushes && std::sync::Arc::ptr_eq(&floor, &state.backing.floor) {
-                // Observing an occupied length can improve our capacity lower
-                // bound without changing physical backing or allocating bytes.
                 let snapshot = self.loop_snapshot(&expr.span, &state.capacity);
-                frame_invariants.push(crate::ast_util::mk_ineq(
+                frame_invariants.push(crate::ast_util::mk_eq(
                     &expr.span,
                     &snapshot,
                     &state.capacity,
-                    InequalityOp::Le,
                 ));
                 let snapshot = self.loop_snapshot(&expr.span, &state.backing.bytes);
-                frame_invariants.push(crate::ast_util::mk_eq(
-                    &expr.span,
-                    &state.backing.bytes,
-                    &snapshot,
-                ));
+                let frame = if state.removals == removals {
+                    crate::ast_util::mk_eq(&expr.span, &state.backing.bytes, &snapshot)
+                } else {
+                    crate::ast_util::mk_ineq(
+                        &expr.span,
+                        &state.backing.bytes,
+                        &snapshot,
+                        InequalityOp::Le,
+                    )
+                };
+                frame_invariants.push(frame);
             }
         }
         let mut invariants = self.growth.invariants(&expr.span, &ids, &loop_scalars, &self.bound);

@@ -16,17 +16,16 @@ fn local_charge_zero_does_not_mean_the_incoming_buffer_is_empty() {
             let child = Vec::<u32>::with_capacity(1); v.push(child);
             twice(&mut v); let scratch = [0u8;128];
         }";
-    verifies("incoming_capacity", &code.replace("HELPER", "40").replace("BOUND", "192"));
+    verifies("incoming_capacity", &code.replace("HELPER", "40").replace("BOUND", "184"));
     rejects(
         "incoming_capacity_short",
-        &code.replace("HELPER", "40").replace("BOUND", "191"),
+        &code.replace("HELPER", "40").replace("BOUND", "183"),
         "memory budget exceeded",
     );
-    // The first append may use one caller-provided slot. It must not establish
-    // the four-slot growth floor merely because this frame started at zero bytes.
+    // Without a known reservation the helper must allow for both pushed slots.
     rejects(
         "incoming_capacity_not_exact",
-        &code.split("fn f()").next().unwrap().replace("HELPER", "24"),
+        &code.split("fn f()").next().unwrap().replace("HELPER", "15"),
         "memory budget exceeded",
     );
 }
@@ -43,7 +42,7 @@ fn fixed_and_repeated_ownership_paths_share_the_same_loan_rules() {
             "let mut values = Vec::<Box<Vec<u32>>>::with_capacity(1);
              let child = Box::new(Vec::<u32>::new()); values.push(child);
              let mut v = Box::new(values);",
-            80,
+            72,
         ),
         (
             "boxed_slice_children",
@@ -54,7 +53,7 @@ fn fixed_and_repeated_ownership_paths_share_the_same_loan_rules() {
             "let mut values = Vec::<Box<Vec<u32>>>::with_capacity(1);
              let child = Box::new(Vec::<u32>::new()); values.push(child);
              let mut v = values.into_boxed_slice();",
-            64,
+            56,
         ),
         (
             "struct_children",
@@ -67,7 +66,7 @@ fn fixed_and_repeated_ownership_paths_share_the_same_loan_rules() {
              let child = Child { value: Box::new(Vec::<u32>::new()), tag: Box::new([0u8;16]) };
              values.push(child);
              let mut v = Parent { values, tag: Box::new([0u8;32]) };",
-            136,
+            128,
         ),
     ] {
         // Each helper delegates to an ordinary leaf helper. The same fixed and
@@ -112,8 +111,8 @@ fn nested_runtime_children_are_not_charged_twice() {
             let child = Vec::<u32>::new(); row.push(child); v.push(row);
             grow(&mut v); let scratch = [0u8;256];
         }";
-    verifies("nested_incoming", &code.replace("BOUND", "344"));
-    rejects("nested_incoming_short", &code.replace("BOUND", "343"), "memory budget exceeded");
+    verifies("nested_incoming", &code.replace("BOUND", "332"));
+    rejects("nested_incoming_short", &code.replace("BOUND", "331"), "memory budget exceeded");
 }
 
 #[test]
@@ -145,8 +144,8 @@ fn owned_inputs_keep_their_provenance_when_mutated_and_returned() {
             let child = Vec::<u32>::new(); v.push(child);
             let result = grow(v); let scratch = [0u8;128];
         }";
-    verifies("owned_incoming_child", &code.replace("BOUND", "192"));
-    rejects("owned_incoming_child_short", &code.replace("BOUND", "191"), "memory budget exceeded");
+    verifies("owned_incoming_child", &code.replace("BOUND", "180"));
+    rejects("owned_incoming_child_short", &code.replace("BOUND", "179"), "memory budget exceeded");
 }
 
 #[test]

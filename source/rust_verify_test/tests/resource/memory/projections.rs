@@ -19,8 +19,8 @@ fn direct_indexed_growth_retains_new_allocations() {
         let child = Vec::<u32>::new(); outer.push(child);
         outer[0].push(1); let scratch = [0u8;64];
     }";
-    verifies("indexed_growth", &code.replace("BOUND", "128"));
-    rejects("indexed_growth_short", &code.replace("BOUND", "127"), "memory budget exceeded");
+    verifies("indexed_growth", &code.replace("BOUND", "116"));
+    rejects("indexed_growth_short", &code.replace("BOUND", "115"), "memory budget exceeded");
 }
 
 #[test]
@@ -33,8 +33,8 @@ fn indexed_helper_growth_replaces_the_selected_child_charge() {
             let child = Vec::<u32>::new(); outer.push(child);
             grow(&mut outer[0]); grow(&mut outer[0]); let scratch = [0u8;64];
         }";
-    verifies("indexed_helpers", &code.replace("BOUND", "136"));
-    rejects("indexed_helpers_short", &code.replace("BOUND", "135"), "memory budget exceeded");
+    verifies("indexed_helpers", &code.replace("BOUND", "120"));
+    rejects("indexed_helpers_short", &code.replace("BOUND", "119"), "memory budget exceeded");
 }
 
 #[test]
@@ -62,8 +62,8 @@ fn nested_projection_updates_are_counted_once() {
         let child = Vec::<u32>::new(); middle.push(child); outer.push(middle);
         outer[0][0].push(1); let scratch = [0u8;64];
     }";
-    verifies("nested_projected_sum", &code.replace("BOUND", "152"));
-    rejects("nested_projected_sum_short", &code.replace("BOUND", "151"), "memory budget exceeded");
+    verifies("nested_projected_sum", &code.replace("BOUND", "140"));
+    rejects("nested_projected_sum_short", &code.replace("BOUND", "139"), "memory budget exceeded");
 }
 
 #[test]
@@ -74,8 +74,8 @@ fn selection_uses_a_runtime_index() {
         let b = Vec::<u32>::new(); outer.push(b);
         outer[i].push(1); let scratch = [0u8;64];
     }";
-    verifies("runtime_projection", &code.replace("BOUND", "160"));
-    rejects("runtime_projection_short", &code.replace("BOUND", "159"), "memory budget exceeded");
+    verifies("runtime_projection", &code.replace("BOUND", "148"));
+    rejects("runtime_projection_short", &code.replace("BOUND", "147"), "memory budget exceeded");
 }
 
 #[test]
@@ -86,8 +86,8 @@ fn branch_local_projection_effects_remain_path_sensitive() {
         if flag { outer[0].push(1); }
         let scratch = [0u8;64];
     }";
-    verifies("branch_projection", &code.replace("BOUND", "129"));
-    rejects("branch_projection_short", &code.replace("BOUND", "128"), "memory budget exceeded");
+    verifies("branch_projection", &code.replace("BOUND", "117"));
+    rejects("branch_projection_short", &code.replace("BOUND", "116"), "memory budget exceeded");
 }
 
 #[test]

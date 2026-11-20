@@ -25,11 +25,12 @@ fn immediate_join_preserves_backings_across_publications() {
             push,
             pop,
             "drop(handles);",
-            102,
+            70,
         ),
     ] {
-        // At n=2 a reserved vector has two slots. A vector grown on first push
-        // retains four, even after pop. Each peer adds a tag and 59 backing bytes.
+        // At n=2 the explicit reservation retains two handle slots. The
+        // initially empty vector releases its temporary slot at each pop.
+        // Each outstanding peer adds a tag and 59 backing bytes.
         let empty = if declaration.is_empty() { 30 } else { 54 };
         let one = frame + 60;
         let two = frame + 120;

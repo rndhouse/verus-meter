@@ -142,6 +142,17 @@ impl Analysis<'_> {
         Ok(())
     }
 
+    /// Immutable scalar values and shared slice lengths can be reread inside
+    /// isolated loop proofs without losing a section's entry allowance.
+    pub(super) fn record_immutable_binding(&mut self, name: &VarIdent, typ: &Typ) {
+        if super::contracts::scalar(typ) {
+            self.stable_scalars.insert(name.clone());
+        } else if matches!(&**typ, TypX::Decorate(TypDecoration::Ref, None, inner) if super::model::slice(inner))
+        {
+            self.growth.immutable_slices.insert(name.clone());
+        }
+    }
+
     /// Operation-local allocation observations include the current unit counters.
     /// Persistent contracts still use only immutable function inputs.
     pub(super) fn allocation_scalars(&self) -> HashSet<VarIdent> {
@@ -271,9 +282,8 @@ impl Analysis<'_> {
                                 "let-else, ref bindings, or generated declarations",
                             ));
                         }
-                        if binding.user_mut == Some(false) && super::contracts::scalar(&binding.typ)
-                        {
-                            self.stable_scalars.insert(binding.name.clone());
+                        if binding.user_mut == Some(false) {
+                            self.record_immutable_binding(&binding.name, &binding.typ);
                         }
                         locals.push((stmt.span.clone(), binding.name.clone()));
                         let value = if let Some(init) = init {
@@ -697,6 +707,9 @@ pub(super) fn check(
     for (index, param) in f.params.iter().enumerate() {
         analysis.var_modes.insert(param.x.name.clone(), param.x.mode);
         if param.x.mode == Mode::Exec {
+            if !param.x.user_mut {
+                analysis.record_immutable_binding(&param.x.name, &param.x.typ);
+            }
             let borrowed = layouts.borrowed_owner(&param.x.typ);
             if borrowed.is_some() && param.x.user_mut {
                 return Err(unsupported(
@@ -727,6 +740,15 @@ pub(super) fn check(
                 let value =
                     SpannedTyped::new(&param.span, &param.x.typ, ExprX::Var(param.x.name.clone()));
                 analysis.bind_collection_sources(&param.span, &mut owner, typ, value)?;
+                owner.visit(&mut |node| {
+                    if let Some(id) = node.vector
+                        && node.source.is_some()
+                    {
+                        let length = analysis.owner_length(&param.span, node);
+                        let entry = analysis.allocation_snapshot(&param.span, length);
+                        analysis.growth.vectors[id].entry_length = Some(entry);
+                    }
+                });
                 if borrowed.is_some() {
                     analysis.heap.borrowed.insert(param.x.name.clone(), owner);
                 } else {

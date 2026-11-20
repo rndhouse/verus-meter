@@ -21,7 +21,7 @@ pub(super) enum ReturnedOwner {
         index: usize,
         /// Children surviving in this node, possibly moved from other inputs.
         children: std::collections::BTreeMap<super::heap::OwnerSlot, ReturnedOwner>,
-        /// This node's replacement size; the original allocation may be larger.
+        /// Additional bytes that may remain with this input on return.
         replacement: Option<Charge<Expr>>,
         /// New runtime child allocations captured by this node.
         addition: Option<super::elements::ElementSummary>,
@@ -88,8 +88,7 @@ pub(super) struct RetainedAllocation {
 }
 
 impl RetainedAllocation {
-    /// Schedule a possible replacement's retained effect. The operation's peak
-    /// was accounted separately; committing these statements must follow it.
+    /// Schedule bytes that a call can leave attached to this allocation.
     pub(super) fn retain(
         &mut self,
         span: &Span,
@@ -123,10 +122,9 @@ pub(super) fn instantiate(
     })
 }
 
-/// After a possible replacement, either the old allocation or the new one
-/// survives. Their sum belongs only to the temporary overlap at the operation.
-pub(super) fn retained_bytes(span: &Span, previous: Expr, replacement: Expr) -> Expr {
-    contracts::maximum(span, previous, replacement)
+/// An opaque helper can add its retained allowance on top of existing slots.
+pub(super) fn retained_bytes(span: &Span, previous: Expr, additional: Expr) -> Expr {
+    contracts::add(span, previous, additional)
 }
 
 impl Accounting {
@@ -201,18 +199,14 @@ mod tests {
             Some(0)
         );
         assert_eq!(contracts::constant(&storage.live_expression(&s).total()), Some(24));
-        storage.set_allocation(
-            old,
-            device,
-            retained_bytes(&s, contracts::literal(&s, 16), contracts::literal(&s, 32)),
-        );
+        storage.set_allocation(old, device, contracts::literal(&s, 32));
         assert_eq!(contracts::constant(&storage.live_expression(&s).total()), Some(40));
         storage.release_dynamic(old);
         assert_eq!(contracts::constant(&storage.live_expression(&s).total()), Some(8));
     }
 
     #[test]
-    fn smaller_replacement_bound_cannot_erase_the_original_charge() {
+    fn opaque_additions_accumulate_across_calls() {
         let s = span();
         assert_eq!(
             contracts::constant(&retained_bytes(
@@ -220,7 +214,7 @@ mod tests {
                 contracts::literal(&s, 64),
                 contracts::literal(&s, 16)
             )),
-            Some(64)
+            Some(80)
         );
         assert_eq!(
             contracts::constant(&retained_bytes(

@@ -151,9 +151,9 @@ fn stored_payloads_preserve_mutated_geometry_through_helpers() {
     // Cover a root collection and both fixed ownership edges without repeating
     // the full shape matrix for each way to produce a match input.
     for (name, payload, initial, access, peak) in [
-        ("vector", "Vec<u32>", "Vec::<u32>::with_capacity(4)", "", 592),
-        ("box", "Box<Vec<u32>>", "Box::new(Vec::<u32>::with_capacity(4))", "", 600),
-        ("field", "Payload", "Payload { values: Vec::<u32>::with_capacity(4) }", ".values", 592),
+        ("vector", "Vec<u32>", "Vec::<u32>::with_capacity(4)", "", 580),
+        ("box", "Box<Vec<u32>>", "Box::new(Vec::<u32>::with_capacity(4))", "", 588),
+        ("field", "Payload", "Payload { values: Vec::<u32>::with_capacity(4) }", ".values", 580),
     ] {
         check_mutated_payload(
             &format!("pattern_geometry_stored_{name}"),
@@ -168,13 +168,13 @@ fn stored_payloads_preserve_mutated_geometry_through_helpers() {
 
 #[test]
 fn temporary_payloads_preserve_mutated_geometry_through_helpers() {
-    // Temporary input storage adds 25 bytes to the stored-vector case's 592.
+    // Temporary input storage adds 25 bytes to the stored-vector case's 580.
     check_mutated_payload(
         "pattern_geometry_temporary_vector",
         "Vec<u32>",
         "Vec::<u32>::with_capacity(4)",
         "",
         "match Some(child)",
-        617,
+        605,
     );
 }

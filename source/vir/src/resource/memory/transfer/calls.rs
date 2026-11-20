@@ -499,7 +499,7 @@ impl Analysis<'_> {
                 self.release_owner(old, &value.span);
                 predicted
             } else {
-                let effects = self.summaries[&function.x.name].allocations.retained.clone();
+                let summary = &self.summaries[&function.x.name];
                 let bound = super::super::contracts::instantiate(
                     function,
                     args,
@@ -518,7 +518,7 @@ impl Analysis<'_> {
                     &predicted,
                     index,
                     &mut vec![],
-                    &effects,
+                    summary,
                     &bound,
                 )?;
                 self.release_owner_storage(predicted, &value.span, false)?;
@@ -592,13 +592,16 @@ impl Analysis<'_> {
         predicted: &Owner,
         parameter: usize,
         path: &mut super::super::heap::OwnerPath,
-        effects: &HashMap<super::super::paths::InputPath, super::super::footprint::Charge<Expr>>,
+        summary: &super::super::summary::FunctionSummary,
         bound: &Expr,
     ) -> Result<(), VirErr> {
         old.view = predicted.view;
         if let (Some(id), Some(next)) = (old.vector, predicted.vector) {
-            if effects.contains_key(&(parameter, path.clone())) {
+            let location = (parameter, path.clone());
+            let grows = summary.allocations.retained.contains_key(&location);
+            if grows || summary.vectors.removals.contains(&location) {
                 let source = self.growth.vectors[next].clone();
+                let length = old.source.as_ref().map(|_| self.owner_length(span, old));
                 let state = &mut self.growth.vectors[id];
                 self.growth.after.entry(span.id).or_default().extend([
                     super::super::symbolic::assign(span, &state.capacity, source.capacity),
@@ -608,13 +611,17 @@ impl Analysis<'_> {
                         source.backing.bytes,
                     ),
                 ]);
-                state.backing.changed = true;
-                state.backing.floor = super::super::contracts::maximum(
-                    span,
-                    state.backing.floor.clone(),
-                    bound.clone(),
-                );
-                state.sequence_length = None;
+                state.removals += 1;
+                if grows {
+                    state.pushes += 1;
+                    state.backing.changed = true;
+                    state.backing.floor = super::super::contracts::maximum(
+                        span,
+                        state.backing.floor.clone(),
+                        bound.clone(),
+                    );
+                }
+                state.sequence_length = length;
                 state.append_only = false;
             }
         }
@@ -631,7 +638,7 @@ impl Analysis<'_> {
                 })?,
                 parameter,
                 path,
-                effects,
+                summary,
                 bound,
             )?;
             path.pop();
