@@ -7,7 +7,7 @@ elements. Each successful advance transfers one element to the loop body.
 
 ## Work
 
-- [x] Connect the [standard consuming iterator specification](../../../../../source/vstd/std_specs/vec.rs)
+- [x] Connect the [standard consuming iterator specification](../../../../../../source/vstd/std_specs/vec.rs)
   to the memory model. Track the original backing capacity independently of the
   shrinking number of unvisited elements, including an empty vector with
   reserved capacity.
@@ -28,12 +28,12 @@ elements. Each successful advance transfers one element to the loop body.
   traversal and current storage after cleanup, including the surviving payload.
   A one-element vector with spare capacity also tests that yielding its last
   item does not prematurely release the backing while the body is executing.
-- [x] Run the [project memory checks](../../../../../AGENTS.md#focused-memory-checks)
+- [x] Run the [project memory checks](../../../../../../AGENTS.md#focused-memory-checks)
   and affected iterator, ownership-transfer and cleanup regressions.
 
-Start with [iteration transfers](../../../../../source/vir/src/resource/memory/transfer/iteration.rs),
-[iterator effects across calls](../../../../../source/vir/src/resource/memory/transfer/trace/iterators.rs)
-and [ownership extraction tests](../../../../../source/rust_verify_test/tests/resource/memory/owned_extraction.rs).
+Start with [iteration transfers](../../../../../../source/vir/src/resource/memory/transfer/iteration.rs),
+[iterator effects across calls](../../../../../../source/vir/src/resource/memory/transfer/trace/iterators.rs)
+and [ownership extraction tests](../../../../../../source/rust_verify_test/tests/resource/memory/owned_extraction.rs).
 
 ## Validation
 

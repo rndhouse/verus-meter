@@ -1,7 +1,7 @@
 # Collection iterators
 
 Support `for block in blocks` in resource-checked Rust when the loop borrows a
-slice or vector, or consumes a vector. The [range iterator work](../complete/heap-loops/complete/08-for-loops-and-iterators.md)
+slice or vector, or consumes a vector. The [range iterator work](../heap-loops/complete/08-for-loops-and-iterators.md)
 already handles loop lowering, progress and exits. These tasks add the memory
 effects of yielding a reference or transferring an owned element.
 
@@ -29,8 +29,8 @@ version. Keep one fixed section budget around the entire traversal.
 Use ordinary collection loops in the example, with no handwritten loop
 invariants for memory accounting. Functional properties such as checksum
 arithmetic can still require their own proofs. Record the passing example and
-its expected failure in the [memory examples](../../../../examples/resource/memory/README.md)
-and update the [supported boundary](../../../model.md) as each form lands.
+its expected failure in the [memory examples](../../../../../examples/resource/memory/README.md)
+and update the [supported boundary](../../../../model.md) as each form lands.
 
 Mutable iteration, by-value arrays, arbitrary iterator implementations and
 additional adapters can be scoped separately.

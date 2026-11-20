@@ -10,8 +10,8 @@ or the first time tests are written.
 
 ## Work
 
-- [ ] Review every approved-plan checklist item against implementation and named
-  executable tests. Reconcile the operation matrix from 01 with actual supported
+- [ ] Review every [core capability](README.md#core-capability-coverage) against
+  implementation and named executable tests. Reconcile the operation matrix from 01 with actual supported
   APIs, outcomes and restrictions. Resolve gaps in their owning task; reopen and
   move that TODO out of `complete/` if its completion criteria no longer hold.
 - [ ] Audit trusted contracts and generated obligations together: compiler identity,
@@ -33,14 +33,14 @@ or the first time tests are written.
   Update existing model/example guidance instead of creating a status-log archive.
 - [ ] Run applicable full validation against the rebuilt verifier. Record precise
   commands/results and material limitations in the implementation commit messages.
-- [ ] Mark parent checklist items complete only with evidence. Move this document
+- [ ] Record evidence for the core capabilities. Move this document
   to `complete/` only when the whole core checklist is satisfied and no required
   implementation or verification work remains.
 
 ## Completion criteria
 
-All required behavior in the approved plan and the resolved supported-operation
-matrix works together. Standard contracts reuse Rust guarantees; custom protocols
+The implementation covers the core capabilities and supported-operation matrix
+end to end. Standard contracts reuse Rust guarantees; custom protocols
 use Verus proofs; both automatically constrain actual allocation lifetimes.
 Symbolic total bounds compose across calls and thread boundaries without missing
 or double-counted storage. Diagnostics and documentation reflect actual support.
@@ -71,7 +71,7 @@ model-version change does not silently alter existing sequential contracts.
 
 ## Starting points
 
-- `docs/verus-meter/todo/plan-concurrent-symbolic-analysis.md`
+- `docs/verus-meter/concurrent-model.md`
 - `docs/model.md`
 - `examples/resource/memory/README.md`
 - `source/rust_verify_test/tests/resource.rs`

@@ -1,11 +1,7 @@
 # Concurrent symbolic memory analysis TODOs
 
-Implement the [approved plan](../plan-concurrent-symbolic-analysis.md) as one
-complete core feature. These tasks divide implementation responsibilities; they
-are not separate prototypes or releases.
+These tasks track implementation of the concurrent core.
 Next is [04 — Allocation and synchronization lifetimes](04-allocation-and-synchronization-lifetimes.md). The [final worker audit](complete/03.4.3-validate-and-close-03.md) records the verified worker scope and integration checks.
-The parent plan is the capability checklist; this index tracks the work that
-satisfies it. Read both before starting a task.
 
 ## Authoritative location
 
@@ -56,7 +52,6 @@ Preserve the semantics and synchronization precision established in 01 throughou
 and lifecycle effects; it must not defer that connection to 05. TODO 04 adds local
 allocation/synchronization lifetime conditions, and 05 extends the common summary
 interface across general helpers. 07 owns the global simultaneous-byte proof.
-The parent plan's supported scope and acceptance requirements remain unchanged.
 
 ## Requirements that apply to every task
 
@@ -87,24 +82,23 @@ Read applicable repository instructions, inspect current changes and preserve
 unrelated work. Source starting points in numbered documents are repository-root
 paths, intentionally independent of whether the document is in `complete/`.
 
-## Coverage of the parent checklist
+## Core capability coverage
 
-The numbers below refer to the 20 checklist entries in their current order in the
-approved plan. Descriptions keep the mapping understandable if entries are added.
-An owning task supplies the implementation; 08 verifies the evidence for all items.
+Each owning task supplies the implementation. TODO 08 verifies the evidence across
+the [concurrent specification](../../concurrent-model.md) and these capabilities.
 
-| Parent requirements | Owning TODOs |
+| Core requirements | Owning TODOs |
 | --- | --- |
-| 1, 4: accounting/trust semantics and division of responsibility | 01, 02 |
-| 2, 3: standard contracts, guard/permit semantics and capacity effects | 02, 06 |
-| 5, 15: automatic lifetime relationships and executable-allocation obligations | 04, 05, 07 |
-| 6, 10: symbolic total bounds and exclusive/bounded overlap | 03, 06, 07 |
-| 7, 8: worker lifecycle, sharing and ownership conservation | 03.1–03.4 (03 checklist), 04 |
-| 9: custom synchronization proofs | 02, 06 |
-| 11, 12: helper composition and identity across boundaries | 03.2–03.3 worker foundation, 05 general helpers |
-| 13, 14: combined per-holder charges and retained allocations | 02, 03, 04, 07 |
-| 16, 17, 18: negative tests, standard/custom integration and regressions | 02–07, 08 |
-| 19, 20: explicit support boundary, diagnostics and complete validation | 01, 07, 08 |
+| accounting/trust semantics and division of responsibility | 01, 02 |
+| standard contracts, guard/permit semantics and capacity effects | 02, 06 |
+| automatic lifetime relationships and executable-allocation obligations | 04, 05, 07 |
+| symbolic total bounds and exclusive/bounded overlap | 03, 06, 07 |
+| worker lifecycle, sharing and ownership conservation | 03.1–03.4 (03 checklist), 04 |
+| custom synchronization proofs | 02, 06 |
+| helper composition and identity across boundaries | 03.2–03.3 worker foundation, 05 general helpers |
+| combined per-holder charges and retained allocations | 02, 03, 04, 07 |
+| negative tests, standard/custom integration and regressions | 02–07, 08 |
+| explicit support boundary, diagnostics and complete validation | 01, 07, 08 |
 
 ## Completing and moving a TODO
 
@@ -120,19 +114,19 @@ An owning task supplies the implementation; 08 verifies the evidence for all ite
    This also applies individually to 03.1–03.4: update the links and rows in 03
    when a subtask moves. Keep 03 active until all its criteria and subtasks are
    complete; when moving 03, adjust its relative links to the completed subtasks.
-4. Update the parent capability checklist only when the complete capability has
-   evidence, including dependent integration. Completing an infrastructure task
+4. Record evidence for the complete capability, including dependent integration,
+   in its owning TODO. Completing an infrastructure task
    does not by itself complete the corresponding end-to-end capability.
 5. Commit the document move and tracking updates in the authoritative `main`
    checkout after committing the implementation on its feature branch. Identify
    the implementation commit and validation evidence when recording completion.
    If later work invalidates completion, move the task back, clear its status and
-   reopen affected parent checklist items.
+   reopen affected capability checks.
 
 The last task cannot move until every required core capability is implemented and
 validated. Scope changes must be explicit; do not move incomplete requirements
 into an unspecified future phase. Routine design choices can be resolved from
-the approved plan, while material reductions require user agreement.
+the concurrent specification, while material reductions require user agreement.
 
 ## Validation
 
