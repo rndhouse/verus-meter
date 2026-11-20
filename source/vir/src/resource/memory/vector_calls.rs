@@ -131,14 +131,6 @@ impl Analysis<'_> {
             let id = self.vector_argument(&args[*index], &callee.x.params[*index].x.typ, path)?;
             let bound =
                 super::allocations::instantiate(bound, callee, args, &self.allocation_scalars())?;
-            if self.growth.section_protected.contains(&id)
-                && super::contracts::constant(&bound.amount) != Some(0)
-            {
-                return Err(unsupported(
-                    c,
-                    "growing an enclosing vector through a helper inside a memory section",
-                ));
-            }
             self.retain_vector_growth(c, id, bound)?;
         }
         Ok(())

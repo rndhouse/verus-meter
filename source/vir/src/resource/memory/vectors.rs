@@ -127,6 +127,7 @@ impl Analysis<'_> {
             None,
             allocation,
         );
+        self.growth.vectors[state].local_constructor = true;
         if let Some(id) = owner.dynamic {
             self.storage.release_dynamic(id);
         }
@@ -260,8 +261,7 @@ impl Analysis<'_> {
         intrinsic: Option<ResourceIntrinsic>,
     ) -> Result<u64, VirErr> {
         let (state_id, typ, vector) = self.vector_receiver(receiver)?;
-        let grow = !self.growth.vectors[state_id].reserved
-            && !self.growth.section_protected.contains(&state_id);
+        let grow = !self.growth.vectors[state_id].reserved;
         let mut input = None;
         if self.layouts.owning_elements(&typ)
             && matches!(
@@ -321,6 +321,7 @@ impl Analysis<'_> {
                     &expr.span,
                     &Charge { kind: state.backing.kind.clone(), amount: extra.clone() },
                 )?;
+                self.record_section_replacement(&expr.span, state_id, &extra);
                 self.growth.updates.entry(expr.span.id).or_default().extend([
                     super::symbolic::assign(&expr.span, &state.next_capacity, lower),
                     super::symbolic::assign(&expr.span, &state.backing.next_bytes, retained),

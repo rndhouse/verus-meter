@@ -107,14 +107,14 @@ fn nested_growth_has_inductive_loop_state() {
 }
 
 #[test]
-fn sections_protect_nested_allocations() {
+fn section_charges_only_new_nested_backing() {
     let code = "struct P { v: Vec<u32> }
         fn f() resources peak(memory) <= 100 {
             let mut p = P { v: Vec::with_capacity(CAPACITY) };
             resources peak(memory) <= 0 { p.v.push(1); }
         }";
     verifies("nested_section_reserved", &code.replace("CAPACITY", "1"));
-    rejects("nested_section_growth", &code.replace("CAPACITY", "0"), "vector capacity exceeded");
+    rejects("nested_section_growth", &code.replace("CAPACITY", "0"), "memory budget exceeded");
 }
 
 #[test]
@@ -228,17 +228,18 @@ fn nested_helper_effects_have_inductive_loop_state() {
 }
 
 #[test]
-fn helper_cannot_hide_nested_growth_in_section() {
-    rejects(
-        "nested_helper_section",
-        "struct P { v: Vec<u32> }
+fn helper_growth_in_section_updates_the_enclosing_field() {
+    let code = "struct P { v: Vec<u32> }
         fn append(p: &mut P) requires old(p).v.len() == 0,
             resources peak(memory) <= 24 { p.v.push(1); }
         fn f() resources peak(memory) <= 100 {
-            let mut p = P { v: Vec::new() }; resources peak(memory) <= 24 { append(&mut p); }
-        }",
-        "growing an enclosing vector through a helper inside a memory section",
-    );
+            let mut p = P { v: Vec::new() };
+            resources peak(memory) <= 24 { append(&mut p); }
+            assert(current(memory) <= LIMIT);
+        }";
+    // The checked helper exports its 24-byte replacement allowance.
+    verifies("nested_helper_section", &code.replace("LIMIT", "48"));
+    rejects("nested_helper_section_short", &code.replace("LIMIT", "47"), "memory budget exceeded");
 }
 
 #[test]

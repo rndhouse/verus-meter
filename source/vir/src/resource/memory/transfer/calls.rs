@@ -151,7 +151,7 @@ impl Analysis<'_> {
                             .all(|id| !self.growth.protected_elements.contains(id))
                 });
                 precise &=
-                    node.vector.is_none_or(|id| !self.growth.section_protected.contains(&id));
+                    node.vector.is_none_or(|id| !self.growth.section_backings.contains_key(&id));
             });
             if !precise {
                 return Err(unsupported(

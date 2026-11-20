@@ -21,7 +21,11 @@ contract syntax, heap ownership, loops, and expected failures.
 Function budgets can depend on immutable scalar inputs and use arithmetic,
 conditionals, and local verified numeric specification functions. Budget
 arithmetic must fit in `u64`; sections and checkpoints currently require fixed
-bounds. See [contract examples](../examples/resource/memory/README.md#contracts).
+bounds. A vector created outside a section can grow inside it. The section
+pays for each replacement while the vector's owner retains its buffer on exit.
+A push that fits the existing capacity adds no backing charge. If the section
+replaces a buffer it allocated earlier, both buffers count at replacement.
+See [contract examples](../examples/resource/memory/README.md#contracts).
 
 ## Runtime queries (prototype)
 

@@ -14,6 +14,9 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub(super) struct VectorState {
+    /// A local constructor starts with exact slots and bytes in this model.
+    /// Call summaries and borrowed inputs can carry independent bounds.
+    pub(super) local_constructor: bool,
     /// Guaranteed reserved element slots, including occupied slots.
     pub(super) capacity: Expr,
     /// Initial reservation remains a lower bound because supported operations never shrink.
@@ -139,8 +142,9 @@ pub(super) struct Growth {
     pub(super) after: HashMap<u64, Vec<Stmt>>,
     /// Inductive resource invariants generated for each loop.
     pub(super) loops: HashMap<u64, Vec<Expr>>,
-    /// Enclosing allocations excluded from a section's local accounting.
-    pub(super) section_protected: std::collections::HashSet<usize>,
+    /// For each enclosing vector, the replacement bytes retained since entry
+    /// to each active section, outermost first. Its owner keeps the full backing.
+    pub(super) section_backings: HashMap<usize, Vec<Expr>>,
 }
 
 pub(super) fn select(span: &Span, condition: Expr, yes: Expr, no: Expr) -> Expr {
@@ -202,6 +206,32 @@ pub(super) fn push_transition(
         lower = select(span, exact, exact_lower, lower);
     }
     (lower, retained, extra)
+}
+
+impl VectorState {
+    /// Only an append beyond the initial reservation can allocate. The most recent
+    /// replacement used a length at most one less than the current length.
+    pub(super) fn appended_bytes(&self, span: &Span, length: &Expr, floor: Expr) -> Expr {
+        let replacement = select(
+            span,
+            mk_ineq(span, length, &self.minimum, InequalityOp::Le),
+            contracts::literal(span, 0),
+            contracts::multiply(
+                span,
+                contracts::literal(span, self.element),
+                grown_capacity(
+                    span,
+                    contracts::subtract(span, length.clone(), contracts::literal(span, 1)),
+                    self.element,
+                ),
+            ),
+        );
+        contracts::maximum(
+            span,
+            self.backing.initial_bytes.clone(),
+            contracts::maximum(span, floor, replacement),
+        )
+    }
 }
 
 impl Growth {
@@ -366,6 +396,7 @@ impl Growth {
             assign(span, &upper, size.amount.clone()),
         ]);
         self.vectors.push(VectorState {
+            local_constructor: false,
             capacity: lower,
             minimum: capacity,
             uniform_minimum: None,
@@ -426,29 +457,51 @@ impl Growth {
                     grown_capacity(span, state.capacity.clone(), state.element),
                 ),
             );
-            let upper = if let Some(length) = &state.sequence_length {
-                let replacement = select(
+            // Section-relative allocation checks need the capacity relation
+            // when proving overlap with the growing buffers of enclosing owners.
+            if !self.section_backings.is_empty()
+                && state.local_constructor
+                && state.append_only
+                && state.pushes > 0
+                && contracts::constant(&floor) == Some(0)
+                && state.element != 0
+            {
+                // Direct appends preserve exact modeled capacity. Any replacement
+                // provides at least the policy's first buffer, so induction must
+                // not charge another allocation on the very next small append.
+                let bytes = contracts::multiply(
                     span,
-                    mk_ineq(span, length, &state.minimum, InequalityOp::Le),
-                    contracts::literal(span, 0),
-                    contracts::multiply(
-                        span,
-                        contracts::literal(span, state.element),
-                        // The newest replacement was made before an append,
-                        // at a length at most current_length - 1. This holds
-                        // for scalar elements too; removal invalidates it.
-                        grown_capacity(
-                            span,
-                            contracts::subtract(span, length.clone(), contracts::literal(span, 1)),
-                            state.element,
-                        ),
-                    ),
+                    contracts::literal(span, state.element),
+                    state.capacity.clone(),
                 );
-                contracts::maximum(
+                result.push(mk_eq(span, &state.backing.bytes, &bytes));
+                let small = mk_ineq(
                     span,
-                    state.backing.initial_bytes.clone(),
-                    contracts::maximum(span, floor, replacement),
-                )
+                    &state.capacity,
+                    &grown_capacity(span, zero.clone(), state.element),
+                    InequalityOp::Lt,
+                );
+                result.push(mk_implies(
+                    span,
+                    &small,
+                    &mk_eq(span, &state.backing.bytes, &state.backing.initial_bytes),
+                ));
+            }
+            let upper = if let Some(length) = &state.sequence_length {
+                // If all appends still fit the original reservation, none of
+                // them charged a section. Helpers may have retained their own
+                // replacement bound independently of the append count.
+                if let Some(scopes) = self.section_backings.get(id) {
+                    let within = mk_ineq(span, length, &state.minimum, InequalityOp::Le);
+                    for local in scopes {
+                        result.push(mk_implies(
+                            span,
+                            &within,
+                            &mk_ineq(span, local, &floor, InequalityOp::Le),
+                        ));
+                    }
+                }
+                state.appended_bytes(span, length, floor)
             } else if state.pushes == 0 {
                 contracts::maximum(span, state.backing.initial_bytes.clone(), floor)
             } else {
@@ -470,6 +523,7 @@ impl super::analysis::Analysis<'_> {
         if let Some((snapshot, commit)) =
             self.growth.vectors[id].backing.retain(span, &replacement)?
         {
+            self.record_section_replacement(span, id, &replacement.amount);
             self.growth.updates.entry(span.id).or_default().push(snapshot);
             self.growth.after.entry(span.id).or_default().push(commit);
         }

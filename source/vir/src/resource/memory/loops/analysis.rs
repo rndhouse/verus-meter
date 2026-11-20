@@ -278,6 +278,26 @@ impl Analysis<'_> {
             && let ExprX::Var(backing) = &extent.x
         {
             let span = &record.span;
+            // A consuming iterator keeps its entire backing, even after yielding
+            // an element. Carry its original length-to-bytes bound through the
+            // isolated proof alongside any other vectors growing in this loop.
+            if let Some(allocation) = owner.dynamic
+                && let Some(state) = self.growth.vectors.iter().find(|v| v.backing.id == allocation)
+                && state.append_only
+                && state.pushes > 0
+                && [&state.minimum, &state.backing.initial_bytes, &state.backing.floor]
+                    .into_iter()
+                    .all(|term| contracts::constant(term).is_some())
+            {
+                let upper =
+                    state.appended_bytes(span, &iterator.length, state.backing.floor.clone());
+                self.growth.loops.entry(span.id).or_default().push(crate::ast_util::mk_ineq(
+                    span,
+                    extent,
+                    &upper,
+                    InequalityOp::Le,
+                ));
+            }
             let facts =
                 record.iterator_headroom(iterator, &loop_scalars, extent, &self.bound, |point| {
                     match &point.total().x {

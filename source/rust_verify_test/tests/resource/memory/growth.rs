@@ -95,14 +95,96 @@ test_verify_one_file! {
     } => Ok(())
 }
 
-test_verify_one_file! {
-    #[test] section_cannot_hide_growth_of_enclosing_owner verus_code! {
-        use vstd::prelude::*;
-        fn f() resources peak(memory) <= 64 {
-            let mut v = Vec::<u32>::new();
-            resources peak(memory) <= 40 { v.push(1); }
+#[test]
+fn enclosing_vector_growth_is_charged_at_replacement_and_retained_by_its_owner() {
+    let code = "fn f() resources peak(memory) <= FUNCTION {
+        let mut v = Vec::<u32>::new();
+        resources peak(memory) <= FIRST { v.push(1); }
+        resources peak(memory) <= 0 { v.push(2); v.push(3); v.push(4); }
+        resources peak(memory) <= NEXT { v.push(5); }
+        assert(current(memory) <= LIVE);
+    }";
+    // The 24-byte handle stays in the function. At the second growth, its
+    // 16-byte buffer overlaps a 32-byte replacement; only the latter survives.
+    let case = |parent, first, next, live| {
+        code.replace("FUNCTION", parent)
+            .replace("FIRST", first)
+            .replace("NEXT", next)
+            .replace("LIVE", live)
+    };
+    verifies("section_vector_replacement", &case("72", "16", "32", "56"));
+    for (name, code) in [
+        ("first", case("72", "15", "32", "56")),
+        ("next", case("72", "16", "31", "56")),
+        ("overlap", case("71", "16", "32", "56")),
+        ("retained", case("72", "16", "32", "55")),
+    ] {
+        rejects(&format!("section_growth_{name}"), &code, "memory budget exceeded");
+    }
+}
+
+#[test]
+fn nested_section_retains_growth_on_each_path() {
+    let code = "fn f(grow: bool) resources peak(memory) <= 57 {
+        let mut v = Vec::<u32>::new();
+        resources peak(memory) <= 32 {
+            if grow { resources peak(memory) <= 16 { v.push(1); } }
+            let scratch = [0u8; 16];
+            assert(current(memory) <= LIMIT);
         }
-    } => Err(err) => assert_vir_error_msg(err, "vector capacity exceeded")
+        if grow { assert(current(memory) <= 41); }
+        else { assert(current(memory) <= 25); }
+    }";
+    verifies("nested_section_conditional_growth", &code.replace("LIMIT", "32"));
+    rejects("nested_section_growth_short", &code.replace("LIMIT", "31"), "memory budget exceeded");
+}
+
+#[test]
+fn breaking_out_of_a_section_keeps_the_vectors_new_backing() {
+    let code = "fn f(grow: bool) resources peak(memory) <= 41 {
+        let mut v = Vec::<u32>::new();
+        loop decreases 1int, {
+            resources peak(memory) <= 16 {
+                if grow { v.push(1); break; }
+            }
+            break;
+        }
+        if grow { assert(current(memory) <= LIMIT); }
+        else { assert(current(memory) <= 25); }
+    }";
+    verifies("section_growth_break", &code.replace("LIMIT", "41"));
+    rejects("section_growth_break_short", &code.replace("LIMIT", "40"), "memory budget exceeded");
+}
+
+#[test]
+fn splitting_a_streaming_loop_retains_the_staged_blocks() {
+    const STREAMING_PEAK: u64 = 184;
+    const STAGED_PEAK: u64 = 937;
+    let stream = "for byte in packed {
+        let block = [*byte; 128];
+        output.push(block[0]);
+    }";
+    let stage = "let mut staged = Vec::new();
+        for byte in packed {
+            let block = [*byte; 128];
+            staged.push(block);
+        }
+        for block in staged { output.push(block[0]); }";
+    let program = |body, peak| {
+        format!("fn collect(input: [u8; 2]) -> Vec<u8>
+        resources peak(memory) <= value_size(input) + ref_size(&[u8]) + value_size(Vec<u8>) + {peak},
+    {{
+        let packed: &[u8] = &input;
+        let mut output = Vec::new();
+        resources peak(memory) <= {peak} {{ {body} }}
+        output
+    }}")
+    };
+    verifies("streaming_blocks", &program(stream, STREAMING_PEAK));
+    verifies("staged_blocks", &program(stage, STAGED_PEAK));
+    let source = format!("use vstd::prelude::*; verus! {{ {} }}", program(stage, STREAMING_PEAK));
+    let err = verify_one_file("staged_over_streaming_peak", source, &[]).unwrap_err();
+    assert_any_vir_error_msg(err, "memory budget exceeded");
 }
 
 #[test]
