@@ -217,7 +217,10 @@ impl Analysis<'_> {
                 Some((allocation, live_bytes))
             })
             .collect();
-        WaitingJoin { frame: self.storage.live_expression(span), resumed_backing }
+        WaitingJoin {
+            frame: self.storage.worker_frame(span, states::Phase::Waiting, |cost| cost),
+            resumed_backing,
+        }
     }
 }
 
@@ -230,7 +233,9 @@ impl WaitingJoin {
         storage: &mut Accounting,
         inline_bytes: u64,
     ) -> (Footprint, Footprint) {
-        let ready = states::completed(span, storage.live_expression(span), inline_bytes);
+        let ready = storage.worker_frame(span, states::Phase::Ready, |cost| {
+            states::completed(span, cost, inline_bytes)
+        });
         for (allocation, live_bytes) in self.resumed_backing {
             storage.set_allocation(allocation, MemoryKind::host_heap(), live_bytes);
         }

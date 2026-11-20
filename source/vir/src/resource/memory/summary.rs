@@ -16,13 +16,46 @@ pub(super) struct BodyEffects {
 }
 
 impl BodyEffects {
-    pub(super) fn validate_intervals(
-        &self,
+    /// Bind every source observation once, independently of whether the body
+    /// can already be instantiated as a general call. A missing global proof
+    /// must not discard the publisher's local effects.
+    pub(super) fn from_accounting(
+        body: Expr,
+        ownership: super::transfer::Checked,
+        report: &super::accounting::MemoryReport,
+        calls: Vec<(Fun, crate::messages::Span)>,
         actor: Option<super::workers::WorkerId>,
-    ) -> Result<(), VirErr> {
+    ) -> Result<Arc<Self>, VirErr> {
+        let effects = Self { body, ownership, points: report.points.clone(), calls };
+        effects.validate_intervals(actor)?;
+        Ok(Arc::new(effects))
+    }
+
+    fn validate_intervals(&self, actor: Option<super::workers::WorkerId>) -> Result<(), VirErr> {
         let intervals = self.ownership.interval_binders(&self.body.span, actor)?;
+        use super::synchronization::local::Boundary;
+        for birth in self.ownership.allocation_visits.values() {
+            if birth.actor != actor
+                || birth.coordinates.iter().any(|(_, n)| !matches!(&*n.typ, TypX::Int(_)))
+            {
+                return Err(super::model::unsupported(
+                    &self.body.span,
+                    "an allocation outside its creating actor or loop occurrence",
+                ));
+            }
+        }
+        let mut starts = std::collections::BTreeSet::new();
         for phase in self.points.iter() {
             phase.validate(&intervals)?;
+            if let Boundary::Wait(id) | Boundary::Attempt(id) = phase.condition.boundary {
+                starts.insert(id);
+            }
+        }
+        if starts != intervals {
+            return Err(super::model::unsupported(
+                &self.body.span,
+                "a native acquisition without its complete entry footprint",
+            ));
         }
         Ok(())
     }
@@ -31,9 +64,7 @@ impl BodyEffects {
     pub(super) fn validate(
         &self,
         summaries: &std::collections::HashMap<Fun, FunctionSummary>,
-        actor: Option<super::workers::WorkerId>,
     ) -> Result<(), VirErr> {
-        self.validate_intervals(actor)?;
         for (callee, span) in &self.calls {
             if summaries.get(callee).and_then(|summary| summary.effects.as_ref()).is_none() {
                 return Err(super::model::unsupported(
@@ -68,6 +99,12 @@ impl BodyEffects {
                 Ok(pattern.clone())
             },
         )?;
+        if self.ownership.allocation_visits.values().any(|visit| !sites.contains(&visit.source)) {
+            return Err(super::model::unsupported(
+                &self.body.span,
+                "an allocation detached from its source site",
+            ));
+        }
         let kinds = [
             Kind::Operation,
             Kind::Branch,

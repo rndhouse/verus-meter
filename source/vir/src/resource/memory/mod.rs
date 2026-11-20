@@ -173,7 +173,7 @@ pub fn check_crate(
             if let Some(error) = &checked.incomplete {
                 incomplete.push(error.clone());
             }
-            graph.validate_calls(function, &checked.calls)?;
+            graph.validate_calls(function, &checked.effects.calls)?;
             reports.push((function.clone(), checked));
         }
     }

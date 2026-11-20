@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// The charged allocations reached by following uniquely owned children.
 #[derive(Default)]
 struct Allocations {
+    roles: BTreeMap<MemoryKind, BTreeSet<u64>>,
     fixed: BTreeMap<MemoryKind, u64>,
     dynamic: BTreeSet<u64>,
 }
@@ -32,6 +33,10 @@ impl Allocations {
         let mut duplicate = false;
         if let Some(owner) = owner {
             owner.visit(&mut |node| {
+                if let Some(role) = node.fixed_role {
+                    duplicate |=
+                        !allocations.roles.entry(node.kind.clone()).or_default().insert(role);
+                }
                 if node.bytes != 0 {
                     let bytes = allocations.fixed.entry(node.kind.clone()).or_default();
                     *bytes = bytes.checked_add(node.bytes).expect("live storage fits the model");
@@ -56,6 +61,7 @@ impl Allocations {
 /// Byte-only immutable backing for a canonical shared root. Fixed totals need
 /// identities while conditional. Symbolic allocations keep their original IDs.
 pub(in super::super) struct SharedBackingCharges {
+    roles: BTreeMap<MemoryKind, BTreeSet<u64>>,
     fixed: Vec<(u64, Charge<u64>)>,
     dynamic: BTreeSet<u64>,
 }
@@ -72,12 +78,13 @@ impl SharedBackingCharges {
         {
             return Ok(None);
         }
-        let Allocations { fixed, dynamic } = Allocations::owned(Some(owner), element_states, span)?;
+        let Allocations { fixed, dynamic, roles } =
+            Allocations::owned(Some(owner), element_states, span)?;
         let fixed = fixed
             .into_iter()
             .map(|(kind, amount)| (Accounting::fresh_allocation(), Charge { kind, amount }))
             .collect();
-        Ok(Some(Self { fixed, dynamic }))
+        Ok(Some(Self { fixed, dynamic, roles }))
     }
 
     /// A path can only defer an allocation it currently owns. Check every
@@ -89,13 +96,15 @@ impl SharedBackingCharges {
         span: &Span,
     ) -> bool {
         for path in &storage.paths {
-            if self.fixed.iter().any(|(id, c)| {
-                path.dynamic.contains_key(id)
-                    || path.fixed.get(&c.kind).copied().unwrap_or(0) < c.amount
-            }) || self
-                .dynamic
-                .iter()
-                .any(|id| path.dynamic.get(id).is_none_or(|c| c.original.is_some()))
+            if self.roles.values().flatten().any(|role| !path.owned.contains_key(role))
+                || self.fixed.iter().any(|(id, c)| {
+                    path.dynamic.contains_key(id)
+                        || path.fixed.get(&c.kind).copied().unwrap_or(0) < c.amount
+                })
+                || self
+                    .dynamic
+                    .iter()
+                    .any(|id| path.dynamic.get(id).is_none_or(|c| c.original.is_some()))
             {
                 return false;
             }
@@ -105,6 +114,11 @@ impl SharedBackingCharges {
                 path.remove_fixed(&c.kind, c.amount);
                 let mut charge =
                     DynamicCharge::new(c.kind.clone(), contracts::literal(span, c.amount));
+                for role in self.roles.get(&c.kind).into_iter().flatten() {
+                    charge
+                        .owned
+                        .insert(*role, path.owned.remove(role).expect("validated backing role"));
+                }
                 charge.defer(span, &empty);
                 path.dynamic.insert(*id, charge);
             }
@@ -124,7 +138,9 @@ impl SharedBackingCharges {
             let missing =
                 || unsupported(span, "an indexed Arc result without its retained backing charge");
             for (id, c) in &self.fixed {
-                path.dynamic.remove(id).and_then(|c| c.original).ok_or_else(missing)?;
+                let saved = path.dynamic.remove(id).ok_or_else(missing)?;
+                saved.original.ok_or_else(missing)?;
+                path.owned.extend(saved.owned);
                 path.add_fixed(span, &c.kind, c.amount)?;
             }
             for id in &self.dynamic {
@@ -158,6 +174,7 @@ impl Accounting {
     ) -> bool {
         self.paths.iter().all(|path| {
             path.fixed.values().all(|bytes| *bytes == 0)
+                && path.owned.is_empty()
                 && path.dynamic.is_empty()
                 && path.held.is_empty()
                 && path.values.iter().all(|(id, charge)| charge.amount == 0 || slots.contains(id))
@@ -174,13 +191,19 @@ impl Accounting {
         growth: &Growth,
         span: &Span,
     ) -> Result<Self, VirErr> {
-        let Allocations { fixed, dynamic } =
+        let Allocations { fixed, dynamic, roles } =
             Allocations::owned(storage.owner.as_ref(), &growth.elements, span)?;
         let inputs = storage.owner.as_ref().map(Owner::inputs).unwrap_or_default();
         let mut remaining = self.paths.clone();
         let mut transferred = Vec::new();
         for path in &mut remaining {
             let mut selected = Live::default();
+            for role in roles.values().flatten() {
+                let origin = path.owned.remove(role).ok_or_else(|| {
+                    unsupported(span, "actor transport without its fixed allocation origin")
+                })?;
+                selected.owned.insert(*role, origin);
+            }
             for (kind, bytes) in &fixed {
                 let total = path.fixed.entry(kind.clone()).or_default();
                 *total = total.checked_sub(*bytes).ok_or_else(|| {
@@ -239,7 +262,8 @@ impl Accounting {
         let mut paths = Vec::new();
         for current in &self.paths {
             for incoming in &source.paths {
-                if incoming.values.keys().any(|id| current.values.contains_key(id))
+                if incoming.owned.keys().any(|role| current.owned.contains_key(role))
+                    || incoming.values.keys().any(|id| current.values.contains_key(id))
                     || incoming.dynamic.keys().any(|id| current.dynamic.contains_key(id))
                     || !incoming.inputs.is_disjoint(&current.inputs)
                 {
@@ -252,6 +276,7 @@ impl Accounting {
                         unsupported(span, "collected storage exceeding the model range")
                     })?;
                 }
+                path.owned.extend(&incoming.owned);
                 path.dynamic.extend(incoming.dynamic.clone());
                 path.values.extend(incoming.values.clone());
                 path.inputs.extend(&incoming.inputs);
@@ -296,7 +321,8 @@ mod tests {
         let site = span(1);
         let mut caller = Accounting::new(&site, 1024);
         let inline = caller.reserve_value(&site, MemoryKind::host_local(), 8).unwrap();
-        caller.reserve(&site, MemoryKind::host_heap(), 32, "owned buffer").unwrap();
+        let fixed_role =
+            caller.reserve_owned(&site, MemoryKind::host_heap(), 32, "owned buffer").unwrap();
         let allocation = Accounting::fresh_allocation();
         caller.set_allocation(allocation, MemoryKind::host_heap(), contracts::literal(&site, 16));
         caller.record_live(&site).unwrap();
@@ -308,11 +334,20 @@ mod tests {
                 origins: [inline].into(),
                 ..Value::unit()
             },
-            owner: Some(Owner { bytes: 32, dynamic: Some(allocation), ..Default::default() }),
+            owner: Some(Owner {
+                bytes: 32,
+                fixed_role,
+                dynamic: Some(allocation),
+                ..Default::default()
+            }),
         };
         let mut worker = caller.take_storage(&storage, &Growth::default(), &span(2)).unwrap();
         assert_eq!(live(&caller), 0);
         assert_eq!(live(&worker), 56);
+        let origin = *worker.paths[0].owned.values().next().unwrap();
+        assert_eq!(origin.identity, fixed_role.unwrap());
+        assert_eq!(origin.site, site.id);
+        assert!(caller.paths[0].owned.is_empty());
         worker.reserve(&span(3), MemoryKind::host_heap(), 80, "worker scratch").unwrap();
         worker.release(&span(4), MemoryKind::host_heap(), 80, "worker scratch");
         assert_eq!(peak(&caller), 56);
@@ -322,6 +357,7 @@ mod tests {
         caller.receive_storage(outgoing.clone(), &span(6)).unwrap();
         assert_eq!(live(&caller), 56);
         assert_eq!(peak(&caller), 56);
+        assert_eq!(caller.paths[0].owned[&fixed_role.unwrap()].identity, origin.identity);
         assert!(caller.receive_storage(outgoing, &span(7)).is_err());
         assert_eq!(live(&caller), 56);
     }
@@ -332,8 +368,12 @@ mod tests {
         let site = span(1);
         let allocation = Accounting::fresh_allocation();
         let payload_kind = MemoryKind::new("device.buffer");
+        let mut storage = Accounting::new(&site, 256);
+        let role =
+            storage.reserve_owned(&site, MemoryKind::host_heap(), 40, "shared backing").unwrap();
         let owner = Owner {
             bytes: 40,
+            fixed_role: role,
             children: [(
                 OwnerSlot::Contents,
                 Owner {
@@ -346,13 +386,12 @@ mod tests {
             ..Default::default()
         };
         let charges = SharedBackingCharges::for_payload(&owner, &[], &site).unwrap().unwrap();
-        let mut storage = Accounting::new(&site, 256);
-        storage.reserve(&site, MemoryKind::host_heap(), 40, "shared backing").unwrap();
         let mut alternative = storage.clone();
         storage.set_allocation(allocation, payload_kind.clone(), contracts::literal(&site, 7));
         alternative.set_allocation(allocation, payload_kind.clone(), contracts::literal(&site, 19));
         storage.join_live(&alternative).unwrap();
         assert!(charges.defer(&mut storage, crate::ast_util::mk_bool(&site, false), &site));
+        assert!(storage.paths.iter().all(|p| p.owned.is_empty()));
         charges.receive(&mut storage, &site).unwrap();
         let restored: Vec<_> = storage
             .paths
@@ -361,6 +400,7 @@ mod tests {
                 let charge = &path.dynamic[&allocation];
                 assert_eq!(charge.kind, payload_kind);
                 assert_eq!(path.fixed[&MemoryKind::host_heap()], 40);
+                assert_eq!(path.owned[&role.unwrap()].identity, role.unwrap());
                 contracts::constant(&charge.amount).unwrap()
             })
             .collect();

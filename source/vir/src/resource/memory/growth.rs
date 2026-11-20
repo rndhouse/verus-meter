@@ -37,6 +37,9 @@ pub(super) struct VectorState {
     pub(super) reserved: bool,
     /// Logical length used to bound retained slot charges in loop proofs.
     pub(super) sequence_length: Option<Expr>,
+    /// Compiler-owned length of a vector moved into a local mutex. Only checked
+    /// payload operations may write this variable.
+    pub(super) protected_length: Option<Expr>,
     /// Removal permanently disables append-only length bounds, including after
     /// later pushes and across branches analyzed in either order.
     pub(super) append_only: bool,
@@ -467,6 +470,7 @@ impl Growth {
             element,
             reserved: false,
             sequence_length: None,
+            protected_length: None,
             append_only: true,
             loop_backing: false,
             backing: super::allocations::RetainedAllocation {

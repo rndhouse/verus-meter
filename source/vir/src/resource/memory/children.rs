@@ -83,7 +83,29 @@ impl Analysis<'_> {
     }
 
     fn assign_owner_inner(&mut self, place: &Place, typ: &Typ, rhs: &Expr) -> Result<(), VirErr> {
-        let (name, path) = super::paths::place(place, typ)
+        let protected = if let PlaceX::DerefMut(base) = &place.x
+            && matches!(
+                self.synchronization_place(base),
+                Some(super::synchronization::local::View::Payload(_))
+            ) {
+            // Rust evaluates the RHS before resolving the assignment place.
+            // A borrow observed before evaluation cannot authorize a later write.
+            self.initialize_expr(rhs)?;
+            let Some(super::synchronization::local::View::Payload(interval)) =
+                self.synchronization_place(base)
+            else {
+                return Err(unsupported(
+                    &place.span,
+                    "a changed guard view at protected assignment",
+                ));
+            };
+            Some(self.local_payload(interval, &place.span)?)
+        } else {
+            None
+        };
+        let through_guard = protected.is_some();
+        let (name, path) = protected
+            .or_else(|| super::paths::place(place, typ))
             .ok_or_else(|| unsupported(&place.span, "assignment outside a fixed child path"))?;
         if path.is_empty() {
             if self.growth.iterator_item_slots.contains(&name)
@@ -114,9 +136,13 @@ impl Analysis<'_> {
         if !super::paths::indexed(&path) {
             self.heap.check_transfer(&name, &place.span)?;
         }
-        self.access(place, typ)?;
+        if !through_guard {
+            self.access(place, typ)?;
+        }
         let revision = self.growth.revision();
-        self.initialize_expr(rhs)?;
+        if !through_guard {
+            self.initialize_expr(rhs)?;
+        }
         if super::paths::indexed(&path) && revision != self.growth.revision() {
             return Err(unsupported(
                 &rhs.span,
@@ -127,12 +153,20 @@ impl Analysis<'_> {
             .result_owner
             .take()
             .ok_or_else(|| unsupported(&rhs.span, "a replacement without ownership"))?;
-        self.bind_collection_sources(
-            &rhs.span,
-            &mut child,
-            typ,
-            super::projections::spec_value(&crate::ast_util::place_to_spec_expr(place))?,
-        )?;
+        if through_guard {
+            // The RHS is already live before the protected place is evaluated.
+            // Acquiring the view never frees the displaced payload.
+            self.access(place, typ)?;
+            self.freeze_owner_geometry(rhs, &mut child);
+            self.protect_vector_length(rhs, &mut child);
+        } else {
+            self.bind_collection_sources(
+                &rhs.span,
+                &mut child,
+                typ,
+                super::projections::spec_value(&crate::ast_util::place_to_spec_expr(place))?,
+            )?;
+        }
         // RHS evaluation has already recorded the old/new overlap. Retire only
         // the destination's original input subtree before installing the child.
         let input = self.split_input(&place.span, &(name.clone(), path.clone()), None)?;

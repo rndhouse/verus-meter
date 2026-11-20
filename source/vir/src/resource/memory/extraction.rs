@@ -85,10 +85,11 @@ impl Analysis<'_> {
                     self.discard(&args[1])?;
                 }
                 let focused = self.focus_arguments(args, &source.span)?;
-                let (state, typ, value) = self.vector_receiver(receiver)?;
+                let resolved = self.vector_receiver(receiver, &source.span)?;
+                let state = resolved.state;
+                let typ = resolved.typ.clone();
                 let pop = if optional {
-                    let TypX::Datatype(_, types, _) = &*typ else { unreachable!() };
-                    let len = super::vectors::length(&source.span, types.clone(), value.clone());
+                    let len = resolved.length.clone();
                     let len =
                         SpannedTyped::new(&source.span, &crate::ast_util::int_typ(), len.x.clone());
                     let len = self.allocation_snapshot(&source.span, len);
@@ -96,9 +97,10 @@ impl Analysis<'_> {
                 } else {
                     None
                 };
-                self.remove_vector_slot(&source.span, state, &typ, value.clone());
+                self.remove_vector_slot(&source.span, state, resolved.length.clone());
+                self.advance_protected_vector(&source.span, &resolved, attrs.resource_intrinsic);
                 let tag = pop.as_ref().and_then(|removal| removal.tag.clone());
-                let (name, path) = super::paths::expr(receiver, &typ).unwrap();
+                let (name, path) = resolved.location.clone();
                 let elements = self
                     .heap
                     .root(&name)
@@ -135,8 +137,7 @@ impl Analysis<'_> {
                 let mut removal = if let Some(pop) = pop {
                     pop
                 } else {
-                    let TypX::Datatype(_, types, _) = &*typ else { unreachable!() };
-                    let len = super::vectors::length(&source.span, types.clone(), value);
+                    let len = resolved.length.clone();
                     let len =
                         SpannedTyped::new(&source.span, &crate::ast_util::int_typ(), len.x.clone());
                     let index = super::projections::spec_value(&args[1])?;

@@ -19,6 +19,28 @@ use crate::{
 };
 use std::collections::BTreeSet;
 
+/// Source-visible caller phases. The worker starts with its own acquisitions.
+#[derive(Clone, Copy)]
+pub(in super::super) enum Phase {
+    Fork,
+    Published,
+    Waiting,
+    Ready,
+    Resumed,
+}
+
+impl Phase {
+    pub(in super::super) fn description(self) -> &'static str {
+        match self {
+            Self::Fork => "before transferring worker captures",
+            Self::Published => "after transferring worker captures",
+            Self::Waiting => "while waiting for a worker",
+            Self::Ready => "while retaining a completed worker result",
+            Self::Resumed => "after worker join",
+        }
+    }
+}
+
 /// The caller can remain here while the published child enters its body.
 /// The child's separate entry ledger owns all moved captures. The caller
 /// retains the handle slot, completion tag and other source temporaries.
@@ -112,7 +134,7 @@ impl Analysis<'_> {
     }
 
     pub(super) fn publication_state(
-        &self,
+        &mut self,
         span: &Span,
         actor: WorkerId,
         at_fork: Footprint,
@@ -122,7 +144,7 @@ impl Analysis<'_> {
             site: self.state_binding(span, true)?,
             span: span.clone(),
             occurrence: self.worker_identity(span, actor),
-            caller_frame: self.storage.live_expression(span),
+            caller_frame: self.storage.worker_frame(span, Phase::Published, |cost| cost),
             at_fork,
         })
     }
@@ -182,7 +204,7 @@ impl Analysis<'_> {
     }
 
     pub(super) fn join_phases(
-        &self,
+        &mut self,
         span: &Span,
         waiting: Footprint,
         ready: Footprint,
@@ -193,7 +215,7 @@ impl Analysis<'_> {
             span: span.clone(),
             waiting,
             ready,
-            resumed: self.storage.live_expression(span),
+            resumed: self.storage.worker_frame(span, Phase::Resumed, |cost| cost),
         })
     }
 

@@ -496,6 +496,7 @@ impl Analysis<'_> {
         for mut edge in breaks {
             edge.state.heap.unprotect(protection.clone());
             if let Some(result) = &mut result {
+                edge.align_result_role(owner.as_ref())?;
                 self.join_exit(&edge.span, &edge.state)?;
                 result.merge(&edge.value);
                 owner = super::super::control::merge_result(&expr.span, owner, edge.owner)?;

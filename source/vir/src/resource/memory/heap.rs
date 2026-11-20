@@ -87,6 +87,8 @@ pub(super) struct Owner {
     pub(super) elements: Option<super::elements::Elements>,
     /// Memory kind charged for the owned allocation, independently of its handle.
     pub(super) kind: MemoryKind,
+    /// Stable role whose particular source allocation can differ by reaching path.
+    pub(super) fixed_role: Option<u64>,
     /// Fixed portion of the live charge, released when this owner is consumed.
     pub(super) bytes: u64,
     /// Identity of any symbolic portion of the live charge.
@@ -121,6 +123,7 @@ impl Default for Owner {
             elements: None,
             kind: MemoryKind::host_heap(),
             bytes: 0,
+            fixed_role: None,
             dynamic: None,
             extent: None,
             capacity: None,
@@ -490,12 +493,21 @@ impl Analysis<'_> {
         if !crate::ast_util::types_equal(inner, &args[0].typ) {
             return Err(unsupported(&args[0].span, "this box initializer coercion"));
         }
-        self.storage.reserve(&expr.span, MemoryKind::host_heap(), bytes, "heap object")?;
+        let fixed_role = self.storage.reserve_owned(
+            &expr.span,
+            MemoryKind::host_heap(),
+            bytes,
+            "heap object",
+        )?;
+        if let Some(id) = fixed_role {
+            self.bind_allocation(&expr.span, id)?;
+        }
         // Box::new is a model intrinsic: its argument initializes the heap object,
         // using the same destination rule as local and aggregate initializers.
         self.initialize_expr(&args[0])?;
         let mut owner = Owner {
             bytes,
+            fixed_role,
             extent: Some(super::contracts::literal(&expr.span, bytes)),
             ..Owner::default()
         };
@@ -759,7 +771,13 @@ impl Analysis<'_> {
         if let Some(id) = owner.dynamic {
             self.storage.release_dynamic(id);
         }
-        self.storage.release(span, owner.kind, owner.bytes, "drop heap object");
+        self.storage.release_owned(
+            span,
+            owner.fixed_role,
+            owner.kind,
+            owner.bytes,
+            "drop heap object",
+        );
         if let Some(inputs) = ending_inputs {
             for input in inputs {
                 self.storage.release_input(input);
@@ -819,14 +837,27 @@ impl Analysis<'_> {
             self.access(place, &types[0])?;
             // A child handle remains part of its parent's inline storage. Drop
             // consumes its ownership without creating another handle slot.
-            if matches!(place.x, PlaceX::Local(_))
+            let mut value = if matches!(place.x, PlaceX::Local(_))
                 && crate::ast_util::types_equal(&types[0], &place.typ)
             {
-                let value = self.take_value(place)?;
-                self.release_value(value, &expr.span);
-            }
+                Some(self.take_value(place)?)
+            } else {
+                None
+            };
             let owner = self.move_owner_to(place, &types[0])?;
+            // A struct or closure can still carry inline sibling fields when
+            // its embedded guard unlocks. Its aggregate slot ends after field
+            // destruction, including fields with no separately allocated owner.
+            if owner.declared_fields.is_none()
+                && owner.closure.is_none()
+                && let Some(operand) = value.take()
+            {
+                self.release_value(operand, &expr.span);
+            }
             self.release_owner(owner, &expr.span);
+            if let Some(operand) = value {
+                self.release_value(operand, &expr.span);
+            }
             self.transitions.operation(
                 &expr.span,
                 super::transfer::checked::Operation::Drop { source: args[0].clone() },

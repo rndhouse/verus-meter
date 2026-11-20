@@ -95,7 +95,7 @@ impl Analysis<'_> {
                     "a worker summary substituted for a different actor",
                 ));
             }
-            execution.effects.validate(self.summaries, Some(*actor))?;
+            execution.effects.validate(self.summaries)?;
             let owned = execution.entry.captures.owned_slots(self.layouts);
             for cleanup in &execution.capture_cleanup {
                 if !cleanup.owners.keys().all(|slot| owned.contains(slot)) {
@@ -169,7 +169,7 @@ impl Analysis<'_> {
         let signature =
             inputs::signature(&definition, body.clone(), &inputs, closure, self.functions)?;
         super::super::control::validate(&body, &self.var_modes)?;
-        let at_fork = self.storage.live_expression(span);
+        let at_fork = self.storage.worker_frame(span, super::states::Phase::Fork, |cost| cost);
         let mut storage = self.storage.take_storage(&entry.storage, &self.growth, span)?;
         let (body_workers, tags) =
             self.heap.workers.body_scope(actor, entry.storage.owner.as_ref(), span)?;
@@ -272,6 +272,7 @@ impl Analysis<'_> {
                 input.name.clone(),
                 Value {
                     bytes: worker.layouts.size(&input.typ, span)?,
+                    synchronization_view: None,
                     environment: input.environment,
                     ..Value::unit()
                 },
@@ -430,12 +431,13 @@ impl Analysis<'_> {
             entry: entry_descriptor,
             publication,
             initial,
-            effects: Arc::new(BodyEffects {
+            effects: BodyEffects::from_accounting(
                 body,
-                ownership: worker.transitions,
-                points: report.points,
-                calls: worker.calls,
-            }),
+                worker.transitions,
+                &report,
+                worker.calls,
+                Some(actor),
+            )?,
             transfer: inferred.map(|inferred| inferred.template),
             transfer_required,
             capture_cleanup,

@@ -186,7 +186,7 @@ impl Analysis<'_> {
             self.storage.set_allocation(id, allocation.kind.clone(), allocation.amount.clone());
             owner.dynamic = Some(id);
         } else if let Some(bytes) = contracts::constant(&allocation.amount) {
-            self.storage.reserve(
+            owner.fixed_role = self.storage.reserve_owned(
                 &expr.span,
                 allocation.kind.clone(),
                 bytes,
@@ -199,6 +199,9 @@ impl Analysis<'_> {
             self.storage.set_allocation(id, allocation.kind.clone(), allocation.amount.clone());
             self.storage.record_live(&expr.span)?;
             owner.dynamic = Some(id);
+        }
+        if let Some(id) = owner.fixed_role.or(owner.dynamic) {
+            self.bind_allocation(&expr.span, id)?;
         }
         Ok(owner)
     }

@@ -335,6 +335,18 @@ impl Analysis<'_> {
             .collect()
     }
 
+    /// A nested source allocation, lock or publication is instantiated in the
+    /// creating actor's original visit, including after transport to another actor.
+    pub(super) fn actor_coordinates(&self, local: Vec<(u64, Expr)>) -> Vec<(u64, Expr)> {
+        let mut coordinates = self
+            .current_worker
+            .and_then(|actor| self.growth.worker_occurrences.get(&actor))
+            .cloned()
+            .unwrap_or_default();
+        coordinates.extend(local);
+        coordinates
+    }
+
     /// Source-site identity plus actual enclosing iteration coordinates. A
     /// template's compiler key alone is never a dynamic publication count.
     pub(super) fn worker_identity(&self, span: &Span, actor: WorkerId) -> Expr {
@@ -452,12 +464,7 @@ impl Analysis<'_> {
         self.storage.event(&expr.span, "publish worker completion tag".into());
         let id =
             self.growth.worker_families.publication(expr.span.id, *definition, self.current_worker);
-        let mut occurrences = self
-            .current_worker
-            .and_then(|actor| self.growth.worker_occurrences.get(&actor))
-            .cloned()
-            .unwrap_or_default();
-        occurrences.extend(local_occurrences);
+        let occurrences = self.actor_coordinates(local_occurrences);
         self.growth.worker_occurrences.insert(id, occurrences);
         let mut entry = body::Entry::checked(
             definition_body,
@@ -661,6 +668,7 @@ impl Analysis<'_> {
             ids: [packed].into(),
             origins,
             parameter: None,
+            synchronization_view: None,
             environment: None,
         })
     }

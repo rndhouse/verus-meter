@@ -75,6 +75,10 @@ impl Trace<'_> {
         let span = &value.span;
         use checked::Operation;
         match operation {
+            Operation::GuardBorrow { source, .. } => {
+                self.value(&source)?;
+                Some(Value::Unknown)
+            }
             Operation::GuardExtract { source } => {
                 let Value::Owner(mut guard) = self.value(&source)? else { return None };
                 guard.typ = value.typ.clone();

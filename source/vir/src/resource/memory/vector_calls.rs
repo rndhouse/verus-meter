@@ -234,7 +234,13 @@ impl Analysis<'_> {
             if let Some(old) = owner.dynamic {
                 self.storage.release_dynamic(old);
             }
-            self.storage.release(span, owner.kind.clone(), owner.bytes, "track returned vector");
+            self.storage.release_owned(
+                span,
+                owner.fixed_role.take(),
+                owner.kind.clone(),
+                owner.bytes,
+                "track returned vector",
+            );
             owner.bytes = 0;
             owner.dynamic = Some(allocation);
             owner.vector = Some(id);

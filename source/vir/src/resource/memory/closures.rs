@@ -256,6 +256,7 @@ impl Analysis<'_> {
             ids: [id].into_iter().collect(),
             origins,
             parameter: None,
+            synchronization_view: None,
             environment: Some(environment),
         })
     }

@@ -9,6 +9,17 @@ use crate::ast::*;
 use crate::ast_util::*;
 use std::sync::Arc;
 
+/// One existing vector owner and its logical length before a source operation.
+pub(super) struct Receiver {
+    pub(super) state: usize,
+    pub(super) typ: Typ,
+    pub(super) location: super::paths::LocalPath,
+    pub(super) length: Expr,
+    /// Present only for an owned protected vector. Its logical length follows
+    /// checked source operations through each lock/release of the same root.
+    pub(super) protected: Option<Expr>,
+}
+
 /// Logical vector length used by operation adapters before consuming or mutating it.
 pub(super) fn length(span: &crate::messages::Span, types: Typs, vector: Expr) -> Expr {
     SpannedTyped::new(
@@ -107,6 +118,7 @@ impl Analysis<'_> {
         let mut owner =
             Owner { capacity: Some(capacity), extent: Some(cost.clone()), ..Default::default() };
         owner.geometry = Some(contracts::literal(&expr.span, 0));
+        let first = self.storage.points().len();
         if let Some(n) = contracts::constant(&cost) {
             self.storage.reserve(
                 &expr.span,
@@ -119,10 +131,13 @@ impl Analysis<'_> {
             self.storage.reserve_dynamic(&expr.span, MemoryKind::host_heap(), cost.clone());
             owner.dynamic = Some(expr.span.id);
         }
+        let reservation = first..self.storage.points().len();
         if self.layouts.owning_elements(&expr.typ) {
             owner.elements = Some(self.new_elements(&expr.span));
         }
         let allocation = super::accounting::Accounting::fresh_allocation();
+        self.storage.name_vector_reservation(reservation, owner.dynamic, allocation);
+        self.bind_allocation(&expr.span, allocation)?;
         let state = self.growth.new_vector(
             &expr.span,
             owner.capacity.clone().unwrap(),
@@ -161,41 +176,57 @@ impl Analysis<'_> {
     }
 
     /// Resolve a vector leaf through the same paths used by ownership summaries.
-    pub(super) fn vector_receiver(&mut self, arg: &Expr) -> Result<(usize, Typ, Expr), VirErr> {
-        if super::paths::vector_index(arg).is_some() {
-            let mut typ = super::paths::referent(&arg.typ);
-            while let TypX::Decorate(TypDecoration::Box, _, inner) = &**typ {
-                typ = inner;
-            }
-            let id = self.vector_argument(arg, typ, &[])?;
-            self.discard(arg)?;
-            return Ok((id, typ.clone(), super::projections::spec_value(arg)?));
+    pub(super) fn vector_receiver(
+        &mut self,
+        arg: &Expr,
+        site: &crate::messages::Span,
+    ) -> Result<Receiver, VirErr> {
+        if let Some(receiver) = self.protected_vector(arg, site)? {
+            return Ok(receiver);
         }
-        let place = match &arg.x {
-            ExprX::BorrowMut(p) | ExprX::TwoPhaseBorrowMut(p) | ExprX::ReadPlace(p, _) => p,
-            _ => {
-                return Err(unsupported(
-                    &arg.span,
-                    "vector operations through an aliased owner; borrow its slice instead",
-                ));
-            }
-        };
-        let mut typ = super::paths::referent(&place.typ);
+        let mut typ = super::paths::referent(&arg.typ);
         while let TypX::Decorate(TypDecoration::Box, _, inner) = &**typ {
             typ = inner;
         }
+        let TypX::Datatype(_, types, _) = &**typ else {
+            return Err(unsupported(&arg.span, "this vector receiver"));
+        };
         if !self.layouts.vector(typ) {
             return Err(unsupported(&arg.span, "this vector receiver"));
         }
-        let id = self.vector_argument(arg, typ, &[])?;
-        self.access(place, if matches!(&*place.typ, TypX::MutRef(_)) { &place.typ } else { typ })?;
-        let value =
-            if super::paths::expr(arg, typ).is_some_and(|(_, path)| super::paths::indexed(&path)) {
+        let state = self.vector_argument(arg, typ, &[])?;
+        let location = super::paths::expr(arg, typ)
+            .ok_or_else(|| unsupported(&arg.span, "a vector without a checked location"))?;
+        let value = if super::paths::vector_index(arg).is_some() {
+            self.discard(arg)?;
+            super::projections::spec_value(arg)?
+        } else {
+            let place = match &arg.x {
+                ExprX::BorrowMut(p) | ExprX::TwoPhaseBorrowMut(p) | ExprX::ReadPlace(p, _) => p,
+                _ => {
+                    return Err(unsupported(
+                        &arg.span,
+                        "vector operations through an aliased owner; borrow its slice instead",
+                    ));
+                }
+            };
+            self.access(
+                place,
+                if matches!(&*place.typ, TypX::MutRef(_)) { &place.typ } else { typ },
+            )?;
+            if super::paths::indexed(&location.1) {
                 super::projections::spec_value(arg)?
             } else {
                 place_to_spec_expr(place)
-            };
-        Ok((id, typ.clone(), value))
+            }
+        };
+        Ok(Receiver {
+            state,
+            typ: typ.clone(),
+            location,
+            length: length(&arg.span, types.clone(), value),
+            protected: None,
+        })
     }
 
     /// Resolve a formal child path relative to an actual argument's owner.
@@ -289,11 +320,8 @@ impl Analysis<'_> {
         &mut self,
         span: &crate::messages::Span,
         id: usize,
-        typ: &Typ,
-        vector: Expr,
+        len: Expr,
     ) {
-        let TypX::Datatype(_, types, _) = &**typ else { unreachable!() };
-        let len = length(span, types.clone(), vector);
         let state = &self.growth.vectors[id];
         if !state.backing.changed
             && !state.loop_backing
@@ -366,7 +394,9 @@ impl Analysis<'_> {
         index: bool,
         intrinsic: Option<ResourceIntrinsic>,
     ) -> Result<u64, VirErr> {
-        let (state_id, typ, vector) = self.vector_receiver(receiver)?;
+        let resolved = self.vector_receiver(receiver, &expr.span)?;
+        let state_id = resolved.state;
+        let typ = resolved.typ.clone();
         let grow = !self.growth.vectors[state_id].reserved;
         let mut input = None;
         if self.layouts.owning_elements(&typ)
@@ -385,10 +415,9 @@ impl Analysis<'_> {
             }
             let state = self.growth.vectors[state_id].clone();
             let capacity = state.capacity.clone();
-            let TypX::Datatype(_, types, _) = &*typ else { unreachable!() };
             // Read the current logical length at the push, so ordinary branches,
             // preconditions and loop invariants can establish available room.
-            let len = length(&expr.span, types.clone(), vector.clone());
+            let len = resolved.length.clone();
             let element_length = len.clone();
             if state.append_only || state.local_constructor {
                 self.growth.vectors[state_id].sequence_length = Some(len.clone());
@@ -416,7 +445,7 @@ impl Analysis<'_> {
                 allocation = Some(self.add_vector_slot(&expr.span, state_id, len)?);
             }
             if let Some(mut child) = child {
-                let (name, path) = super::paths::expr(receiver, &typ).unwrap();
+                let (name, path) = resolved.location.clone();
                 input = self.join_input(&expr.span, &(name.clone(), path.clone()), &mut child)?;
                 let mut elements = self
                     .heap
@@ -441,20 +470,20 @@ impl Analysis<'_> {
         {
             // Ownership-producing paths use extraction. A receiver-only effect
             // retains the aggregate conservatively and invalidates length bounds.
-            let (name, path) = super::paths::expr(receiver, &typ).unwrap();
+            let (name, path) = resolved.location.clone();
             self.forget_collection_length(&name, &path);
         } else if intrinsic == Some(ResourceIntrinsic::VecRemove) {
             let [_, index] = args.as_slice() else {
                 return Err(unsupported(&expr.span, "this vector removal"));
             };
             self.discard(index)?;
-            let (name, path) = super::paths::expr(receiver, &typ).unwrap();
+            let (name, path) = resolved.location.clone();
             self.forget_collection_length(&name, &path);
         } else if intrinsic == Some(ResourceIntrinsic::VecPop) {
             // Removing a scalar changes the sequence shape even though its
             // backing allocation is retained. Export that effect through leaf
             // helpers so an enclosing indexed loan observes the mutation.
-            let (name, path) = super::paths::expr(receiver, &typ).unwrap();
+            let (name, path) = resolved.location.clone();
             self.forget_collection_length(&name, &path);
         } else if index {
             if args.len() != 2 {
@@ -465,9 +494,10 @@ impl Analysis<'_> {
             return Err(unsupported(&expr.span, "this vector operation"));
         }
         if matches!(intrinsic, Some(ResourceIntrinsic::VecPop | ResourceIntrinsic::VecRemove)) {
-            self.remove_vector_slot(&expr.span, state_id, &typ, vector);
+            self.remove_vector_slot(&expr.span, state_id, resolved.length.clone());
         }
-        let location = super::paths::expr(receiver, &typ).expect("checked vector receiver");
+        self.advance_protected_vector(&expr.span, &resolved, intrinsic);
+        let location = resolved.location;
         let receiver = super::transfer::checked::Place {
             source: receiver.clone(),
             typ: typ.clone(),

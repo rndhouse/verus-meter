@@ -56,6 +56,25 @@ impl Analysis<'_> {
         // Enclosing storage and earlier peaks belong to the parent. Keep the
         // mode environment and call graph shared, since this is still its code.
         let parent = std::mem::replace(&mut self.storage, Accounting::new(contract_span, envelope));
+        self.storage.enter_section(&parent);
+        let mut synchronized = parent.holding_any();
+        crate::ast_visitor::expr_visitor_check(expr, &mut |_, value| {
+            if let ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), .. } = &value.x {
+                synchronized |= matches!(attrs.resource_intrinsic, Some(ResourceIntrinsic::Synchronization(op)) if op.acquisition_contract().is_some());
+            }
+            Ok::<(), VirErr>(())
+        })?;
+        let prefixes = if synchronized {
+            parent.section_prefixes(contract_span, |amount| {
+                if contracts::constant(&amount).is_some() {
+                    amount
+                } else {
+                    self.allocation_snapshot(contract_span, amount)
+                }
+            })
+        } else {
+            vec![]
+        };
         // An enclosing loop must not add its previous iteration's peak to a
         // child checkpoint: the child starts fresh each time it is entered.
         let parent_slots = self.slots.clone();
@@ -123,7 +142,9 @@ impl Analysis<'_> {
         );
         // The parent relies on the declared contract, including slack, rather
         // than the implementation's measured peak. Siblings reuse this allowance.
+        let allowance_start = self.storage.points().len();
         self.storage.section_allowance(contract_span, bound)?;
+        self.storage.compose_section_phases(&prefixes, &report, allowance_start);
         for edge in &mut self.flow.exits[first_exit..] {
             let local = std::mem::replace(&mut edge.state.storage, self.storage.clone());
             edge.state.storage.retain_section_storage(&local.into_live_storage(), &edge.span)?;

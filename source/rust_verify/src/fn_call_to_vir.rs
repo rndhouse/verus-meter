@@ -526,7 +526,15 @@ pub(crate) fn call_overloaded_method<'tcx>(
     let typ_args = mk_typ_args(bctx, trait_args, trait_fun_id, span)?;
     let impl_paths = get_impl_paths(bctx, trait_fun_id, trait_args, None, false, span)?;
     let call_target_attrs = vir::ast::CallTargetAttrs {
-        resource_intrinsic: None,
+        // The receiver adjustment is an executable access through this concrete
+        // guard, even when the user writes guard.push(...) without an explicit deref.
+        resource_intrinsic: crate::resource::memory::intrinsics::call(
+            tcx,
+            trait_fun_id,
+            None,
+            trait_args,
+        )
+        .filter(|op| matches!(op, vir::ast::ResourceIntrinsic::Synchronization(_))),
         autospec: autospec_usage,
         assume_external_allowed: false,
         const_var: false,

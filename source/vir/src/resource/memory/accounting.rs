@@ -9,6 +9,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 mod intervals;
+mod origins;
+pub(super) use origins::AllocationVisit;
+mod sections;
 mod transport;
 pub(super) use transport::SharedBackingCharges;
 
@@ -125,17 +128,20 @@ struct DynamicCharge {
     kind: MemoryKind,
     amount: Expr,
     original: Option<Expr>,
+    /// Source identities retained inside a conditionally charged shared backing.
+    owned: origins::FixedOrigins,
 }
 
 impl DynamicCharge {
     fn new(kind: MemoryKind, amount: Expr) -> Self {
-        Self { kind, amount, original: None }
+        Self { kind, amount, original: None, owned: Default::default() }
     }
 
     /// A branch join must preserve what a later collection can restore, even
     /// when two paths currently expose the same symbolic cost.
     fn same_state(&self, other: &Self) -> bool {
         self.kind == other.kind
+            && self.owned == other.owned
             && Arc::ptr_eq(&self.amount, &other.amount)
             && self.original.as_ref().map(Arc::as_ptr) == other.original.as_ref().map(Arc::as_ptr)
     }
@@ -153,6 +159,9 @@ impl DynamicCharge {
 
 #[derive(Clone, Default)]
 pub(super) struct Live {
+    /// Entry acquisitions of the immediately enclosing independently contracted section.
+    section_entry: Option<Arc<[super::synchronization::local::Interval]>>,
+    owned: origins::FixedOrigins,
     fixed: std::collections::BTreeMap<MemoryKind, u64>,
     /// Allocation identity fixes symbolic addition order across verifier runs.
     /// Hash iteration changes SMT term shape and can amplify metadata matching.
@@ -183,9 +192,14 @@ impl Live {
 
 #[derive(Clone)]
 pub(super) struct Point {
+    section_entry: Option<Arc<[super::synchronization::local::Interval]>>,
     pub(super) span: Span,
     pub(super) condition: super::synchronization::local::Condition,
     pub(super) cost: Footprint,
+    /// Fixed heap constructors individually charged on this reaching path.
+    pub(super) fixed_origins: std::collections::BTreeSet<origins::FixedOrigin>,
+    /// Identified dynamic backing and aggregate-forest charges on this path.
+    pub(super) allocations: std::collections::BTreeSet<u64>,
     pub(super) values: HashSet<u64>,
     pub(super) inputs: HashSet<usize>,
 }
@@ -245,6 +259,9 @@ impl Accounting {
         let mut paths = Vec::new();
         for parent in &self.paths {
             for local in other {
+                if local.section_entry.as_deref().is_some_and(|held| !parent.held.iter().eq(held)) {
+                    continue;
+                }
                 let mut path = parent.clone();
                 for (kind, amount) in &local.fixed {
                     let sum = path.fixed.entry(kind.clone()).or_default();
@@ -252,7 +269,8 @@ impl Accounting {
                         .checked_add(*amount)
                         .ok_or_else(|| unsupported(span, "storage totals exceeding u64"))?;
                 }
-                path.held.extend(local.held.iter().copied());
+                path.owned.extend(&local.owned);
+                path.held.clone_from(&local.held);
                 path.dynamic.extend(local.dynamic.clone());
                 path.values.extend(local.values.clone());
                 path.inputs.extend(local.inputs.iter().copied());
@@ -302,7 +320,9 @@ impl Accounting {
     pub(super) fn join_live(&mut self, other: &Self) -> Result<(), VirErr> {
         for path in &other.paths {
             if !self.paths.iter().any(|p| {
-                p.fixed == path.fixed
+                p.section_entry == path.section_entry
+                    && p.fixed == path.fixed
+                    && p.owned == path.owned
                     && p.values == path.values
                     && p.inputs == path.inputs
                     && p.held == path.held
@@ -539,6 +559,9 @@ impl Accounting {
                 held: path.held.iter().copied().collect(),
                 boundary,
             },
+            section_entry: path.section_entry.clone(),
+            fixed_origins: path.fixed_origins(),
+            allocations: path.dynamic.keys().copied().collect(),
             values: path.values.keys().copied().collect(),
             inputs: path.inputs.clone(),
         });

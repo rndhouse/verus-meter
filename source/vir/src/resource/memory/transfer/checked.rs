@@ -121,6 +121,8 @@ pub(in super::super) struct WorkerPublication {
 /// One executable ownership rule, with layout decisions supplied by accounting.
 #[derive(Clone)]
 pub(in super::super) enum Operation {
+    /// A compiler-resolved native dereference borrows this existing acquisition.
+    GuardBorrow { source: Expr, interval: super::super::synchronization::local::Interval },
     /// A proved-success Result extraction moves its release responsibility.
     GuardExtract { source: Expr },
     /// The protected root retains its constructor occurrence independently of moves.
@@ -304,6 +306,8 @@ pub(in super::super) struct Checked {
     pub(super) outputs: super::Origins<usize>,
     /// Caller-side lifetime mappings published after a template is committed.
     pub(in super::super) call_origins: HashMap<u64, CallOrigins>,
+    /// Constructor visits for fixed heap objects and logical vector backings.
+    pub(in super::super) allocation_visits: HashMap<u64, super::super::accounting::AllocationVisit>,
     /// Additional borrowed-input and operation-derived lifetime identities.
     regions: usize,
     /// Ordered writes let operation-local loans distinguish mutation from reads.
@@ -361,6 +365,16 @@ impl Checked {
                 return Err(super::super::model::unsupported(
                     span,
                     "an invalid synchronization occurrence binder",
+                ));
+            }
+        }
+        for operation in self.operations.values() {
+            if let Operation::GuardBorrow { interval, .. } = operation
+                && !intervals.contains(interval)
+            {
+                return Err(super::super::model::unsupported(
+                    span,
+                    "a protected borrow without its acquisition occurrence",
                 ));
             }
         }

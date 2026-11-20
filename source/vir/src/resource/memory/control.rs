@@ -252,11 +252,12 @@ impl Analysis<'_> {
         let mut result = self.flow.reachable.then_some(normal);
         let mut owner = self.result_owner.take();
         let edges = std::mem::take(&mut self.flow.exits);
-        for edge in edges {
+        for mut edge in edges {
             if edge.target != Target::Return {
                 return Err(unsupported(&edge.span, "an unresolved control-flow exit"));
             }
             if let Some(result) = &mut result {
+                edge.align_result_role(owner.as_ref())?;
                 self.join_exit(span, &edge.state)?;
                 result.merge(&edge.value);
                 owner = merge_result(span, owner, edge.owner)?;
@@ -268,6 +269,17 @@ impl Analysis<'_> {
         }
         self.result_owner = owner;
         Ok(result.unwrap_or_else(Value::unit))
+    }
+}
+
+impl Edge {
+    pub(super) fn align_result_role(&mut self, canonical: Option<&Owner>) -> Result<(), VirErr> {
+        if let (Some(current), Some(incoming)) = (canonical, self.owner.as_ref()) {
+            let mut roles = std::collections::BTreeMap::new();
+            current.align_fixed_roles(incoming, &mut roles);
+            self.state.storage.align_owned(&self.span, &roles)?;
+        }
+        Ok(())
     }
 }
 

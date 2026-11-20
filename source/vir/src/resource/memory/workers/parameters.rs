@@ -70,18 +70,21 @@ impl Analysis<'_> {
                 "a parameter join with owned or unknown outcome storage",
             ));
         }
-        let waiting = self.storage.live_expression(&source.span);
+        let waiting =
+            self.storage.worker_frame(&source.span, super::states::Phase::Waiting, |cost| cost);
         // Successful and failed outcomes are both possible. Here the error is
         // unit and the success payload is inline. The incoming worker's tag
         // is charged by the publisher, outside this helper's local frame.
         let bytes = self.layouts.size(success, &source.span)?;
-        let ready = waiting.add(
-            &source.span,
-            super::super::footprint::Footprint::charge(
-                super::super::footprint::MemoryKind::host_heap(),
-                super::super::contracts::literal(&source.span, bytes),
-            ),
-        );
+        let ready = self.storage.worker_frame(&source.span, super::states::Phase::Ready, |cost| {
+            cost.add(
+                &source.span,
+                super::super::footprint::Footprint::charge(
+                    super::super::footprint::MemoryKind::host_heap(),
+                    super::super::contracts::literal(&source.span, bytes),
+                ),
+            )
+        });
         let result = self.fresh_value(&source.span, &source.typ)?;
         self.release_owner(owner, &source.span);
         self.release_value(handle, &source.span);

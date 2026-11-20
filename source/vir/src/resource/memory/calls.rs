@@ -142,6 +142,7 @@ impl Analysis<'_> {
                 ids: [id].into_iter().collect(),
                 origins: [id].into_iter().collect(),
                 parameter: None,
+                synchronization_view: None,
                 environment: None,
             })
         };
@@ -265,7 +266,7 @@ impl Analysis<'_> {
             }
             return self.expression_value(value, &expr.span);
         }
-        if self.shared_borrow(expr)? {
+        if self.guard_access(expr)? || self.shared_borrow(expr)? {
             return Ok(0);
         }
         if let Some(bytes) = self.iterator_call(expr, destination)? {

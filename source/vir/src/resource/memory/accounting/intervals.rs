@@ -92,6 +92,33 @@ impl Accounting {
         self.record_live(span)
     }
 
+    /// Keep each caller path paired with its actual acquisitions. A spawned
+    /// body receives only the captured storage, never its publisher's held set.
+    pub(in super::super) fn worker_frame(
+        &mut self,
+        span: &Span,
+        phase: super::super::workers::states::Phase,
+        project: impl Fn(super::Footprint) -> super::Footprint,
+    ) -> super::Footprint {
+        if !self.holding_any() {
+            return project(self.live_expression(span));
+        }
+        let paths = self.paths.clone();
+        paths
+            .into_iter()
+            .map(|path| {
+                let cost = project(Self::path_expression(&path, span));
+                self.record_phase(span, cost.clone(), &path, Boundary::Worker(phase));
+                cost
+            })
+            .reduce(|left, right| left.maximum(span, right))
+            .expect("a held acquisition has a live path")
+    }
+
+    pub(in super::super) fn holds_interval(&self, interval: Interval) -> bool {
+        !self.paths.is_empty() && self.paths.iter().all(|path| path.held.contains(&interval))
+    }
+
     /// Narrow only at an executable result variant or a verified unwrap.
     pub(in super::super) fn select_interval(&mut self, interval: Interval, acquired: bool) -> bool {
         self.paths.retain(|path| path.held.contains(&interval) == acquired);

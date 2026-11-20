@@ -38,6 +38,15 @@ pub(in super::super) enum Owned {
     Attempt(Interval),
 }
 
+/// Source borrows are views only. A guard view and a payload view retain the
+/// same acquisition and never duplicate ownership or its storage.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in super::super) enum View {
+    Mutex(Instance),
+    Guard(Interval),
+    Payload(Interval),
+}
+
 impl Owned {
     pub(in super::super) fn interval(self) -> Option<Interval> {
         match self {
@@ -58,6 +67,8 @@ pub(in super::super) enum Boundary {
     Release(Interval),
     /// Complete pre-cleanup storage under every source-permitted field order.
     UnorderedCleanup,
+    /// The caller owns its acquisitions at this native spawn or join.
+    Worker(super::super::workers::states::Phase),
 }
 
 #[derive(Clone, Default)]
@@ -95,46 +106,63 @@ impl Analysis<'_> {
                 "a synchronization site without its local loop occurrence",
             ));
         }
-        let mut coordinates = self
-            .current_worker
-            .and_then(|actor| self.growth.worker_occurrences.get(&actor))
-            .cloned()
-            .unwrap_or_default();
-        coordinates.extend(local);
+        let coordinates = self.actor_coordinates(local);
         Ok(Occurrence { site: site.clone(), actor: self.current_worker, coordinates })
     }
 
-    fn mutex_receiver(&self, argument: &Expr) -> Option<Instance> {
-        match &argument.x {
-            ExprX::ReadPlace(place, _) => {
-                let typ = paths::referent(&place.typ);
-                if let Some((name, path)) = paths::place(place, typ)
-                    && let Some(owner) = self.heap.root(&name).and_then(|root| root.at(&path))
-                {
-                    if self.layouts.mutex_payload(typ).is_some() {
-                        return owner.mutex_instance();
-                    }
-                    if let TypX::Decorate(TypDecoration::Arc, _, payload) = &**typ
-                        && self.layouts.mutex_payload(payload).is_some()
-                    {
-                        return self.heap.shared.mutex_instance(owner.shared?);
-                    }
-                }
-                // Autoderef can retain the borrowed Arc as the operand of a
-                // temporary reference. Follow that borrow to its canonical root.
-                if let PlaceX::Temporary(value) = &place.x {
-                    return self.mutex_receiver(value);
-                }
-                None
-            }
-            ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), args, .. }
-                if attrs.resource_intrinsic
-                    == Some(ResourceIntrinsic::Concurrency(
-                        super::super::concurrency::Operation::ArcBorrow,
-                    )) =>
+    /// Resolve a reference to an already known mutex. Stored references retain
+    /// identity but never take ownership of the acquisition or protected bytes.
+    pub(in super::super) fn synchronization_place(&self, place: &Place) -> Option<View> {
+        let typ = paths::referent(&place.typ);
+        if let Some((name, path)) = paths::place(place, typ) {
+            if path.is_empty()
+                && let Some(view) = self.slots.get(&name).and_then(|v| v.synchronization_view)
             {
+                return Some(view);
+            }
+            if let Some(owner) = self.heap.root(&name).and_then(|root| root.at(&path)) {
+                match owner.synchronization {
+                    Some(Owned::Mutex(instance)) => return Some(View::Mutex(instance)),
+                    Some(Owned::Guard(interval)) if self.layouts.guard_owner(typ) => {
+                        return Some(View::Guard(interval));
+                    }
+                    _ => {}
+                }
+                if let TypX::Decorate(TypDecoration::Arc, _, payload) = &**typ
+                    && self.layouts.mutex_payload(payload).is_some()
+                {
+                    return self.heap.shared.mutex_instance(owner.shared?).map(View::Mutex);
+                }
+            }
+        }
+        match &place.x {
+            PlaceX::Temporary(value) => self.synchronization_view(value),
+            PlaceX::DerefMut(base) => self.synchronization_place(base),
+            _ => None,
+        }
+    }
+
+    pub(in super::super) fn synchronization_view(&self, argument: &Expr) -> Option<View> {
+        match &argument.x {
+            ExprX::ReadPlace(place, _)
+            | ExprX::BorrowMut(place)
+            | ExprX::TwoPhaseBorrowMut(place) => self.synchronization_place(place),
+            ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), args, .. } => {
                 let [source] = args.as_slice() else { return None };
-                self.mutex_receiver(source)
+                match attrs.resource_intrinsic {
+                    Some(ResourceIntrinsic::Concurrency(
+                        super::super::concurrency::Operation::ArcBorrow,
+                    )) => self.synchronization_view(source),
+                    Some(ResourceIntrinsic::Synchronization(
+                        Operation::GuardBorrow | Operation::GuardBorrowMut,
+                    )) => {
+                        let View::Guard(interval) = self.synchronization_view(source)? else {
+                            return None;
+                        };
+                        Some(View::Payload(interval))
+                    }
+                    _ => None,
+                }
             }
             _ => None,
         }
@@ -179,6 +207,7 @@ impl Analysis<'_> {
                         unsupported(&expr.span, "mutex construction without its payload ownership")
                     })?;
                     self.freeze_owner_geometry(argument, &mut child);
+                    self.protect_vector_length(argument, &mut child);
                     owner.children.insert(OwnerSlot::Contents, child);
                     Some(OwnerSlot::Contents)
                 } else {
@@ -197,9 +226,9 @@ impl Analysis<'_> {
                 Ok(Some(owner))
             }
             Operation::MutexLock | Operation::MutexTryLock => {
-                let instance = self.mutex_receiver(argument).ok_or_else(|| {
-                    unsupported(&expr.span, "a lock without a checked mutex instance")
-                })?;
+                let Some(View::Mutex(instance)) = self.synchronization_view(argument) else {
+                    return Err(unsupported(&expr.span, "a lock without a checked mutex instance"));
+                };
                 self.discard(argument)?;
                 let interval =
                     Interval { instance, acquisition: Acquisition(Accounting::fresh_allocation()) };
@@ -237,7 +266,7 @@ impl crate::resource::memory::accounting::Point {
             Boundary::Wait(interval)
             | Boundary::Attempt(interval)
             | Boundary::Release(interval) => Some(interval),
-            Boundary::Live | Boundary::UnorderedCleanup => None,
+            Boundary::Live | Boundary::UnorderedCleanup | Boundary::Worker(_) => None,
         };
         if changed.is_some_and(|interval| self.condition.held.contains(&interval))
             || self
@@ -268,6 +297,7 @@ impl Condition {
             Boundary::Wait(_) => "while waiting for the mutex",
             Boundary::Release(_) => "at mutex release",
             Boundary::UnorderedCleanup => "during unordered capture or aggregate cleanup",
+            Boundary::Worker(phase) => phase.description(),
             Boundary::Live => return None,
         };
         let cost = crate::resource::memory::contracts::constant(&footprint.total())

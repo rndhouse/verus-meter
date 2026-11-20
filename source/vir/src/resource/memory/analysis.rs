@@ -19,8 +19,8 @@ pub(super) struct FunctionAnalysis {
     /// unavailable. A helper can expose its local ownership transformation
     /// to checked callers while this error prevents crate verification.
     pub(super) incomplete: Option<VirErr>,
-    /// Executed direct call sites cross-checked against the canonical graph.
-    pub(super) calls: Vec<(Fun, Span)>,
+    /// Local actor effects exist even when no general call summary is admissible.
+    pub(super) effects: std::sync::Arc<super::summary::BodyEffects>,
     /// Declared bound when it must be proved as a formula rather than a constant.
     pub(super) symbolic_bound: Option<Expr>,
     /// Memory inequalities to assert at their original execution sites.
@@ -330,6 +330,18 @@ impl Analysis<'_> {
                         if !self.flow.reachable {
                             break 'statement;
                         }
+                        let mut value = value;
+                        // A mutable reference slot can be rewritten through another
+                        // borrow. Only immutable bindings may keep an identity view.
+                        if binding.user_mut != Some(false)
+                            || matches!(&*binding.typ, TypX::MutRef(_))
+                                && !matches!(
+                                    value.synchronization_view,
+                                    Some(super::synchronization::local::View::Payload(_))
+                                )
+                        {
+                            value.synchronization_view = None;
+                        }
                         self.slots.insert(binding.name.clone(), value);
                         if self.layouts.owner(&binding.typ) {
                             owned_locals.push(binding.name.clone());
@@ -600,6 +612,11 @@ impl Analysis<'_> {
                     } else {
                         self.initialize_expr(rhs)?;
                     }
+                    // A late initialization or later write cannot preserve an
+                    // immutable view from the previous value of this slot.
+                    if let Some(slot) = self.slots.get_mut(name) {
+                        slot.synchronization_view = None;
+                    }
                 } else {
                     self.initialize_expr(rhs)?;
                 }
@@ -821,6 +838,14 @@ pub(super) fn check(
     let result = analysis.produce(body)?;
     analysis.check_indexed_exits(&body.span);
     let result = analysis.finish_returns(&function.span, result)?;
+    if analysis.storage.holding_any() {
+        // Acquisitions in supported function interfaces must end here. General
+        // guard-return summaries will need an explicit outgoing binder.
+        return Err(unsupported(
+            &function.span,
+            "an acquisition surviving without a checked outgoing guard",
+        ));
+    }
     if !analysis.heap.temporaries.is_empty() || !analysis.evaluations.is_empty() {
         return Err(unsupported(&function.span, "unclosed compiler receiver-temporary scopes"));
     }
@@ -887,11 +912,18 @@ pub(super) fn check(
                 bound: super::footprint::MemoryBudget::total(analysis.bound.clone()),
                 kind: CheckKind::Function,
             }));
+            let effects = super::summary::BodyEffects::from_accounting(
+                body.clone(),
+                analysis.transitions,
+                &report,
+                analysis.calls,
+                None,
+            )?;
             return Ok(Some(FunctionAnalysis {
                 report,
                 summary: None,
                 incomplete: Some(error.clone()),
-                calls: analysis.calls,
+                effects,
                 symbolic_bound,
                 obligations: analysis.obligations,
                 checks: analysis.checks,
@@ -1051,15 +1083,15 @@ pub(super) fn check(
         },
     };
     let mut summary = summary;
-    let effects = super::summary::BodyEffects {
-        body: body.clone(),
-        ownership: analysis.transitions,
-        points: report.points.clone(),
-        calls: analysis.calls.clone(),
-    };
-    effects.validate_intervals(None)?;
+    let effects = super::summary::BodyEffects::from_accounting(
+        body.clone(),
+        analysis.transitions,
+        &report,
+        analysis.calls,
+        None,
+    )?;
     let summary_has_lock = effects.ownership.locks_mutex();
-    summary.effects = Some(std::sync::Arc::new(effects));
+    summary.effects = Some(effects.clone());
     super::transfer::validate(function, layouts, &summary)?;
     Ok(Some(FunctionAnalysis {
         report,
@@ -1074,7 +1106,7 @@ pub(super) fn check(
                 worker_parameter.map(|_| super::workers::parameter_domain_error(&function.span))
             }
         }),
-        calls: analysis.calls,
+        effects,
         symbolic_bound,
         obligations: analysis.obligations,
         checks: analysis.checks,

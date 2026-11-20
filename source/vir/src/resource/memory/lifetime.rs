@@ -13,6 +13,8 @@ pub(super) struct Value {
     pub(super) ids: std::collections::HashSet<u64>,
     // Origins identify earlier points where this same value already existed.
     pub(super) parameter: Option<usize>,
+    /// Identity behind an immutable reference binding, when it agrees on every path.
+    pub(super) synchronization_view: Option<super::synchronization::local::View>,
     /// Capture inputs from the actual closure construction, preserved by copies
     /// and moves. Absence never authorizes rereading the parent's variables.
     pub(super) environment: Option<super::closures::observations::EnvironmentId>,
@@ -51,6 +53,7 @@ impl Value {
             origins: Default::default(),
             ids: Default::default(),
             parameter: None,
+            synchronization_view: None,
             environment: None,
         }
     }
@@ -72,6 +75,7 @@ impl Analysis<'_> {
             origins: [id].into_iter().collect(),
             ids: [id].into_iter().collect(),
             parameter: None,
+            synchronization_view: None,
             environment: None,
         })
     }
@@ -132,6 +136,9 @@ impl Analysis<'_> {
         let environment = self.copied_environment(place, typ)?;
         let mut value = self.fresh_value(span, typ)?;
         value.environment = environment;
+        if matches!(&**typ, TypX::Decorate(TypDecoration::Ref, _, _) | TypX::MutRef(_)) {
+            value.synchronization_view = self.synchronization_place(place);
+        }
         self.initialize(place, typ)?;
         Ok(value)
     }
@@ -154,7 +161,16 @@ impl Analysis<'_> {
 
     pub(super) fn produce(&mut self, expr: &Expr) -> Result<Value, VirErr> {
         let evaluation = self.enter_temporary_scope(expr.span.id);
-        let result = self.produce_inner(expr)?;
+        let view = match &*expr.typ {
+            TypX::MutRef(_) | TypX::Decorate(TypDecoration::Ref, _, _) => {
+                self.synchronization_view(expr)
+            }
+            _ => None,
+        };
+        let mut result = self.produce_inner(expr)?;
+        if view.is_some() {
+            result.synchronization_view = view;
+        }
         self.finish_temporary_scope(evaluation);
         Ok(result)
     }
@@ -194,6 +210,7 @@ impl Analysis<'_> {
                 origins: Default::default(),
                 ids: Default::default(),
                 parameter: None,
+                synchronization_view: None,
                 environment: None,
             });
         }
@@ -309,6 +326,9 @@ impl Value {
         self.ids.extend(other.ids.iter().copied());
         self.origins.retain(|id| other.origins.contains(id));
         self.origins.extend(self.ids.iter().copied());
+        if self.synchronization_view != other.synchronization_view {
+            self.synchronization_view = None;
+        }
         if self.parameter != other.parameter {
             self.parameter = None;
         }
@@ -347,7 +367,19 @@ impl Analysis<'_> {
                 "branch-dependent shared roots or outstanding worker ownership",
             ));
         }
-        self.storage.join_live(&state.storage)?;
+        let mut roles = std::collections::BTreeMap::new();
+        for (name, old) in state.heap.owners.iter().chain(&state.heap.borrowed) {
+            if let Some(current) = self.heap.root(name) {
+                current.align_fixed_roles(old, &mut roles);
+            }
+        }
+        if roles.is_empty() {
+            self.storage.join_live(&state.storage)?;
+        } else {
+            let mut incoming = state.storage.clone();
+            incoming.align_owned(span, &roles)?;
+            self.storage.join_live(&incoming)?;
+        }
         let mut peak = self.storage.peak();
         peak.merge(&state.storage.peak());
         self.storage.set_peak(peak);

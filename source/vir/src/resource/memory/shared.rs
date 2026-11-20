@@ -813,15 +813,19 @@ impl Analysis<'_> {
                     .ok_or_else(|| {
                         unsupported(&expr.span, "shared backing storage exceeding u64")
                     })?;
-            self.storage.reserve(
+            let fixed_role = self.storage.reserve_owned(
                 &expr.span,
                 super::footprint::MemoryKind::host_heap(),
                 bytes,
                 "shared backing and inline payload",
             )?;
+            if let Some(id) = fixed_role {
+                self.bind_allocation(&expr.span, id)?;
+            }
             self.initialize_expr(argument)?;
             let mut storage = Owner {
                 bytes,
+                fixed_role,
                 extent: Some(super::contracts::literal(&expr.span, bytes)),
                 ..Default::default()
             };
@@ -835,12 +839,7 @@ impl Analysis<'_> {
             }
             let handle = self.heap.shared.insert(storage);
             let root = handle.shared.and_then(StrongLink::known).expect("new strong owner");
-            let mut coordinates = self
-                .current_worker
-                .and_then(|actor| self.growth.worker_occurrences.get(&actor))
-                .cloned()
-                .unwrap_or_default();
-            coordinates.extend(self.local_occurrences(&expr.span)?);
+            let coordinates = self.actor_coordinates(self.local_occurrences(&expr.span)?);
             if !coordinates.is_empty() {
                 let identity = root.occurrence(&expr.span, &coordinates);
                 let identity = self.freeze_shared_identity(&expr.span, identity, true);
