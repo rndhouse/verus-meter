@@ -2,7 +2,7 @@
 //!
 //! Exclusion is supplied by a reviewed primitive contract or (eventually) a
 //! checked protocol certificate. It never releases allocation charges. This
-//! module deliberately has no operation that changes allocation accounting.
+//! module transports existing payload charges when ownership crosses an actor boundary.
 //! The standard contract targets the pinned Rust 1.99.1 library and assumes its
 //! mutex/guard semantics and Rust ownership/Send checks. Acquire may block and
 //! poison outcomes retain guards; neither success nor a user invariant is assumed.
@@ -18,6 +18,7 @@ pub(super) mod local;
 pub(super) mod parameters;
 mod patterns;
 mod payload;
+pub(super) mod versions;
 
 /// Compiler-identified synchronization operations, independent of source names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToDebugSNode)]

@@ -76,6 +76,7 @@ impl Analysis<'_> {
                 .chain(self.growth.occurrence_peers.keys())
                 .chain(self.growth.peer_results.keys())
                 .copied()
+                .chain(self.growth.versioned_shared.keys().copied())
                 .collect();
             self.heap.shared.take_exclusive_protected(
                 &mut entry.shared,

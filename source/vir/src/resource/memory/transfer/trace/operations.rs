@@ -197,12 +197,25 @@ impl Trace<'_> {
             }
             Operation::StrongTake { source, root } => {
                 self.value(&source)?;
-                let child = self.shared_payloads.get(&root)?.clone();
+                let child = if self
+                    .layouts
+                    .mutex_payload(self.layouts.option_payload(&value.typ, span).ok()?)
+                    .is_some_and(|t| self.layouts.owner(t))
+                {
+                    self.state.values.remove(&root.binder())?
+                } else {
+                    self.shared_payloads.get(&root)?.clone()
+                };
                 Some(self.wrapped_owner(value, child, 0, 1))
             }
             Operation::StrongNew { payload, root, coordinates } => {
                 let child = self.value(&payload)?;
-                if coordinates.is_empty()
+                if self.layouts.mutex_payload(&payload.typ).is_some_and(|t| self.layouts.owner(t)) {
+                    // A later guard can replace this forest before unique
+                    // extraction. Branches and early returns carry its current
+                    // binding just like the other executable owners.
+                    self.state.values.insert(root.binder(), child);
+                } else if coordinates.is_empty()
                     || self.layouts.join_handle(&payload.typ).is_some()
                     || matches!(&*payload.typ, TypX::Decorate(TypDecoration::Arc, _, _))
                 {

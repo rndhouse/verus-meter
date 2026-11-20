@@ -5,6 +5,7 @@ mod helpers;
 mod lifetimes;
 mod mutex;
 mod payload;
+mod shared_payloads;
 
 #[test]
 fn opaque_sizes_are_source_model_values() {

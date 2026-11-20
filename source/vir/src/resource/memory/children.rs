@@ -99,6 +99,11 @@ impl Analysis<'_> {
                     "a changed guard view at protected assignment",
                 ));
             };
+            // Evaluate the native dereference at its executable expression.
+            // The place itself has no proof insertion site.
+            let replacement = self.result_owner.take();
+            self.access(place, typ)?;
+            self.result_owner = replacement;
             Some(self.local_payload(interval, &place.span)?)
         } else {
             None
@@ -156,7 +161,6 @@ impl Analysis<'_> {
         if through_guard {
             // The RHS is already live before the protected place is evaluated.
             // Acquiring the view never frees the displaced payload.
-            self.access(place, typ)?;
             self.freeze_owner_geometry(rhs, &mut child);
             self.protect_vector_length(rhs, &mut child);
         } else {

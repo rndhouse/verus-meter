@@ -58,6 +58,8 @@ impl Analysis<'_> {
                 "a protected borrow outside its live acquisition",
             ));
         }
+        let payload = paths::referent(&argument.typ);
+        self.open_imported_payload(interval, payload, &argument.span)?;
         self.discard(guard)?;
         self.transitions.operation(
             &argument.span,
@@ -96,7 +98,8 @@ impl Analysis<'_> {
             });
         }
         if let Some((root, name)) = self.heap.shared.protected_root(instance) {
-            if self.heap.workers.shares_root(root)
+            if self.growth.versioned_shared.contains_key(&root)
+                || self.heap.workers.shares_root(root)
                 || self.growth.section_shared.contains(&root)
                 || self.growth.indexed_shared.contains_key(&root)
                 || self.growth.occurrence_peers.contains_key(&root)
@@ -141,6 +144,11 @@ impl Analysis<'_> {
         let Some(View::Payload(interval)) = self.synchronization_view(argument) else {
             return Ok(None);
         };
+        // Collection updates snapshot their pre-state at the operation. Bind
+        // the live guard's input there before computing length or child bytes.
+        // The receiver's native dereference below reuses the same acquisition.
+        let typ = paths::referent(&argument.typ);
+        self.open_imported_payload(interval, typ, site)?;
         match &argument.x {
             ExprX::BorrowMut(place)
             | ExprX::TwoPhaseBorrowMut(place)
@@ -151,7 +159,6 @@ impl Analysis<'_> {
                 self.discard(argument)?;
             }
         }
-        let typ = paths::referent(&argument.typ);
         let location = self.local_payload(interval, &argument.span)?;
         let (state, counter) = self
             .heap

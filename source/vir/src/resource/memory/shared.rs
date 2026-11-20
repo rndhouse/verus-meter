@@ -23,6 +23,15 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) struct RootId(u64);
 
 impl RootId {
+    /// Private ownership place for this allocation. All strong aliases resolve
+    /// to the same place, including during ownership-template inference.
+    pub(super) fn binder(self) -> VarIdent {
+        VarIdent(
+            std::sync::Arc::new("$memory_arc_backing".into()),
+            VarIdentDisambiguate::VirTemp(self.0),
+        )
+    }
+
     /// A link at a fixed ownership path. Only the canonical backing owns bytes.
     pub(super) fn record(self, span: &Span, path: Expr) -> Expr {
         use super::metadata::expr;
@@ -126,6 +135,8 @@ struct Root {
     /// Immutable mutex identity of a direct protected payload, shared with
     /// importing workers independently of the domain charged for the bytes.
     mutex: Option<super::synchronization::Instance>,
+    /// The Rust payload type at Arc::new, used to check a later guard view.
+    protected_type: Option<Typ>,
     /// Live strong handles in this accounting domain, not historical clones.
     /// An imported view counts only the handles transferred into that view.
     strong: u64,
@@ -139,7 +150,7 @@ impl Root {
     fn owned(storage: Owner) -> Self {
         let mutex =
             storage.children.get(&OwnerSlot::Contents).and_then(|child| child.mutex_instance());
-        Self { strong: 1, mutex, storage: Backing::Owned(Box::new(storage)) }
+        Self { strong: 1, mutex, protected_type: None, storage: Backing::Owned(Box::new(storage)) }
     }
 }
 
@@ -311,6 +322,33 @@ impl SharedRoots {
         self.roots.get(&link.known()?)?.mutex
     }
 
+    /// The worker has a strong handle but the bytes belong to its publisher.
+    pub(super) fn imported_mutex(
+        &self,
+        instance: super::synchronization::Instance,
+        payload: &Typ,
+        site: &Span,
+    ) -> Result<Option<RootId>, VirErr> {
+        let mut matches = self.roots.iter().filter(|(_, root)| {
+            root.mutex == Some(instance)
+                && root.strong > 0
+                && matches!(root.storage, Backing::Imported { .. })
+        });
+        let Some((&id, root)) = matches.next() else { return Ok(None) };
+        if matches.next().is_some()
+            || !root
+                .protected_type
+                .as_ref()
+                .is_some_and(|typ| crate::ast_util::types_equal(typ, payload))
+        {
+            return Err(unsupported(
+                site,
+                "a guard view inconsistent with its captured mutex payload",
+            ));
+        }
+        Ok(Some(id))
+    }
+
     /// Direct payload moved into the executable Arc constructor in this domain.
     pub(super) fn payload(&self, id: RootId) -> Option<&Owner> {
         let Backing::Owned(backing) = &self.roots.get(&id)?.storage else { return None };
@@ -324,19 +362,12 @@ impl SharedRoots {
         instance: super::synchronization::Instance,
     ) -> Option<(RootId, VarIdent)> {
         self.roots.iter().find_map(|(&id, root)| {
-            (root.mutex == Some(instance) && matches!(root.storage, Backing::Owned(_))).then(|| {
-                (
-                    id,
-                    VarIdent(
-                        std::sync::Arc::new("$memory_arc_backing".into()),
-                        VarIdentDisambiguate::VirTemp(id.0),
-                    ),
-                )
-            })
+            (root.mutex == Some(instance) && matches!(root.storage, Backing::Owned(_)))
+                .then(|| (id, id.binder()))
         })
     }
 
-    fn root_binder(name: &VarIdent) -> Option<RootId> {
+    pub(super) fn root_binder(name: &VarIdent) -> Option<RootId> {
         if name.0.as_str() == "$memory_arc_backing"
             && let VarIdentDisambiguate::VirTemp(id) = name.1
         {
@@ -727,6 +758,7 @@ impl SharedRoots {
                     Root {
                         strong,
                         mutex: enclosing.roots[&id].mutex,
+                        protected_type: enclosing.roots[&id].protected_type.clone(),
                         storage: Backing::Imported { entry: strong },
                     },
                 );
@@ -756,6 +788,11 @@ impl SharedRoots {
                 other.roots.get(id).is_some_and(|other| {
                     root.strong == other.strong
                         && root.mutex == other.mutex
+                        && match (&root.protected_type, &other.protected_type) {
+                            (Some(a), Some(b)) => crate::ast_util::types_equal(a, b),
+                            (None, None) => true,
+                            _ => false,
+                        }
                         && match (&root.storage, &other.storage) {
                             (Backing::Owned(a), Backing::Owned(b)) => {
                                 super::control::compatible(a, b)
@@ -923,6 +960,8 @@ impl Analysis<'_> {
             }
             let handle = self.heap.shared.insert(storage);
             let root = handle.shared.and_then(StrongLink::known).expect("new strong owner");
+            self.heap.shared.roots.get_mut(&root).unwrap().protected_type =
+                self.layouts.mutex_payload(payload).cloned();
             let coordinates = self.actor_coordinates(self.local_occurrences(&expr.span)?);
             if !coordinates.is_empty() {
                 let identity = root.occurrence(&expr.span, &coordinates);

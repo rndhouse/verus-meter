@@ -33,6 +33,7 @@ impl Analysis<'_> {
             .summaries
             .get(target)
             .ok_or_else(|| unsupported(&expr.span, "a call without a checked function summary"))?;
+        self.open_guard_arguments(callee, args, &expr.span)?;
         let call_scalars = self.allocation_scalars();
         let transfer = self.prepare_transfer_call(expr, callee, args)?;
         self.check_vector_call(expr, callee, args)?;
@@ -191,6 +192,7 @@ impl Analysis<'_> {
             .and_then(|call| summary.synchronized_result.map(|owner| call.result(owner)));
         if let Some(call) = &synchronization {
             self.storage.commit_call_intervals(c, call, result_sync)?;
+            self.publish_consumed_payloads(call, result_sync, c)?;
         }
         let mut replaced_inputs = Vec::new();
         if let Some(transfer) = transfer {

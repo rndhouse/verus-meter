@@ -65,6 +65,12 @@ pub(in super::super) struct Execution {
 }
 
 impl Execution {
+    pub(in super::super) fn versioned_roots(
+        &self,
+    ) -> impl Iterator<Item = super::super::shared::RootId> + '_ {
+        self.effects.ownership.protected_versions.roots()
+    }
+
     pub(in super::super) fn shared_checkpoints(
         &self,
     ) -> &[super::super::shared::phases::Checkpoint] {
@@ -77,7 +83,7 @@ impl Analysis<'_> {
     /// effects. Structurally valid local executions do not establish an envelope
     /// over simultaneous worker states or synchronization containment.
     pub(in super::super) fn check_worker_domain(
-        &self,
+        &mut self,
         span: &Span,
     ) -> Result<Option<VirErr>, VirErr> {
         if self.growth.worker_executions.is_empty() {
@@ -129,6 +135,26 @@ impl Analysis<'_> {
             {
                 return Err(unsupported(span, "inconsistent worker entry proof bindings"));
             }
+        }
+        for checkpoint in std::mem::take(&mut self.growth.protected_checkpoints) {
+            checkpoint.resolve_publication(self)?;
+        }
+        let versions: Vec<_> = self
+            .growth
+            .worker_executions
+            .values()
+            .flat_map(|worker| worker.versioned_roots())
+            .collect();
+        if !versions.is_empty() {
+            let count = versions.len();
+            let roots: std::collections::BTreeSet<_> = versions.into_iter().collect();
+            return Ok(Some(unsupported(
+                span,
+                &format!(
+                    "shared payload state composition (checked acquisitions = {count}, distinct mutexes = {})",
+                    roots.len()
+                ),
+            )));
         }
         Ok(Some(unsupported(
             span,
@@ -391,6 +417,13 @@ impl Analysis<'_> {
         if !worker.heap.owners.is_empty() || !worker.slots.is_empty() {
             return Err(unsupported(span, "worker completion with unaccounted local storage"));
         }
+        worker.transitions.protected_versions.validate(
+            actor,
+            &entry_descriptor.shared,
+            &worker.heap,
+            &worker.storage,
+            span,
+        )?;
         worker.check_checkpoints()?;
         let transfer_required = super::super::transfer::requires_summary(
             &signature,

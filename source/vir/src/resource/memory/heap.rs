@@ -695,6 +695,7 @@ impl Analysis<'_> {
         if let Some(interval) =
             owner.synchronization.and_then(super::synchronization::local::Owned::interval)
         {
+            self.publish_imported_payload(interval, span, proofs);
             self.storage.release_interval(span, interval);
         }
         if owner.selected_worker.is_some() {

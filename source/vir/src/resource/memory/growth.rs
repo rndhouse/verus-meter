@@ -51,6 +51,13 @@ pub(super) struct VectorState {
 
 #[derive(Default)]
 pub(super) struct Growth {
+    /// Roots whose contents have been supplied by an acquisition-relative
+    /// worker input. A fixed total follows from the payload type on every
+    /// acquisition. Dynamic contents require a state observation for pricing.
+    pub(super) versioned_shared: std::collections::BTreeMap<super::shared::RootId, Option<u64>>,
+    /// A peer running at a checkpoint can be published later in source order.
+    /// Resolve these observations when all checked workers are known.
+    pub(super) protected_checkpoints: Vec<super::shared::phases::Checkpoint>,
     /// Source-derived outstanding strong claims on coordinator-owned backing.
     pub(super) indexed_shared:
         std::collections::BTreeMap<super::shared::RootId, super::workers::Claims>,

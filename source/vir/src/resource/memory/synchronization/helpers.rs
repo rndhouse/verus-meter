@@ -34,6 +34,8 @@ pub(in super::super) struct Call {
     borrowed: BTreeSet<Interval>,
     /// Residual disjointness requirements on the caller's own formal inputs.
     pub(in super::super) distinct_inputs: BTreeSet<(usize, usize)>,
+    /// Actual acquisitions through which the body or a nested call accessed protected data.
+    pub(in super::super) payload_borrows: BTreeSet<Interval>,
     /// The native operation permits a non-acquiring result on these intervals.
     attempts: BTreeSet<Interval>,
 }
@@ -65,6 +67,7 @@ impl Call {
             borrowed: BTreeSet::new(),
             distinct_inputs: BTreeSet::new(),
             attempts: BTreeSet::new(),
+            payload_borrows: BTreeSet::new(),
         };
         for (&index, &(parameter, formal)) in &inputs.0 {
             let actual = match parameter {
@@ -134,6 +137,12 @@ impl Call {
                     call.attempts.insert(interval);
                 }
             }
+        }
+        for formal in effects.ownership.payload_borrows() {
+            let actual = call.intervals.get(&formal).ok_or_else(|| {
+                unsupported(&expr.span, "a protected helper access without its acquisition")
+            })?;
+            call.payload_borrows.insert(*actual);
         }
         if let Some(Owned::Mutex(instance)) = summary.synchronized_result {
             call.instance(instance, &expr.span)?;

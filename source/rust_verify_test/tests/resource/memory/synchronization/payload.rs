@@ -111,28 +111,6 @@ fn replacing_the_protected_box_keeps_the_old_box_live_through_construction() {
 }
 
 #[test]
-fn a_worker_cannot_treat_shared_vector_geometry_as_actor_local() {
-    rejects(
-        "shared_guarded_vector_requires_an_interference_summary",
-        r#"
-        fn f() resources peak(memory) <= 2000 {
-            let m = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
-            let peer = std::sync::Arc::clone(&m);
-            let child = std::thread::spawn(move || {
-                let result = peer.lock();
-                if result.is_err() { return; }
-                let mut guard = result.unwrap();
-                guard.push(1u8);
-            });
-            let done = child.join();
-            drop(m);
-        }
-    "#,
-        "without a unique local protected payload",
-    );
-}
-
-#[test]
 fn two_strong_aliases_update_one_persistent_protected_vector() {
     let program = r#"
         fn f() resources peak(memory) <= 1000 {

@@ -55,6 +55,13 @@ impl Trace<'_> {
     /// Combine an authoritative owner path with its traced runtime indices.
     pub(super) fn checked_location(&mut self, place: &checked::Place) -> Option<Location> {
         let (name, path) = &place.location;
+        // Accounting starts at the Arc backing. The ownership template stores
+        // its payload directly, so cross exactly the backing-to-payload edge.
+        let path = if crate::resource::memory::shared::SharedRoots::root_binder(name).is_some() {
+            path.strip_prefix(&[OwnerSlot::Contents])?
+        } else {
+            path.as_slice()
+        };
         let mut indices = HashMap::new();
         self.indices_expr(&place.source, &mut indices)?;
         let expressions = path
@@ -64,7 +71,7 @@ impl Trace<'_> {
                 _ => Some(expr::integer(&place.source.span, self.layouts.metadata_slot(slot))),
             })
             .collect::<Option<Vec<_>>>()?;
-        Some((name.clone(), path.clone(), expressions))
+        Some((name.clone(), path.to_vec(), expressions))
     }
 
     /// Build a finite metadata path from evaluated ownership steps.

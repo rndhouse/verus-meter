@@ -26,6 +26,12 @@ impl Analysis<'_> {
             .ok_or_else(|| {
                 unsupported(span, "extracting a shared payload without a known allocation")
             })?;
+        if self.growth.versioned_shared.contains_key(&root) {
+            return Err(unsupported(
+                span,
+                "extracting a protected payload before composing its worker updates",
+            ));
+        }
         if !(self.transitions.owns_fixed_root(root) || self.transitions.recovered_payload(root))
             || self.growth.section_shared.contains(&root)
             || self.growth.peer_results.contains_key(&root)

@@ -153,6 +153,12 @@ impl Analysis<'_> {
         let mut carried = None;
         let single = imports.len() == 1;
         for (root, count, backing) in imports {
+            if self.growth.versioned_shared.contains_key(&root) {
+                return Err(unsupported(
+                    span,
+                    "indexing shared backing before composing its worker updates",
+                ));
+            }
             if let Some(role) = self.growth.peer_results.get(&root).cloned() {
                 if !single || self.heap.shared.has_strong(root) {
                     return Err(unsupported(

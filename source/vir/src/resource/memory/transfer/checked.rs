@@ -156,7 +156,7 @@ pub(in super::super) enum Operation {
     /// A body-local canonical allocation. Its identity may be used to prove
     /// internal observations but cannot escape as a caller-relative input.
     StrongNew { payload: Expr, root: super::super::shared::RootId, coordinates: Vec<(u64, Expr)> },
-    /// A unique strong handle yields the original payload of its checked constructor.
+    /// A unique strong handle yields the current contents of its checked allocation.
     StrongTake { source: Expr, root: super::super::shared::RootId },
     /// Clone one strong link from a checked borrowed place. The backing stays
     /// in its canonical root and the receiver retains its own handle.
@@ -278,6 +278,9 @@ pub(in super::super) enum Kind {
 
 #[derive(Default)]
 pub(in super::super) struct Checked {
+    /// Shared contents observed under a specific worker acquisition. A later
+    /// acquisition has a new input even if it addresses the same root.
+    pub(in super::super) protected_versions: super::super::synchronization::versions::Versions,
     /// Charged result paths on each reaching normal exit, before transport.
     pub(in super::super) returned: Vec<super::super::accounting::ReturnedStorage>,
     /// Incoming guard and mutex binders come from executable formal parameters.
@@ -342,6 +345,26 @@ impl Checked {
                 Operation::Call { synchronization: Some(call), .. } => call.has_intervals(),
                 _ => false,
             })
+    }
+
+    /// A guard-consuming helper may publish its caller's unchanged contents
+    /// only when neither it nor a nested helper accessed that acquisition.
+    pub(in super::super) fn payload_borrows(
+        &self,
+    ) -> std::collections::BTreeSet<super::super::synchronization::local::Interval> {
+        let mut borrows = std::collections::BTreeSet::new();
+        for op in self.operations.values() {
+            match op {
+                Operation::GuardBorrow { interval, .. } => {
+                    borrows.insert(*interval);
+                }
+                Operation::Call { synchronization: Some(call), .. } => {
+                    borrows.extend(&call.payload_borrows);
+                }
+                _ => {}
+            }
+        }
+        borrows
     }
 
     /// Validate native construction and acquisition binders once per body.

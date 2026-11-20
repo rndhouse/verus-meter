@@ -361,6 +361,9 @@ pub fn run_verus(
             verus_args.push(module.to_string());
         } else if *option == "--trace" {
             verus_args.push("--trace".to_string());
+        } else if let Some(count) = option.strip_prefix("--multiple-errors=") {
+            verus_args.push("--multiple-errors".to_string());
+            verus_args.push(count.to_string());
         } else if *option == "--expand-errors" {
             verus_args.push("--expand-errors".to_string());
             verus_args.push("--multiple-errors".to_string());

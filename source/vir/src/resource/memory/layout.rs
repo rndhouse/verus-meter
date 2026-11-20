@@ -341,7 +341,30 @@ impl Layouts {
     /// empty. Recursion revisits add no new field types to this reachability
     /// query; validating the executable layout remains the sizing pass's job.
     pub(super) fn contains_references(&self, typ: &Typ) -> bool {
-        fn visit(layouts: &Layouts, typ: &Typ, visiting: &mut Vec<LayoutNode>) -> bool {
+        self.contains_identity(typ, false)
+    }
+
+    /// A plain memory forest cannot export a nested guard destructor, mutex
+    /// identity, consuming iterator, or executable closure to another holder.
+    pub(super) fn plain_protected_payload(&self, typ: &Typ) -> bool {
+        !self.contains_identity(typ, true)
+    }
+
+    fn contains_identity(&self, typ: &Typ, protected: bool) -> bool {
+        fn visit(
+            layouts: &Layouts,
+            typ: &Typ,
+            protected: bool,
+            visiting: &mut Vec<LayoutNode>,
+        ) -> bool {
+            if protected
+                && (layouts.guard_owner(typ)
+                    || layouts.mutex_payload(typ).is_some()
+                    || super::iterators::owns_vector_storage(typ)
+                    || matches!(&**typ, TypX::AnonymousClosure(..)))
+            {
+                return true;
+            }
             if matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _))
                 || layouts.join_handle(typ).is_some()
                 || layouts.result_payloads(typ).is_some()
@@ -352,11 +375,11 @@ impl Layouts {
             // types. Inspect their actual arguments before the datatype-only
             // recursion guard (Vec<Vec<Arc<T>>> is not a recursive type).
             if let TypX::Decorate(TypDecoration::Box, _, inner) = &**typ {
-                return visit(layouts, inner, visiting);
+                return visit(layouts, inner, protected, visiting);
             }
             if let TypX::Datatype(_, args, _) | TypX::Primitive(_, args) = &**typ {
                 for argument in args.iter() {
-                    if visit(layouts, argument, visiting) {
+                    if visit(layouts, argument, protected, visiting) {
                         return true;
                     }
                 }
@@ -395,12 +418,12 @@ impl Layouts {
             visiting.push(key);
             let mut found = false;
             for child in children {
-                found |= visit(layouts, &child, visiting);
+                found |= visit(layouts, &child, protected, visiting);
             }
             visiting.pop();
             found
         }
-        visit(self, typ, &mut Vec::new())
+        visit(self, typ, protected, &mut Vec::new())
     }
 
     fn element_size(

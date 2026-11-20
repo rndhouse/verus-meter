@@ -48,6 +48,13 @@ pub(in super::super) struct Checkpoint {
     /// publications where their canonical owners are in scope.
     frame: Expr,
     backing: Vec<BackingCost>,
+    /// When a guard is open its actor frame already pays for the current
+    /// contents. Only the Arc allocation itself is added by the publisher.
+    open_payloads: BTreeSet<RootId>,
+    /// Publication estimates used by this observation, excluding the Arc
+    /// header and inline payload. After a peer write, only a type-invariant
+    /// price can justify these estimates.
+    publication_payloads: BTreeMap<RootId, Option<u64>>,
     /// Necessary source path conditions expressible using immutable captures.
     publisher_guard: Option<Expr>,
     limit: u64,
@@ -130,9 +137,23 @@ impl Analysis<'_> {
         span: &Span,
         frame: &Footprint,
         limit: u64,
-    ) {
+    ) -> Result<(), VirErr> {
+        if self.growth.versioned_shared.iter().any(|(id, fixed)| {
+            fixed.is_none()
+                && self
+                    .heap
+                    .shared
+                    .roots
+                    .get(id)
+                    .is_some_and(|r| matches!(r.storage, Backing::Owned(_)))
+        }) {
+            return Err(unsupported(
+                span,
+                "a checkpoint on owned shared backing before composing its worker updates",
+            ));
+        }
         if self.current_worker.is_none() {
-            return;
+            return Ok(());
         }
         let handles = self.heap.shared.imports_at_checkpoint();
         let selections: BTreeMap<_, _> = self
@@ -153,10 +174,13 @@ impl Analysis<'_> {
                 collections,
                 frame: frame.total(),
                 backing: Vec::new(),
+                open_payloads: self.transitions.protected_versions.open_roots(&self.heap).collect(),
+                publication_payloads: BTreeMap::new(),
                 publisher_guard: None,
                 limit,
             });
         }
+        Ok(())
     }
 
     /// Hoist a condition only when its value is fixed by the captured operands.
@@ -203,6 +227,7 @@ impl Analysis<'_> {
             let (selected, selections) = self.heap.shared.project_selections(check)?;
             let mut imports = BTreeMap::new();
             let mut owned = Vec::new();
+            let mut projected = check.clone();
             // A known owner reaches its backing regardless of any separate
             // selected alias's identity. Charge it once through the union.
             let fixed: BTreeSet<_> = counts.keys().copied().collect();
@@ -273,7 +298,7 @@ impl Analysis<'_> {
                         "a worker checkpoint with outstanding jobs inside shared backing",
                     ));
                 }
-                let (mut bytes, proof) = self.checkpoint_backing(publication, backing)?;
+                let (mut bytes, proof) = projected.price_backing(self, publication, id, backing)?;
                 let proofs = self.growth.after.entry(publication.id).or_default();
                 proofs.extend(proof);
                 let candidates = selected.get(&id);
@@ -333,7 +358,6 @@ impl Analysis<'_> {
                 }
                 owned.push(bytes);
             }
-            let mut projected = check.clone();
             projected.collections.clear();
             projected.handles = imports;
             projected.selections = selections;
@@ -349,7 +373,11 @@ impl Analysis<'_> {
                 });
             }
             if projected.handles.is_empty() && projected.selections.is_empty() {
-                projected.emit(self)?;
+                if projected.publication_payloads.is_empty() {
+                    projected.emit(self)?;
+                } else {
+                    self.growth.protected_checkpoints.push(projected);
+                }
             } else {
                 self.transitions.shared_checkpoints.push(projected);
             }
@@ -359,6 +387,60 @@ impl Analysis<'_> {
 }
 
 impl Checkpoint {
+    /// The actor already pays for the payload held under its guard. For a
+    /// closed view, remember which part of a publication estimate depends on
+    /// the contents. Its validity may depend on a peer published later.
+    fn price_backing(
+        &mut self,
+        analysis: &Analysis<'_>,
+        publication: &Span,
+        root: RootId,
+        backing: &super::Owner,
+    ) -> Result<(Expr, Option<Stmt>), VirErr> {
+        let fixed_header = backing.dynamic.is_none() && backing.fixed_role.is_some();
+        if self.open_payloads.contains(&root) {
+            if !fixed_header {
+                return Err(unsupported(
+                    &self.site,
+                    "an acquired payload without a separate canonical Arc allocation",
+                ));
+            }
+            return Ok((contracts::literal(publication, backing.bytes), None));
+        }
+        let cost = analysis.checkpoint_backing(publication, backing)?;
+        if backing.children.get(&super::OwnerSlot::Contents).is_some_and(|owner| {
+            owner.mutex_instance().is_some()
+                && owner.children.contains_key(&super::OwnerSlot::Contents)
+        }) {
+            let payload = contracts::constant(&cost.0)
+                .filter(|_| fixed_header)
+                .and_then(|bytes| bytes.checked_sub(backing.bytes));
+            self.publication_payloads.insert(root, payload);
+        }
+        Ok(cost)
+    }
+
+    /// At this point the verifier has seen every worker. A publication-time
+    /// price survives a peer update only when its value follows from the type.
+    pub(in super::super) fn resolve_publication(
+        self,
+        analysis: &mut Analysis<'_>,
+    ) -> Result<(), VirErr> {
+        if self.publication_payloads.iter().any(|(root, estimate)| {
+            analysis
+                .growth
+                .versioned_shared
+                .get(root)
+                .is_some_and(|fixed| fixed.is_none() || fixed != estimate)
+        }) {
+            return Err(unsupported(
+                &self.site,
+                "a worker checkpoint requiring the current shared payload after a peer update",
+            ));
+        }
+        self.emit(analysis)
+    }
+
     /// Constants may be combined across scopes. A symbolic cost must be
     /// checked where its proof variables describe this particular execution.
     fn emit(self, analysis: &mut Analysis<'_>) -> Result<(), VirErr> {
