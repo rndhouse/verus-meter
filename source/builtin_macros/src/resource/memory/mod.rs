@@ -89,7 +89,7 @@ impl Visitor {
         let Expr::Path(path) = &*call.func else {
             return false;
         };
-        if !path.path.is_ident("value_size") && !path.path.is_ident("ref_size") {
+        if !path.path.get_ident().is_some_and(verus_syn::ResourceExpr::is_size_query) {
             return false;
         }
         let span = expr.span();

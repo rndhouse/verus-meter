@@ -24,6 +24,16 @@ pub const fn reference_bytes(slice: bool) -> u64 {
     if slice { 2 * WORD_BYTES } else { WORD_BYTES }
 }
 
+/// Storage of the cursor and end of a shared forward slice iterator.
+pub const SLICE_ITERATOR_BYTES: u64 = 2 * WORD_BYTES;
+
+/// State live in the body of a lowered `for item in source` shared traversal.
+/// The lowering keeps its initial source reference, the wrapped iterator, the
+/// yielded reference and its copy in the user's item binding.
+pub const fn borrowed_for_loop_bytes(source_is_slice: bool) -> u64 {
+    reference_bytes(source_is_slice) + SLICE_ITERATOR_BYTES + 2 * reference_bytes(false)
+}
+
 /// Inline mutex source storage: synchronization state, poison flag and payload.
 /// This describes source storage, not the platform lock ABI or OS workspace.
 pub const fn mutex_bytes(payload: u64) -> Option<u64> {

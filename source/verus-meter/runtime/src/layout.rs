@@ -36,7 +36,28 @@ pub trait ReferenceSize: sealed::Reference {
     const BYTES: u64;
 }
 
+/// Inline body state for a forward loop over a supported shared collection.
+#[doc(hidden)]
+pub trait ForLoopSize: sealed::ForLoop {
+    /// Source-model bytes live alongside the user body.
+    const BYTES: u64;
+}
+
+impl<T> sealed::ForLoop for &[T] {}
+
+impl<T> ForLoopSize for &[T] {
+    const BYTES: u64 = verus_meter_model::borrowed_for_loop_bytes(true);
+}
+
+impl<T> sealed::ForLoop for &Vec<T> {}
+
+impl<T> ForLoopSize for &Vec<T> {
+    const BYTES: u64 = verus_meter_model::borrowed_for_loop_bytes(false);
+}
+
 mod sealed {
+    pub trait ForLoop {}
+
     pub trait Value {}
 
     pub trait Reference {}

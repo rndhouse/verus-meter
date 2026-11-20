@@ -67,7 +67,7 @@ pub(super) fn size(
         Some(Kind::Range) => super::model::integer_type_size(inner)
             .and_then(|bytes| bytes.checked_mul(2))
             .ok_or_else(|| unsupported(span, "ranges with non-native-integer elements"))?,
-        Some(Kind::Slice) => 2 * super::model::WORD_BYTES,
+        Some(Kind::Slice) => verus_meter_model::SLICE_ITERATOR_BYTES,
         Some(kind) => {
             let inner_kind = kind_of_source(inner, span)?;
             if matches!(inner_kind, Kind::Slice | Kind::Vector) && kind != Kind::Wrapper {
@@ -87,6 +87,23 @@ pub(super) fn size(
         None => return Err(unsupported(span, "this iterator class")),
     };
     Ok(bytes)
+}
+
+/// Size the live body state of the simple binding form `for item in source`.
+/// Validate the reference and element with the same layouts used in traversal.
+pub(super) fn for_loop_size(
+    layouts: &super::layout::Layouts,
+    typ: &Typ,
+    span: &Span,
+) -> Result<u64, VirErr> {
+    if let TypX::Decorate(TypDecoration::Ref, None, collection) = &**typ {
+        let is_slice = super::model::slice(collection);
+        if is_slice || layouts.vector(collection) {
+            layouts.ref_size(typ, span)?;
+            return Ok(verus_meter_model::borrowed_for_loop_bytes(is_slice));
+        }
+    }
+    Err(crate::messages::error(span, "for_loop_size requires a shared slice or vector reference"))
 }
 
 /// A native consuming iterator or the Verus wrapper that moves it into a loop.

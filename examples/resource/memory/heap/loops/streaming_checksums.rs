@@ -1,18 +1,21 @@
-// Decode and checksum each input byte as a run of 64 identical bytes.
-// The checksum vector has room for both results before the scratch section begins.
+// Decode and checksum each input byte as a run of BLOCK_BYTES identical bytes.
 
 use vstd::prelude::*;
 
 verus! {
 
-type Block = [u8; 64];
+const BLOCK_BYTES: usize = 128;
+type Block = [u8; BLOCK_BYTES];
 
-// Add all 64 bytes. The maximum partial sum is 255 times the number of bytes read.
+// The first push reserves four u16 slots, enough for both results.
+type SumSlots = [u16; 4];
+
+// Add the bytes in one block. The maximum partial sum is 255 times the number of bytes read.
 fn checksum(block: &Block) -> u16
-    resources peak(memory) <= 52,
+    resources peak(memory) <= 51,
 {
     let mut sum = 0u16;
-    for i in 0usize..64
+    for i in 0usize..block.len()
         invariant
             sum <= 255 * i,
     {
@@ -22,16 +25,18 @@ fn checksum(block: &Block) -> u16
 }
 
 fn checksums(input: [u8; 2]) -> Vec<u16>
-    resources peak(memory) <= 600,
+    resources peak(memory) <= value_size(input) + ref_size(&[u8]) + value_size(Vec<u16>)
+        + value_size(Block) + value_size(SumSlots)
+        + for_loop_size(&[u8]) + peak(checksum),
 {
-    let blocks: &[u8] = &input;
-    let mut sums = Vec::with_capacity(2);
+    let packed: &[u8] = &input;
+    let mut sums = Vec::new();
 
-    // One decoded block, the checksum helper's allowance, and up to 48 bytes
-    // for the iterator, yielded reference, and expression temporaries.
-    resources peak(memory) <= value_size(Block) + peak(checksum) + 48 {
-        for block in blocks {
-            let decoded = [*block; 64];
+    resources peak(memory) <= value_size(Block) + value_size(SumSlots)
+        + for_loop_size(packed) + peak(checksum)
+    {
+        for byte in packed {
+            let decoded = [*byte; BLOCK_BYTES];
             sums.push(checksum(&decoded));
         }
     }
@@ -41,5 +46,5 @@ fn checksums(input: [u8; 2]) -> Vec<u16>
 } // verus!
 
 fn main() {
-    assert_eq!(checksums([1, 2]), vec![64, 128]);
+    assert_eq!(checksums([1, 2]), vec![128, 256]);
 }

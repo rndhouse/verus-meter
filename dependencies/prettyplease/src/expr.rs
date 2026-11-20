@@ -518,7 +518,7 @@ impl Printer {
         self.outer_attrs(&expr.attrs);
         self.expr_beginning_of_line(&expr.func, needs_paren, beginning_of_line, left_fixup);
         self.word("(");
-        if matches!(&*expr.func, Expr::Path(p) if (p.path.is_ident("value_size") || p.path.is_ident("ref_size")))
+        if matches!(&*expr.func, Expr::Path(p) if p.path.get_ident().is_some_and(verus_syn::ResourceExpr::is_size_query))
             && expr.args.len() == 1
         {
             if let Expr::Verbatim(tokens) = &expr.args[0] {

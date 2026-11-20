@@ -256,11 +256,18 @@ ast_enum! {
         Paren(token::Paren, Box<ResourceExpr>),
         Add(Box<ResourceExpr>, Token![+], Box<ResourceExpr>),
         Mul(Box<ResourceExpr>, Token![*], Box<ResourceExpr>),
-        /// An `value_size` or `ref_size` query, preserving its written name.
+        /// A model-size query, preserving its written name.
         Size(Ident, token::Paren, Type),
         Peak(Ident, token::Paren, ExprPath),
         PeakCall(Ident, token::Paren, ExprCall),
         If(Token![if], Box<Expr>, token::Brace, Box<ResourceExpr>, Token![else], token::Brace, Box<ResourceExpr>),
+    }
+}
+
+impl ResourceExpr {
+    /// Whether an unqualified call takes a size-query type or binding as its operand.
+    pub fn is_size_query(name: &Ident) -> bool {
+        name == "value_size" || name == "ref_size" || name == "for_loop_size"
     }
 }
 
@@ -1529,11 +1536,10 @@ pub mod parsing {
         // Verus, rather than the parser, checks that the target is a spec function.
         let ahead = input.fork();
         let path = ahead.parse::<ExprPath>()?;
-        let query = path.path.segments.len() == 1
-            && matches!(
-                path.path.segments[0].ident.to_string().as_str(),
-                "value_size" | "ref_size" | "peak"
-            );
+        let query = path
+            .path
+            .get_ident()
+            .is_some_and(|name| ResourceExpr::is_size_query(name) || name == "peak");
         if !query && ahead.peek(token::Paren) {
             let function: ExprPath = input.parse()?;
             let mut function = Expr::Path(function);
@@ -1554,18 +1560,18 @@ pub mod parsing {
             }
         }
         let name: Ident = input.parse()?;
-        if name != "value_size" && name != "ref_size" && name != "peak" {
+        if !ResourceExpr::is_size_query(&name) && name != "peak" {
             if input.peek(token::Paren) {
                 return Err(Error::new(
                     name.span(),
-                    "expected value_size(type/parameter), ref_size(reference), or peak(function)",
+                    "expected value_size(type/parameter), ref_size(reference), for_loop_size(source), or peak(function)",
                 ));
             }
             return Ok(ResourceExpr::Quantity(name));
         }
         let content;
         let paren = parenthesized!(content in input);
-        let expr = if name == "value_size" || name == "ref_size" {
+        let expr = if ResourceExpr::is_size_query(&name) {
             ResourceExpr::Size(name, paren, content.parse()?)
         } else {
             match content.parse::<Expr>()? {

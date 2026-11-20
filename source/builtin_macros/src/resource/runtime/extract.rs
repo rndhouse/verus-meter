@@ -369,7 +369,7 @@ impl<'a> Extractor<'a> {
         let name = path.path.get_ident().ok_or_else(|| {
             error(call, "runtime spec helpers must be named in the same verus item scope")
         })?;
-        if name == "value_size" || name == "ref_size" {
+        if ResourceExpr::is_size_query(name) {
             let ResourceExpr::Size(query, _, ty) = verus_syn::parse2(call.to_token_stream())?
             else {
                 return Err(error(call, "invalid runtime model-size query"));

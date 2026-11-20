@@ -304,6 +304,12 @@ pub(super) fn lower(
         BudgetExprX::ValueSize(typ) => {
             return Ok(literal(&expr.span, layouts.value_size(typ, &expr.span)?));
         }
+        BudgetExprX::ForLoopSize(typ) => {
+            return Ok(literal(
+                &expr.span,
+                super::iterators::for_loop_size(layouts, typ, &expr.span)?,
+            ));
+        }
         BudgetExprX::RefSize(typ) => {
             return Ok(literal(&expr.span, layouts.ref_size(typ, &expr.span)?));
         }

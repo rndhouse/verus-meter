@@ -80,3 +80,43 @@ test_verify_one_file! {
         proof fn sizes() { let n = value_size(Borrowed); }
     } => Err(err) => assert_vir_error_msg(err, "reference or decorated struct fields")
 }
+
+#[test]
+fn for_loop_size_matches_live_state_at_body_entry() {
+    // Compare the query to the live checker for both thin and fat source references.
+    // The enclosing section excludes the original parameter from the checkpoint.
+    for (label, source, bytes) in [("slice", "&'a [u16]", 48), ("vector", "&'a Vec<u16>", 40)] {
+        // Advancement also evaluates the tagged next result before the body runs.
+        let section = "for_loop_size(items) + value_size(u8) + ref_size(&u16)";
+        let code = format!(
+            "type Source<'a> = {source};
+            spec fn state() -> nat {{ for_loop_size(Source) }}
+            fn visit(items: Source) resources peak(memory) <= ref_size(items) + {section} {{
+                assert(state() == {bytes});
+                resources peak(memory) <= {section} {{
+                    for item in items {{ assert(current(memory) <= BOUND); }}
+                }}
+            }}"
+        );
+        super::support::verifies(
+            &format!("for_loop_size_{label}"),
+            &code.replace("BOUND", "for_loop_size(items)"),
+        );
+        super::support::rejects(
+            &format!("for_loop_size_{label}_short"),
+            &code.replace("BOUND", &(bytes - 1).to_string()),
+            if label == "slice" {
+                "current(memory) assertion failed"
+            } else {
+                "conditional memory budget exceeded"
+            },
+        );
+    }
+}
+
+test_verify_one_file! {
+    #[test] for_loop_size_rejects_consuming_traversal verus_code! {
+        use vstd::prelude::*;
+        proof fn check(items: Vec<u8>) { let n = for_loop_size(items); }
+    } => Err(err) => assert_vir_error_msg(err, "for_loop_size requires a shared slice or vector reference")
+}

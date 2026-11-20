@@ -36,7 +36,11 @@ fn spec_budget_calls_round_trip() {
 
 #[test]
 fn memory_query_type_round_trip() {
-    for query in ["value_size(Box<[u32; 4]>)", "ref_size(&mut [u32])"] {
+    for query in [
+        "value_size(Box<[u32; 4]>)",
+        "ref_size(&mut [u32])",
+        "for_loop_size(&Vec<u32>)",
+    ] {
         let parsed: syn::Expr = syn::parse_str(query).unwrap();
         let printed = prettyplease::unparse_expr(&parsed);
         let reparsed: syn::Expr = syn::parse_str(&printed).unwrap();
