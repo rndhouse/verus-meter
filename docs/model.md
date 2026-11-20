@@ -18,5 +18,5 @@ Verus Meter verifies upper bounds on peak source-level memory for supported Rust
 ## What can I verify today?
 
 - Supported cases include concrete values, arrays, structs, options, boxes, vectors, boxed slices, selected loops, and safe nongeneric helpers in the same crate with an acyclic call graph. Support depends on the operation and the ownership facts available. [Executable examples](../examples/resource/memory/README.md)
-- Borrowed loops currently include extra iterator charges. The [accounting audit](verus-meter/todo/audit-and-correct-source-accounting.md) tracks discrepancies between verifier behavior and the source policy.
+- Borrowed loops currently include extra iterator charges. The [accounting audit](verus-meter/todo/remove-excess-memory-charges.md) tracks discrepancies between verifier behavior and the source policy.
 - Local worker and ownership checks exist. A total concurrent peak still requires a global overlap proof. [Concurrent specification](verus-meter/concurrent-model.md)
