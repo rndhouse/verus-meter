@@ -107,6 +107,8 @@ pub(crate) fn check(
     vir::resource::memory::erase_annotations(&mut krate.functions)?;
     let diagnostics = if trace && incomplete.is_empty() {
         reports.into_iter().flat_map(|(span, report)| report.diagnostics(&span)).collect()
+    } else if trace {
+        reports.into_iter().flat_map(|(_, report)| report.interval_diagnostics()).collect()
     } else {
         Vec::new()
     };

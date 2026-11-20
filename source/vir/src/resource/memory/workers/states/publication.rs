@@ -65,10 +65,10 @@ impl Execution {
             // Fold constant totals first. A symbolic max duplicates its left
             // operand in both the condition and one arm of the generated VIR.
             let fixed = self
-                .report
-                .cost_points
+                .effects
+                .points
                 .iter()
-                .map(|(_, cost)| cost)
+                .map(|point| &point.cost)
                 .filter(|cost| contracts::constant(&cost.total()).is_some())
                 .cloned()
                 .reduce(|a, b| a.maximum(span, b));

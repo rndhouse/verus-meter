@@ -123,6 +123,9 @@ pub(super) fn selected_record(span: &Span, identity: Expr) -> Expr {
 
 #[derive(Clone)]
 struct Root {
+    /// Immutable mutex identity of a direct protected payload, shared with
+    /// importing workers independently of the domain charged for the bytes.
+    mutex: Option<super::synchronization::Instance>,
     /// Live strong handles in this accounting domain, not historical clones.
     /// An imported view counts only the handles transferred into that view.
     strong: u64,
@@ -130,6 +133,14 @@ struct Root {
     /// Releasing the last handle in an imported view cannot decide whether the
     /// enclosing domain has another live alias or reclaim its allocation tree.
     storage: Backing,
+}
+
+impl Root {
+    fn owned(storage: Owner) -> Self {
+        let mutex =
+            storage.children.get(&OwnerSlot::Contents).and_then(|child| child.mutex_instance());
+        Self { strong: 1, mutex, storage: Backing::Owned(Box::new(storage)) }
+    }
 }
 
 #[derive(Clone)]
@@ -285,6 +296,13 @@ impl SharedRoots {
             Backing::Owned(owner) => Some(owner.as_ref()),
             Backing::Imported { .. } => None,
         })
+    }
+
+    pub(super) fn mutex_instance(
+        &self,
+        link: StrongLink,
+    ) -> Option<super::synchronization::Instance> {
+        self.roots.get(&link.known()?)?.mutex
     }
 
     /// Direct payload moved into the executable Arc constructor in this domain.
@@ -500,8 +518,7 @@ impl SharedRoots {
                 .checked_add(1)
                 .ok_or_else(|| unsupported(span, "strong handle counts exceeding u64"))?;
         } else {
-            self.roots
-                .insert(id, Root { strong: 1, storage: Backing::Owned(Box::new(backing.clone())) });
+            self.roots.insert(id, Root::owned(backing.clone()));
         }
         Ok(Owner { shared: Some(StrongLink::Known(id)), ..Default::default() })
     }
@@ -514,11 +531,7 @@ impl SharedRoots {
 
     pub(super) fn insert(&mut self, storage: Owner) -> Owner {
         let id = RootId(super::accounting::Accounting::fresh_allocation());
-        assert!(
-            self.roots
-                .insert(id, Root { strong: 1, storage: Backing::Owned(Box::new(storage)) })
-                .is_none()
-        );
+        assert!(self.roots.insert(id, Root::owned(storage)).is_none());
         Owner { shared: Some(StrongLink::Known(id)), ..Default::default() }
     }
 
@@ -625,8 +638,14 @@ impl SharedRoots {
                     self.roots.get(&id).map_or(0, |r| r.strong),
                     enclosing.roots.get(&id).map(|r| r.strong),
                 )?;
-                self.roots
-                    .insert(id, Root { strong, storage: Backing::Imported { entry: strong } });
+                self.roots.insert(
+                    id,
+                    Root {
+                        strong,
+                        mutex: enclosing.roots[&id].mutex,
+                        storage: Backing::Imported { entry: strong },
+                    },
+                );
             }
             StrongLink::Selected(id) => {
                 let source = enclosing.selections.get(&id).ok_or_else(|| {
@@ -652,6 +671,7 @@ impl SharedRoots {
             && self.roots.iter().all(|(id, root)| {
                 other.roots.get(id).is_some_and(|other| {
                     root.strong == other.strong
+                        && root.mutex == other.mutex
                         && match (&root.storage, &other.storage) {
                             (Backing::Owned(a), Backing::Owned(b)) => {
                                 super::control::compatible(a, b)

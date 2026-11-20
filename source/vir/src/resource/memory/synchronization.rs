@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use vir_macros::ToDebugSNode;
 
 pub mod flow;
+pub(super) mod local;
 
 /// Compiler-identified synchronization operations, independent of source names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToDebugSNode)]
@@ -154,7 +155,7 @@ impl Contract {
 
 /// Instance identity within one summary. Input identities are binders: different
 /// input indices do not prove that actual instances are distinct.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Instance {
     /// An instance supplied by a caller, substituted with its actual identity.
     Input(usize),
@@ -164,7 +165,7 @@ pub enum Instance {
 
 /// One acquired interval. A fresh interval is required after every release.
 /// Summary instantiation must freshen these identities along with instance sites.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Acquisition(u64);
 
 /// Acquisition lifecycle events, which never imply deallocation of a buffer.
@@ -490,7 +491,13 @@ fn reject_unaccounted_inner(
                     }
                     if self.types.get(name).is_some_and(|kind| {
                         *kind != LibraryType::Result
-                            && !(self.shared == SharedCheck::Local && *kind == LibraryType::Mutex)
+                            && !(self.shared == SharedCheck::Local
+                                && matches!(
+                                    kind,
+                                    LibraryType::Mutex
+                                        | LibraryType::MutexGuard
+                                        | LibraryType::PoisonError
+                                ))
                     }) {
                         return Err(super::model::unsupported(
                             span,
@@ -541,7 +548,8 @@ fn reject_unaccounted_inner(
             if let ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), .. } = &expr.x
                 && let Some(ResourceIntrinsic::Synchronization(operation)) =
                     attrs.resource_intrinsic
-                && !(self.shared == SharedCheck::Local && operation == Operation::MutexNew)
+                && !(self.shared == SharedCheck::Local
+                    && matches!(operation, Operation::MutexNew | Operation::MutexLock))
             {
                 return Err(super::model::unsupported(
                     &expr.span,

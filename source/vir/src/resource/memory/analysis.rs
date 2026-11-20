@@ -881,9 +881,9 @@ pub(super) fn check(
         }
         if !consumed_payload {
             let report = analysis.storage.finish_conditional();
-            analysis.obligations.extend(report.cost_points.iter().map(|(span, cost)| Obligation {
-                span: span.clone(),
-                cost: cost.clone(),
+            analysis.obligations.extend(report.points.iter().map(|point| Obligation {
+                span: point.span.clone(),
+                cost: point.cost.clone(),
                 bound: super::footprint::MemoryBudget::total(analysis.bound.clone()),
                 kind: CheckKind::Function,
             }));
@@ -976,9 +976,9 @@ pub(super) fn check(
     };
     let bound =
         symbolic_bound.clone().unwrap_or_else(|| super::contracts::literal(&function.span, budget));
-    analysis.obligations.extend(report.cost_points.iter().map(|(span, cost)| Obligation {
-        span: span.clone(),
-        cost: cost.clone(),
+    analysis.obligations.extend(report.points.iter().map(|point| Obligation {
+        span: point.span.clone(),
+        cost: point.cost.clone(),
         bound: super::footprint::MemoryBudget::total(bound.clone()),
         kind: CheckKind::Function,
     }));
@@ -1051,17 +1051,28 @@ pub(super) fn check(
         },
     };
     let mut summary = summary;
-    summary.effects = Some(std::sync::Arc::new(super::summary::BodyEffects {
+    let effects = super::summary::BodyEffects {
         body: body.clone(),
         ownership: analysis.transitions,
+        points: report.points.clone(),
         calls: analysis.calls.clone(),
-    }));
+    };
+    effects.validate_intervals(None)?;
+    let summary_has_lock = effects.ownership.locks_mutex();
+    summary.effects = Some(std::sync::Arc::new(effects));
     super::transfer::validate(function, layouts, &summary)?;
     Ok(Some(FunctionAnalysis {
         report,
         summary: Some(summary),
         incomplete: incomplete.or_else(|| {
-            worker_parameter.map(|_| super::workers::parameter_domain_error(&function.span))
+            if summary_has_lock {
+                Some(unsupported(
+                    &function.span,
+                    "mutex intervals awaiting global synchronization and lifetime coverage",
+                ))
+            } else {
+                worker_parameter.map(|_| super::workers::parameter_domain_error(&function.span))
+            }
         }),
         calls: analysis.calls,
         symbolic_bound,

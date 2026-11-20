@@ -238,10 +238,13 @@ impl Analysis<'_> {
                     "a publication state outside its source worker",
                 ));
             }
-            for (span, frame) in &execution.report.cost_points {
+            // A synchronized execution exports every source phase, including
+            // waiting and newly unrestricted storage at release. Until global
+            // composition each such phase still owes its full local allowance.
+            for point in execution.effects.points.iter() {
                 self.obligations.push(Obligation {
-                    span: span.clone(),
-                    cost: actor_cost(span, frame.clone(), Some(execution.actor)),
+                    span: point.span.clone(),
+                    cost: actor_cost(&point.span, point.cost.clone(), Some(execution.actor)),
                     bound: bound.clone(),
                     kind: CheckKind::WorkerState("during worker execution"),
                 });

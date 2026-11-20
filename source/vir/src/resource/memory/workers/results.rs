@@ -250,6 +250,21 @@ impl Analysis<'_> {
         let mut owner = self.result_owner.take().ok_or_else(|| {
             unsupported(&expr.span, "Result extraction without checked outcome ownership")
         })?;
+        if matches!(
+            owner.synchronization,
+            Some(super::super::synchronization::local::Owned::Guard(_))
+        ) {
+            // The ordinary Result::unwrap precondition must prove Ok at this
+            // site. Either original variant held this same acquisition.
+            self.transitions.operation(
+                &expr.span,
+                super::super::transfer::checked::Operation::GuardExtract { source: source.clone() },
+            );
+            self.release_value(value, &expr.span);
+            let result = self.fresh_value(&expr.span, &expr.typ)?;
+            self.result_owner = Some(owner);
+            return Ok(Some(result));
+        }
         self.checked_result(&owner, &expr.span)?;
         let observed_scalar = self.observed_worker_scalar(&owner);
         self.transitions.operation(
@@ -318,7 +333,12 @@ impl Analysis<'_> {
             self.heap.root(&name).and_then(|owner| owner.at(&path)).ok_or_else(|| {
                 unsupported(&expr.span, "Result predicate without a live outcome")
             })?;
-        self.checked_result(owner, &expr.span)?;
+        if !matches!(
+            owner.synchronization,
+            Some(super::super::synchronization::local::Owned::Guard(_))
+        ) {
+            self.checked_result(owner, &expr.span)?;
+        }
         self.discard(source)?;
         Ok(true)
     }

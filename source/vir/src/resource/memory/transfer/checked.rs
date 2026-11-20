@@ -121,6 +121,15 @@ pub(in super::super) struct WorkerPublication {
 /// One executable ownership rule, with layout decisions supplied by accounting.
 #[derive(Clone)]
 pub(in super::super) enum Operation {
+    /// A proved-success Result extraction moves its release responsibility.
+    GuardExtract { source: Expr },
+    /// A normal blocking acquisition owns a guard in either Result variant.
+    MutexLock {
+        receiver: Expr,
+        interval: super::super::synchronization::local::Interval,
+        actor: Option<super::super::workers::WorkerId>,
+        coordinates: Vec<(u64, Expr)>,
+    },
     /// A finite iterator operation accepted by its layout and operation adapter.
     Iterator(crate::resource::memory::iterators::Operation),
     /// Read the length of a checked shared slice.
@@ -297,6 +306,20 @@ pub(in super::super) struct Checked {
 }
 
 impl Checked {
+    pub(in super::super) fn locks_mutex(&self) -> bool {
+        self.operations.values().any(|op| matches!(op, Operation::MutexLock { .. }))
+    }
+
+    pub(in super::super) fn binds_interval(
+        &self,
+        id: super::super::synchronization::local::Interval,
+        worker: Option<super::super::workers::WorkerId>,
+    ) -> bool {
+        self.operations.values().any(|op| matches!(op,
+            Operation::MutexLock { interval, actor, coordinates, .. }
+                if *interval == id && *actor == worker && coordinates.iter().all(|(_, ordinal)| matches!(&*ordinal.typ, TypX::Int(_)))))
+    }
+
     /// Local construction outside the actor's repeatable loops.
     pub(in super::super) fn owns_fixed_root(&self, root: super::super::shared::RootId) -> bool {
         self.operations

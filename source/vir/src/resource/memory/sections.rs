@@ -106,9 +106,9 @@ impl Analysis<'_> {
         self.checkpoints = parent_checkpoints;
         let retained = section.live_storage();
         let report = section.finish_section(contract_span);
-        self.obligations.extend(report.cost_points.iter().map(|(span, cost)| Obligation {
-            span: span.clone(),
-            cost: cost.clone(),
+        self.obligations.extend(report.points.iter().map(|point| Obligation {
+            span: point.span.clone(),
+            cost: point.cost.clone(),
             bound: super::footprint::MemoryBudget::total(bound.clone()),
             kind: CheckKind::Section,
         }));

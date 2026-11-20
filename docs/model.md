@@ -19,4 +19,5 @@ Verus Meter verifies upper bounds on peak source-level memory for supported Rust
 
 - Supported cases include concrete values, arrays, structs, options, boxes, vectors, boxed slices, selected loops, and safe nongeneric helpers in the same crate with an acyclic call graph. Support depends on the operation and the ownership facts available. [Executable examples](../examples/resource/memory/README.md)
 - Constructing a local standard mutex charges its inline state and payload. Moving it transfers the payload's existing allocations, and dropping it releases the allocations it still owns.
+- A blocking lock on a known local mutex or a captured strong alias retains the caller’s storage while it waits. On normal return both success and poisoning carry the guard. Dropping that owner ends the acquisition and leaves any surviving buffer charged. Functions using these intervals still require the pending global coverage proof.
 - Local worker and ownership checks exist. A total concurrent peak still requires a global overlap proof. [Concurrent specification](verus-meter/concurrent-model.md)

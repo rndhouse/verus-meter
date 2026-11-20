@@ -46,16 +46,17 @@ fn mutex_construction_keeps_the_owned_payload_until_drop() {
 }
 
 #[test]
-fn constructing_a_mutex_does_not_establish_an_acquisition() {
+fn blocking_reacquisition_requires_the_previous_guard_to_be_released() {
     rejects(
         "mutex_acquisition_coverage",
         r#"
         fn f() resources peak(memory) <= 1000 {
             let m = std::sync::Mutex::new(1u64);
+            let held = m.lock();
             let guard = m.lock();
         }
     "#,
-        "before concurrent lifetime accounting is available",
+        "reentrant blocking acquisition",
     );
 }
 
@@ -159,4 +160,90 @@ fn opaque_guard_specification_preserves_rust_send_restriction() {
     )
     .unwrap_err();
     crate::common::assert_rust_error_msg(err, "cannot be sent between threads safely");
+}
+
+#[test]
+fn releasing_a_lock_result_preserves_exactly_the_scratch_still_live() {
+    for (name, cleanup, live) in [
+        ("contained", "drop(scratch); drop(held);", 10),
+        ("escapes", "drop(held); drop(scratch);", 82),
+    ] {
+        let source = format!(
+            r#"
+            use vstd::prelude::*;
+            verus! {{
+                fn f() resources peak(memory) <= 1000 {{
+                    let m = std::sync::Mutex::new(1u8);
+                    let held = m.lock();
+                    let scratch = Box::new([0u8; 64]);
+                    {cleanup}
+                }}
+            }}
+        "#
+        );
+        let result = crate::verify_one_file(name, source, &["--trace"]).unwrap_err();
+        crate::common::assert_vir_error_msg(result.clone(), "mutex intervals awaiting global");
+        assert!(
+            result.notes.iter().any(|note| note
+                .message
+                .contains(&format!("memory at mutex release: {live} live bytes"))),
+            "{:?}",
+            result.notes
+        );
+    }
+}
+
+#[test]
+fn worker_uses_the_mutex_instance_carried_by_its_arc_capture() {
+    let source = r#"
+        fn f() resources peak(memory) <= 1000 {
+            let m = std::sync::Arc::new(std::sync::Mutex::new(0u8));
+            let alias = m.clone();
+            let worker = std::thread::spawn(move || {
+                let held = m.lock();
+                SECOND
+                drop(held);
+            });
+            let done = worker.join();
+        }
+    "#;
+    rejects(
+        "worker_lock_instance",
+        &source.replace("SECOND", "drop(alias);"),
+        "checked worker effects still require global",
+    );
+    rejects(
+        "worker_lock_alias",
+        &source.replace("SECOND", "let again = alias.lock();"),
+        "reentrant blocking acquisition",
+    );
+}
+
+#[test]
+fn the_lock_contract_preserves_the_unwrap_precondition() {
+    let source = r#"
+        fn f() resources peak(memory) <= 1000 {
+            let m = std::sync::Mutex::new(1u8);
+            let result = m.lock();
+            CHECK
+            let guard = result.unwrap();
+            drop(guard);
+        }
+    "#;
+    rejects(
+        "checked_guard_extract",
+        &source.replace("CHECK", "if result.is_err() { return; }"),
+        "mutex intervals awaiting global",
+    );
+    let errors = crate::verify_one_file(
+        "unchecked_guard_extract",
+        format!("use vstd::prelude::*; verus! {{ {} }}", source.replace("CHECK", "")),
+        &[],
+    )
+    .unwrap_err();
+    assert!(
+        errors.errors.iter().any(|d| d.message.contains("precondition")),
+        "{:?}",
+        errors.errors
+    );
 }

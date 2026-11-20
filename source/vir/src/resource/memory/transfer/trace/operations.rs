@@ -75,6 +75,17 @@ impl Trace<'_> {
         let span = &value.span;
         use checked::Operation;
         match operation {
+            Operation::GuardExtract { source } => {
+                let Value::Owner(mut guard) = self.value(&source)? else { return None };
+                guard.typ = value.typ.clone();
+                Some(Value::Owner(guard))
+            }
+            Operation::MutexLock { receiver, .. } => {
+                self.value(&receiver)?;
+                // The lock result owns a release effect. There is no separate
+                // payload allocation and no checked Ok discriminator here.
+                Some(self.wrapped_owner(value, Value::Unknown, 0, 0))
+            }
             Operation::Iterator(operation) => self.iterator_operation(value, operation),
             Operation::SliceLength { receiver } => Some(match self.value(&receiver)? {
                 Value::CollectionLength(length) => Value::Scalar(length),

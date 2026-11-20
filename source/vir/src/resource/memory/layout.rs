@@ -180,6 +180,18 @@ impl Layouts {
         }
     }
 
+    /// Guards and acquiring poison errors own the release effect, while the
+    /// protected payload remains in the mutex's persistent allocation tree.
+    pub(super) fn guard_owner(&self, typ: &Typ) -> bool {
+        use super::synchronization::LibraryType;
+        let TypX::Datatype(name, args, _) = &**typ else { return false };
+        match self.synchronization_types.get(name) {
+            Some(LibraryType::MutexGuard) => true,
+            Some(LibraryType::PoisonError) => args.first().is_some_and(|typ| self.guard_owner(typ)),
+            _ => false,
+        }
+    }
+
     /// Only the compiler-identified standard Result carries primitive outcomes.
     pub(super) fn result_payloads<'t>(&self, typ: &'t Typ) -> Option<(&'t Typ, &'t Typ)> {
         let TypX::Datatype(name, args, _) = &**typ else { return None };
@@ -218,7 +230,10 @@ impl Layouts {
     }
 
     fn owner_inner(&self, typ: &Typ, visiting: &mut HashSet<Dt>) -> bool {
-        if self.mutex_payload(typ).is_some() || self.result_payloads(typ).is_some() {
+        if self.guard_owner(typ)
+            || self.mutex_payload(typ).is_some()
+            || self.result_payloads(typ).is_some()
+        {
             return true;
         }
         if self.join_handle(typ).is_some() || super::iterators::owns_vector_storage(typ) {
@@ -373,7 +388,7 @@ impl Layouts {
             }
             return Ok(children);
         }
-        if self.join_handle(typ).is_some() {
+        if self.guard_owner(typ) || self.join_handle(typ).is_some() {
             return Ok(children);
         }
         if let TypX::AnonymousClosure(_, _, _, id) = &**typ {

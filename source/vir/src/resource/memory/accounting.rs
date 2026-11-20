@@ -8,6 +8,7 @@ use crate::messages::{Span, note};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+mod intervals;
 mod transport;
 pub(super) use transport::SharedBackingCharges;
 
@@ -44,16 +45,17 @@ pub struct MemoryReport {
     pub budget: u64,
     pub events: Vec<MemoryEvent>,
     pub(super) conditional: bool,
-    pub(super) cost_points: Vec<(Span, Footprint)>,
+    /// Source observations shared by byte obligations, lifetime profiles and checked body effects.
+    pub(super) points: Arc<Vec<Point>>,
 }
 
 impl MemoryReport {
     /// Project each simultaneous footprint before taking its peak. This also
     /// retains aggregate contract slack across calls and sections.
     pub fn selected_peak(&self, span: &Span, selection: &MemorySelection) -> Expr {
-        self.cost_points
+        self.points
             .iter()
-            .map(|(_, cost)| cost.select(span, selection))
+            .map(|point| point.cost.select(span, selection))
             .reduce(|a, b| contracts::maximum(span, a, b))
             .unwrap_or_else(|| contracts::literal(span, 0))
     }
@@ -73,6 +75,7 @@ impl MemoryReport {
                 )
             },
         ))];
+        result.extend(self.interval_diagnostics());
         result.extend(self.events.iter().map(|event| {
             VirErrAs::Note(note(
                 &event.span,
@@ -156,6 +159,8 @@ pub(super) struct Live {
     dynamic: std::collections::BTreeMap<u64, DynamicCharge>,
     values: HashMap<u64, Charge<u64>>,
     pub(super) inputs: HashSet<usize>,
+    /// Acquisitions held by this actor on this particular execution path.
+    held: std::collections::BTreeSet<super::synchronization::local::Interval>,
 }
 
 impl Live {
@@ -178,6 +183,8 @@ impl Live {
 
 #[derive(Clone)]
 pub(super) struct Point {
+    pub(super) span: Span,
+    pub(super) condition: super::synchronization::local::Condition,
     pub(super) cost: Footprint,
     pub(super) values: HashSet<u64>,
     pub(super) inputs: HashSet<usize>,
@@ -189,7 +196,6 @@ pub(super) struct Accounting {
     /// Restoring a branch must not erase peaks on an edge that already exited.
     observed_peak: u128,
     paths: Vec<Live>,
-    points: Vec<Point>,
     peak_costs: Vec<(Span, Footprint)>,
     peak_span: Span,
     report: MemoryReport,
@@ -210,7 +216,6 @@ impl Accounting {
         Self {
             observed_peak: 0,
             paths: vec![Live::default()],
-            points: Vec::new(),
             peak_costs: Vec::new(),
             peak_span: span.clone(),
             report: MemoryReport {
@@ -218,13 +223,13 @@ impl Accounting {
                 budget,
                 events: Vec::new(),
                 conditional: false,
-                cost_points: Vec::new(),
+                points: Arc::default(),
             },
         }
     }
 
     pub(super) fn points(&self) -> &[Point] {
-        &self.points
+        &self.report.points
     }
     pub(super) fn restore_live(&mut self, other: &Self) {
         self.paths = other.paths.clone();
@@ -247,6 +252,7 @@ impl Accounting {
                         .checked_add(*amount)
                         .ok_or_else(|| unsupported(span, "storage totals exceeding u64"))?;
                 }
+                path.held.extend(local.held.iter().copied());
                 path.dynamic.extend(local.dynamic.clone());
                 path.values.extend(local.values.clone());
                 path.inputs.extend(local.inputs.iter().copied());
@@ -299,6 +305,7 @@ impl Accounting {
                 p.fixed == path.fixed
                     && p.values == path.values
                     && p.inputs == path.inputs
+                    && p.held == path.held
                     && p.dynamic.len() == path.dynamic.len()
                     && p.dynamic
                         .iter()
@@ -514,10 +521,24 @@ impl Accounting {
         }
     }
     fn record_point(&mut self, span: &Span, cost: Footprint, path: &Live) {
-        self.report.cost_points.push((span.clone(), cost.clone()));
+        self.record_phase(span, cost, path, super::synchronization::local::Boundary::Live);
+    }
+
+    fn record_phase(
+        &mut self,
+        span: &Span,
+        cost: Footprint,
+        path: &Live,
+        boundary: super::synchronization::local::Boundary,
+    ) {
         self.peak_costs.push((span.clone(), cost.clone()));
-        self.points.push(Point {
+        Arc::make_mut(&mut self.report.points).push(Point {
+            span: span.clone(),
             cost,
+            condition: super::synchronization::local::Condition {
+                held: path.held.iter().copied().collect(),
+                boundary,
+            },
             values: path.values.keys().copied().collect(),
             inputs: path.inputs.clone(),
         });

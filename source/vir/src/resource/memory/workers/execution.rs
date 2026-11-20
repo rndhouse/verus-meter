@@ -56,8 +56,6 @@ pub(in super::super) struct Execution {
     pub(super) obligations: Vec<super::super::accounting::Obligation>,
     /// Additional body safety obligations such as reserved-capacity checks.
     pub(super) checks: Vec<(Span, Expr)>,
-    /// Independent actor history; it is never added to the caller as a call peak.
-    pub(super) report: super::super::accounting::MemoryReport,
     /// Actual normal result after every source return's capture cleanup.
     pub(super) result: Storage,
     /// All storage retained by completion, including newly created shared backing.
@@ -97,7 +95,7 @@ impl Analysis<'_> {
                     "a worker summary substituted for a different actor",
                 ));
             }
-            execution.effects.validate(self.summaries)?;
+            execution.effects.validate(self.summaries, Some(*actor))?;
             let owned = execution.entry.captures.owned_slots(self.layouts);
             for cleanup in &execution.capture_cleanup {
                 if !cleanup.owners.keys().all(|slot| owned.contains(slot)) {
@@ -427,6 +425,7 @@ impl Analysis<'_> {
             effects: Arc::new(BodyEffects {
                 body,
                 ownership: worker.transitions,
+                points: report.points,
                 calls: worker.calls,
             }),
             transfer: inferred.map(|inferred| inferred.template),
@@ -436,7 +435,6 @@ impl Analysis<'_> {
             requirements: requires.clone(),
             obligations: worker.obligations,
             checks: worker.checks,
-            report,
             result,
             retained,
             shared: worker.heap.shared,

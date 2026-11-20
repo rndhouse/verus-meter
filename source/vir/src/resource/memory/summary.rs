@@ -9,17 +9,30 @@ use std::sync::Arc;
 pub(super) struct BodyEffects {
     pub(super) body: Expr,
     pub(super) ownership: super::transfer::Checked,
+    /// Actor-local simultaneous costs with resolved acquisition conditions.
+    pub(super) points: Arc<Vec<super::accounting::Point>>,
     /// Resolved ordinary helpers whose proofs the caller must discharge.
     pub(super) calls: Vec<(Fun, crate::messages::Span)>,
 }
 
 impl BodyEffects {
+    pub(super) fn validate_intervals(
+        &self,
+        actor: Option<super::workers::WorkerId>,
+    ) -> Result<(), VirErr> {
+        for phase in self.points.iter() {
+            phase.validate(&self.ownership, actor)?;
+        }
+        Ok(())
+    }
     /// Every consumed helper must retain its verified source effects. A function
     /// contract alone cannot discharge worker cleanup or panic-free dependencies.
     pub(super) fn validate(
         &self,
         summaries: &std::collections::HashMap<Fun, FunctionSummary>,
+        actor: Option<super::workers::WorkerId>,
     ) -> Result<(), VirErr> {
+        self.validate_intervals(actor)?;
         for (callee, span) in &self.calls {
             if summaries.get(callee).and_then(|summary| summary.effects.as_ref()).is_none() {
                 return Err(super::model::unsupported(

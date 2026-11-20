@@ -55,6 +55,8 @@ pub(super) type OwnerPath = Vec<OwnerSlot>;
 /// its inline storage belongs to the enclosing value or allocation layout.
 #[derive(Clone)]
 pub(super) struct Owner {
+    /// A source mutex identity or a returned acquisition, transported with its owner.
+    pub(super) synchronization: Option<super::synchronization::local::Owned>,
     /// A collection handle and the evidence its owner can use at join.
     pub(super) selected_worker: Option<SelectedWorker>,
     /// Native/vstd successful join payload, conditional on every possible body's
@@ -101,6 +103,7 @@ pub(super) struct Owner {
 impl Default for Owner {
     fn default() -> Self {
         Self {
+            synchronization: None,
             selected_worker: None,
             joined: None,
             extracted_arc: None,
@@ -519,36 +522,7 @@ impl Analysis<'_> {
         if let Some(owner) = self.extracted_owner(expr, false)? {
             return Ok(owner);
         }
-        if let Some(args) = intrinsic(
-            expr,
-            ResourceIntrinsic::Synchronization(super::synchronization::Operation::MutexNew),
-        ) {
-            let payload = self
-                .layouts
-                .mutex_payload(&expr.typ)
-                .filter(|payload| crate::ast_util::types_equal(payload, &args[0].typ))
-                .ok_or_else(|| unsupported(&expr.span, "inconsistent standard mutex payload"))?;
-            // The destination already pays for the mutex state and inline payload.
-            // Preserve the original allocation tree under the single protected root.
-            self.initialize_expr(&args[0])?;
-            let mut owner = Owner::default();
-            let slot = if self.layouts.owner(payload) {
-                let mut child = self.result_owner.take().ok_or_else(|| {
-                    unsupported(&expr.span, "mutex construction without its payload ownership")
-                })?;
-                self.freeze_owner_geometry(&args[0], &mut child);
-                owner.children.insert(OwnerSlot::Contents, child);
-                Some(OwnerSlot::Contents)
-            } else {
-                None
-            };
-            self.transitions.operation(
-                &expr.span,
-                super::transfer::checked::Operation::Aggregate {
-                    fields: vec![(args[0].clone(), slot)],
-                    tag: 0,
-                },
-            );
+        if let Some(owner) = self.synchronization_owner(expr)? {
             return Ok(owner);
         }
         if let Some(owner) = self.allocate_box(expr)? {
@@ -635,10 +609,12 @@ impl Analysis<'_> {
     ) -> Result<(), VirErr> {
         let mut shared = false;
         owner.visit(&mut |node| {
-            shared |= matches!(node.selected_worker, Some(SelectedWorker::Parameter))
-                || node.shared.is_some()
-                || node.closure.is_some()
-                || node.worker.is_some()
+            shared |=
+                matches!(node.synchronization, Some(super::synchronization::local::Owned::Guard(_)))
+                    || matches!(node.selected_worker, Some(SelectedWorker::Parameter))
+                    || node.shared.is_some()
+                    || node.closure.is_some()
+                    || node.worker.is_some()
         });
         if shared {
             // Forest records retain identity links, but the population consumer
@@ -696,6 +672,9 @@ impl Analysis<'_> {
         inputs: bool,
         proofs: &mut Vec<Stmt>,
     ) {
+        if let Some(super::synchronization::local::Owned::Guard(interval)) = owner.synchronization {
+            self.storage.release_interval(span, interval);
+        }
         if owner.selected_worker.is_some() {
             self.heap.workers.detach_occurrence(span);
             return;
