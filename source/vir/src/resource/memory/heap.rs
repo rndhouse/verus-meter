@@ -22,10 +22,12 @@ pub(super) struct Heap {
     /// Shared allocations live once in the closed domain, independently of
     /// which local, aggregate or worker currently retains each strong handle.
     pub(super) shared: super::shared::SharedRoots,
-    pub(super) owners: HashMap<VarIdent, Owner>,
+    /// Local roots in a stable order. Loop snapshots and invariants visit this
+    /// map directly, so its iteration order becomes part of the solver input.
+    pub(super) owners: BTreeMap<VarIdent, Owner>,
     /// Borrowed inputs use the same structural paths as owned inputs. Original
     /// allocations remain charged to the caller; replacements are charged here.
-    pub(super) borrowed: HashMap<VarIdent, Owner>,
+    pub(super) borrowed: BTreeMap<VarIdent, Owner>,
     protected: HashSet<VarIdent>,
     /// Loops may partition ownership while retaining enclosing owner slots.
     /// Checked loop branches preserve it through explicit lifetime joins;
