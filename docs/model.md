@@ -1,6 +1,6 @@
 # Memory contracts
 
-Verus Meter verifies upper bounds on peak source-level memory for supported Rust programs. The [accounting guide](verus-meter/accounting/README.md) defines model bytes, their lifetimes, and how they combine.
+Verus Meter verifies upper bounds on peak source-level memory for supported Rust programs. The [accounting policy](verus-meter/accounting/README.md) defines model bytes, their lifetimes, and how they combine.
 
 ## How do I read a contract?
 

@@ -1,6 +1,10 @@
 # Source memory accounting
 
-Verus Meter bounds the source-level storage a Rust program keeps live. These pages define the accounting policy. The current verifier still charges some operations more than the policy requires.
+These pages record our design agreement about the memory bound Verus Meter should prove.
+
+- The aim is to let programmers control algorithmic memory use through decisions they make in Rust source.
+- A change to a compiler or library's private implementation should preserve the bound whenever the program and the operation's source-level effects stay the same.
+- We use these rules to decide what the verifier should charge. Differences in current behavior belong in the [accounting audit](../todo/audit-and-correct-source-accounting.md).
 
 ## Rules
 
@@ -12,5 +16,3 @@ Verus Meter bounds the source-level storage a Rust program keeps live. These pag
 
 - [Arrays and slices](collections/arrays-and-slices.md) covers inline elements, borrowed views, and boxed slices.
 - [Vectors](collections/vectors.md) covers explicitly reserved slots, occupied slots, and owned elements.
-
-For contract syntax, see the [contract guide](../../model.md). For known discrepancies, see the [accounting audit](../todo/audit-and-correct-source-accounting.md).
