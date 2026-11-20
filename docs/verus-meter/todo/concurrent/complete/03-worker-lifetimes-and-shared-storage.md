@@ -9,9 +9,7 @@ multiplying allocation charges. Connect actual worker execution to checked
 ownership and effect descriptions for later synchronization-aware composition.
 Spawning must never be handled as a completed ordinary function call.
 
-This document is the completion checklist for 03. Implement the remaining work in
-03.1–03.4; these are parts of the complete core, not separate feature releases.
-Keep 03 open until all four documents and the criteria below are complete.
+**Complete on the implementation branch at `04d32dbd1`.** The [final worker audit](03.4.3-validate-and-close-03.md) records the source regressions, supported transfers and integrated checks for 03.1–03.4.
 
 ## Architecture and boundaries
 
@@ -53,7 +51,7 @@ Preserve their semantic requirements while integrating or simplifying the code.
   body. Retain the source definition and disjoint capture views into one inline
   environment instead of duplicating its storage.
 - [x] Preserve construction-time scalar and collection-geometry observations
-  through closure transport. Repeated constructions still need occurrence binding.
+  through closure transport. 03.3 binds repeated constructions to their actual occurrences.
 - [x] Maintain internal publication, running, completion, waiting and collection
   states; retain captures/results separately from handles. Internal checks reject
   lost storage, detached/outstanding work and self/cyclic waits.
@@ -72,16 +70,16 @@ semantics, including checked capture ownership at the invocation boundary.
 effects and ownership templates, capture cleanup, and native/vstd join results.
 Source tests exercise generated local obligations while the mandatory global
 rejection remains. The completed 03.3 tests exercise symbolic worker populations
-and final shared releases in executable programs. The [03.4.3 audit](03.4.3-validate-and-close-03.md) tracks final integration of the verified ownership transfers.
+and final shared releases in executable programs. The [03.4.3 audit](03.4.3-validate-and-close-03.md) records final integration of the verified ownership transfers.
 
 ## Remaining work
 
 | Done | Task | Required result |
 | --- | --- | --- |
-| [x] | [03.1 — Closure invocation and cleanup](complete/03.1-closure-invocation-and-cleanup.md) | Source-semantic invocation, ownership transport and cleanup without exact generated-wrapper admission checks. |
-| [x] | [03.2 — Executable worker analysis](complete/03.2-executable-worker-analysis.md) | Actual worker bodies produce checked effects connected to entry, completion and native/vstd join. |
-| [x] | [03.3 — Symbolic populations and shared ownership](complete/03.3-symbolic-populations-and-shared-ownership.md) | Executable spawn/join loops, nested workers, retained results and global strong ownership have checked symbolic transitions. |
-| [ ] | [03.4 — Worker integration and completion](03.4-worker-integration-and-completion.md) | All worker requirements below have source-connected evidence and explicit rejection boundaries. |
+| [x] | [03.1 — Closure invocation and cleanup](03.1-closure-invocation-and-cleanup.md) | Source-semantic invocation, ownership transport and cleanup without exact generated-wrapper admission checks. |
+| [x] | [03.2 — Executable worker analysis](03.2-executable-worker-analysis.md) | Actual worker bodies produce checked effects connected to entry, completion and native/vstd join. |
+| [x] | [03.3 — Symbolic populations and shared ownership](03.3-symbolic-populations-and-shared-ownership.md) | Executable spawn/join loops, nested workers, retained results and global strong ownership have checked symbolic transitions. |
+| [x] | [03.4 — Worker integration and completion](03.4-worker-integration-and-completion.md) | All worker requirements below have source-connected evidence and explicit rejection boundaries. |
 
 ## Completion criteria
 
@@ -90,16 +88,16 @@ and final shared releases in executable programs. The [03.4.3 audit](03.4.3-vali
 - [x] Closure construction, spawn setup/publication overlap, execution, waiting,
   completion and joining preserve all modeled inline and separately owned storage.
   Returning storage stays charged until collection; join transfers it once.
-- [ ] Capture scalar values, aggregate projections, allocation identities and
+- [x] Capture scalar values, aggregate projections, allocation identities and
   synchronization relationships survive construction, calls and thread boundaries.
   `Send`/`Sync` remain enforced and supply no exclusion or memory allowance.
 - [x] Symbolic loops describe actual historical spawns, outstanding workers and
   retained results, including zero iterations, partial joins and repeated capture
   construction. Generated count/ownership obligations follow executable events.
-- [ ] Acyclic nested worker trees, handle transfers and waits preserve actor and
+- [x] Acyclic nested worker trees, handle transfers and waits preserve actor and
   parent identity. Join-safety obligations cover symbolic families and caller
   substitutions; every accounting scope retains or joins its descendants.
-- [ ] Strong Arc operations work across workers, supported runtime containers and
+- [x] Strong Arc operations work across workers, supported runtime containers and
   checked input/output descriptors. Count backing/control storage once and each
   handle separately; prove final release globally. Preserve protected payload
   identity for the owning-payload operations completed in 05.
@@ -107,7 +105,7 @@ and final shared releases in executable programs. The [03.4.3 audit](03.4.3-vali
   environmental assumptions and primitive Result outcomes follow 01; native join
   success is never an unproved assumption. Reject detach, scoped borrowed captures,
   Weak/raw/cyclic ownership, leaks and other excluded operations explicitly.
-- [ ] All four subtasks are validated and moved to `complete/`. Update their links
+- [x] All four subtasks are validated and moved to `complete/`. Update their links
   here and in the index as they move. No internal ledger, manually maintained
   ghost counter or unconnected summary can discharge a source memory guarantee.
 
