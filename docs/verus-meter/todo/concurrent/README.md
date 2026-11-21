@@ -1,7 +1,7 @@
 # Concurrent symbolic memory analysis TODOs
 
 These tasks track implementation of the concurrent core.
-Next is [05.2 — Ownership after unlock](05.2-ownership-after-unlock.md).
+Next is [05.3 — Helpers and conditional paths](05.3-helpers-and-conditional-paths.md).
 [05 — Function and worker summaries](05-function-and-worker-summaries.md) tracks the four subtasks and final integration checks. The [final worker audit](complete/03.4.3-validate-and-close-03.md) records the verified worker scope and integration checks.
 
 ## Authoritative location
@@ -46,7 +46,7 @@ Preserve the semantics and synchronization precision established in 01 throughou
 | [x] | [04 — Allocation and synchronization lifetimes](complete/04-allocation-and-synchronization-lifetimes.md) | Compiler-derived containment, escape and release relationships. |
 | [ ] | [05 — Function and worker summaries](05-function-and-worker-summaries.md) | General helper/lifetime composition and protected payloads, extending 03.2's summaries. |
 | [x] | [05.1 — Shared contents across workers](complete/05.1-shared-contents-across-workers.md) | Connect a mutex release to the contents visible to its next holder. |
-| [ ] | [05.2 — Ownership after unlock](05.2-ownership-after-unlock.md) | Account for removed storage through worker completion, join and final drop. |
+| [x] | [05.2 — Ownership after unlock](complete/05.2-ownership-after-unlock.md) | Account for removed storage through worker completion, join and final drop. |
 | [ ] | [05.3 — Helpers and conditional paths](05.3-helpers-and-conditional-paths.md) | Preserve protected updates, ownership and guard effects on each path through a call. |
 | [ ] | [05.4 — Repeated acquisitions and loop-selected mutexes](05.4-repeated-acquisitions-and-loop-selected-mutexes.md) | Preserve the selected mutex and its contents across symbolic iterations. |
 | [ ] | [06 — Verified protocols and bounded permits](06-verified-protocols-and-bounded-permits.md) | Custom Verus protocols and the selected semaphore interface. |
