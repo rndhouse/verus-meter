@@ -23,6 +23,8 @@ pub(super) struct Section<'a> {
     pub(super) binding: &'a Binding,
     /// One body-derived transformation per possible release of the guard.
     pub(super) releases: Vec<Recipe>,
+    /// One source-checked result per normal return of a returning holder.
+    pub(super) returns: Vec<Recipe>,
 }
 
 enum Origin {
@@ -142,6 +144,52 @@ impl History {
             }
         }
         inputs
+    }
+
+    /// Each prefix can be a completed run if other holders skip their
+    /// protected access. Look up the input of the actual returning holder
+    /// on that same prefix. An absent holder retained its default empty input.
+    pub(super) fn terminal_states(&self) -> std::ops::Range<usize> {
+        0..self.states.len()
+    }
+
+    pub(super) fn input_before(&self, mut state: usize, interval: Interval) -> Option<&Expr> {
+        while let Origin::Release { previous, interval: step, .. } = &self.states[state].origin {
+            if *step == interval {
+                return Some(&self.states[*previous].forest);
+            }
+            state = *previous;
+        }
+        None
+    }
+
+    /// All cuts of this history compatible with the native joins seen at the
+    /// observation. Unjoined actors can already have run. Future actors cannot.
+    pub(super) fn at_join(&self, mut end: usize, observation: &super::Observation) -> Vec<&Expr> {
+        let mut path = vec![end];
+        while let Origin::Release { previous, .. } = &self.states[end].origin {
+            end = *previous;
+            path.push(end);
+        }
+        path.reverse();
+        let mut first = 0;
+        let mut last = path.len() - 1;
+        for (i, &state) in path.iter().enumerate().skip(1) {
+            let Origin::Release { actor, .. } = &self.states[state].origin else { unreachable!() };
+            if observation.completed.contains(actor) {
+                first = i;
+            }
+            if !observation.published.contains(actor) {
+                last = last.min(i - 1);
+            }
+        }
+        // This ordering violates publication order. Including its baseline
+        // conservatively keeps every choice defined.
+        path.get(first..=last)
+            .unwrap_or(&path[..1])
+            .iter()
+            .map(|&i| &self.states[i].forest)
+            .collect()
     }
 
     pub(super) fn transitions(&self, interval: Interval, release: &Expr) -> Vec<(&Expr, &Expr)> {

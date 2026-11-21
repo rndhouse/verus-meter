@@ -132,6 +132,8 @@ pub(super) struct Edge {
     pub(super) target: Target,
     /// Source exit used for cleanup and unsupported-dependency diagnostics.
     pub(super) span: Span,
+    /// The operand has produced its value here, before the exit transfers control.
+    pub(super) value_site: Option<Span>,
     /// Live values, allocations, and peak history on this edge alone.
     pub(super) state: BranchState,
     /// Inline result remains live while enclosing scopes release their locals.
@@ -180,6 +182,7 @@ impl Analysis<'_> {
         self.flow.exits.push(Edge {
             target,
             span: expr.span.clone(),
+            value_site: result.map(|value| value.span.clone()),
             state: self.branch_state(),
             value,
             owner,

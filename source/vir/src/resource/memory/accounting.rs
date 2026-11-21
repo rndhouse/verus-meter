@@ -175,6 +175,22 @@ pub(super) struct Live {
 }
 
 impl Live {
+    /// Equal live ledgers preserve future destruction, inputs and held guards.
+    /// Numeric equality alone cannot identify transported storage.
+    fn same_state(&self, other: &Self) -> bool {
+        self.section_entry == other.section_entry
+            && self.fixed == other.fixed
+            && self.owned == other.owned
+            && self.values == other.values
+            && self.inputs == other.inputs
+            && self.held == other.held
+            && self.dynamic.len() == other.dynamic.len()
+            && self
+                .dynamic
+                .iter()
+                .all(|(id, e)| other.dynamic.get(id).is_some_and(|v| e.same_state(v)))
+    }
+
     /// Sections freeze dynamic byte terms at entry. Fixed charges and their
     /// symbolic addition order follow the ordinary path expression.
     fn footprint_with(
@@ -368,18 +384,7 @@ impl Accounting {
     }
     pub(super) fn join_live(&mut self, other: &Self) -> Result<(), VirErr> {
         for path in &other.paths {
-            if !self.paths.iter().any(|p| {
-                p.section_entry == path.section_entry
-                    && p.fixed == path.fixed
-                    && p.owned == path.owned
-                    && p.values == path.values
-                    && p.inputs == path.inputs
-                    && p.held == path.held
-                    && p.dynamic.len() == path.dynamic.len()
-                    && p.dynamic
-                        .iter()
-                        .all(|(id, e)| path.dynamic.get(id).is_some_and(|v| e.same_state(v)))
-            }) {
+            if !self.paths.iter().any(|other| other.same_state(path)) {
                 if self.paths.len() >= 1024 {
                     return Err(unsupported(
                         &self.peak_span,

@@ -5,6 +5,8 @@ use std::sync::Arc;
 
 mod builders;
 mod prefixes;
+mod projections;
+pub(in crate::resource::memory) use projections::fixed_selection_facts;
 mod ranges;
 mod scope;
 

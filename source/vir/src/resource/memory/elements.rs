@@ -709,6 +709,36 @@ impl Analysis<'_> {
             ));
         }
         if elements.precise {
+            if self.current_worker.is_some()
+                && self.transitions.protected_versions.roots().next().is_some()
+            {
+                // A freshly constructed vector can enter another worker's
+                // ownership through this slot. Check the constructor length
+                // at the move while the executable value is still in scope.
+                child.visit_mut(&mut |node| {
+                    if node.source.is_some()
+                        && node.vector.is_some_and(|id| {
+                            let v = &self.growth.vectors[id];
+                            v.local_constructor
+                                && v.pushes == 0
+                                && v.removals == 0
+                                && !v.backing.changed
+                        })
+                        && let Some(length) = &node.geometry
+                    {
+                        let equality =
+                            crate::ast_util::mk_eq(span, &self.owner_length(span, node), length);
+                        self.growth.before.entry(span.id).or_default().push(
+                            super::metadata::expr::check(
+                                span,
+                                equality,
+                                "inserted vector differs from its constructor length",
+                            ),
+                        );
+                        node.source = None;
+                    }
+                });
+            }
             let records = self.snapshot_owner_metadata(span, &child);
             let path = self.metadata_path(span, length.clone())?;
             if let Some(id) = selection {

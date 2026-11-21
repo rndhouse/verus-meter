@@ -28,7 +28,7 @@ use std::collections::{BTreeMap, HashMap};
 
 pub(super) use checked::Checked;
 pub(super) use consistency::{modified_parameters, validate};
-pub(super) use proofs::forest as prove_forest;
+pub(super) use proofs::{fixed_selection_facts, forest as prove_forest};
 
 /// Establish descriptor properties and one-step membership laws in a loop's
 /// source proof context. The proposed invariant remains an ordinary obligation.

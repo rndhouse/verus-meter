@@ -5,9 +5,11 @@
 mod composition;
 mod history;
 mod input;
+mod outcomes;
 mod recipe;
 
 pub(in crate::resource::memory) use history::History;
+pub(in crate::resource::memory) use outcomes::Observation;
 
 /// Actual contents and allocation origins observed at a fixed publication.
 #[derive(Clone)]
@@ -36,6 +38,8 @@ use std::collections::BTreeMap;
 #[derive(Default)]
 pub(in super::super) struct Versions {
     bindings: BTreeMap<Interval, Binding>,
+    /// All normal exits of a worker returning an owning value from this acquisition.
+    returns: Vec<Publication>,
     /// Cleanup runs on each source exit and cannot return errors directly.
     error: Option<VirErr>,
 }
@@ -78,6 +82,10 @@ impl Interval {
 }
 
 impl Versions {
+    pub(in super::super) fn result_root(&self) -> Option<RootId> {
+        (!self.returns.is_empty()).then(|| self.bindings.values().next().unwrap().root)
+    }
+
     pub(in super::super) fn roots(&self) -> impl Iterator<Item = RootId> + '_ {
         self.bindings.values().map(|b| b.root)
     }

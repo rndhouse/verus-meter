@@ -76,6 +76,37 @@ pub(super) struct Recipe {
 }
 
 impl Recipe {
+    /// Request the algebra facts used to evaluate each component of a
+    /// projected result. Nested children can read a lookup on a subtree that
+    /// is already gone from the normalized result descriptor.
+    pub(super) fn result_facts(
+        &self,
+        site: &crate::messages::Span,
+        entry: &Expr,
+        input: &Expr,
+        parameters: &HashMap<VarIdent, Expr>,
+        facts: &mut Vec<Stmt>,
+    ) -> Option<()> {
+        let mut values = parameters.clone();
+        values.insert(variable(entry).clone(), input.clone());
+        for (name, value) in &self.assignments {
+            let step = crate::ast_visitor::map_expr_visitor(value, &|e| {
+                if let ExprX::Var(n) = &e.x
+                    && let Some(v) = values.get(n)
+                {
+                    Ok(v.clone())
+                } else {
+                    Ok(e.clone())
+                }
+            })
+            .ok()?;
+            crate::resource::memory::transfer::fixed_selection_facts(site, &step, facts);
+            let normalized = simplify::simplify(&step);
+            values.insert(name.clone(), normalized);
+        }
+        Some(())
+    }
+
     pub(super) fn apply(&self, input: Option<(&Expr, &Expr)>) -> Expr {
         let mut values = HashMap::new();
         if let Some((formal, actual)) = input {

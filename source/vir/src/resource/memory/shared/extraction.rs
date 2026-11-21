@@ -26,12 +26,6 @@ impl Analysis<'_> {
             .ok_or_else(|| {
                 unsupported(span, "extracting a shared payload without a known allocation")
             })?;
-        if self.growth.versioned_shared.contains_key(&root) {
-            return Err(unsupported(
-                span,
-                "extracting a protected payload before composing its worker updates",
-            ));
-        }
         if !(self.transitions.owns_fixed_root(root) || self.transitions.recovered_payload(root))
             || self.growth.section_shared.contains(&root)
             || self.growth.peer_results.contains_key(&root)
@@ -53,6 +47,14 @@ impl Analysis<'_> {
                 span,
                 crate::ast_util::mk_eq(span, &claims.population.pending, &meta::integer(span, 0)),
                 "cannot extract a shared payload while indexed aliases still own it",
+            ));
+        }
+        if self.growth.versioned_shared.contains_key(&root)
+            && (!self.heap.shared.payload_settled(root) || self.heap.workers.shares_root(root))
+        {
+            return Err(unsupported(
+                span,
+                "extracting a protected payload before composing its worker updates",
             ));
         }
         let mut backing = self.heap.shared.release(root).unwrap();

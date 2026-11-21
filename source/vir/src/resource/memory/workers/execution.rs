@@ -126,7 +126,22 @@ impl Analysis<'_> {
                     ));
                 }
             }
-            if execution.transfer_required && execution.transfer.is_none() {
+            if let Some(root) = execution.effects.ownership.protected_versions.result_root()
+                && !self
+                    .growth
+                    .protected_observations
+                    .get(&root)
+                    .is_some_and(|obs| obs.iter().any(|o| o.result == Some(*actor)))
+            {
+                return Err(unsupported(
+                    span,
+                    "a protected worker result without a checked direct join",
+                ));
+            }
+            if execution.transfer_required
+                && execution.transfer.is_none()
+                && execution.effects.ownership.protected_versions.result_root().is_none()
+            {
                 return Err(unsupported(
                     span,
                     "worker effects without their required ownership template",
@@ -425,6 +440,7 @@ impl Analysis<'_> {
         if let Some(error) = cleanup_error {
             return Err(error);
         }
+        worker.freeze_protected_returns(&body.span, result_type)?;
         let result = worker.finish_returns(span, result)?;
         if !worker.heap.temporaries.is_empty() || !worker.evaluations.is_empty() {
             return Err(unsupported(span, "unclosed worker receiver-temporary scopes"));
@@ -447,14 +463,20 @@ impl Analysis<'_> {
             &worker.transitions,
             worker.summaries,
         )?;
-        let inferred = super::super::transfer::summarize(
-            &signature,
-            worker.layouts,
-            worker.functions,
-            worker.summaries,
-            &worker.var_modes,
-            &worker.transitions,
-        )?;
+        // A fixed protected result depends on the preceding holder. Its checked
+        // exit forests replace the capture-only template at a direct join.
+        let inferred = if worker.transitions.protected_versions.result_root().is_some() {
+            None
+        } else {
+            super::super::transfer::summarize(
+                &signature,
+                worker.layouts,
+                worker.functions,
+                worker.summaries,
+                &worker.var_modes,
+                &worker.transitions,
+            )?
+        };
         if let Some(inferred) = &inferred {
             worker.apply_transfer_evidence(inferred)?;
         }

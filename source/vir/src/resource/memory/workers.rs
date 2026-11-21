@@ -586,9 +586,30 @@ impl Analysis<'_> {
             );
         }
         self.heap.workers.complete(id, &expr.span)?;
+        if self.current_worker.is_none() {
+            for root in execution.entry.shared.allocation_ids() {
+                if self.growth.versioned_shared.contains_key(&root)
+                    && self.heap.shared.payload(root).is_some()
+                {
+                    self.observe_joined_payload(root, id, &expr.span)?;
+                }
+            }
+        }
         let mut retained = execution.retained.clone();
         let mut result_owner = execution.result.owner.clone();
-        if let Some(owner) = &mut result_owner {
+        if let Some(root) = execution.effects.ownership.protected_versions.result_root() {
+            let packed = result_owner.take().ok_or_else(|| {
+                unsupported(&expr.span, "a protected result without its retained owner")
+            })?;
+            result_owner = Some(self.receive_protected_result(
+                &expr.span,
+                id,
+                root,
+                success,
+                packed,
+                &mut retained,
+            )?);
+        } else if let Some(owner) = &mut result_owner {
             self.rebind_worker_output(owner, &mut retained, &execution, &expr.span, Some(&handle))?;
         }
         let mut shared = execution.shared.clone();

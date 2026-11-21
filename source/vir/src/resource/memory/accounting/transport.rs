@@ -240,7 +240,12 @@ impl Accounting {
                     selected.inputs.insert(*id);
                 }
             }
-            transferred.push(selected);
+            // Projecting a subset can erase every distinction between two
+            // source exits. Keep that outgoing ledger once before composing
+            // workers, without merging the source histories or allocation IDs.
+            if !transferred.iter().any(|prior: &Live| prior.same_state(&selected)) {
+                transferred.push(selected);
+            }
         }
         let mut target = Self::new(span, self.report.budget);
         target.paths = transferred;

@@ -140,12 +140,8 @@ impl Analysis<'_> {
     ) -> Result<(), VirErr> {
         if self.growth.versioned_shared.iter().any(|(id, fixed)| {
             fixed.is_none()
-                && self
-                    .heap
-                    .shared
-                    .roots
-                    .get(id)
-                    .is_some_and(|r| matches!(r.storage, Backing::Owned(_)))
+                && self.heap.shared.payload(*id).is_some()
+                && (!self.heap.shared.payload_settled(*id) || self.heap.workers.shares_root(*id))
         }) {
             return Err(unsupported(
                 span,

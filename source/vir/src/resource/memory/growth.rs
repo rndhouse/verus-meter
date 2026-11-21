@@ -51,6 +51,11 @@ pub(super) struct VectorState {
 
 #[derive(Default)]
 pub(super) struct Growth {
+    /// Coordinator observations that must share a checked mutex history.
+    pub(super) protected_observations: std::collections::BTreeMap<
+        super::shared::RootId,
+        Vec<super::synchronization::versions::Observation>,
+    >,
     /// Canonical contents still in the publisher's scope when a fixed worker
     /// receives a shared handle. Each observation is checked at its own spawn.
     pub(super) protected_seeds: std::collections::BTreeMap<

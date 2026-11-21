@@ -1,6 +1,8 @@
 //! Acquisition-relative contents of an owning payload shared by fixed workers.
 use super::rejects;
 
+mod joined;
+
 /// Local checks still run when the domain lacks its global interference proof.
 fn diagnostics(name: &str, program: &str, expected: &[&str]) {
     let source = format!("use vstd::prelude::*; verus! {{ {program} }}");
@@ -209,6 +211,8 @@ fn an_unresolved_initial_vector_cannot_be_treated_as_empty() {
         &program,
         &[
             "linked acquisitions = 0",
+            // The caller also receives an unrestricted surviving backing at join.
+            "conditional memory budget exceeded: cannot prove the required model bytes",
             "conditional memory budget exceeded during worker",
             CHECKPOINT,
         ],
@@ -253,17 +257,13 @@ fn a_dynamic_payload_cannot_be_priced_or_extracted_from_its_initial_state() {
     );
     let aliases = format!("{ALIAS} let keep = cell.clone();");
     let observe = format!("{REVERSED} assert(current(memory) <= 512); drop(keep);");
-    rejects(
+    diagnostics(
         "coordinator_observes_after_joins",
         &writers(Write::Push, &aliases, &observe),
-        "a checkpoint on owned shared backing before composing its worker updates",
+        &[LINKED],
     );
     let joins = format!("{REVERSED} let recovered = std::sync::Arc::into_inner(keep);");
-    rejects(
-        "coordinator_after_both_joins",
-        &writers(Write::Push, &aliases, &joins),
-        "extracting a protected payload before composing its worker updates",
-    );
+    diagnostics("coordinator_after_both_joins", &writers(Write::Push, &aliases, &joins), &[LINKED]);
 }
 
 #[test]

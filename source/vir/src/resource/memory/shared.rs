@@ -14,6 +14,7 @@ use super::{
     elements::References,
     heap::{Owner, OwnerSlot},
     model::unsupported,
+    workers::WorkerId,
 };
 use crate::{ast::*, messages::Span};
 use std::collections::{BTreeMap, BTreeSet};
@@ -132,6 +133,9 @@ pub(super) fn selected_record(span: &Span, identity: Expr) -> Expr {
 
 #[derive(Clone)]
 struct Root {
+    /// Fixed holders seen on this source path. Only a native receipt proves a
+    /// published holder has completed, even if its handle left this ledger.
+    payload_joins: BTreeMap<WorkerId, bool>,
     /// Immutable mutex identity of a direct protected payload, shared with
     /// importing workers independently of the domain charged for the bytes.
     mutex: Option<super::synchronization::Instance>,
@@ -150,7 +154,13 @@ impl Root {
     fn owned(storage: Owner) -> Self {
         let mutex =
             storage.children.get(&OwnerSlot::Contents).and_then(|child| child.mutex_instance());
-        Self { strong: 1, mutex, protected_type: None, storage: Backing::Owned(Box::new(storage)) }
+        Self {
+            payload_joins: BTreeMap::new(),
+            strong: 1,
+            mutex,
+            protected_type: None,
+            storage: Backing::Owned(Box::new(storage)),
+        }
     }
 }
 
@@ -353,6 +363,41 @@ impl SharedRoots {
     pub(super) fn payload(&self, id: RootId) -> Option<&Owner> {
         let Backing::Owned(backing) = &self.roots.get(&id)?.storage else { return None };
         backing.children.get(&OwnerSlot::Contents)
+    }
+
+    pub(super) fn payload_settled(&self, id: RootId) -> bool {
+        self.roots.get(&id).is_some_and(|root| {
+            !root.payload_joins.is_empty() && root.payload_joins.values().all(|joined| *joined)
+        })
+    }
+
+    pub(super) fn publish_payload_holder(&mut self, id: RootId, actor: WorkerId) {
+        self.roots
+            .get_mut(&id)
+            .expect("published canonical backing")
+            .payload_joins
+            .insert(actor, false);
+    }
+
+    pub(super) fn joined_holders(&self, id: RootId) -> BTreeSet<WorkerId> {
+        self.roots
+            .get(&id)
+            .into_iter()
+            .flat_map(|root| &root.payload_joins)
+            .filter_map(|(&actor, &joined)| joined.then_some(actor))
+            .collect()
+    }
+
+    pub(super) fn record_payload_join(&mut self, id: RootId, actor: WorkerId) {
+        if let Some(joined) =
+            self.roots.get_mut(&id).and_then(|root| root.payload_joins.get_mut(&actor))
+        {
+            *joined = true;
+        }
+    }
+
+    pub(super) fn protected_type(&self, id: RootId) -> Option<Typ> {
+        self.roots.get(&id)?.protected_type.clone()
     }
 
     /// The regular ownership path operations can address a canonical Arc backing
@@ -756,6 +801,7 @@ impl SharedRoots {
                 self.roots.insert(
                     id,
                     Root {
+                        payload_joins: BTreeMap::new(),
                         strong,
                         mutex: enclosing.roots[&id].mutex,
                         protected_type: enclosing.roots[&id].protected_type.clone(),
@@ -787,6 +833,7 @@ impl SharedRoots {
             && self.roots.iter().all(|(id, root)| {
                 other.roots.get(id).is_some_and(|other| {
                     root.strong == other.strong
+                        && root.payload_joins == other.payload_joins
                         && root.mutex == other.mutex
                         && match (&root.protected_type, &other.protected_type) {
                             (Some(a), Some(b)) => crate::ast_util::types_equal(a, b),

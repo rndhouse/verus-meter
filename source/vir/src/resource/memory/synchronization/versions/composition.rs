@@ -2,6 +2,8 @@
 //! specialization has a base obligation at publication and a step obligation
 //! at the executable release. Join order supplies neither premise.
 
+mod receipts;
+
 use super::{
     history::Section,
     recipe::{Schedule, assignment, variable},
@@ -77,6 +79,7 @@ impl Analysis<'_> {
             else {
                 continue;
             };
+            self.heap.shared.publish_payload_holder(root, actor);
             if !complete_contents(&payload) {
                 continue;
             }
@@ -98,7 +101,7 @@ impl Analysis<'_> {
         &mut self,
         function: &Function,
     ) -> Result<usize, VirErr> {
-        if self.growth.protected_seeds.is_empty() {
+        if self.growth.protected_seeds.is_empty() && self.growth.protected_observations.is_empty() {
             return Ok(0);
         }
         let mut groups = BTreeMap::<RootId, Vec<(Arc<Execution>, Interval)>>::new();
@@ -132,6 +135,16 @@ impl Analysis<'_> {
                     plan(&self.growth, &publisher, function, root, &members)
             {
                 plans.push((root, history, proof));
+            }
+        }
+        for (root, observations) in &self.growth.protected_observations {
+            if observations.iter().any(|o| o.result.is_some())
+                && !plans.iter().any(|(linked, _, _)| linked == root)
+            {
+                return Err(unsupported(
+                    &observations[0].snapshot.span,
+                    "a joined outcome without a complete checked history for its mutex",
+                ));
             }
         }
         for (root, history, proof) in plans {
@@ -203,15 +216,31 @@ fn plan(
             .map(|r| schedule.recipe(&r.contents, Some(&binding.entry), &captures))
             .collect::<Option<_>>()?;
         used.extend(releases.iter().flat_map(|r| r.parameters.iter().cloned()));
+        let returns = effects
+            .protected_versions
+            .returns
+            .iter()
+            .map(|out| {
+                if out.origins.is_empty() {
+                    return None;
+                }
+                schedule.recipe(&out.contents, Some(&binding.entry), &captures)
+            })
+            .collect::<Option<Vec<_>>>()?;
+        used.extend(returns.iter().flat_map(|r| r.parameters.iter().cloned()));
         sections.push(Section {
             worker,
             access: schedule.position(&binding.entry)?.clone(),
             interval: *interval,
             binding,
             releases,
+            returns,
         });
     }
     let history = History::build(seeds, &sections)?;
+    if let Some(observations) = growth.protected_observations.get(&root) {
+        proof.joined_outcomes(function, &history, &sections, observations)?;
+    }
     for (publication, initial) in history.seeds() {
         let snapshot = &publication.contents;
         let check = expr::check(
@@ -247,6 +276,29 @@ fn plan(
             }
         };
         let states: Vec<_> = history.inputs(section.interval).into_iter().map(bind).collect();
+        let empty = expr::empty(site, expr::record_type());
+        for (exit, recipe) in
+            section.worker.effects.ownership.protected_versions.returns.iter().zip(&section.returns)
+        {
+            let origin = &exit.contents;
+            let site = &origin.span;
+            let mut checks = Vec::new();
+            for state in history.inputs(section.interval).into_iter().chain(std::iter::once(&empty))
+            {
+                let result = recipe.apply(Some((input, state)));
+                recipe.result_facts(site, input, &bind(state), &bindings, &mut checks)?;
+                checks.push(expr::check(
+                    site,
+                    mk_implies(
+                        site,
+                        &mk_eq(site, input, &bind(state)),
+                        &mk_eq(site, origin, &bind(&result)),
+                    ),
+                    "completed worker result differs from its checked exit",
+                ));
+            }
+            proof.snapshots.push((origin.clone(), None, checks));
+        }
         let mut options = states.iter();
         let mut choice = options.next()?.clone();
         for state in options {

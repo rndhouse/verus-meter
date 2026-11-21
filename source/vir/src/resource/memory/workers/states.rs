@@ -250,6 +250,19 @@ impl Analysis<'_> {
             // Result records its new layout. Reuse those ordinary inequalities.
             if join.phases.caller.is_some() {
                 self.obligations.extend(join.phases.obligations(&self.bound));
+            } else if join
+                .families
+                .iter()
+                .any(|id| workers[id].effects.ownership.protected_versions.result_root().is_some())
+            {
+                // The joined forest first belongs to the intact completion
+                // record. Prove this phase before the handle and tag retire.
+                self.obligations.push(Obligation {
+                    span: join.phases.span.clone(),
+                    cost: join.phases.ready.clone(),
+                    bound: bound.clone(),
+                    kind: CheckKind::WorkerState(Phase::Ready.description()),
+                });
             }
         }
         for execution in workers.values() {

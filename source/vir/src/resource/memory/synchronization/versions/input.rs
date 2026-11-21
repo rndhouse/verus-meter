@@ -31,6 +31,27 @@ fn fixed_bytes(owner: &Owner) -> Option<u64> {
 }
 
 impl Analysis<'_> {
+    pub(super) fn unrestricted_payload(&mut self, site: &Span, name: &str) -> Expr {
+        // Normalize malformed descriptors to the empty forest. Every legal
+        // incoming forest is still possible, without adding a trusted premise.
+        let any = self.metadata_local(
+            site,
+            "unknown_protected_contents",
+            SpannedTyped::new(site, &expr::memory_type(), ExprX::Nondeterministic),
+        );
+        let valid =
+            expr::operation(site, "well_formed", vec![any.clone()], crate::ast_util::bool_typ());
+        self.metadata_local(
+            site,
+            name,
+            SpannedTyped::new(
+                site,
+                &expr::memory_type(),
+                ExprX::If(valid, any, Some(expr::empty(site, expr::record_type()))),
+            ),
+        )
+    }
+
     pub(super) fn acquired_owner(
         &mut self,
         typ: &Typ,
@@ -50,24 +71,7 @@ impl Analysis<'_> {
             let bytes = fixed_bytes(&payload);
             return Ok((entry, payload, bytes));
         }
-        // Normalize malformed descriptors to the empty forest. Every legal
-        // incoming forest is still possible, without adding a trusted premise.
-        let any = self.metadata_local(
-            site,
-            "protected_input",
-            SpannedTyped::new(site, &expr::memory_type(), ExprX::Nondeterministic),
-        );
-        let valid =
-            expr::operation(site, "well_formed", vec![any.clone()], crate::ast_util::bool_typ());
-        let entry = self.metadata_local(
-            site,
-            "protected_contents",
-            SpannedTyped::new(
-                site,
-                &expr::memory_type(),
-                ExprX::If(valid, any, Some(expr::empty(site, expr::record_type()))),
-            ),
-        );
+        let entry = self.unrestricted_payload(site, "protected_contents");
         let mut payload =
             self.owner_from_metadata(site, typ, entry.clone(), metadata::View::Complete, false)?;
         if let Some(id) = payload.vector {
