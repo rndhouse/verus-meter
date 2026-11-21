@@ -99,11 +99,12 @@ affected Clippy checks passed.
   vector size at a worker checkpoint, in the owning actor after join, or on unique
   extraction after a peer update. Join order supplies no ordering between writes.
 
-Work through the following children in order. At `b8e289e04`, a worker can still
-receive an arbitrary vector at acquisition, so the two-worker push/pop program
-cannot prove its 4,096-byte allowance.
+In `b6d2185c8`, the two-worker push/pop program discharges its worker-local
+4,096-byte obligations in either join order. Its total concurrent bound still
+requires 07. Next, 05.2 follows the popped allocation through worker completion
+and join.
 
-- [ ] [05.1 — Shared contents across workers](05.1-shared-contents-across-workers.md). Connect the initial contents and feasible releases to the next acquisition of that mutex.
+- [x] [05.1 — Shared contents across workers](complete/05.1-shared-contents-across-workers.md). Connect the initial contents and feasible releases to the next acquisition of that mutex.
 - [ ] [05.2 — Ownership after unlock](05.2-ownership-after-unlock.md). Follow the selected allocation through unlock, worker completion, join and final drop.
 - [ ] [05.3 — Helpers and conditional paths](05.3-helpers-and-conditional-paths.md). Preserve each path’s contents, released or returned guard, and escaped ownership across calls.
 - [ ] [05.4 — Repeated acquisitions and loop-selected mutexes](05.4-repeated-acquisitions-and-loop-selected-mutexes.md). Apply those relationships to the selected allocation and acquisition on each loop visit.
