@@ -227,7 +227,23 @@ pub(super) fn summarize(
         } else {
             Value::Unknown
         };
-        trace.state.values.insert(parameter.x.name.clone(), value);
+        if descriptor.is_some() && layouts.owner(&parameter.x.typ) {
+            trace.state.values.insert(
+                parameter.x.name.clone(),
+                Value::Owner(Node {
+                    origin: None,
+                    typ: parameter.x.typ.clone(),
+                    memory: expr::empty(&parameter.span, expr::record_type()),
+                    minima: Minima::new(),
+                }),
+            );
+        }
+        let name = if descriptor.is_some() {
+            layouts.borrowed_binder(parameter)
+        } else {
+            parameter.x.name.clone()
+        };
+        trace.state.values.insert(name, value);
     }
     trace
         .initialize_regions(function)
@@ -243,6 +259,19 @@ pub(super) fn summarize(
             .take()
             .unwrap_or_else(|| Failure::new(&body.span, "executable body composition"))
     })?;
+    // Accounting has executed implicit parameter destructors on every normal
+    // return. Only the protected tree and an explicitly returned guard remain.
+    for (index, p) in function.x.params.iter().enumerate() {
+        if matches!(
+            checked.synchronization_inputs.owned_input(index),
+            Some(super::super::synchronization::local::Owned::Guard(_))
+        ) {
+            trace.state.values.remove(&p.x.name);
+            for edge in &mut trace.exits {
+                edge.state.values.remove(&p.x.name);
+            }
+        }
+    }
     let result = trace
         .finish_exits(&function.span, result, &crate::resource::memory::control::Target::Return)
         .ok_or_else(|| Failure::new(&function.span, "return and exit composition"))?;
@@ -255,12 +284,12 @@ pub(super) fn summarize(
     let mut borrowed = BTreeMap::new();
     for (index, parameter) in function.x.params.iter().enumerate() {
         if layouts.borrowed_owner(&parameter.x.typ).is_some()
-            && trace.state.written.contains(&parameter.x.name)
+            && trace.state.written.contains(&layouts.borrowed_binder(parameter))
         {
             let Value::Owner(node) = trace
                 .state
                 .values
-                .get(&parameter.x.name)
+                .get(&layouts.borrowed_binder(parameter))
                 .ok_or_else(|| Failure::new(&parameter.span, "borrowed output description"))?
             else {
                 continue;
@@ -398,7 +427,9 @@ impl Trace<'_> {
         let mut effects = Vec::new();
         for effect in &self.effects {
             let Some(index) = function.x.params.iter().position(|parameter| {
-                matches!(&*parameter.x.typ, TypX::MutRef(_)) && &parameter.x.name == effect.root()
+                (matches!(&*parameter.x.typ, TypX::MutRef(_))
+                    || self.layouts.writable_guard_payload(&parameter.x.typ).is_some())
+                    && &self.layouts.borrowed_binder(parameter) == effect.root()
             }) else {
                 continue;
             };

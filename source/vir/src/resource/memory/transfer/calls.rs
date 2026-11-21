@@ -77,7 +77,7 @@ impl Analysis<'_> {
                 Some(View::Payload(_)) => self.layouts.vector(super::super::paths::referent(typ)),
                 Some(View::Guard(_) | View::Mutex(_)) => self
                     .layouts
-                    .mutable_guard_payload(typ)
+                    .writable_guard_payload(typ)
                     .or_else(|| self.layouts.mutex_payload(super::super::paths::referent(typ)))
                     .is_some_and(|payload| self.layouts.vector(payload)),
                 None => false,
@@ -480,6 +480,7 @@ impl Analysis<'_> {
         function: &Function,
         args: &Exprs,
         mut prepared: Prepared,
+        places: &HashMap<usize, checked::Place>,
         transferred: &mut [Option<Owner>],
     ) -> Result<Option<Owner>, VirErr> {
         let forwarded = self.take_worker_parameter(&value.span, function, transferred)?;
@@ -491,9 +492,7 @@ impl Analysis<'_> {
                 .layouts
                 .borrowed_owner(&function.x.params[index].x.typ)
                 .expect("mutable owner parameter");
-            let (name, path) = self.call_location(&args[index], typ).ok_or_else(|| {
-                unsupported(&value.span, "a transferred parameter without a tracked owner")
-            })?;
+            let (name, path) = places[&index].location.clone();
             let through_guard = matches!(
                 self.synchronization_view(&args[index]),
                 Some(super::super::synchronization::local::View::Payload(_))

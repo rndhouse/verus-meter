@@ -430,7 +430,7 @@ impl Analysis<'_> {
     /// Join original lifetimes by fixed ownership role. Earlier branch peak
     /// witnesses keep their separate identities; only live exit paths switch to
     /// the conditional identity consumed by later operations and loop summaries.
-    fn join_conditional_inputs(
+    pub(super) fn join_conditional_inputs(
         &mut self,
         span: &Span,
         yes: &mut BranchState,
@@ -441,12 +441,7 @@ impl Analysis<'_> {
             return Err(unsupported(span, "branch-dependent surviving ownership slots"));
         }
         let mut joins = Vec::new();
-        for (name, owner) in &yes.heap.owners {
-            owner.visit_paths(&mut vec![], &mut |path, node| {
-                joins.push((name.clone(), path.clone(), node.input));
-            });
-        }
-        for (name, owner) in &yes.heap.borrowed {
+        for (name, owner) in yes.heap.owners.iter().chain(&yes.heap.borrowed) {
             owner.visit_paths(&mut vec![], &mut |path, node| {
                 joins.push((name.clone(), path.clone(), node.input));
             });
@@ -473,6 +468,12 @@ impl Analysis<'_> {
                 .root_mut(&name)
                 .and_then(|owner| owner.at_mut(&path))
                 .ok_or_else(|| unsupported(span, "branch-dependent fixed ownership slots"))?;
+            if !current.same_synchronization(yes.heap.root(&name).unwrap().at(&path).unwrap()) {
+                return Err(unsupported(
+                    span,
+                    "branch-dependent synchronization owners at a continuing slot",
+                ));
+            }
             if current.input == input {
                 continue;
             }
@@ -502,11 +503,13 @@ impl Analysis<'_> {
         no: Option<&Expr>,
         new_value: bool,
     ) -> Result<Option<Value>, VirErr> {
-        if self.layouts.owner(&expr.typ) {
+        let guard_option = self.layouts.optional_guard_payload(&expr.typ).is_some();
+        if self.layouts.owner(&expr.typ) && !guard_option {
             return Err(unsupported(&expr.span, "conditional heap ownership results"));
         }
         // The condition always runs before either alternative. Its completed
         // transfers belong to both paths; only conditional work needs protection.
+        self.open_branch_payloads(std::iter::once(yes).chain(no).cloned(), &expr.span)?;
         self.discard(cond)?;
         let protection = self.heap.protect_branch(self.growth.loop_depth > 0);
         let entry = self.branch_state();
@@ -522,6 +525,7 @@ impl Analysis<'_> {
         if !yes_state.reachable {
             result = None;
         }
+        let yes_owner = self.result_owner.take();
         self.restore_branch(&entry);
         if let Some(no) = no {
             if new_value {
@@ -538,12 +542,24 @@ impl Analysis<'_> {
             }
         }
         self.guard_shared_checkpoints(cond, first_checkpoint, else_checkpoint);
+        let owner = if guard_option {
+            match (yes_state.reachable, self.flow.reachable) {
+                (true, true) => {
+                    super::control::merge_result(&expr.span, yes_owner, self.result_owner.take())?
+                }
+                (true, false) => yes_owner,
+                _ => self.result_owner.take(),
+            }
+        } else {
+            None
+        };
         if yes_state.reachable && self.flow.reachable {
             self.join_conditional_inputs(&expr.span, &mut yes_state)?;
             self.join_branch(&expr.span, &yes_state)?;
         } else if yes_state.reachable {
             self.restore_branch(&yes_state);
         }
+        self.result_owner = owner;
         self.heap.unprotect(protection);
         Ok(result)
     }

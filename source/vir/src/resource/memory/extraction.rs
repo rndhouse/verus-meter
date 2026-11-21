@@ -60,6 +60,12 @@ impl Analysis<'_> {
                     .result_owner
                     .take()
                     .ok_or_else(|| unsupported(&source.span, "an Option without ownership"))?;
+                if !self.select_optional_guard(&mut option, true, &source.span)? {
+                    return Err(unsupported(
+                        &source.span,
+                        "a guard extraction without a present acquisition",
+                    ));
+                }
                 let child = option.children.remove(&OwnerSlot::Contents).ok_or_else(|| {
                     unsupported(&source.span, "an Option without a payload owner")
                 })?;

@@ -249,6 +249,24 @@ before combining workers. A scalar `peak(helper)` remains the helper's declared
 allowance; its slack cannot establish exclusion or an ownership effect. Refined
 summaries must be checked against executable bodies and existing declared bounds.
 
+For a native mutex helper, the guard parameter carries the release duty and its
+protected contents have a separate ownership descriptor. A caller binds both to
+the actual acquisition before moving the guard. A helper can update the
+descriptor, release the guard, or return it to the caller. For
+`Option<MutexGuard<_>>`, the `Some` arm resumes the same acquisition and its
+contents. The `None` arm carries no guard. All present outcomes must identify
+the same acquisition. A helper that returns an allocation on selected exits
+retains each exit’s byte charge and original ownership regions. Its caller
+selects the returned contents and the remaining mutex contents with the same
+branch condition.
+
+For fixed workers with a representable mutex history, a conditional write can
+depend on immutable scalar inputs. An arm that skips the write preserves the
+incoming contents. The verifier checks each proposed transformation at the
+source release and accounts for an extracted allocation through its subsequent
+owner and join. Opaque conditions or too many alternatives can prevent a tight
+proof. These local checks feed the global interference proof in 07.
+
 For custom protocols, expose a verified **synchronization-effect declaration** on
 local executable functions, with instance projection, incoming/outgoing tracked
 witness projections, acquisition/release outcomes, and an instance holder-bound

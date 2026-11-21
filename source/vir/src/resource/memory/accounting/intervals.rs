@@ -2,6 +2,7 @@
 //! A blocked caller retains its storage. Unlock changes the phase constraint
 //! even if every byte in the previous phase remains live.
 
+use super::super::synchronization::optional::GuardOption;
 use super::{Accounting, MemoryReport};
 use crate::resource::memory::{
     model::unsupported,
@@ -27,10 +28,12 @@ impl Accounting {
         for path in &self.paths {
             let mut expected = borrowed.clone();
             match result {
-                Some(Owned::Guard(id)) => {
+                Some(Owned::Guard(id) | Owned::GuardOption(GuardOption::Present(id))) => {
                     expected.insert(id);
                 }
-                Some(Owned::Attempt(id)) if path.held.contains(&id) => {
+                Some(Owned::Attempt(id) | Owned::GuardOption(GuardOption::Conditional(id)))
+                    if path.held.contains(&id) =>
+                {
                     expected.insert(id);
                 }
                 _ => {}
@@ -58,7 +61,7 @@ impl Accounting {
             for id in call.consumed() {
                 path.held.remove(&id);
             }
-            if let Some(Owned::Guard(id)) = result {
+            if let Some(Owned::Guard(id) | Owned::GuardOption(GuardOption::Present(id))) = result {
                 if path.held.iter().any(|held| held.instance == id.instance && *held != id) {
                     return Err(unsupported(
                         span,
@@ -66,7 +69,9 @@ impl Accounting {
                     ));
                 }
                 path.held.insert(id);
-            } else if let Some(Owned::Attempt(id)) = result
+            } else if let Some(
+                Owned::Attempt(id) | Owned::GuardOption(GuardOption::Conditional(id)),
+            ) = result
                 && !path.held.iter().any(|held| held.instance == id.instance)
             {
                 let mut success = path.clone();

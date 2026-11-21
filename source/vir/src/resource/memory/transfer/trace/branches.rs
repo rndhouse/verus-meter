@@ -111,24 +111,33 @@ impl Trace<'_> {
         } else {
             self.effects.extend(common_inline_appends(yes_effects, no_effects)?);
         }
-        if let Some(joins) = self.checked.branches.get(&span.id) {
-            self.used.insert((checked::Kind::Branch, span.id));
-            for join in joins {
-                let memory = |id: Option<usize>| match id {
-                    Some(id) => self.regions.get(&id).cloned(),
-                    None => Some(expr::empty(span, expr::record_type())),
-                };
-                let memory =
-                    choose(span, condition.as_ref(), &memory(join.yes)?, &memory(join.no)?)?;
-                self.regions.insert(join.result, simplify::simplify(&memory));
-            }
-        }
+        self.join_input_regions(span, span.id, condition.as_ref())?;
         match (yes_reachable, no_reachable) {
             (true, true) => Self::join_values(span, condition.as_ref(), &yes_value, &no_value),
             (true, false) => Some(yes_value),
             (false, true) => Some(no_value),
             (false, false) => Some(Value::Unit),
         }
+    }
+
+    pub(super) fn join_input_regions(
+        &mut self,
+        span: &Span,
+        site: u64,
+        condition: Option<&Expr>,
+    ) -> Option<()> {
+        if let Some(joins) = self.checked.branches.get(&site) {
+            self.used.insert((checked::Kind::Branch, site));
+            for join in joins {
+                let memory = |id: Option<usize>| match id {
+                    Some(id) => self.regions.get(&id).cloned(),
+                    None => Some(expr::empty(span, expr::record_type())),
+                };
+                let memory = choose(span, condition, &memory(join.yes)?, &memory(join.no)?)?;
+                self.regions.insert(join.result, simplify::simplify(&memory));
+            }
+        }
+        Some(())
     }
 
     /// Join matching live bindings and retain only shared immutable definitions.

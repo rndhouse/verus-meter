@@ -356,11 +356,26 @@ impl Analysis<'_> {
                     continue;
                 }
             } else {
+                let mut owner = option_owner.clone();
+                if let Some(owner) = owner.as_mut()
+                    && matches!(
+                        owner.synchronization,
+                        Some(super::synchronization::local::Owned::GuardOption(_))
+                    )
+                    && let PatternX::Constructor(_, variant, _) = &arm.x.pattern.x
+                    && !self.select_optional_guard(
+                        owner,
+                        variant.as_str() == "Some",
+                        &arm.x.body.span,
+                    )?
+                {
+                    continue;
+                }
                 self.option_pattern(
                     &arm.x.pattern,
                     &scrutinee.typ,
                     &mut slots,
-                    option_owner.clone(),
+                    owner,
                     shared_next,
                 )?;
             }

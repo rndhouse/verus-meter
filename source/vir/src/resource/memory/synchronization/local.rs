@@ -31,6 +31,8 @@ pub(in super::super) enum Owned {
     Guard(Interval),
     /// A try-lock Result or Err value owns the acquisition only on acquiring paths.
     Attempt(Interval),
+    /// The executable Option discriminant controls this guard's release duty.
+    GuardOption(super::optional::GuardOption),
 }
 
 /// Source borrows are views only. A guard view and a payload view retain the
@@ -46,6 +48,7 @@ impl Owned {
     pub(in super::super) fn interval(self) -> Option<Interval> {
         match self {
             Self::Guard(interval) | Self::Attempt(interval) => Some(interval),
+            Self::GuardOption(tag) => tag.interval(),
             Self::Mutex(_) => None,
         }
     }

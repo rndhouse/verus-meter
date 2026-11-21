@@ -2,6 +2,7 @@
 //! acquisition. Source-level ownership operations transform that input in the
 //! worker. A release exports the resulting forest separately from worker results.
 
+mod calls;
 mod composition;
 mod history;
 mod input;
@@ -42,6 +43,15 @@ pub(in super::super) struct Versions {
     returns: Vec<Publication>,
     /// Cleanup runs on each source exit and cannot return errors directly.
     error: Option<VirErr>,
+}
+
+/// A conditional handoff closes the actor's charge view. Only a returned
+/// guard for this exact acquisition can reopen it. The None arm has already
+/// published at the helper release and owns none of these charges.
+pub(in super::super) struct Suspended {
+    interval: Interval,
+    wrapper: Owner,
+    charges: Accounting,
 }
 
 /// The forest supplied by a holder of this exact mutex, at this dynamic acquisition.
@@ -147,35 +157,6 @@ impl Versions {
 }
 
 impl Analysis<'_> {
-    pub(in super::super) fn open_guard_arguments(
-        &mut self,
-        callee: &Function,
-        args: &Exprs,
-        site: &Span,
-    ) -> Result<(), VirErr> {
-        if self.current_worker.is_none() {
-            return Ok(());
-        }
-        for (param, arg) in
-            callee.x.params.iter().zip(args.iter()).filter(|(p, _)| p.x.mode == Mode::Exec)
-        {
-            match self.synchronization_view(arg) {
-                Some(super::local::View::Guard(interval)) => {
-                    if let Some(typ) = self.layouts.mutable_guard_payload(&param.x.typ) {
-                        self.open_imported_payload(interval, typ, site)?;
-                    }
-                }
-                Some(super::local::View::Payload(interval)) => self.open_imported_payload(
-                    interval,
-                    crate::resource::memory::paths::referent(&param.x.typ),
-                    site,
-                )?,
-                _ => {}
-            }
-        }
-        Ok(())
-    }
-
     /// Lazily bind only on a path that actually dereferences a live guard.
     /// While that guard is held, no other actor can change these contents.
     pub(in super::super) fn open_imported_payload(
@@ -257,36 +238,6 @@ impl Analysis<'_> {
         self.storage.record_live(site)
     }
 
-    /// End an already-open view when a checked helper drops the moved guard.
-    /// The call-site value equals the release value if the whole call left the
-    /// payload untouched. Returning the guard keeps the original view open.
-    pub(in super::super) fn publish_consumed_payloads(
-        &mut self,
-        call: &super::helpers::Call,
-        result: Option<Owned>,
-        site: &Span,
-    ) -> Result<(), VirErr> {
-        let mut proofs = Vec::new();
-        for interval in call.consumed() {
-            if result.and_then(Owned::interval) == Some(interval)
-                || !self.heap.borrowed.contains_key(&interval.payload_name())
-            {
-                continue;
-            }
-            if call.payload_borrows.contains(&interval) {
-                return Err(unsupported(
-                    site,
-                    "a consuming helper without its release-time payload",
-                ));
-            }
-            self.publish_imported_payload(interval, site, &mut proofs);
-        }
-        if !proofs.is_empty() {
-            self.growth.after.entry(site.id).or_default().extend(proofs);
-        }
-        Ok(())
-    }
-
     /// Transport the live allocation tree into the shared cell. Only the
     /// version's frame charge ends; displaced owners remain in the worker.
     pub(in super::super) fn publish_imported_payload(
@@ -294,13 +245,13 @@ impl Analysis<'_> {
         interval: Interval,
         site: &Span,
         proofs: &mut Vec<Stmt>,
-    ) {
-        let Some(mut wrapper) = self.heap.borrowed.remove(&interval.payload_name()) else { return };
+    ) -> Option<Suspended> {
+        let mut wrapper = self.heap.borrowed.remove(&interval.payload_name())?;
         let visit = match self.local_occurrences(site) {
             Ok(local) => self.source_visit(site.clone(), local),
             Err(error) => {
                 self.transitions.protected_versions.error = Some(error);
-                return;
+                return None;
             }
         };
         let payload =
@@ -341,8 +292,15 @@ impl Analysis<'_> {
                     .expect("acquired input")
                     .releases
                     .push(Release { visit, contents, origins, complete });
+                wrapper
+                    .children
+                    .insert(OwnerSlot::Contents, storage.owner.expect("published payload"));
+                Some(Suspended { interval, wrapper, charges: transferred })
             }
-            Err(err) => versions.error = Some(err),
+            Err(err) => {
+                versions.error = Some(err);
+                None
+            }
         }
     }
 }

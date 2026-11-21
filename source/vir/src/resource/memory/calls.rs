@@ -34,8 +34,48 @@ impl Analysis<'_> {
             .get(target)
             .ok_or_else(|| unsupported(&expr.span, "a call without a checked function summary"))?;
         self.open_guard_arguments(callee, args, &expr.span)?;
+        // Pin the mutex's actual location before moving any guard argument.
+        // Callee profiles and post-call writes use this same acquisition.
+        let mut borrowed = std::collections::HashMap::new();
+        for (index, (arg, parameter)) in args.iter().zip(callee.x.params.iter()).enumerate() {
+            if parameter.x.mode == Mode::Exec {
+                if let Some(typ) = self.layouts.borrowed_descriptor(&parameter.x.typ) {
+                    let location = self
+                        .call_location(arg, &typ)
+                        .ok_or_else(|| unsupported(&arg.span, "this borrowed owner argument"))?;
+                    borrowed.insert(
+                        index,
+                        super::transfer::checked::Place {
+                            source: arg.clone(),
+                            typ: typ.clone(),
+                            location,
+                        },
+                    );
+                }
+            }
+        }
         let call_scalars = self.allocation_scalars();
         let transfer = self.prepare_transfer_call(expr, callee, args)?;
+        let covered = borrowed
+            .keys()
+            .filter_map(|&index| {
+                let Some(super::synchronization::local::View::Guard(interval)) =
+                    self.synchronization_view(&args[index])
+                else {
+                    return None;
+                };
+                // Fixed child replacements use their checked native ownership
+                // summary. Runtime mutations require the specialized forest.
+                let complete = !summary.modified_parameters.contains(&index)
+                    || transfer.is_some()
+                    || summary
+                        .allocations
+                        .children
+                        .keys()
+                        .any(|(parameter, _)| *parameter == index);
+                complete.then_some(interval)
+            })
+            .collect();
         self.check_vector_call(expr, callee, args)?;
         let result_size = self.layouts.return_size(&expr.typ, &expr.span)?;
         let bound = super::contracts::instantiate(
@@ -192,16 +232,21 @@ impl Analysis<'_> {
             .and_then(|call| summary.synchronized_result.map(|owner| call.result(owner)));
         if let Some(call) = &synchronization {
             self.storage.commit_call_intervals(c, call, result_sync)?;
-            self.publish_consumed_payloads(call, result_sync, c)?;
         }
         let mut replaced_inputs = Vec::new();
         if let Some(transfer) = transfer {
-            self.result_owner =
-                self.apply_transfer_call(expr, callee, args, transfer, &mut transferred)?;
+            self.result_owner = self.apply_transfer_call(
+                expr,
+                callee,
+                args,
+                transfer,
+                &borrowed,
+                &mut transferred,
+            )?;
         } else {
             self.apply_vector_call_effects(expr, callee, args)?;
             replaced_inputs =
-                self.apply_child_call_effects(expr, callee, args, &mut transferred)?;
+                self.apply_child_call_effects(expr, callee, args, &borrowed, &mut transferred)?;
             self.result_owner =
                 self.complete_ownership_call(expr, callee, args, &mut transferred)?;
         }
@@ -212,27 +257,12 @@ impl Analysis<'_> {
                 .synchronization = Some(sync);
         }
         self.record_element_updates(c)?;
+        if let Some(call) = &synchronization {
+            self.publish_consumed_payloads(call, &covered, result_sync, c)?;
+        }
         self.storage.record_call_exit(c, &self.growth);
         self.produced = result;
         let retained = if destination { 0 } else { result_size };
-        let mut borrowed = std::collections::HashMap::new();
-        for (index, (arg, parameter)) in args.iter().zip(callee.x.params.iter()).enumerate() {
-            if parameter.x.mode == Mode::Exec {
-                if let Some(typ) = self.layouts.borrowed_descriptor(&parameter.x.typ) {
-                    let location = self
-                        .call_location(arg, &typ)
-                        .ok_or_else(|| unsupported(&arg.span, "this borrowed owner argument"))?;
-                    borrowed.insert(
-                        index,
-                        super::transfer::checked::Place {
-                            source: arg.clone(),
-                            typ: typ.clone(),
-                            location,
-                        },
-                    );
-                }
-            }
-        }
         let origins = self.transitions.call_origins.remove(&expr.span.id).unwrap_or_default();
         self.transitions.operation(
             &expr.span,

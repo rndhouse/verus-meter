@@ -638,6 +638,9 @@ impl Trace<'_> {
                 {
                     self.value(arg)?
                 } else {
+                    if self.layouts.owner(&parameter.x.typ) {
+                        self.value(arg)?;
+                    }
                     let location = self.checked_location(place)?;
                     let node = self.get(&arg.span, &location, &place.typ)?;
                     locations.insert(index, location);

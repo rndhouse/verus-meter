@@ -289,6 +289,9 @@ pub(in super::super) struct Checked {
     >,
     /// Charged result paths on each reaching normal exit, before transport.
     pub(in super::super) returned: Vec<super::super::accounting::ReturnedStorage>,
+    /// Source exits retained their own result origins and charges before the
+    /// structural transfer template joined their returned forests.
+    pub(in super::super) packed_returns: bool,
     /// Incoming guard and mutex binders come from executable formal parameters.
     pub(in super::super) synchronization_inputs: super::super::synchronization::parameters::Inputs,
     /// Pairs of formal mutex instances whose ownership updates require separate trees.

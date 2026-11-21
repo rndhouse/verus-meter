@@ -46,6 +46,117 @@ const RECEIPT: &str = r#"
     assert(current(memory) <= 0);
 "#;
 
+/// The flag stays live in the joining frame. A successful pop carries its
+/// 32-byte allocation independently of the mutex and both join handles.
+#[test]
+fn conditional_writes_survive_nested_consuming_helpers_and_join() {
+    let guard = "type G<'a> = std::sync::MutexGuard<'a, Vec<Box<[u8; 32]>>>;";
+    let helpers = format!(
+        r#"
+        {guard}
+        fn finish(mut g: G<'_>, insert: bool) resources peak(memory) <= 512 {{
+            if insert {{ g.push(Box::new([1u8; 32])); }} drop(g);
+        }}
+        fn forward(g: G<'_>, insert: bool) resources peak(memory) <= 1024 {{ finish(g, insert); }}
+    "#
+    );
+    for (case, functions, write) in [
+        ("direct", "", "if insert { guard.push(Box::new([1u8; 32])); }"),
+        ("early", "", "if !insert { return; } guard.push(Box::new([1u8; 32]));"),
+        ("nested", helpers.as_str(), "forward(guard, insert);"),
+    ] {
+        let receipt = RECEIPT.replace("assert(current(memory) <= 41);",
+            "if insert { assert(current(memory) <= 42); } else { assert(current(memory) <= 10); }")
+            .replace("<= 0", "<= 1");
+        let body = workers("Box<[u8; 32]>", "new()", write, REMOVE, &receipt)
+            .replace("fn work()", "fn work(insert: bool)");
+        let program = format!("{functions} {body}");
+        let mut expected = vec![LINKED];
+        if !functions.is_empty() {
+            expected.push("mutex intervals awaiting global");
+        }
+        diagnostics(&format!("conditional_{case}"), &program, &expected);
+        expected.push(BUDGET);
+        diagnostics(
+            &format!("conditional_{case}_short"),
+            &program.replace("<= 42", "<= 41"),
+            &expected,
+        );
+    }
+}
+
+#[test]
+fn a_conditional_guard_handoff_preserves_the_open_payload_on_its_some_arm() {
+    let helper = r#"
+        type G<'a> = std::sync::MutexGuard<'a, Vec<Box<[u8; 32]>>>;
+        fn handoff<'a>(mut g: G<'a>, keep: bool) -> Option<G<'a>> resources peak(memory) <= 512 {
+            g.push(Box::new([1u8; 32]));
+            if keep { Some(g) } else { drop(g); None }
+        }
+    "#;
+    let receipt = RECEIPT.replace("<= 41", "<= 42").replace("<= 0", "<= 1");
+    for (name, action) in [
+        (
+            "match",
+            "match returned { Some(mut held) => { let old = held.pop(); drop(old); drop(held); }, None => {} }",
+        ),
+        ("drop", "drop(returned);"),
+    ] {
+        let write = format!("let returned = handoff(guard, keep_guard); {action}");
+        let body = workers("Box<[u8; 32]>", "new()", &write, REMOVE, &receipt)
+            .replace("fn work()", "fn work(keep_guard: bool)");
+        let program = format!("{helper} {body}");
+        diagnostics(
+            &format!("handoff_{name}"),
+            &program,
+            &[LINKED, "mutex intervals awaiting global"],
+        );
+        diagnostics(
+            &format!("handoff_{name}_short"),
+            &program.replace("<= 42", "<= 41"),
+            &[LINKED, "mutex intervals awaiting global", BUDGET],
+        );
+    }
+}
+
+#[test]
+fn a_helper_return_selects_the_escaped_allocation_and_the_remaining_cell_together() {
+    let receipt = RECEIPT
+        .replace(
+            "assert(current(memory) <= 41);",
+            "if take { assert(current(memory) <= 42); } else { assert(current(memory) <= 10); }",
+        )
+        .replace("<= 0", "<= 1");
+    let body = workers("Box<[u8; 32]>", "new()", INSERT, "let item = pull(guard, take);", &receipt)
+        .replace("fn work()", "fn work(take: bool)")
+        .replace("drop(guard);", "");
+    let helper = r#"
+        type G<'a> = std::sync::MutexGuard<'a, Vec<Box<[u8; 32]>>>;
+        fn pull(mut guard: G<'_>, take: bool) -> Option<Box<[u8; 32]>>
+            resources peak(memory) <= 512 {
+            if !take { drop(guard); return None; }
+            RESULT
+        }
+    "#;
+    for (case, result) in [
+        ("incoming", "guard.pop()"),
+        ("fresh", "let box_to_return = Box::new([7u8; 32]); drop(guard); Some(box_to_return)"),
+    ] {
+        let helper = helper.replace("RESULT", result);
+        let program = format!("{helper} {body}");
+        diagnostics(
+            &format!("guard_return_{case}"),
+            &program,
+            &[LINKED, "mutex intervals awaiting global"],
+        );
+        diagnostics(
+            &format!("guard_return_{case}_short"),
+            &program.replace("<= 42", "<= 41"),
+            &[LINKED, "mutex intervals awaiting global", BUDGET],
+        );
+    }
+}
+
 #[test]
 fn returned_box_lives_past_unlock_join_and_last_mutex_owner() {
     let program = workers("Box<[u8; 32]>", "new()", INSERT, REMOVE, RECEIPT);

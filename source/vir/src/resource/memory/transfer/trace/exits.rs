@@ -6,6 +6,8 @@ use crate::resource::memory::control::Target;
 /// A detached symbolic result and the persistent owners surviving its scopes.
 #[derive(Clone)]
 pub(super) struct Edge {
+    /// The checked return/break/continue that detached this ownership.
+    pub(super) site: u64,
     /// Compiler-resolved destination accepted by the body proof.
     pub(super) target: Target,
     /// Scalar path selecting this edge; never inferred from payload bytes.
@@ -99,6 +101,7 @@ impl Trace<'_> {
                 continue;
             }
             if let Some(previous) = result {
+                self.join_input_regions(span, edge.site, Some(&edge.condition))?;
                 result =
                     Some(Self::join_value(span, edge.condition.clone(), &edge.result, &previous)?);
                 self.state =

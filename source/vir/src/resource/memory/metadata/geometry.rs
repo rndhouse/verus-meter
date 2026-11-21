@@ -19,7 +19,9 @@ impl Analysis<'_> {
         owner: &Owner,
         proofs: &mut Vec<Stmt>,
     ) -> Result<Expr, VirErr> {
-        if owner.complete() {
+        // A guard grants access to the observed tree. Its executable value
+        // cannot serve as a projection of the mutex's current contents.
+        if owner.complete() || owner.mutex_instance().is_some() {
             return Ok(self.owner_metadata(span, owner, proofs));
         }
         let Some((typ, source)) = &owner.source else {

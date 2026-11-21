@@ -213,7 +213,7 @@ fn plan(
         let releases: Vec<super::recipe::Recipe> = binding
             .releases
             .iter()
-            .map(|r| schedule.recipe(&r.contents, Some(&binding.entry), &captures))
+            .map(|r| schedule.release_recipe(&r.contents, &binding.entry, &captures))
             .collect::<Option<_>>()?;
         used.extend(releases.iter().flat_map(|r| r.parameters.iter().cloned()));
         let returns = effects

@@ -15,6 +15,7 @@ use vir_macros::ToDebugSNode;
 pub mod flow;
 pub(super) mod helpers;
 pub(super) mod local;
+pub(super) mod optional;
 pub(super) mod parameters;
 mod patterns;
 mod payload;
@@ -392,7 +393,7 @@ pub fn needs_cleanup(
     let empty = HashMap::new();
     let modes = modes.map(|m| &m.var_modes).unwrap_or(&empty);
     super::closures::needs_evidence(function, modes)
-        || reject_unaccounted_inner(function, modes, types, datatypes, false, false).is_err()
+        || reject_unaccounted_inner(function, modes, types, datatypes, false, false, None).is_err()
 }
 
 /// Distinguish executable roots from tracked protocol witnesses and specification
@@ -420,8 +421,17 @@ pub(super) fn reject_unaccounted(
     types: &LibraryTypes,
     datatypes: &[crate::ast::Datatype],
     worker_parameter: bool,
+    optional_result: Option<&crate::ast::Typ>,
 ) -> Result<(), crate::ast::VirErr> {
-    reject_unaccounted_inner(function, modes, types, datatypes, true, worker_parameter)
+    reject_unaccounted_inner(
+        function,
+        modes,
+        types,
+        datatypes,
+        true,
+        worker_parameter,
+        optional_result,
+    )
 }
 
 /// Evidence collection still observes supported shared operations. Their logical
@@ -434,6 +444,7 @@ fn reject_unaccounted_inner(
     datatypes: &[crate::ast::Datatype],
     shared_accounted: bool,
     worker_parameter: bool,
+    optional_result: Option<&crate::ast::Typ>,
 ) -> Result<(), crate::ast::VirErr> {
     use crate::ast::*;
     use crate::ast_visitor::{AstVisitor, NoScoper, Walk};
@@ -630,7 +641,7 @@ fn reject_unaccounted_inner(
     }
     let result = &function.x.outer_ret.x.typ;
     let result = if shared_accounted {
-        parameters::result_payload(result, types).unwrap_or(result)
+        parameters::result_payload(result, types).or(optional_result).unwrap_or(result)
     } else {
         result
     };

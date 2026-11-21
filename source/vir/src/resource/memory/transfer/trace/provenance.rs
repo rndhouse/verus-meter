@@ -70,9 +70,13 @@ impl Trace<'_> {
             .enumerate()
             .chain(self.checked.borrowed_inputs.iter().map(|(id, path)| (*id, path)))
         {
-            let Value::Owner(node) =
-                self.state.values.get(&function.x.params[*parameter].x.name)?
-            else {
+            let p = &function.x.params[*parameter];
+            let name = if self.checked.borrowed_inputs.contains_key(&id) {
+                self.layouts.borrowed_binder(p)
+            } else {
+                p.x.name.clone()
+            };
+            let Value::Owner(node) = self.state.values.get(&name)? else {
                 return None;
             };
             let mut memory = node.memory.clone();

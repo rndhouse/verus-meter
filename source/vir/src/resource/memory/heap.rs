@@ -57,6 +57,9 @@ pub(super) type OwnerPath = Vec<OwnerSlot>;
 pub(super) struct Owner {
     /// A source mutex identity or a returned acquisition, transported with its owner.
     pub(super) synchronization: Option<super::synchronization::local::Owned>,
+    /// The exact protected view that a returned Some guard can reopen.
+    pub(super) suspended_payload:
+        Option<std::sync::Arc<super::synchronization::versions::Suspended>>,
     /// A collection handle and the evidence its owner can use at join.
     pub(super) selected_worker: Option<SelectedWorker>,
     /// Native/vstd successful join payload, conditional on every possible body's
@@ -108,6 +111,7 @@ impl Default for Owner {
     fn default() -> Self {
         Self {
             synchronization: None,
+            suspended_payload: None,
             selected_worker: None,
             joined: None,
             extracted_arc: None,
@@ -134,6 +138,15 @@ impl Default for Owner {
 }
 
 impl Owner {
+    pub(super) fn same_synchronization(&self, other: &Owner) -> bool {
+        self.synchronization == other.synchronization
+            && match (&self.suspended_payload, &other.suspended_payload) {
+                (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            }
+    }
+
     /// Byte-free owner nodes and forests still carry strong/worker lifetimes.
     pub(super) fn references(&self) -> super::elements::References {
         use super::elements::References;
@@ -305,6 +318,18 @@ impl Heap {
         if in_loop {
             self.protected = old.0.clone();
             self.partitions = old.1.clone();
+        } else {
+            // A guard's linear slot owns only its release obligation. Each arm
+            // performs its own move/drop and the join checks surviving identities.
+            for (name, owner) in &self.owners {
+                if matches!(
+                    owner.synchronization,
+                    Some(super::synchronization::local::Owned::Guard(_))
+                ) && !old.0.contains(name)
+                {
+                    self.protected.remove(name);
+                }
+            }
         }
         old
     }
@@ -695,6 +720,9 @@ impl Analysis<'_> {
         if let Some(interval) =
             owner.synchronization.and_then(super::synchronization::local::Owned::interval)
         {
+            if let Some(saved) = &owner.suspended_payload {
+                self.restore_dropped_guard_payload(saved, span);
+            }
             self.publish_imported_payload(interval, span, proofs);
             self.storage.release_interval(span, interval);
         }

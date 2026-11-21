@@ -270,14 +270,16 @@ impl Analysis<'_> {
         expr: &Expr,
         callee: &Function,
         args: &Exprs,
+        places: &std::collections::HashMap<usize, super::transfer::checked::Place>,
         transferred: &mut [Option<Owner>],
     ) -> Result<Vec<super::transfer::checked::Assignment>, VirErr> {
         let mut inputs = Vec::new();
         for ((index, child_path), effect) in
             self.summaries[&callee.x.name].allocations.children.clone()
         {
-            let (name, mut path) = self
-                .call_location(&args[index], &callee.x.params[index].x.typ)
+            let (name, mut path) = places
+                .get(&index)
+                .map(|place| place.location.clone())
                 .ok_or_else(|| unsupported(&expr.span, "an aliased child replacement argument"))?;
             path.extend(child_path.iter().cloned());
             if !super::paths::indexed(&path) {
@@ -292,7 +294,8 @@ impl Analysis<'_> {
             self.release_owner(old, &expr.span);
             let mut typ = super::paths::referent(&callee.x.params[index].x.typ).clone();
             let mut slots = child_path.iter();
-            if let Some(payload) = self.layouts.mutable_guard_payload(&callee.x.params[index].x.typ)
+            if let Some(payload) =
+                self.layouts.writable_guard_payload(&callee.x.params[index].x.typ)
             {
                 if slots.next() != Some(&super::heap::OwnerSlot::Contents) {
                     return Err(unsupported(

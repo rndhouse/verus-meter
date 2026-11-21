@@ -83,7 +83,7 @@ pub(in super::super) fn modified_parameters(
         .enumerate()
         .filter_map(|(index, parameter)| {
             (layouts.borrowed_owner(&parameter.x.typ).is_some()
-                && checked.mutates(&parameter.x.name))
+                && checked.mutates(&layouts.borrowed_binder(parameter)))
             .then_some(index)
         })
         .collect()

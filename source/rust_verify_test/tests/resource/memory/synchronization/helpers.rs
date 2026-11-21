@@ -377,3 +377,102 @@ fn an_outer_mutex_does_not_supply_an_interface_for_an_embedded_guard() {
         "runtime synchronization values before concurrent lifetime accounting",
     );
 }
+
+#[test]
+fn optional_guard_continuations_preserve_the_actual_mutex_and_helper_scratch() {
+    let source = r#"
+        type M = std::sync::Mutex<u8>;
+        type G<'a> = std::sync::MutexGuard<'a, u8>;
+        fn retain_guard<'a>(g: G<'a>, keep: bool) -> Option<G<'a>> resources peak(memory) <= 1024 {
+            let scratch = Box::new([0u8; 64]);
+            assert(current(memory) <= LIMIT);
+            drop(scratch);
+            if !keep { drop(g); return None; }
+            Some(g)
+        }
+        fn run(keep: bool) resources peak(memory) <= 4096 {
+            let m = M::new(0u8);
+            let other = M::new(1u8);
+            let alias = &m;
+            let r = alias.lock();
+            if r.is_err() { return; }
+            let guard = r.unwrap();
+            let outcome = retain_guard(guard, keep);
+            match outcome {
+                Some(held) => { let independent = ACTUAL.lock(); drop(independent); drop(held); },
+                None => { let reacquired = alias.lock(); drop(reacquired); },
+            }
+        }
+    "#;
+    let normal = source.replace("LIMIT", "81");
+    check(
+        "conditional_guard",
+        &normal.replace("ACTUAL", "other"),
+        "mutex intervals awaiting global",
+    );
+    check(
+        "conditional_guard_alias",
+        &normal.replace("ACTUAL", "m"),
+        "reentrant blocking acquisition",
+    );
+    let short = source.replace("LIMIT", "80").replace("ACTUAL", "other");
+    let errors = verify_one_file(
+        "conditional_guard_scratch",
+        format!("use vstd::prelude::*; verus! {{ {short} }}"),
+        &[],
+    )
+    .unwrap_err();
+    crate::common::assert_any_vir_error_msg(errors, "live 81 bytes exceeds bound 80 bytes");
+}
+
+#[test]
+fn extracting_a_returned_optional_guard_requires_the_present_variant() {
+    let source = r#"
+        type G<'a> = std::sync::MutexGuard<'a, u8>;
+        fn retain_guard<'a>(g: G<'a>, keep: bool) -> Option<G<'a>> resources peak(memory) <= 128 {
+            if keep { Some(g) } else { drop(g); None }
+        }
+        fn caller(keep: bool) resources peak(memory) <= 4096 {
+            let m = std::sync::Mutex::new(0u8);
+            let r = m.lock();
+            if r.is_err() { return; }
+            let g = r.unwrap();
+            let returned = retain_guard(g, keep);
+            CHECK
+            let held = returned.unwrap();
+            drop(held);
+        }
+    "#;
+    check(
+        "proved_guard_unwrap",
+        &source.replace("CHECK", "if returned.is_none() { return; }"),
+        "mutex intervals awaiting global",
+    );
+    let unchecked = source.replace("CHECK", "");
+    let errors = verify_one_file(
+        "unproved_guard_unwrap",
+        format!("use vstd::prelude::*; verus! {{ {unchecked} }}"),
+        &[],
+    )
+    .unwrap_err();
+    crate::common::assert_any_vir_error_msg(errors, "precondition not satisfied");
+}
+
+#[test]
+fn moving_a_guard_into_a_fixed_payload_replacement_keeps_its_destination() {
+    check(
+        "owned_guard_replacement",
+        r#"
+        type G<'a> = std::sync::MutexGuard<'a, Box<[u8; 32]>>;
+        fn replace(mut g: G<'_>, fresh: Box<[u8; 32]>) resources peak(memory) <= 256 { *g = fresh; }
+        fn caller() resources peak(memory) <= 1024 {
+            let m = std::sync::Mutex::new(Box::new([0u8; 32]));
+            let r = m.lock();
+            if r.is_err() { return; }
+            let g = r.unwrap();
+            replace(g, Box::new([1u8; 32]));
+        }
+    "#,
+        "mutex intervals awaiting global",
+    );
+}

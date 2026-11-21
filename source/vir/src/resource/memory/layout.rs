@@ -153,12 +153,17 @@ impl Layouts {
 
     pub(super) fn synchronization_result(&self, typ: &Typ) -> bool {
         super::synchronization::parameters::result_payload(typ, &self.synchronization_types)
+            .or_else(|| self.optional_guard_payload(typ))
             .is_some()
     }
 
-    /// A borrowed native guard provides access to a separately owned mutex payload.
-    pub(super) fn mutable_guard_payload<'t>(&self, typ: &'t Typ) -> Option<&'t Typ> {
-        let TypX::MutRef(inner) = &**typ else { return None };
+    /// A native guard, including one passed by move, grants temporary access to
+    /// a separately owned mutex payload.
+    pub(super) fn writable_guard_payload<'t>(&self, typ: &'t Typ) -> Option<&'t Typ> {
+        let inner = match &**typ {
+            TypX::MutRef(inner) => inner,
+            _ => typ,
+        };
         let TypX::Datatype(name, args, _) = &**inner else { return None };
         (self.synchronization_types.get(name)
             == Some(&super::synchronization::LibraryType::MutexGuard))
@@ -168,16 +173,31 @@ impl Layouts {
 
     pub(super) fn borrowed_owner<'t>(&self, typ: &'t Typ) -> Option<&'t Typ> {
         let inner = super::paths::referent(typ);
+        if let Some(payload) = self.writable_guard_payload(typ) {
+            return self.owner(payload).then_some(inner);
+        }
         (matches!(&**typ, TypX::MutRef(_) | TypX::Decorate(TypDecoration::Ref, None, _))
             && (!super::synchronization::parameters::borrowed_view(
                 typ,
                 &self.synchronization_types,
-            ) || self
-                .mutex_payload(inner)
-                .or_else(|| self.mutable_guard_payload(typ))
-                .is_some_and(|payload| self.owner(payload)))
+            ) || self.mutex_payload(inner).is_some_and(|payload| self.owner(payload)))
             && self.owner(inner))
         .then_some(inner)
+    }
+
+    /// A moved guard has its own linear slot. Its protected tree keeps a
+    /// distinct location across moves and remains available at helper exit.
+    pub(super) fn borrowed_binder(&self, p: &Param) -> VarIdent {
+        if self.synchronization_parameter(&p.x.typ)
+            == Some(super::synchronization::parameters::Parameter::Guard)
+        {
+            VarIdent(
+                std::sync::Arc::new(format!("$memory_guard_payload_{}", p.x.name.0)),
+                p.x.name.1.clone(),
+            )
+        } else {
+            p.x.name.clone()
+        }
     }
 
     /// Ownership templates for a mutable guard borrow describe the native
@@ -185,7 +205,7 @@ impl Layouts {
     /// destructor remain independent of that tree.
     pub(super) fn borrowed_descriptor(&self, typ: &Typ) -> Option<Typ> {
         let inner = self.borrowed_owner(typ)?;
-        if let Some(payload) = self.mutable_guard_payload(typ) {
+        if let Some(payload) = self.writable_guard_payload(typ) {
             let mutex = self.synchronization_types.iter().find_map(|(name, kind)| {
                 (*kind == super::synchronization::LibraryType::Mutex).then_some(name)
             })?;
@@ -212,6 +232,22 @@ impl Layouts {
 
     pub(super) fn option(&self, typ: &Typ) -> bool {
         matches!(&**typ, TypX::Datatype(name, _, _) if Some(name) == self.option.as_ref())
+    }
+
+    /// Only the resolved standard Option of the native guard carries a
+    /// discriminant that selects release responsibility at a helper boundary.
+    pub(super) fn optional_guard_payload<'t>(&self, typ: &'t Typ) -> Option<&'t Typ> {
+        let TypX::Datatype(_, args, _) = &**typ else { return None };
+        if !self.option(typ) {
+            return None;
+        }
+        let [guard] = args.as_slice() else { return None };
+        if self.synchronization_parameter(guard)
+            != Some(super::synchronization::parameters::Parameter::Guard)
+        {
+            return None;
+        }
+        self.writable_guard_payload(guard)
     }
 
     /// The native mutex stores its payload inline. Owning descendants remain

@@ -265,6 +265,7 @@ impl Trace<'_> {
                 let result = if let Some(value) = value { self.value(value)? } else { Value::Unit };
                 if self.reachable {
                     self.exits.push(exits::Edge {
+                        site: span.id,
                         target,
                         condition: self.path.clone(),
                         state: self.state.clone(),

@@ -193,6 +193,7 @@ impl Call {
             Owned::Mutex(id) => Owned::Mutex(self.instances[&id]),
             Owned::Guard(id) => Owned::Guard(self.intervals[&id]),
             Owned::Attempt(id) => Owned::Attempt(self.intervals[&id]),
+            Owned::GuardOption(tag) => Owned::GuardOption(tag.substitute(|id| self.intervals[&id])),
         }
     }
 

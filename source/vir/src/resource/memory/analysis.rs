@@ -771,7 +771,7 @@ pub(super) fn check(
             }
             let descriptor = layouts.borrowed_descriptor(&param.x.typ);
             let borrowed = descriptor.as_ref();
-            if borrowed.is_some() && param.x.user_mut {
+            if borrowed.is_some() && param.x.user_mut && !layouts.owner(&param.x.typ) {
                 return Err(unsupported(
                     &param.span,
                     "mutable bindings for borrowed owner parameters",
@@ -788,7 +788,22 @@ pub(super) fn check(
                     &capacities,
                     worker_parameter == Some(index),
                 )?;
-                analysis.bind_protected_input(&mut owner, index, &interface, &body.span);
+                let separate_guard = borrowed.is_some() && layouts.owner(&param.x.typ);
+                if separate_guard {
+                    let mut guard = super::heap::Owner {
+                        synchronization: interface.owned_input(index),
+                        ..Default::default()
+                    };
+                    analysis.mark_input(&mut guard, index, &mut vec![]);
+                    analysis.heap.owners.insert(param.x.name.clone(), guard);
+                }
+                analysis.bind_protected_input(
+                    &mut owner,
+                    index,
+                    &interface,
+                    &body.span,
+                    separate_guard,
+                );
                 if worker_parameter == Some(index) {
                     analysis.transitions.worker_parameter =
                         Some((index, owner.vector.expect("worker vector input")));
@@ -811,7 +826,7 @@ pub(super) fn check(
                     }
                 });
                 if borrowed.is_some() {
-                    analysis.heap.borrowed.insert(param.x.name.clone(), owner);
+                    analysis.heap.borrowed.insert(layouts.borrowed_binder(param), owner);
                 } else {
                     analysis.mark_input(&mut owner, index, &mut vec![]);
                     analysis.heap.owners.insert(param.x.name.clone(), owner);
@@ -842,6 +857,7 @@ pub(super) fn check(
     let result = analysis.produce(body)?;
     analysis.check_indexed_exits(&body.span);
     analysis.drop_guard_parameters(function, &interface);
+    analysis.prepare_guard_returns(function, &body.span)?;
     let result = analysis.finish_returns(&function.span, result)?;
     let synchronized_result = analysis.finish_synchronization_interface(function, &interface)?;
     if !analysis.heap.temporaries.is_empty() || !analysis.evaluations.is_empty() {
@@ -950,8 +966,10 @@ pub(super) fn check(
         })
         .collect::<Vec<_>>();
     let result_owner = analysis.result_owner.take();
-    analysis.transitions.returned =
-        analysis.storage.returned_storage(result_owner.as_ref(), &analysis.growth.elements);
+    if !analysis.transitions.packed_returns {
+        analysis.transitions.returned =
+            analysis.storage.returned_storage(result_owner.as_ref(), &analysis.growth.elements);
+    }
     analysis.record_output_origins(function, result_owner.as_ref());
     let (returned, returned_capacities) = super::ownership::summarize(
         function,
@@ -972,7 +990,7 @@ pub(super) fn check(
         if super::paths::indexed(path) {
             continue;
         }
-        let index = f.params.iter().position(|p| p.x.name == *name).unwrap();
+        let index = f.params.iter().position(|p| layouts.borrowed_binder(p) == *name).unwrap();
         let child = analysis.heap.borrowed[name].at(path).unwrap();
         let (owner, capacities) =
             super::ownership::summarize(function, Some(child), &analysis.growth, &analysis.bound)?;
@@ -1065,9 +1083,10 @@ pub(super) fn check(
             collections: {
                 let mut effects = HashMap::new();
                 for (index, param) in f.params.iter().enumerate() {
-                    if let Some(owner) = analysis.heap.borrowed.get(&param.x.name) {
+                    if let Some(owner) = analysis.heap.borrowed.get(&layouts.borrowed_binder(param))
+                    {
                         for (path, effect) in super::elements::additions(owner, &analysis.growth) {
-                            if !analysis.heap.is_replaced(&param.x.name, &path) {
+                            if !analysis.heap.is_replaced(&layouts.borrowed_binder(param), &path) {
                                 effects.insert((index, path), effect);
                             }
                         }
@@ -1078,14 +1097,15 @@ pub(super) fn check(
             retained: {
                 let mut effects = HashMap::new();
                 for (index, param) in f.params.iter().enumerate() {
-                    if let Some(owner) = analysis.heap.borrowed.get(&param.x.name) {
+                    if let Some(owner) = analysis.heap.borrowed.get(&layouts.borrowed_binder(param))
+                    {
                         for (path, charge) in super::ownership::replacements(
                             owner,
                             &analysis.growth,
                             function,
                             &analysis.bound,
                         ) {
-                            if !analysis.heap.is_replaced(&param.x.name, &path) {
+                            if !analysis.heap.is_replaced(&layouts.borrowed_binder(param), &path) {
                                 effects.insert((index, path), charge);
                             }
                         }

@@ -137,6 +137,7 @@ pub fn check_crate(
                 &synchronization.types,
                 datatypes,
                 layouts.worker_parameter(function).is_some(),
+                layouts.optional_guard_payload(&function.x.outer_ret.x.typ),
             )?;
         }
         concurrency::sites::validate(function, modes, functions, synchronization)?;

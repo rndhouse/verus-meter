@@ -261,6 +261,9 @@ impl Analysis<'_> {
             }
             if let Some(result) = &mut result {
                 edge.align_result_role(owner.as_ref())?;
+                if self.transitions.synchronization_inputs.has_guards() {
+                    self.align_guard_exit(&mut owner, &mut edge)?;
+                }
                 self.join_exit(span, &edge.state)?;
                 result.merge(&edge.value);
                 owner = merge_result(span, owner, edge.owner)?;
@@ -328,7 +331,8 @@ pub(super) fn merge_result(
 ) -> Result<Option<Owner>, VirErr> {
     match (left, right) {
         (None, None) => Ok(None),
-        (Some(mut left), Some(right)) => {
+        (Some(mut left), Some(mut right)) => {
+            super::synchronization::optional::GuardOption::merge_results(&mut left, &mut right);
             if compatible(&left, &right) {
                 fn minima(span: &Span, left: &mut Owner, right: &Owner) {
                     if let (Some(left), Some(right)) = (&mut left.elements, &right.elements) {
@@ -366,7 +370,7 @@ pub(super) fn compatible(a: &Owner, b: &Owner) -> bool {
             _ => false,
         }
     }
-    a.synchronization == b.synchronization
+    a.same_synchronization(b)
         && a.joined == b.joined
         && a.extracted_arc == b.extracted_arc
         && match (&a.selected_worker, &b.selected_worker) {

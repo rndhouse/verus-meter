@@ -19,7 +19,10 @@ impl Analysis<'_> {
             return Ok(());
         }
         for (parameter, value) in function.x.params.iter().enumerate() {
-            let Some(mut owner) = self.heap.borrowed.remove(&value.x.name) else { continue };
+            let Some(mut owner) = self.heap.borrowed.remove(&self.layouts.borrowed_binder(value))
+            else {
+                continue;
+            };
             let mut paths = Vec::new();
             owner.visit_paths(&mut vec![], &mut |path, _| paths.push(path.clone()));
             for path in paths {
@@ -28,7 +31,7 @@ impl Analysis<'_> {
                 self.storage.add_input(id);
                 owner.at_mut(&path).unwrap().input = Some(id);
             }
-            self.heap.borrowed.insert(value.x.name.clone(), owner);
+            self.heap.borrowed.insert(self.layouts.borrowed_binder(value), owner);
         }
         Ok(())
     }
@@ -54,7 +57,7 @@ impl Analysis<'_> {
             outputs.insert(None, collect(owner));
         }
         for (index, parameter) in function.x.params.iter().enumerate() {
-            if let Some(owner) = self.heap.borrowed.get(&parameter.x.name) {
+            if let Some(owner) = self.heap.borrowed.get(&self.layouts.borrowed_binder(parameter)) {
                 outputs.insert(Some(index), collect(owner));
             }
         }

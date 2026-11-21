@@ -125,7 +125,7 @@ impl Analysis<'_> {
         {
             return self.mutex_root(instance);
         }
-        if self.layouts.mutable_guard_payload(&arg.typ).is_some()
+        if self.layouts.writable_guard_payload(&arg.typ).is_some()
             && let Some(View::Guard(interval)) = self.synchronization_view(arg)
         {
             return self.mutex_root(interval.instance);

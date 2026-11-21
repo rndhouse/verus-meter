@@ -15,6 +15,7 @@ mod failure;
 mod iteration;
 mod origins;
 mod proofs;
+mod returns;
 pub(super) mod simplify;
 mod trace;
 
@@ -252,7 +253,11 @@ pub(super) fn requires_summary(
     checked: &Checked,
     summaries: &HashMap<Fun, super::summary::FunctionSummary>,
 ) -> Result<bool, VirErr> {
-    if checked.retained_workers || required(function, layouts)? || checked.has_regions() {
+    if checked.packed_returns
+        || checked.retained_workers
+        || required(function, layouts)?
+        || checked.has_regions()
+    {
         return Ok(true);
     }
     if !layouts.owner(&function.x.outer_ret.x.typ) {

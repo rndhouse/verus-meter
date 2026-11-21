@@ -268,6 +268,13 @@ impl Analysis<'_> {
                 });
                 owner.children.insert(super::heap::OwnerSlot::Contents, child);
             }
+            if self.layouts.optional_guard_payload(&expr.typ).is_some() {
+                self.package_optional_guard(
+                    &expr.span,
+                    &mut owner,
+                    matches!(&expr.x, ExprX::Ctor(_, variant, _, _) if variant.as_str() == "Some"),
+                )?;
+            }
             self.result_owner = Some(owner);
         } else if matches!(&expr.x, ExprX::Call { .. }) {
             self.transitions.operation(

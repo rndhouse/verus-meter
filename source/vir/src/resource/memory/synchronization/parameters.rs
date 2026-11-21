@@ -162,10 +162,15 @@ impl Analysis<'_> {
         index: usize,
         inputs: &Inputs,
         entry: &crate::messages::Span,
+        separate_guard: bool,
     ) {
         owner.synchronization = match inputs.input_view(index) {
             Some(View::Mutex(id)) => Some(Owned::Mutex(id)),
             Some(View::Guard(interval)) => Some(Owned::Mutex(interval.instance)),
+            _ if separate_guard => inputs
+                .owned_input(index)
+                .and_then(Owned::interval)
+                .map(|id| Owned::Mutex(id.instance)),
             _ => inputs.owned_input(index),
         };
         if owner.mutex_instance().is_some()
