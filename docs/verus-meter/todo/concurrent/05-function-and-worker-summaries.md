@@ -90,7 +90,7 @@ Validation passed all 1,201 memory integration tests, including 58 synchronizati
 tests. One VIR test and one upstream test are marked ignored. Formatting and the
 affected Clippy checks passed.
 
-## Remaining shared payload work
+## Shared payload checklist
 
 - [x] Bind supported owning accesses in fixed workers to the actual captured mutex,
   guard and occurrence. Keep borrow, pop, replacement and release effects tied to
@@ -98,38 +98,29 @@ affected Clippy checks passed.
 - [x] Count fixed-shape contents once at worker checkpoints. Reject use of an earlier
   vector size at a worker checkpoint, in the owning actor after join, or on unique
   extraction after a peer update. Join order supplies no ordering between writes.
-- [ ] Expose the initial protected state and each checked release as alternatives for
-  the next acquisition of the same root. Preserve source conditions, occurrence
-  identities and allocation origins across proof scopes. Express the outgoing tree in
-  terms of the incoming tree and checked inputs so a caller can instantiate the relation
-  without referring to another worker’s local proof variables. Include the unchanged state
-  on paths that never modify the payload. A vector input is currently arbitrary at
-  each acquisition. The two-worker push/pop program still cannot prove its 4,096-byte
-  allowance. Test both possible acquisition orders and preserve the transient cost
-  while a replacement and the value it displaces coexist. TODO 07 owns the proof
-  that all permitted interleavings satisfy the total bound.
-- [ ] Connect a popped allocation returned from a worker to the incoming element it
-  selected. Check the empty and nonempty outcomes and a one-byte-short bound after it
-  escapes the guard. A later observation or extraction of dynamic contents must use
-  the state at that point.
-- [ ] Carry these transformations through helpers that both change contents and
-  consume the guard, multiple access paths under one acquisition, and loop-selected
-  shared roots. Indexed backing reservations still require a consistent ownership
-  relation for the selected occurrence. Keep unsupported cases explicit.
+
+Work through the following children in order. At `b8e289e04`, a worker can still
+receive an arbitrary vector at acquisition, so the two-worker push/pop program
+cannot prove its 4,096-byte allowance.
+
+- [ ] [05.1 — Shared contents across workers](05.1-shared-contents-across-workers.md). Connect the initial contents and feasible releases to the next acquisition of that mutex.
+- [ ] [05.2 — Ownership after unlock](05.2-ownership-after-unlock.md). Follow the selected allocation through unlock, worker completion, join and final drop.
+- [ ] [05.3 — Helpers and conditional paths](05.3-helpers-and-conditional-paths.md). Preserve each path’s contents, released or returned guard, and escaped ownership across calls.
+- [ ] [05.4 — Repeated acquisitions and loop-selected mutexes](05.4-repeated-acquisitions-and-loop-selected-mutexes.md). Apply those relationships to the selected allocation and acquisition on each loop visit.
 
 05 supplies the body-checked transitions. 06 supplies the verified protocol and permit
 contracts. 07 proves that the global bound covers the allowed orderings.
 
 ## Completion criteria
 
-Equivalent supported operations written directly or inside helpers preserve the
-same ownership/synchronization relationships needed for tight composition.
-Returned allocations retain identity and cost, releases in helpers end the correct
-acquisition, and equal/different lock arguments remain equal/different. Summaries
-are derived and checked against bodies or come from explicit trusted contracts.
-Worker and helper summaries share the same identity/effect semantics, with the
-distinct lifecycle rules already connected in 03. Global interference and total
-byte-envelope proofs remain assigned to 07.
+- [ ] All four children have implementation commits and passing source regressions.
+  Check their evidence against the remaining Work and Decisions from TODO 01 items.
+- [ ] Direct and factored operations preserve allocation identity and cost, the
+  acquisition actually ended by release, and alias relationships across calls,
+  worker results and loop iterations. Use the existing worker lifecycle from 03.
+- [ ] Worker and helper summaries share the same checked effects. Each effect
+  follows from an executable body or an explicit trusted contract. Run the
+  integrated validation below with the global proof obligation from 07 intact.
 
 ## Validation
 
