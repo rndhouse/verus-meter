@@ -5,8 +5,8 @@
 mod receipts;
 
 use super::{
-    history::Section,
     recipe::{Schedule, assignment, variable},
+    section::Section,
     *,
 };
 use crate::ast_util::{bool_typ, mk_eq, mk_implies};
@@ -187,55 +187,19 @@ fn plan(
     let mut used = BTreeSet::new();
     let mut sections = Vec::new();
     for (worker, interval) in members {
-        let effects = &worker.effects.ownership;
-        let binding = &effects.protected_versions.bindings[interval];
-        if !effects.fixed_acquisition(*interval)
-            || !binding.access.single_visit()
-            || !binding.releases.iter().all(|r| r.complete && r.visit.single_visit())
-        {
-            return None;
-        }
         let seed = growth.protected_seeds.get(&(worker.actor, root))?;
         if seed.origins.is_empty() {
             return None;
         }
+        let section = Section::from_worker(growth, worker, *interval, &parameters)?;
         let recipe = publisher.recipe(&seed.contents, None, &parameters)?;
         used.extend(recipe.parameters.iter().cloned());
         let initial = recipe.apply(None);
         seeds.push((seed.clone(), initial));
-        let schedule = Schedule::for_body(growth, &worker.effects.body);
-        let captures = worker
-            .immutable_scalars
-            .iter()
-            .filter(|(_, n)| parameters.contains_key(*n))
-            .map(|(local, formal)| (local.clone(), formal.clone()))
-            .collect();
-        let releases: Vec<super::recipe::Recipe> = binding
-            .releases
-            .iter()
-            .map(|r| schedule.release_recipe(&r.contents, &binding.entry, &captures))
-            .collect::<Option<_>>()?;
-        used.extend(releases.iter().flat_map(|r| r.parameters.iter().cloned()));
-        let returns = effects
-            .protected_versions
-            .returns
-            .iter()
-            .map(|out| {
-                if out.origins.is_empty() {
-                    return None;
-                }
-                schedule.recipe(&out.contents, Some(&binding.entry), &captures)
-            })
-            .collect::<Option<Vec<_>>>()?;
-        used.extend(returns.iter().flat_map(|r| r.parameters.iter().cloned()));
-        sections.push(Section {
-            worker,
-            access: schedule.position(&binding.entry)?.clone(),
-            interval: *interval,
-            binding,
-            releases,
-            returns,
-        });
+        for recipe in section.releases.iter().chain(&section.returns) {
+            used.extend(recipe.parameters.iter().cloned());
+        }
+        sections.push(section);
     }
     let history = History::build(seeds, &sections)?;
     if let Some(observations) = growth.protected_observations.get(&root) {

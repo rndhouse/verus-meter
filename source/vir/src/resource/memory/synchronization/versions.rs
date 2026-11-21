@@ -8,6 +8,7 @@ mod history;
 mod input;
 mod outcomes;
 mod recipe;
+mod section;
 
 pub(in crate::resource::memory) use history::History;
 pub(in crate::resource::memory) use outcomes::Observation;

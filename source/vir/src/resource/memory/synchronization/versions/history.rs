@@ -3,10 +3,7 @@
 //! come from different allocations. Keep those edges even when a local byte
 //! proof can share a single case for both.
 
-use super::{
-    Binding, Interval, Publication,
-    recipe::{Position, Recipe},
-};
+use super::{Interval, Publication, recipe::Position, section::Section};
 use crate::{
     ast::Expr,
     resource::memory::{transfer::simplify::inspect::same_expression, workers::WorkerId},
@@ -15,17 +12,6 @@ use std::collections::BTreeSet;
 
 /// Exceeding this search limit leaves the entire mutex input unrestricted.
 const MAX_HISTORY_STATES: usize = 128;
-
-pub(super) struct Section<'a> {
-    pub(super) worker: &'a crate::resource::memory::workers::execution::Execution,
-    pub(super) access: Position,
-    pub(super) interval: Interval,
-    pub(super) binding: &'a Binding,
-    /// One body-derived transformation per possible release of the guard.
-    pub(super) releases: Vec<Recipe>,
-    /// One source-checked result per normal return of a returning holder.
-    pub(super) returns: Vec<Recipe>,
-}
 
 enum Origin {
     /// See the publication observations of this initial state.
