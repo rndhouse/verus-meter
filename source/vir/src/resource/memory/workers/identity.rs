@@ -52,6 +52,10 @@ impl super::Analysis<'_> {
 }
 
 impl<S> SourceVisit<S> {
+    pub(in super::super) fn single_visit(&self) -> bool {
+        self.coordinates.is_empty()
+    }
+
     pub(in super::super) fn valid_for(&self, actor: Option<WorkerId>) -> bool {
         self.actor == actor
             && self.coordinates.iter().all(|(_, ordinal)| matches!(&*ordinal.typ, TypX::Int(_)))

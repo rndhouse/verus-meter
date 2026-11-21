@@ -849,7 +849,7 @@ pub(super) fn check(
     }
     analysis.heap.workers.check_closed(&function.span)?;
     analysis.check_worker_parameter_result(&function.span)?;
-    let incomplete = analysis.check_worker_domain(&function.span)?;
+    let incomplete = analysis.check_worker_domain(function, &function.span)?;
     let mut worker_transfer = None;
     if let Some(error) = &incomplete {
         if analysis.transitions.retained_workers {

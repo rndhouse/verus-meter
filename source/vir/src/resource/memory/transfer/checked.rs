@@ -281,6 +281,12 @@ pub(in super::super) struct Checked {
     /// Shared contents observed under a specific worker acquisition. A later
     /// acquisition has a new input even if it addresses the same root.
     pub(in super::super) protected_versions: super::super::synchronization::versions::Versions,
+    /// Fixed-root histories connect body-local inputs to the source release
+    /// and incoming allocation forest that produced each predecessor.
+    pub(in super::super) protected_histories: std::collections::BTreeMap<
+        super::super::shared::RootId,
+        super::super::synchronization::versions::History,
+    >,
     /// Charged result paths on each reaching normal exit, before transport.
     pub(in super::super) returned: Vec<super::super::accounting::ReturnedStorage>,
     /// Incoming guard and mutex binders come from executable formal parameters.
@@ -338,6 +344,14 @@ pub(in super::super) struct Checked {
 }
 
 impl Checked {
+    pub(in super::super) fn fixed_acquisition(
+        &self,
+        id: super::super::synchronization::local::Interval,
+    ) -> bool {
+        self.operations.values().any(|op| matches!(op,
+            Operation::MutexLock { interval, occurrence, .. } if *interval == id && occurrence.single_visit()))
+    }
+
     pub(in super::super) fn locks_mutex(&self) -> bool {
         self.synchronization_inputs.has_guards()
             || self.operations.values().any(|op| match op {

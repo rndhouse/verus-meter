@@ -2,7 +2,19 @@
 //! acquisition. Source-level ownership operations transform that input in the
 //! worker. A release exports the resulting forest separately from worker results.
 
+mod composition;
+mod history;
 mod input;
+mod recipe;
+
+pub(in crate::resource::memory) use history::History;
+
+/// Actual contents and allocation origins observed at a fixed publication.
+#[derive(Clone)]
+pub(in crate::resource::memory) struct Publication {
+    contents: Expr,
+    origins: Vec<ReturnedStorage>,
+}
 
 use super::local::{Interval, Owned};
 use crate::{
@@ -44,6 +56,16 @@ struct Release {
     visit: SourceVisit<Span>,
     contents: Expr,
     origins: Vec<ReturnedStorage>,
+    /// A byte-only view cannot supply ordered children or logical geometry.
+    complete: bool,
+}
+
+fn complete_contents(payload: &Owner) -> bool {
+    let mut precise = payload.complete();
+    payload.visit(&mut |node| {
+        precise &= node.geometry_known && node.elements.as_ref().is_none_or(|e| e.precise);
+    });
+    precise
 }
 
 impl Interval {
@@ -276,6 +298,7 @@ impl Analysis<'_> {
         let payload =
             wrapper.children.remove(&OwnerSlot::Contents).expect("acquired mutex contents");
         let origins = self.storage.returned_storage(Some(&payload), &self.growth.elements);
+        let complete = complete_contents(&payload);
         let current = self.owner_metadata(site, &payload, proofs);
         let (contents, declaration) = expr::local(
             site,
@@ -309,7 +332,7 @@ impl Analysis<'_> {
                     .get_mut(&interval)
                     .expect("acquired input")
                     .releases
-                    .push(Release { visit, contents, origins });
+                    .push(Release { visit, contents, origins, complete });
             }
             Err(err) => versions.error = Some(err),
         }

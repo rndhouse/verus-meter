@@ -51,6 +51,12 @@ pub(super) struct VectorState {
 
 #[derive(Default)]
 pub(super) struct Growth {
+    /// Canonical contents still in the publisher's scope when a fixed worker
+    /// receives a shared handle. Each observation is checked at its own spawn.
+    pub(super) protected_seeds: std::collections::BTreeMap<
+        (super::workers::WorkerId, super::shared::RootId),
+        super::synchronization::versions::Publication,
+    >,
     /// Roots whose contents have been supplied by an acquisition-relative
     /// worker input. A fixed total follows from the payload type on every
     /// acquisition. Dynamic contents require a state observation for pricing.

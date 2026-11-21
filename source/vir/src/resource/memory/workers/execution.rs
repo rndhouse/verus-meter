@@ -30,7 +30,7 @@ struct CaptureCleanup {
 /// successful native join, or a total concurrent memory bound.
 pub(in super::super) struct Execution {
     /// One fixed publication occurrence; never a thread population count.
-    pub(super) actor: WorkerId,
+    pub(in super::super) actor: WorkerId,
     /// Original concrete closure type identity used by compiler evidence.
     pub(in super::super) definition: usize,
     /// Full entry descriptor, including construction epoch, original allocation
@@ -41,8 +41,11 @@ pub(in super::super) struct Execution {
     pub(super) initial: Accounting,
     /// Capture-to-source substitutions and immutable construction observations.
     pub(super) inputs: Vec<inputs::Input>,
+    /// Immutable scalar captures addressed directly in the enclosing body.
+    /// A payload transition may export one if it denotes a publisher formal.
+    pub(in super::super) immutable_scalars: std::collections::HashMap<VarIdent, VarIdent>,
     /// Ordered source control flow and accepted ownership operations.
-    pub(super) effects: Arc<BodyEffects>,
+    pub(in super::super) effects: Arc<BodyEffects>,
     /// Existing parametric ownership interface, including loop-derived effects.
     pub(super) transfer: Option<super::super::transfer::Template>,
     /// Runtime child ownership requires a representable parametric template.
@@ -65,6 +68,17 @@ pub(in super::super) struct Execution {
 }
 
 impl Execution {
+    /// Value of a directly captured immutable publisher parameter at worker
+    /// entry. Snapshot it before any subsequent mutation inside the worker.
+    pub(in super::super) fn captured_parameter(&self, name: &VarIdent, typ: &Typ) -> Option<Expr> {
+        let input = self.inputs.iter().find(|input| {
+            input.source.0 == *name
+                && input.source.1.is_empty()
+                && crate::ast_util::types_equal(typ, &input.typ)
+        })?;
+        Some(SpannedTyped::new(&self.effects.body.span, typ, ExprX::Var(input.name.clone())))
+    }
+
     pub(in super::super) fn versioned_roots(
         &self,
     ) -> impl Iterator<Item = super::super::shared::RootId> + '_ {
@@ -84,6 +98,7 @@ impl Analysis<'_> {
     /// over simultaneous worker states or synchronization containment.
     pub(in super::super) fn check_worker_domain(
         &mut self,
+        function: &Function,
         span: &Span,
     ) -> Result<Option<VirErr>, VirErr> {
         if self.growth.worker_executions.is_empty() {
@@ -139,6 +154,7 @@ impl Analysis<'_> {
         for checkpoint in std::mem::take(&mut self.growth.protected_checkpoints) {
             checkpoint.resolve_publication(self)?;
         }
+        let composed = self.compose_payload_versions(function)?;
         let versions: Vec<_> = self
             .growth
             .worker_executions
@@ -151,7 +167,7 @@ impl Analysis<'_> {
             return Ok(Some(unsupported(
                 span,
                 &format!(
-                    "shared payload state composition (checked acquisitions = {count}, distinct mutexes = {})",
+                    "a total concurrent peak before global interference proofs (checked acquisitions = {count}, distinct mutexes = {}, linked acquisitions = {composed})",
                     roots.len()
                 ),
             )));
@@ -472,6 +488,13 @@ impl Analysis<'_> {
         let execution = Arc::new(Execution {
             actor,
             definition: *id,
+            immutable_scalars: inputs
+                .iter()
+                .filter(|i| {
+                    i.source.1.is_empty() && contracts::scalar(&i.typ) && !mutable.contains(&i.name)
+                })
+                .map(|i| (i.name.clone(), i.source.0.clone()))
+                .collect(),
             inputs,
             entry: entry_descriptor,
             publication,

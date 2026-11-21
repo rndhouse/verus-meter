@@ -74,16 +74,17 @@ fn writers(write: Write, aliases: &str, joins: &str) -> String {
 const ALIAS: &str = "let peer = cell.clone();";
 const REVERSED: &str = "let second = consumer.join(); let first = producer.join();";
 const SAME: &str = "checked acquisitions = 2, distinct mutexes = 1";
-const WORKER_BOUND: &str = "conditional memory budget exceeded during worker execution";
+const LINKED: &str = "distinct mutexes = 1, linked acquisitions = 2";
+const CHECKPOINT: &str = "at a worker checkpoint with shared backing";
 
 #[test]
 fn direct_and_factored_writes_share_the_cell_independently_of_join_order() {
-    diagnostics("direct_writers", &writers(Write::Push, ALIAS, REVERSED), &[SAME, WORKER_BOUND]);
+    diagnostics("direct_writers", &writers(Write::Push, ALIAS, REVERSED), &[LINKED]);
     let joins = "let first = producer.join(); let second = consumer.join();";
     diagnostics(
         "factored_writers",
         &writers(Write::Call, ALIAS, joins),
-        &[SAME, WORKER_BOUND, "mutex intervals awaiting global"],
+        &[LINKED, "mutex intervals awaiting global"],
     );
 }
 
@@ -94,10 +95,123 @@ fn different_mutex_allocations_of_the_same_type_keep_independent_contents() {
         let peer = other.clone();
         let keep = cell.clone();
     "#;
+    let program = writers(Write::Push, aliases, REVERSED).replace(
+        "let removed = guard.pop();",
+        "let removed = guard.pop(); assert(current(memory) <= LIMIT);",
+    );
+    // The other mutex received the box. Only the frame, Arc and empty Option
+    // remain at this consumer's checkpoint.
+    let distinct = "distinct mutexes = 2, linked acquisitions = 2";
+    diagnostics("distinct_writers", &program.replace("LIMIT", "74"), &[distinct]);
+    diagnostics("distinct_writers_short", &program.replace("LIMIT", "73"), &[distinct, CHECKPOINT]);
+}
+
+#[test]
+fn a_pop_can_receive_the_preceding_holders_box_in_either_join_order() {
+    let at = |joins: &str, bound: u32| {
+        writers(Write::Push, ALIAS, joins).replace(
+            "let removed = guard.pop();",
+            &format!("let removed = guard.pop(); assert(current(memory) <= {bound});"),
+        )
+    };
+    // The mutex is empty after this pop in either order. If the push ran
+    // first, the removed 32 bytes are now in the Option. 74 + 32 = 106.
+    for (name, joins) in
+        [("forward", "let a = producer.join(); let b = consumer.join();"), ("reverse", REVERSED)]
+    {
+        diagnostics(&format!("pop_{name}"), &at(joins, 106), &[LINKED]);
+        diagnostics(&format!("pop_{name}_short"), &at(joins, 105), &[LINKED, CHECKPOINT]);
+    }
+}
+
+#[test]
+fn a_shared_vector_keeps_its_explicit_reservation_across_acquisitions() {
+    let program =
+        writers(Write::Push, ALIAS, REVERSED).replace(">>::new()", ">>::with_capacity(3)").replace(
+            "guard.push(Box::new([1u8; 32]));",
+            "guard.push(Box::new([1u8; 32])); assert(current(memory) <= LIMIT);",
+        );
+    // 16 frame + 49 Arc + 24 reserved slots + 32 box payload.
+    diagnostics("reserved_exact", &program.replace("LIMIT", "121"), &[LINKED]);
+    diagnostics("reserved_short", &program.replace("LIMIT", "120"), &[LINKED, CHECKPOINT]);
+}
+
+#[test]
+fn a_worker_receives_a_reservation_chosen_by_another_workers_capture() {
+    let program = writers(Write::Push, ALIAS, REVERSED)
+        .replace("fn work()", "fn work(n: u8)")
+        .replace("guard.push", "*guard = Vec::with_capacity(n as usize); guard.push")
+        .replace(
+            "let removed = guard.pop();",
+            "let removed = guard.pop(); assert(current(memory) <= LIMIT);",
+        );
+    // The consumer never captures n. Its worst case is the popped box and
+    // 255 explicitly reserved pointer slots in the mutex: 106 + 255 * 8.
+    diagnostics("captured_slots_exact", &program.replace("LIMIT", "2146"), &[LINKED]);
+    diagnostics("captured_slots_short", &program.replace("LIMIT", "2145"), &[LINKED, CHECKPOINT]);
+}
+
+#[test]
+fn a_replacement_and_the_preceding_workers_box_can_be_live_together() {
+    let program = writers(Write::Push, ALIAS, REVERSED).replace(
+        "let removed = guard.pop();",
+        r#"let removed = guard.pop();
+           let next = Box::new([9u8; 32]);
+           assert(current(memory) <= LIMIT);
+           guard.push(next);"#,
+    );
+    // The removed Option can still own 32 bytes when the new 40-byte box
+    // (pointer plus allocation) becomes live.
+    diagnostics("both_boxes_exact", &program.replace("LIMIT", "146"), &[LINKED]);
+    diagnostics("both_boxes_short", &program.replace("LIMIT", "145"), &[LINKED, CHECKPOINT]);
+}
+
+#[test]
+fn two_preceding_pushes_can_leave_a_box_in_the_mutex_after_a_pop() {
+    let aliases = format!("{ALIAS} let extra = cell.clone();");
+    let joins = format!("{REVERSED} let third = another.join();");
+    let program = writers(Write::Push, &aliases, &joins)
+        .replace(
+            "let consumer =",
+            r#"let another = std::thread::spawn(move || {
+                   let r = extra.lock();
+                   if r.is_err() { return; }
+                   let mut guard = r.unwrap();
+                   guard.push(Box::new([2u8; 32]));
+               });
+               let consumer ="#,
+        )
+        .replace(
+            "let removed = guard.pop();",
+            "let removed = guard.pop(); assert(current(memory) <= LIMIT);",
+        );
+    // One remaining slot and its box add 40 bytes to the 106-byte pop.
+    let linked = "distinct mutexes = 1, linked acquisitions = 3";
+    diagnostics("two_prior_pushes", &program.replace("LIMIT", "146"), &[linked]);
+    diagnostics("two_prior_pushes_short", &program.replace("LIMIT", "145"), &[linked, CHECKPOINT]);
+}
+
+#[test]
+fn an_unresolved_initial_vector_cannot_be_treated_as_empty() {
+    let program = writers(Write::Push, ALIAS, REVERSED)
+        .replace(
+            "let cell = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Box<[u8; 32]>>::new()));",
+            r#"let mut initial = Vec::<Box<[u8; 32]>>::new();
+               initial.push(Box::new([2u8; 32]));
+               let cell = std::sync::Arc::new(std::sync::Mutex::new(initial));"#,
+        )
+        .replace(
+            "guard.push(Box::new([1u8; 32]));",
+            "guard.push(Box::new([1u8; 32])); assert(current(memory) <= 105);",
+        );
     diagnostics(
-        "distinct_writers",
-        &writers(Write::Push, aliases, REVERSED),
-        &["checked acquisitions = 2, distinct mutexes = 2", WORKER_BOUND],
+        "unresolved_initial_contents",
+        &program,
+        &[
+            "linked acquisitions = 0",
+            "conditional memory budget exceeded during worker",
+            CHECKPOINT,
+        ],
     );
 }
 
@@ -196,17 +310,13 @@ fn a_fixed_payload_is_counted_once_both_inside_and_outside_the_guard() {
 fn replacing_a_variable_sized_payload_gives_a_tight_bound_while_locked() {
     let program = writers(Write::ReplaceAndPush, ALIAS, REVERSED);
     // 16 bytes of frame, 49 of Arc backing and 40 for one occupied Vec slot
-    // plus its box payload. The unknown old vector can affect the earlier peak.
-    diagnostics("replaced_vector_exact", &program.replace("LIMIT", "105"), &[SAME, WORKER_BOUND]);
-    diagnostics(
-        "replaced_vector_short",
-        &program.replace("LIMIT", "104"),
-        &[SAME, WORKER_BOUND, "at a worker checkpoint with shared backing"],
-    );
+    // plus its box payload. A replacement leaves one box under either lock order.
+    diagnostics("replaced_vector_exact", &program.replace("LIMIT", "105"), &[LINKED]);
+    diagnostics("replaced_vector_short", &program.replace("LIMIT", "104"), &[LINKED, CHECKPOINT]);
 }
 
 #[test]
-fn a_worker_cannot_treat_shared_vector_geometry_as_actor_local() {
+fn a_single_writer_starts_from_the_shared_vectors_published_contents() {
     diagnostics(
         "shared_guarded_vector_requires_an_interference_summary",
         r#"
@@ -223,7 +333,7 @@ fn a_worker_cannot_treat_shared_vector_geometry_as_actor_local() {
             drop(m);
         }
     "#,
-        &["checked acquisitions = 1, distinct mutexes = 1", WORKER_BOUND],
+        &["distinct mutexes = 1, linked acquisitions = 1"],
     );
 }
 
@@ -315,11 +425,7 @@ fn try_lock_only_opens_the_payload_on_the_path_that_accesses_it() {
             drop(cell);
         }
     "#;
-    diagnostics(
-        "try_lock_payload",
-        program,
-        &["checked acquisitions = 1, distinct mutexes = 1", WORKER_BOUND],
-    );
+    diagnostics("try_lock_payload", program, &["distinct mutexes = 1, linked acquisitions = 1"]);
 }
 
 #[test]

@@ -54,7 +54,11 @@ pub(super) fn forest_views(
 
 /// Prove the forest expression's validity using the same algebra as local
 /// operations. Conditional branches keep their own arithmetic assumptions.
-pub(super) fn forest(span: &Span, value: &Expr, proofs: &mut Vec<Stmt>) -> Result<(), VirErr> {
+pub(in crate::resource::memory) fn forest(
+    span: &Span,
+    value: &Expr,
+    proofs: &mut Vec<Stmt>,
+) -> Result<(), VirErr> {
     ForestProofs::new().forest(span, value, proofs)
 }
 
