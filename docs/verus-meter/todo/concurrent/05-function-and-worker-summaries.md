@@ -112,7 +112,13 @@ that returns it. 05.4 extends this accounting to repeated acquisitions.
 - [x] [05.1 — Shared contents across workers](complete/05.1-shared-contents-across-workers.md). Connect the initial contents and feasible releases to the next acquisition of that mutex.
 - [x] [05.2 — Ownership after unlock](complete/05.2-ownership-after-unlock.md). Follow the selected allocation through unlock, worker completion, join and final drop.
 - [x] [05.3 — Helpers and conditional paths](complete/05.3-helpers-and-conditional-paths.md). Preserve each path’s contents, released or returned guard, and escaped ownership across calls.
-- [ ] [05.4 — Repeated acquisitions and loop-selected mutexes](05.4-repeated-acquisitions-and-loop-selected-mutexes.md). Apply those relationships to the selected allocation and acquisition on each loop visit.
+- [x] [05.4 — Repeated acquisitions and loop-selected mutexes](complete/05.4-repeated-acquisitions-and-loop-selected-mutexes.md). Apply those relationships to the selected allocation and acquisition on each loop visit.
+
+In `92bd6e071`, a repeated unlock must preserve the proposed set of protected
+contents for every visit. Indexed joins of by-value mutexes retain the selected
+worker's instance and payload. During the integration review, check how these
+effects compose at helper boundaries and distinguish this case from indexed
+shared handles with unresolved backing reservations.
 
 05 supplies the body-checked transitions. 06 supplies the verified protocol and permit
 contracts. 07 proves that the global bound covers the allowed orderings.
