@@ -267,6 +267,22 @@ source release and accounts for an extracted allocation through its subsequent
 owner and join. Opaque conditions or too many alternatives can prevent a tight
 proof. These local checks feed the global interference proof in 07.
 
+When a worker locks a shared mutex in a loop, the incoming contents can be
+the initial allocation tree or the result of any preceding release. The verifier
+proposes a finite set of symbolic trees, checks the initial contents at publication,
+and requires every release to preserve that set. This applies at any iteration
+count, including zero. Replacing a vector with a reservation of `b` bytes can
+satisfy this obligation. Appending an element on every visit can require a
+different invariant. A direct join of an owning result uses the proved alternatives
+independently when the order of repeated releases is unknown.
+
+When a worker returns a mutex by value through an indexed handle collection,
+the selected join record supplies its producer, ownership tree and reservation.
+A buffer removed from that mutex keeps its charge after unlock. This also applies
+when another worker drains the collection. A returned shared handle needs a
+separate relation to the protected contents of its backing. If that relation is
+missing, an indexed join cannot use the constructor site to recover it.
+
 For custom protocols, expose a verified **synchronization-effect declaration** on
 local executable functions, with instance projection, incoming/outgoing tracked
 witness projections, acquisition/release outcomes, and an instance holder-bound

@@ -12,6 +12,10 @@ use std::collections::HashMap;
 
 /// How one acquisition observes, releases and returns protected storage.
 pub(super) struct Section<'a> {
+    /// This source lock can run on multiple visits to an enclosing loop.
+    pub(super) repeated: bool,
+    /// Immutable source guards to preserve in isolated loop queries.
+    pub(super) loop_guards: Vec<(crate::messages::AstId, crate::ast::Expr)>,
     /// Worker whose executable body supplies the effects.
     pub(super) worker: &'a Execution,
     /// Source position where the worker snapshots the incoming contents.
@@ -27,9 +31,8 @@ pub(super) struct Section<'a> {
 }
 
 impl<'a> Section<'a> {
-    /// A fixed section needs one source visit and complete contents at each
-    /// release. Its symbolic effects can use immutable publisher inputs captured
-    /// by the worker.
+    /// A lock visit owns its access and releases. Each release must describe the
+    /// complete protected contents using the entry and immutable captures.
     pub(super) fn from_worker(
         growth: &Growth,
         worker: &'a Execution,
@@ -38,19 +41,23 @@ impl<'a> Section<'a> {
     ) -> Option<Self> {
         let effects = &worker.effects.ownership;
         let binding = &effects.protected_versions.bindings[&interval];
-        if !effects.fixed_acquisition(interval)
-            || !binding.access.single_visit()
-            || !binding.releases.iter().all(|r| r.complete && r.visit.single_visit())
+        let acquisition = effects.acquisition_visit(interval)?;
+        if !acquisition.same_visit_scope(&binding.access)
+            || !binding
+                .releases
+                .iter()
+                .all(|r| r.complete && acquisition.same_visit_scope(&r.visit))
         {
             return None;
         }
         let schedule = Schedule::for_body(growth, &worker.effects.body);
-        let captures = worker
+        let captures: HashMap<_, _> = worker
             .immutable_scalars
             .iter()
             .filter(|(_, n)| parameters.contains_key(*n))
             .map(|(local, formal)| (local.clone(), formal.clone()))
             .collect();
+        let local_parameters = captures.keys().map(|n| (n.clone(), n.clone())).collect();
         let releases = binding
             .releases
             .iter()
@@ -68,6 +75,16 @@ impl<'a> Section<'a> {
             })
             .collect::<Option<_>>()?;
         Some(Self {
+            repeated: !acquisition.single_visit(),
+            loop_guards: acquisition
+                .loops()
+                .flat_map(|site| {
+                    schedule
+                        .entry_guards(site, &local_parameters)
+                        .into_iter()
+                        .map(move |guard| (site, guard))
+                })
+                .collect(),
             worker,
             access: schedule.position(&binding.entry)?.clone(),
             interval,

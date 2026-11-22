@@ -148,6 +148,9 @@ impl Analysis<'_> {
             }
         }
         for (root, history, proof) in plans {
+            for (site, guard) in proof.loop_invariants {
+                self.growth.loops.entry(site).or_default().push(guard);
+            }
             for (site, declaration) in proof.declarations {
                 self.growth.before.entry(site).or_default().insert(0, declaration);
             }
@@ -160,11 +163,13 @@ impl Analysis<'_> {
     }
 }
 
-/// Keep the unrestricted input if a source value is opaque, an acquisition
-/// repeats, or the number of finite alternatives is too expensive to expand.
+/// Keep the unrestricted input if a source value is opaque or the number
+/// of finite alternatives is too expensive to expand.
 /// Discard the whole root's proposal before changing any worker.
 #[derive(Default)]
 struct Evidence {
+    /// Ordinary loop invariants checked on entry and on every back edge.
+    loop_invariants: Vec<(AstId, Expr)>,
     /// Erased scalar inputs in the worker proof scope.
     declarations: Vec<(AstId, Stmt)>,
     /// Each substitution or check is installed at its defining operation.
@@ -223,6 +228,15 @@ fn plan(
         let mut bindings = HashMap::new();
         for parameter in function.x.params.iter().filter(|p| used.contains(&p.x.name)) {
             let typ = &parameter.x.typ;
+            // A loop's verification query can read an immutable capture directly.
+            // A separate pre-loop copy would need its equality carried by induction.
+            if section.repeated
+                && let Some(capture) = section.worker.captured_parameter(&parameter.x.name, typ)
+                && section.worker.immutable_scalars.contains_key(variable(&capture))
+            {
+                bindings.insert(parameter.x.name.clone(), capture);
+                continue;
+            }
             let initial = section
                 .worker
                 .captured_parameter(&parameter.x.name, typ)
@@ -239,6 +253,7 @@ fn plan(
                 crate::resource::memory::transfer::simplify::specialize(term, &bindings)
             }
         };
+        proof.loop_invariants.extend(section.loop_guards.iter().cloned());
         let states: Vec<_> = history.inputs(section.interval).into_iter().map(bind).collect();
         let empty = expr::empty(site, expr::record_type());
         for (exit, recipe) in
@@ -274,6 +289,20 @@ fn plan(
             let output = &release.contents;
             let site = &output.span;
             let mut checks = Vec::new();
+            if history.repeated {
+                // Induction over actual unlocks. A finite prefix only proposes
+                // the invariant; an omitted later state must fail this check.
+                checks.push(expr::check(
+                    site,
+                    crate::ast_util::disjoin(
+                        site,
+                        &states.iter().map(|s| mk_eq(site, output, s)).collect(),
+                    ),
+                    "a repeated mutex release falls outside its proposed contents",
+                ));
+                proof.snapshots.push((output.clone(), None, checks));
+                continue;
+            }
             for (state, next) in history.transitions(section.interval, output) {
                 let condition = mk_implies(
                     site,

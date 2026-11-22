@@ -52,8 +52,25 @@ impl super::Analysis<'_> {
 }
 
 impl<S> SourceVisit<S> {
+    pub(in super::super) fn loops(&self) -> impl Iterator<Item = AstId> + '_ {
+        self.coordinates.iter().map(|(site, _)| *site)
+    }
+
     pub(in super::super) fn single_visit(&self) -> bool {
         self.coordinates.is_empty()
+    }
+
+    /// Equal loop binders pair observations from the same symbolic visit.
+    /// The ordinals are the locals of the checked executable loop counters.
+    pub(in super::super) fn same_visit_scope<T>(&self, other: &SourceVisit<T>) -> bool {
+        self.actor == other.actor
+            && self.coordinates.len() == other.coordinates.len()
+            && self.coordinates.iter().zip(&other.coordinates).all(|((site, ordinal), (s, o))| {
+                site == s
+                    && crate::resource::memory::transfer::simplify::inspect::same_expression(
+                        ordinal, o,
+                    )
+            })
     }
 
     pub(in super::super) fn valid_for(&self, actor: Option<WorkerId>) -> bool {

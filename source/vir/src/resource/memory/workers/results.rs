@@ -346,6 +346,38 @@ impl Analysis<'_> {
             .is_none()
         {
             self.checked_result(owner, &expr.span)?;
+        } else {
+            // Preserve the actual discriminant when a population loop branches
+            // on poison. It is local evidence, never a premise of lock success.
+            let TypX::Datatype(datatype, _, _) = &**typ else { unreachable!("native Result") };
+            let ok = attrs.resource_intrinsic == Some(ResourceIntrinsic::ResultIsOk);
+            let value = super::super::projections::spec_value(source)?;
+            let variant = UnaryOpr::IsVariant {
+                datatype: datatype.clone(),
+                variant: Arc::new(if ok { "Ok" } else { "Err" }.into()),
+            };
+            let outcome =
+                SpannedTyped::new(&expr.span, &bool_typ(), ExprX::UnaryOpr(variant, value));
+            let (observed, declaration) = super::super::metadata::expr::local(
+                &expr.span,
+                "lock_result_test",
+                bool_typ(),
+                mk_bool(&expr.span, false),
+                Mode::Spec,
+            );
+            self.growth.declarations.push(declaration);
+            self.growth
+                .before
+                .entry(expr.span.id)
+                .or_default()
+                .push(super::super::metadata::expr::assign(&expr.span, &observed, outcome));
+            self.transitions.operation(
+                &expr.span,
+                super::super::transfer::checked::Operation::LockPredicate {
+                    receiver: source.clone(),
+                    observed,
+                },
+            );
         }
         self.discard(source)?;
         Ok(true)

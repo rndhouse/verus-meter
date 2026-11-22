@@ -62,6 +62,9 @@ pub(super) fn spec_value(value: &Expr) -> Result<Expr, VirErr> {
         ExprX::If(condition, yes, Some(no)) => {
             ExprX::If(spec_value(condition)?, spec_value(yes)?, Some(spec_value(no)?))
         }
+        ExprX::Logical(op, left, right) => {
+            ExprX::Logical(*op, spec_value(left)?, spec_value(right)?)
+        }
         ExprX::Binary(op, left, right) => {
             // Preserve values (including explicit truncation), while leaving
             // overflow checks on the original executable index.

@@ -3,7 +3,12 @@
 //! and completion states for global composition; the coordinator materializes
 //! received result ownership at the checked join.
 
-use super::super::{analysis::Analysis, heap::Owner, metadata::expr, model::unsupported};
+use super::super::{
+    analysis::Analysis,
+    heap::Owner,
+    metadata::{View, expr},
+    model::unsupported,
+};
 use super::{Stage, WorkerId};
 use crate::{ast::*, messages::Span};
 use std::collections::BTreeSet;
@@ -62,6 +67,7 @@ impl Analysis<'_> {
         {
             return Err(unsupported(&source.span, "population join with a foreign result type"));
         }
+        let mut mutex_receipt = None;
         let memory = expr::operation(
             &source.span,
             "worker_result",
@@ -139,13 +145,11 @@ impl Analysis<'_> {
         } else if let Some(roots) = &arc_roots {
             Some(self.receive_indexed_alias(&source.span, roots, memory)?)
         } else if self.layouts.owner(&payload) {
-            Some(self.owner_from_metadata(
-                &source.span,
-                &payload,
-                memory,
-                super::super::metadata::View::Complete,
-                false,
-            )?)
+            let mut received =
+                self.owner_from_metadata(&source.span, &payload, memory, View::Complete, false)?;
+            mutex_receipt =
+                self.bind_received_mutex(source, &payload, &occurrence, &mut received)?;
+            Some(received)
         } else {
             None
         };
@@ -185,6 +189,7 @@ impl Analysis<'_> {
         self.transitions.operation(
             &source.span,
             super::super::transfer::checked::Operation::WorkerJoin {
+                mutex_receipt,
                 source: argument.clone(),
                 returned_root,
                 payload_handle: result_owner.as_ref().and_then(|o| o.shared?.known()).filter(

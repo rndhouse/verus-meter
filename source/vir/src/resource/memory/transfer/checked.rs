@@ -123,6 +123,8 @@ pub(in super::super) struct WorkerPublication {
 pub(in super::super) enum Operation {
     /// A compiler-resolved native dereference borrows this existing acquisition.
     GuardBorrow { source: Expr, interval: super::super::synchronization::local::Interval },
+    /// Actual discriminant of the lock Result at a native is_ok/is_err test.
+    LockPredicate { receiver: Expr, observed: Expr },
     /// A proved-success Result extraction moves its release responsibility.
     GuardExtract { source: Expr },
     /// The protected root retains its constructor occurrence independently of moves.
@@ -167,6 +169,8 @@ pub(in super::super) enum Operation {
     WorkerPublish(WorkerPublication),
     /// Collect exactly the runtime handle consumed by the source operation.
     WorkerJoin {
+        /// Indexed by-value mutex ownership, bound to this actual join.
+        mutex_receipt: Option<Box<super::super::workers::MutexReceipt>>,
         /// Freshly received outer allocation whose payload handle comes from the selected record.
         payload_handle: Option<super::super::shared::RootId>,
         source: Expr,
@@ -347,12 +351,16 @@ pub(in super::super) struct Checked {
 }
 
 impl Checked {
-    pub(in super::super) fn fixed_acquisition(
+    pub(in super::super) fn acquisition_visit(
         &self,
         id: super::super::synchronization::local::Interval,
-    ) -> bool {
-        self.operations.values().any(|op| matches!(op,
-            Operation::MutexLock { interval, occurrence, .. } if *interval == id && occurrence.single_visit()))
+    ) -> Option<&super::super::synchronization::local::Occurrence> {
+        self.operations.values().find_map(|op| match op {
+            Operation::MutexLock { interval, occurrence, .. } if *interval == id => {
+                Some(occurrence)
+            }
+            _ => None,
+        })
     }
 
     pub(in super::super) fn locks_mutex(&self) -> bool {
@@ -396,6 +404,15 @@ impl Checked {
         let mut attempts = std::collections::BTreeSet::new();
         for (site, operation) in &self.operations {
             let (occurrence, fresh) = match operation {
+                Operation::WorkerJoin { mutex_receipt: Some(receipt), .. } => {
+                    if !receipt.valid_for(*site, actor) {
+                        return Err(super::super::model::unsupported(
+                            span,
+                            "a mutex receipt outside its selected join",
+                        ));
+                    }
+                    continue;
+                }
                 Operation::Call { synchronization: Some(call), .. } => {
                     call.validate(*site, actor, &mut intervals, &mut attempts, span)?;
                     continue;

@@ -34,6 +34,9 @@ struct State {
 
 #[derive(Default)]
 pub(in crate::resource::memory) struct History {
+    /// In a loop these finite forests are induction candidates. All releases
+    /// must preserve their union before it can constrain any acquisition.
+    pub(super) repeated: bool,
     states: Vec<State>,
     /// Each real publication keeps its own proof and allocation origins even
     /// when identical starting contents admit the same sequence of releases.
@@ -61,7 +64,7 @@ impl History {
     }
 
     pub(super) fn build(seeds: Vec<(Publication, Expr)>, sections: &[Section<'_>]) -> Option<Self> {
-        let mut history = Self::default();
+        let mut history = Self { repeated: sections.iter().any(|s| s.repeated), ..Self::default() };
         let mut pending = Vec::new();
         for (publication, forest) in seeds {
             let index =
@@ -123,6 +126,9 @@ impl History {
 
     pub(super) fn inputs(&self, interval: Interval) -> Vec<&Expr> {
         let mut inputs: Vec<&Expr> = Vec::new();
+        if self.repeated {
+            return self.candidates();
+        }
         for id in &self.incoming[&interval] {
             let forest = &self.states[*id].forest;
             if !inputs.iter().any(|other| same_expression(other, forest)) {
@@ -130,6 +136,16 @@ impl History {
             }
         }
         inputs
+    }
+
+    pub(super) fn candidates(&self) -> Vec<&Expr> {
+        let mut values: Vec<&Expr> = Vec::new();
+        for state in &self.states {
+            if !values.iter().any(|other| same_expression(other, &state.forest)) {
+                values.push(&state.forest);
+            }
+        }
+        values
     }
 
     /// Each prefix can be a completed run if other holders skip their

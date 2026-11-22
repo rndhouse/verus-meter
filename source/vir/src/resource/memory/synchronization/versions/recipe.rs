@@ -151,6 +151,8 @@ pub(super) struct Schedule<'a> {
     position: Position,
     writes: Vec<(VarIdent, Expr, Position)>,
     tests: HashMap<u64, Expr>,
+    /// Source arms that dominate entry to each loop in this body.
+    loop_entries: HashMap<u64, Position>,
 }
 
 impl<'a> Schedule<'a> {
@@ -160,6 +162,7 @@ impl<'a> Schedule<'a> {
             position: Position::default(),
             writes: Vec::new(),
             tests: HashMap::new(),
+            loop_entries: HashMap::new(),
         };
         schedule.visit_expr(body).expect("infallible schedule visit");
         schedule
@@ -205,6 +208,33 @@ impl<'a> Schedule<'a> {
             ));
         }
         Some(recipe)
+    }
+
+    /// Immutable path conditions visible before the loop must also be proved
+    /// in Verus's isolated loop query. Supply them as ordinary invariants.
+    pub(super) fn entry_guards(
+        &self,
+        site: crate::messages::AstId,
+        parameters: &HashMap<VarIdent, VarIdent>,
+    ) -> Vec<Expr> {
+        let Some(position) = self.loop_entries.get(&site) else { return Vec::new() };
+        position
+            .arms
+            .iter()
+            .chain(&position.fallthrough)
+            .filter_map(|(site, arm)| {
+                let (condition, _) = self.portable_test(*site, parameters)?;
+                Some(if *arm == 0 {
+                    condition
+                } else {
+                    SpannedTyped::new(
+                        &condition.span,
+                        &condition.typ,
+                        ExprX::Unary(UnaryOp::Not, condition.clone()),
+                    )
+                })
+            })
+            .collect()
     }
 
     fn portable_test(
@@ -286,11 +316,11 @@ impl<'a> Schedule<'a> {
     }
 }
 
-/// A source return has no fallthrough edge, including a unit block ending
+/// A return or loop jump has no fallthrough edge, including a unit block ending
 /// in a semicolon. Unrecognized control flow supplies no path restriction.
 fn exits(value: &Expr) -> bool {
     match &value.x {
-        ExprX::Return(_) => true,
+        ExprX::Return(_) | ExprX::BreakOrContinue { .. } => true,
         ExprX::NeverToAny(inner) => exits(inner),
         ExprX::ReadPlace(place, _) => matches!(&place.x, PlaceX::Temporary(inner) if exits(inner)),
         ExprX::Block(stmts, tail) => {
@@ -311,6 +341,34 @@ impl AstVisitor<Walk, (), NoScoper> for Schedule<'_> {
         self.observe(growth.updates.get(&site));
         match &value.x {
             ExprX::NonSpecClosure { .. } => {}
+            ExprX::Loop { cond, body, .. } => {
+                self.loop_entries.insert(site, self.position.clone());
+                if let Some(test) = cond {
+                    self.visit_expr(test)?;
+                    // Every iteration of an unsigned counter < end implies
+                    // 0 < end. A stable end travels to another worker even
+                    // when the changing counter cannot leave its own loop.
+                    let guard = match &test.x {
+                        ExprX::Binary(BinaryOp::Inequality(InequalityOp::Lt), start, end)
+                            if matches!(
+                                &*start.typ,
+                                TypX::Int(IntRange::U(_) | IntRange::USize | IntRange::Nat)
+                            ) =>
+                        {
+                            crate::ast_util::mk_ineq(
+                                &test.span,
+                                &expr::integer(&test.span, 0),
+                                end,
+                                InequalityOp::Lt,
+                            )
+                        }
+                        _ => test.clone(),
+                    };
+                    self.tests.insert(site, guard);
+                    self.position.fallthrough.push((site, 0));
+                }
+                self.visit_expr(body)?;
+            }
             ExprX::If(test, yes, no) => {
                 self.tests.insert(site, test.clone());
                 self.visit_expr(test)?;

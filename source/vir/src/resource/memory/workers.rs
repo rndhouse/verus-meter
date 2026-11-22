@@ -13,6 +13,7 @@ mod captures;
 pub(super) mod execution;
 mod identity;
 mod inputs;
+mod mutex;
 mod outputs;
 mod parameters;
 mod populations;
@@ -24,6 +25,7 @@ mod waits;
 pub(super) use identity::{Families, SourceVisit, WorkerId};
 pub(super) use inputs::Input;
 pub(super) use inputs::restore_proof_bindings;
+pub(super) use mutex::MutexReceipt;
 pub(super) use parameters::parameter_domain_error;
 pub(super) use populations::SelectedWorker;
 pub(crate) use results::generated_join_move;
@@ -582,6 +584,7 @@ impl Analysis<'_> {
                     source: argument.clone(),
                     returned_root: None,
                     payload_handle: None,
+                    mutex_receipt: None,
                 },
             );
         }

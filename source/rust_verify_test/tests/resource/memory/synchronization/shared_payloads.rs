@@ -2,6 +2,7 @@
 use super::rejects;
 
 mod joined;
+mod repeated;
 
 /// Local checks still run when the domain lacks its global interference proof.
 fn diagnostics(name: &str, program: &str, expected: &[&str]) {

@@ -245,6 +245,19 @@ impl Analysis<'_> {
                     "a join state without its selected worker",
                 ));
             }
+            let ownership =
+                join.phases.caller.map_or(&self.transitions, |id| &workers[&id].effects.ownership);
+            if let Some(super::super::transfer::checked::Operation::WorkerJoin {
+                mutex_receipt: Some(receipt),
+                ..
+            }) = ownership.operation_at(&join.phases.span)
+                && !receipt.matches_join(&join.families, join.record.as_ref(), &self.growth)
+            {
+                return Err(unsupported(
+                    &join.phases.span,
+                    "a mutex receipt without its selected producer",
+                ));
+            }
             // In the coordinator, receiving the payload records the intact
             // waiting frame before releasing the handle and tag. Packing the
             // Result records its new layout. Reuse those ordinary inequalities.

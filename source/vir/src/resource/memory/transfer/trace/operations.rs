@@ -86,6 +86,10 @@ impl Trace<'_> {
                 }
                 Some(Value::Unknown)
             }
+            Operation::LockPredicate { receiver, observed } => {
+                self.value(&receiver)?;
+                Some(Value::Scalar(observed))
+            }
             Operation::GuardExtract { source } => {
                 let Value::Owner(mut guard) = self.value(&source)? else { return None };
                 guard.typ = value.typ.clone();
@@ -170,7 +174,7 @@ impl Trace<'_> {
             }
             Operation::Closure { captures } => self.closure(value, captures),
             Operation::WorkerPublish(publication) => self.publish_worker(value, publication),
-            Operation::WorkerJoin { source, returned_root, payload_handle } => {
+            Operation::WorkerJoin { source, returned_root, payload_handle, .. } => {
                 self.join_worker(value, source, returned_root, payload_handle)
             }
             Operation::ParameterJoin { source, phases } => {

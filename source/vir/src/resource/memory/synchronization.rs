@@ -167,6 +167,9 @@ pub enum Instance {
     Input(usize),
     /// A construction site, freshened on summary instantiation and loop visits.
     Fresh(u64),
+    /// Sole ownership received from the worker record selected at this join.
+    /// The join observation carries its dynamic visit and publication identity.
+    Joined(crate::messages::AstId),
 }
 
 /// One acquired interval. A fresh interval is required after every release.
