@@ -1138,3 +1138,6 @@ test_verify_one_file! {
         }
     } => Err(e) => assert_fails(e, 2)
 }
+
+#[path = "atomic_lib/holders.rs"]
+mod holders;

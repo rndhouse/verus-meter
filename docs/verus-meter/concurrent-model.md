@@ -71,14 +71,11 @@ higher-order execution.
 | Custom protocols | Safe concrete Verus functions, tracked guards/tokens, atomic invariants and tokenized state-machine proofs using those primitives; explicit transition/holder-bound proof interface described below | 02, 05, 06 |
 | Payloads and helpers | Existing supported Box/Vec/boxed slices, concrete structures and ownership operations, plus the listed concurrency wrappers; safe local acyclic helpers with checked effects, including escaped buffers and guard returns | 03–05, 07 |
 
-The semaphore is a new verified library implementation built from existing Verus
-atomics/state machines, not a dependency on an async runtime or a trusted semaphore
-name. Its implementation is assigned to 06; public names are a concrete delivery
-target, and implementation naming changes must update this specification. Its
-permit is a synchronization witness, not a byte allocation permission. Dropping
-an unreleased permit does not replenish capacity; it remains occupied. This
-conservative rule is safe under leaked protocol witnesses and matches explicit
-release. A live runtime permit may not be forgotten by unmodeled operations.
+The verified `vstd::resource::semaphore::Semaphore` stores the available slots in
+a sequentially consistent atomic word. Successful acquisition transfers one
+linear witness to the returned permit. A failed compare-exchange can return
+`None` under contention. Dropping a permit leaves its slot occupied. Calling
+`Permit::release` returns exactly one slot to the issuing instance.
 
 Custom raw-pointer/unsafe synchronization bodies require trusted contracts and
 are outside verified-custom support. Relaxed atomics, arbitrary recursion,
@@ -304,6 +301,15 @@ A buffer removed from that mutex keeps its charge after unlock. This also applie
 when another worker drains the collection. A returned shared handle needs a
 separate relation to the protected contents of its backing. If that relation is
 missing, an indexed join cannot use the constructor site to recover it.
+
+The proof interface in `vstd::resource::holder` identifies an actual witness’s
+instance. A `BoundedHolder` implementation must prove the capacity bound for
+any finite tracked sequence of **owned** witnesses with the same identity and
+capacity. Two references to one witness cannot supply that sequence.
+`Incompatible` proves two roles cannot belong to the same instance at once.
+The semaphore discharges its population proof by joining its unit tokens.
+The vstd RwLock uses its existing unique writer token and shared storage
+invariant. It admits multiple readers. Its handles require explicit release.
 
 For custom protocols, expose a verified **synchronization-effect declaration** on
 local executable functions, with instance projection, incoming/outgoing tracked

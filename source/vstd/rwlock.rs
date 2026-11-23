@@ -10,6 +10,8 @@ use super::modes::*;
 use super::multiset::*;
 use super::prelude::*;
 use super::set::*;
+use crate::resource::holder::{BoundedHolder, Holder};
+use crate::tokens::UniqueValueToken;
 use core::marker::PhantomData;
 use verus_state_machines_macros::tokenized_state_machine_vstd;
 
@@ -151,6 +153,15 @@ RwLockToks<K, V, Pred: InvariantPredicate<K, V>> {
             have reader >= {x};
             have reader >= {y};
             assert(equal(x, y));
+        }
+    }
+
+    /// These two tokens require incompatible states of the stored value.
+    property!{
+        writer_excludes_reader(x: V) {
+            have writer >= Some(());
+            have reader >= {x};
+            assert(false);
         }
     }
 
@@ -387,6 +398,66 @@ pub struct ReadHandle<'a, V, Pred: RwLockPredicate<V>> {
     rwlock: &'a RwLock<V, Pred>,
 }
 
+impl<'a, V, Pred: RwLockPredicate<V>> crate::resource::holder::Holder for WriteHandle<'a, V, Pred> {
+    open spec fn instance_id(&self) -> crate::resource::Loc {
+        self.rwlock().id()
+    }
+}
+
+impl<'a, V, Pred: RwLockPredicate<V>> crate::resource::holder::Holder for ReadHandle<'a, V, Pred> {
+    open spec fn instance_id(&self) -> crate::resource::Loc {
+        self.rwlock().id()
+    }
+}
+
+impl<'a, V, Pred: RwLockPredicate<V>> crate::resource::holder::BoundedHolder for WriteHandle<
+    'a,
+    V,
+    Pred,
+> {
+    open spec fn capacity(&self) -> nat {
+        1
+    }
+
+    proof fn population_bound(
+        tracked mut population: Seq<Self>,
+        id: crate::resource::Loc,
+        capacity: nat,
+    ) {
+        broadcast use crate::seq::group_seq_axioms;
+
+        let ghost before = population;
+        if population.len() > 0 {
+            assert(before[0].instance_id() == id && before[0].capacity() == capacity);
+        }
+        if population.len() > 1 {
+            assert(before.last().instance_id() == id);
+            let tracked mut first = population.tracked_pop();
+            let tracked second = population.tracked_borrow(0);
+            assert(*second == before[0]);
+            use_type_invariant(&first);
+            use_type_invariant(second);
+            first.handle.borrow_mut().unique(second.handle.borrow());
+        }
+    }
+}
+
+impl<'a, 'b, V, Pred: RwLockPredicate<V>> crate::resource::holder::Incompatible<
+    ReadHandle<'b, V, Pred>,
+> for WriteHandle<'a, V, Pred> {
+    proof fn distinct_instances(tracked &mut self, tracked other: &ReadHandle<'b, V, Pred>) {
+        use_type_invariant(&*self);
+        use_type_invariant(other);
+        if self.instance_id() == other.instance_id() {
+            self.rwlock.inst.borrow().writer_excludes_reader(
+                other.handle@.element(),
+                self.handle.borrow(),
+                other.handle.borrow(),
+            );
+        }
+    }
+}
+
 impl<'a, V, Pred: RwLockPredicate<V>> WriteHandle<'a, V, Pred> {
     #[verifier::type_invariant]
     spec fn wf_write_handle(self) -> bool {
@@ -488,6 +559,11 @@ impl<'a, V, Pred: RwLockPredicate<V>> ReadHandle<'a, V, Pred> {
 }
 
 impl<V, Pred: RwLockPredicate<V>> RwLock<V, Pred> {
+    /// Stable identity shared by the reader and writer witnesses of this lock.
+    pub closed spec fn id(&self) -> crate::resource::Loc {
+        self.inst@.id()
+    }
+
     /// Predicate configured for this lock instance.
     pub closed spec fn pred(&self) -> Pred {
         self.pred@

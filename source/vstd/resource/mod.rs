@@ -1,11 +1,13 @@
 use super::prelude::*;
 
 pub mod algebra;
+pub mod holder;
 mod combinators;
 mod impls;
 mod lib;
 pub mod pcm;
 pub mod relations;
+pub mod semaphore;
 pub mod storage_protocol;
 
 pub use combinators::agree;
