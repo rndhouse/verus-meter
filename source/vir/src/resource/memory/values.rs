@@ -175,6 +175,19 @@ impl Analysis<'_> {
                 }
                 Ok(())
             }
+            PatternX::Constructor(name, variant, fields) if self.layouts.scalar_result(typ) => {
+                let TypX::Datatype(actual, _, _) = &**typ else { unreachable!() };
+                let (ok, err) = self.layouts.result_payloads(typ).unwrap();
+                let [field] = fields.as_slice() else {
+                    return Err(unsupported(&pattern.span, "this scalar Result pattern"));
+                };
+                let payload = match (name == actual, variant.as_str()) {
+                    (true, "Ok") => ok,
+                    (true, "Err") => err,
+                    _ => return Err(unsupported(&pattern.span, "this scalar Result variant")),
+                };
+                self.option_pattern(&field.a, payload, slots, None, None)
+            }
             PatternX::Constructor(name, variant, fields) if self.layouts.option(typ) => {
                 let TypX::Datatype(actual, _, _) = &**typ else { unreachable!() };
                 if name != actual {
@@ -234,10 +247,12 @@ impl Analysis<'_> {
             .layouts
             .result_payloads(&scrutinee.typ)
             .is_some_and(|(ok, err)| self.layouts.guard_owner(ok) && self.layouts.guard_owner(err));
-        if self.layouts.result_payloads(&scrutinee.typ).is_some() && !lock_result {
+        let scalar_result = self.layouts.scalar_result(&scrutinee.typ);
+        if self.layouts.result_payloads(&scrutinee.typ).is_some() && !lock_result && !scalar_result
+        {
             return self.worker_result_match(expr, scrutinee, arms, new_value);
         }
-        if !self.layouts.option(&scrutinee.typ) && !lock_result {
+        if !self.layouts.option(&scrutinee.typ) && !lock_result && !scalar_result {
             return Err(unsupported(&expr.span, "matches other than by-value Option matches"));
         }
         if !super::model::diverging(&expr.typ) {

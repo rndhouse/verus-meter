@@ -51,11 +51,13 @@ impl Trace<'_> {
                             self.place_value(init, &pattern.typ)?;
                         }
                     } else {
-                        let PatternX::Var(binding) = &pattern.x else {
+                        let Some((binding, source_type)) =
+                            execution::declaration_binding(pattern, init.as_ref())
+                        else {
                             return None;
                         };
                         let value = if let Some(init) = init {
-                            self.place_value(init, &binding.typ)?
+                            self.place_value(init, source_type)?
                         } else {
                             Value::Unknown
                         };

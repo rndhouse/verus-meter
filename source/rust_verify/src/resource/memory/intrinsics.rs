@@ -20,6 +20,8 @@ pub(crate) fn call<'tcx>(
         Some(ResourceIntrinsic::Concurrency(operation))
     } else if let Some(operation) = synchronization_call(tcx, id, substitutions) {
         Some(ResourceIntrinsic::Synchronization(operation))
+    } else if let Some(op) = atomic_call(tcx, id) {
+        Some(ResourceIntrinsic::Atomic(op))
     } else if let Some(intrinsic) = iterator_intrinsic(tcx, id, rust_item) {
         Some(intrinsic)
     } else if let Some(intrinsic) = option_intrinsic(tcx, id) {
@@ -163,7 +165,11 @@ pub(crate) fn synchronization_type(
         return None;
     }
     let diagnostic = |name| tcx.is_diagnostic_item(rustc_span::Symbol::intern(name), id);
-    if diagnostic("Mutex") {
+    if diagnostic("verus::vstd::atomic::PAtomicBool") {
+        Some(LibraryType::AtomicBool)
+    } else if diagnostic("verus::vstd::atomic::PAtomicUsize") {
+        Some(LibraryType::AtomicUsize)
+    } else if diagnostic("Mutex") {
         Some(LibraryType::Mutex)
     } else if diagnostic("MutexGuard") {
         Some(LibraryType::MutexGuard)
@@ -179,6 +185,34 @@ pub(crate) fn synchronization_type(
             _ => None,
         }
     }
+}
+
+/// Only inherent methods of the reviewed permissioned atomics have this contract.
+fn atomic_call(
+    tcx: TyCtxt<'_>,
+    id: DefId,
+) -> Option<vir::resource::memory::synchronization::AtomicOperation> {
+    use vir::resource::memory::synchronization::{AtomicOperation as Op, LibraryType};
+    let imp = tcx.impl_of_assoc(id)?;
+    if tcx.trait_impl_of_assoc(id).is_some() {
+        return None;
+    }
+    let receiver = tcx.type_of(imp).skip_binder();
+    let TyKind::Adt(adt, _) = receiver.kind() else { return None };
+    let kind = synchronization_type(tcx, adt.did())?;
+    if !matches!(kind, LibraryType::AtomicBool | LibraryType::AtomicUsize) {
+        return None;
+    }
+    Some(match tcx.item_name(id).as_str() {
+        "new" => Op::New,
+        "load" => Op::Load,
+        "store" => Op::Store,
+        "compare_exchange" => Op::CompareExchange,
+        "compare_exchange_weak" => Op::CompareExchangeWeak,
+        "fetch_add_wrapping" if kind == LibraryType::AtomicUsize => Op::FetchAddWrapping,
+        "fetch_sub_wrapping" if kind == LibraryType::AtomicUsize => Op::FetchSubWrapping,
+        _ => return None,
+    })
 }
 
 /// Check both the actual receiver datatype and the defining trait. Unrelated

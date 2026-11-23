@@ -257,7 +257,9 @@ impl Analysis<'_> {
                             );
                             break 'statement;
                         }
-                        let PatternX::Var(binding) = &pattern.x else {
+                        let Some((binding, source_type)) =
+                            super::execution::declaration_binding(pattern, init.as_ref())
+                        else {
                             return Err(unsupported(
                                 &stmt.span,
                                 "destructuring or wildcard declarations",
@@ -317,7 +319,7 @@ impl Analysis<'_> {
                             super::lifetime::Value::unit()
                         } else if let Some(init) = init {
                             let value =
-                                self.produce_place(init, &binding.typ, binding.copy, &stmt.span)?;
+                                self.produce_place(init, source_type, binding.copy, &stmt.span)?;
                             if from_iterator && !binding.copy {
                                 self.release_value(value, &stmt.span);
                                 self.fresh_value(&stmt.span, &binding.typ)?

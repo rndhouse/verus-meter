@@ -1,6 +1,7 @@
 //! Size queries and fail-closed compiler integration for synchronization contracts.
 use super::support::{rejects, verifies};
 
+mod atomic;
 mod helpers;
 mod lifetimes;
 mod mutex;

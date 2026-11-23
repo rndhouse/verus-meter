@@ -239,7 +239,13 @@ fn synchronization_types(
     }
     let tcx = ctxt.tcx;
     let mut types = LibraryTypes::new();
-    for name in ["Mutex", "MutexGuard", "Result"] {
+    for name in [
+        "Mutex",
+        "MutexGuard",
+        "Result",
+        "verus::vstd::atomic::PAtomicBool",
+        "verus::vstd::atomic::PAtomicUsize",
+    ] {
         if let Some(id) = tcx.get_diagnostic_item(rustc_span::Symbol::intern(name))
             && let Some(kind) = super::intrinsics::synchronization_type(tcx, id)
         {

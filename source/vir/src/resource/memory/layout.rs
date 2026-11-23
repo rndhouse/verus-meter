@@ -285,6 +285,13 @@ impl Layouts {
             .then(|| (&args[0], &args[1]))
     }
 
+    /// A CAS result has an ordinary inline discriminant. Neither scalar arm
+    /// can carry a guard, allocation, or successful worker-join obligation.
+    pub(super) fn scalar_result(&self, typ: &Typ) -> bool {
+        self.result_payloads(typ)
+            .is_some_and(|(ok, err)| super::contracts::scalar(ok) && super::contracts::scalar(err))
+    }
+
     pub(super) fn option_payload<'a>(&self, typ: &'a Typ, span: &Span) -> Result<&'a Typ, VirErr> {
         let TypX::Datatype(_, args, _) = &**typ else {
             return Err(unsupported(span, "this Option type"));
@@ -317,7 +324,7 @@ impl Layouts {
     fn owner_inner(&self, typ: &Typ, visiting: &mut HashSet<Dt>) -> bool {
         if self.guard_owner(typ)
             || self.mutex_payload(typ).is_some()
-            || self.result_payloads(typ).is_some()
+            || (self.result_payloads(typ).is_some() && !self.scalar_result(typ))
         {
             return true;
         }
@@ -403,7 +410,7 @@ impl Layouts {
             }
             if matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _))
                 || layouts.join_handle(typ).is_some()
-                || layouts.result_payloads(typ).is_some()
+                || (layouts.result_payloads(typ).is_some() && !layouts.scalar_result(typ))
             {
                 return true;
             }
@@ -681,6 +688,8 @@ impl Layouts {
                 self.size_inner(typ, span, visiting)
             };
             let bytes = match kind {
+                LibraryType::AtomicBool => Some(verus_meter_model::BOOL_BYTES),
+                LibraryType::AtomicUsize => Some(WORD_BYTES),
                 LibraryType::Mutex => verus_meter_model::mutex_bytes(size(0, visiting)?),
                 LibraryType::MutexGuard => {
                     size(0, visiting)?;
@@ -771,6 +780,14 @@ impl Layouts {
                 }
             }
             TypX::Datatype(Dt::Tuple(0), _, _) => Ok(0),
+            // Permissioned constructors return a value paired with erased evidence.
+            TypX::Datatype(Dt::Tuple(2), args, _)
+                if let [value, evidence] = args.as_slice()
+                    && matches!(&**evidence, TypX::Decorate(TypDecoration::Tracked, None, _))
+                    && !self.owner(value) =>
+            {
+                self.size_inner(value, span, visiting)
+            }
             TypX::Datatype(name @ Dt::Path(_), _, _) => {
                 let variant = self.struct_variant(typ, span)?;
                 if !visiting.insert(LayoutNode::Datatype(name.clone())) {

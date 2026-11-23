@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use vir_macros::ToDebugSNode;
 
+pub(super) mod atomic;
 pub mod flow;
 pub(super) mod helpers;
 pub(super) mod local;
@@ -38,9 +39,26 @@ pub enum Operation {
     GuardDrop,
 }
 
+/// Sequentially consistent operations on the two modeled vstd atomic types.
+/// Their executable result is authoritative. None alone establishes a holder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToDebugSNode)]
+pub enum AtomicOperation {
+    New,
+    Load,
+    Store,
+    CompareExchange,
+    CompareExchangeWeak,
+    FetchAddWrapping,
+    FetchSubWrapping,
+}
+
 /// Opaque library layouts recognized by resolved datatype identity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LibraryType {
+    /// One sequentially consistent boolean location. Permissions are erased.
+    AtomicBool,
+    /// One sequentially consistent word location. Permissions are erased.
+    AtomicUsize,
     /// `Mutex<T>`, with state, poison flag and inline T.
     Mutex,
     /// `MutexGuard<T>`, an inline reference with a release effect.
@@ -499,6 +517,14 @@ fn reject_unaccounted_inner(
                     self.runtime_type_inner(inner, span, visiting)?;
                 }
                 TypX::Datatype(name, args, _) => {
+                    // Atomic access carries no exclusion by itself. Its location
+                    // uses the reviewed scalar layout in every caller.
+                    if matches!(
+                        self.types.get(name),
+                        Some(LibraryType::AtomicBool | LibraryType::AtomicUsize)
+                    ) {
+                        return Ok(());
+                    }
                     // A forwarding helper owns the handle, not its future
                     // payload. Opening a handle still needs a checked join.
                     if self.worker_parameter

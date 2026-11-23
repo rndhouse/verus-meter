@@ -16,8 +16,8 @@ use super::view::*;
 use super::wrapping::*;
 
 macro_rules! make_unsigned_integer_atomic {
-    ($at_ident:ident, $p_ident:ident, $p_data_ident:ident, $rust_ty: ty, $value_ty: ty, $modname:ident) => {
-        atomic_types!($at_ident, $p_ident, $p_data_ident, $rust_ty, $value_ty);
+    ($at_ident:ident, $p_ident:ident, $p_data_ident:ident, $rust_ty: ty, $value_ty: ty, $modname:ident $(, $diagnostic:literal)?) => {
+        atomic_types!($at_ident, $p_ident, $p_data_ident, $rust_ty, $value_ty $(, $diagnostic)?);
         #[cfg_attr(verus_keep_ghost, verus::internal(verus_macro))]
         impl $at_ident {
             atomic_common_methods!($at_ident, $p_ident, $p_data_ident, $rust_ty, $value_ty, []);
@@ -38,8 +38,8 @@ macro_rules! make_signed_integer_atomic {
 }
 
 macro_rules! make_bool_atomic {
-    ($at_ident:ident, $p_ident:ident, $p_data_ident:ident, $rust_ty: ty, $value_ty: ty) => {
-        atomic_types!($at_ident, $p_ident, $p_data_ident, $rust_ty, $value_ty);
+    ($at_ident:ident, $p_ident:ident, $p_data_ident:ident, $rust_ty: ty, $value_ty: ty $(, $diagnostic:literal)?) => {
+        atomic_types!($at_ident, $p_ident, $p_data_ident, $rust_ty, $value_ty $(, $diagnostic)?);
         #[cfg_attr(verus_keep_ghost, verus::internal(verus_macro))]
         impl $at_ident {
             atomic_common_methods!($at_ident, $p_ident, $p_data_ident, $rust_ty, $value_ty, []);
@@ -49,10 +49,11 @@ macro_rules! make_bool_atomic {
 }
 
 macro_rules! atomic_types {
-    ($at_ident:ident, $p_ident:ident, $p_data_ident:ident, $rust_ty: ty, $value_ty: ty) => {
+    ($at_ident:ident, $p_ident:ident, $p_data_ident:ident, $rust_ty: ty, $value_ty: ty $(, $diagnostic:literal)?) => {
         verus! {
 
         #[verifier::external_body] /* vattr */
+        $(#[cfg_attr(verus_keep_ghost, rustc_diagnostic_item = $diagnostic)])?
         pub struct $at_ident {
             ato: $rust_ty,
         }
@@ -615,7 +616,7 @@ ptr_atomic_methods!(PAtomicI16, AtomicI16, i16, "16");
 ptr_atomic_methods!(PAtomicI8, AtomicI8, i8, "8");
 ptr_atomic_methods!(PAtomicIsize, AtomicIsize, isize, "ptr");
 
-make_bool_atomic!(PAtomicBool, PermissionBool, PermissionDataBool, AtomicBool, bool);
+make_bool_atomic!(PAtomicBool, PermissionBool, PermissionDataBool, AtomicBool, bool, "verus::vstd::atomic::PAtomicBool");
 
 make_unsigned_integer_atomic!(PAtomicU8, PermissionU8, PermissionDataU8, AtomicU8, u8, u8_specs);
 make_unsigned_integer_atomic!(
@@ -650,7 +651,8 @@ make_unsigned_integer_atomic!(
     PermissionDataUsize,
     AtomicUsize,
     usize,
-    usize_specs
+    usize_specs,
+    "verus::vstd::atomic::PAtomicUsize"
 );
 
 make_signed_integer_atomic!(PAtomicI8, PermissionI8, PermissionDataI8, AtomicI8, i8, i8_specs);

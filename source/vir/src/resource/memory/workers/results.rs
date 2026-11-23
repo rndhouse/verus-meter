@@ -334,6 +334,14 @@ impl Analysis<'_> {
         self.layouts
             .result_payloads(typ)
             .ok_or_else(|| unsupported(&expr.span, "this Result predicate type"))?;
+        if self.layouts.scalar_result(typ) {
+            self.discard(source)?;
+            self.transitions.operation(
+                &expr.span,
+                super::super::transfer::checked::Operation::Evaluate { args: args.clone() },
+            );
+            return Ok(true);
+        }
         let (name, path) = super::super::paths::expr(source, typ)
             .ok_or_else(|| unsupported(&expr.span, "Result predicate without an owned outcome"))?;
         let owner =

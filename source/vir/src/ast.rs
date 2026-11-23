@@ -1069,6 +1069,8 @@ pub enum ResourceIntrinsic {
     ValueSize,
     /// Size of the reference itself, excluding its referent.
     RefSize,
+    /// A reviewed sequentially consistent vstd atomic operation.
+    Atomic(crate::resource::memory::synchronization::AtomicOperation),
     /// Resolved synchronization primitive; never an allocation-lifetime proof.
     Synchronization(crate::resource::memory::synchronization::Operation),
     /// Reviewed worker publication/join and strong shared-ownership operations.

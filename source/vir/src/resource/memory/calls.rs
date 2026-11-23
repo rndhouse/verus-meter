@@ -305,6 +305,9 @@ impl Analysis<'_> {
     }
 
     pub(super) fn call_expr(&mut self, expr: &Expr, destination: bool) -> Result<u64, VirErr> {
+        if let Some(bytes) = self.atomic_call(expr, destination)? {
+            return Ok(bytes);
+        }
         if let Some(value) = self.extract_worker_result(expr)? {
             if let Some(owner) = self.result_owner.take() {
                 self.release_owner(owner, &expr.span);
