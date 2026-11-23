@@ -24,19 +24,20 @@ or a second implementation of lifecycle accounting.
 - [x] Extend the checked summary foundation from 03.2 with instance parameters,
   acquisition/release effects, conditional simultaneous footprints, and retained
   input/result ownership. Reuse existing transfer templates and lifetime profiles.
-- [ ] Instantiate scalar inputs, shared/owned allocation identities and guard/permit
-  relationships at calls and spawn sites. Preserve equal aliases and distinct
-  actual instances; fresh acquisitions must not alias an earlier acquisition.
+- [x] Instantiate scalar inputs, shared/owned allocation identities and native guard
+  relationships at calls and spawn sites. Preserve equal aliases, distinguish
+  distinct actual instances and give every fresh acquisition its own identity.
+  TODO 06 supplies the concrete permit contract.
 - [x] Support helpers that allocate under an incoming guard, acquire internally,
   release a guard, consume a buffer, or return supported owned storage/guards.
   Export the pre-acquisition, acquired and post-release storage needed by callers.
 - [x] Keep caller-live storage during helper work. Preserve early scratch versus
   late-result precision and declared contract slack; do not subtract independent
   peaks or infer hidden phase guarantees from a scalar allowance.
-- [ ] Compose through supported conditional paths and loops, retaining ordering and
+- [x] Compose through supported conditional paths and loops, retaining ordering and
   effects. Validate representability before publishing a summary. Missing ownership
   or synchronization interfaces are errors even with a generous numeric bound.
-- [ ] Apply the added lifetime/footprint composition to existing checked worker
+- [x] Apply the added lifetime/footprint composition to existing checked worker
   summaries through the same interfaces. Preserve asynchronous execution and
   caller-live storage; verify that factored worker code retains direct-code
   precision rather than rebuilding body entry/completion here.
@@ -116,21 +117,56 @@ that returns it. 05.4 extends this accounting to repeated acquisitions.
 
 In `92bd6e071`, a repeated unlock must preserve the proposed set of protected
 contents for every visit. Indexed joins of by-value mutexes retain the selected
-worker's instance and payload. During the integration review, check how these
-effects compose at helper boundaries and distinguish this case from indexed
-shared handles with unresolved backing reservations.
+worker's instance and payload. Indexed shared handles with unresolved backing
+reservations still need a relation to their actual payload.
 
 05 supplies the body-checked transitions. 06 supplies the verified protocol and permit
 contracts. 07 proves that the global bound covers the allowed orderings.
 
+## Integration review
+
+Implementation `6a43c5a5e` connects a guard returned by a helper to the actual
+worker, loop visit and mutex. A second helper that replaces the protected vector
+and releases the moved guard publishes the whole new allocation tree. These
+operations use the ordinary call summary, with the caller’s live bytes and the
+callee’s declared allowance. An unknown payload is never treated as empty.
+
+Executable regressions in
+`source/rust_verify_test/tests/resource/memory/synchronization/shared_payloads/repeated.rs`
+compare direct and factored operations at the same checkpoints.
+
+- With zero iterations or skipped writes, the reader proves 73 bytes. With a
+  possible 37-byte reservation it proves 107 bytes, and 106 fails.
+- Two nested lock helpers preserve a popped box through release, worker completion,
+  join and drop of the last shared handle. The caller proves 10 bytes with zero
+  writes and 42 when the box may have escaped. A 41-byte claim fails.
+- A guard passed through a helper after an indexed join still selects the same
+  worker’s nested vector. Its one-byte reservation survives unlock and dropping
+  the selected mutex. A 28-byte claim passes and 27 fails.
+
+One form remains unsupported. A worker that shares a mutex with another owner can
+pass its guard to a mutating helper. If the helper instead receives only
+`&Mutex<Vec<u8>>`, locks it, pushes and unlocks before returning, the caller has
+no checked description of the contents at that internal release. The negative
+regression requires the missing-interface error even with a generous byte bound.
+A future implementation of this form must relate each internal release to its
+actual acquisition, including paths that skip the update and interleavings before
+acquisition. The caller cannot use a snapshot taken before entering the helper.
+
+Validation passed all 1,228 memory integration tests, 88 VIR memory unit tests,
+47 resource examples and 133 upstream function and closure tests. One VIR test
+and one upstream test are marked ignored. The verifier build, formatting and
+affected Clippy checks passed. TODO 07 still owns the total concurrent peak.
+
 ## Completion criteria
 
-- [ ] All four children have implementation commits and passing source regressions.
+- [x] All four children have implementation commits and passing source regressions.
   Check their evidence against the remaining Work and Decisions from TODO 01 items.
 - [ ] Direct and factored operations preserve allocation identity and cost, the
   acquisition actually ended by release, and alias relationships across calls,
-  worker results and loop iterations. Use the existing worker lifecycle from 03.
-- [ ] Worker and helper summaries share the same checked effects. Each effect
+  worker results and loop iterations. The remaining case in the integration
+  review requires the callee’s internal release to describe the updated payload.
+- [x] Worker and helper summaries share the same checked effects. Each effect
   follows from an executable body or an explicit trusted contract. Run the
   integrated validation below with the global proof obligation from 07 intact.
 
@@ -150,13 +186,14 @@ Implement all summary fields specified in `docs/verus-meter/concurrent-model.md`
 - [ ] Complete the scalar/provenance/instance/acquisition/worker binders, alias
   constraints, entry requirements, phase graphs, exit transformations and proof
   dependencies for the full helper surface, extending the foundation from 03.2.
-- [ ] Support owning values moved into/out of a mutex-protected shared root,
+- [x] Support owning values moved into/out of a mutex-protected shared root,
   primitive-specific lock/try-lock Result matching and proved-success extraction.
   Reuse the Result machinery required for join in 03.2. Changing protected
   ownership updates one persistent descriptor and preserves transients.
-- [ ] Summarize standard guard returns and custom witnesses with actual Rust
-  borrowing/transfer constraints. Unknown alias relationships cannot establish
-  exclusion; scalar contract slack supplies no hidden effect guarantee.
+- [x] Summarize native guard returns using actual Rust borrowing and transfer
+  constraints. Unknown aliases cannot establish exclusion. Scalar contract slack
+  supplies no ownership effect. TODO 06 must exercise this call boundary with
+  verified custom witnesses and bounded permits.
 
 ## Starting points
 

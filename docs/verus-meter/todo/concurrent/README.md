@@ -1,7 +1,7 @@
 # Concurrent symbolic memory analysis TODOs
 
 These tasks track implementation of the concurrent core.
-Next is the integration review in [05 — Function and worker summaries](05-function-and-worker-summaries.md). All four child TODOs are complete. The [final worker audit](complete/03.4.3-validate-and-close-03.md) records the verified worker scope and integration checks.
+The [05 integration review](05-function-and-worker-summaries.md#integration-review) records the completed helper and worker checks and the remaining case where a helper locks and updates a shared mutex internally. All four child TODOs are complete. The [final worker audit](complete/03.4.3-validate-and-close-03.md) records the verified worker scope and integration checks.
 
 ## Authoritative location
 

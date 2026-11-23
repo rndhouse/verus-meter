@@ -47,9 +47,11 @@ Test a custom exclusive protocol and a bounded-permit protocol with actual
 executable acquire/release operations. Break the exclusive protocol, remove its
 successful-acquisition check, release a permit early, use the wrong instance and
 attempt to fabricate extra permits; the relevant proofs must fail. Test repeated
-acquisition and all selected capacity effects. Test the existing RwLock's explicit
-release behavior independently of standard guard drop. Use ordinary verification,
-not `assume`, to establish custom protocol properties in acceptance tests.
+acquisition and all selected capacity effects. Pass a verified witness through a
+helper in a worker, return it on one path and release it on another. Check the
+actual instance and capacity on both paths. Test the existing RwLock's explicit
+release behavior independently of standard guard drop. Establish custom protocol
+properties in the acceptance tests through ordinary verification without `assume`.
 
 Run the README memory checks plus relevant atomic/invariant/mode regressions.
 End-to-end symbolic memory bounds using these proofs are required in 07–08.
