@@ -183,6 +183,9 @@ pub(super) struct FunctionSummary {
     pub(super) effects: Option<Arc<BodyEffects>>,
     /// The checked synchronization owner transferred by a native result or guard return.
     pub(super) synchronized_result: Option<super::synchronization::local::Owned>,
+    /// A checked unit-returning helper with one acquisition can publish the
+    /// modified mutex parameter's ownership template at that acquisition's release.
+    pub(super) closed_mutex: Option<(usize, super::synchronization::local::Interval)>,
     /// Borrowed owner roots changed by checked operations, including logical
     /// length changes that retain the same allocation and reservation.
     pub(super) modified_parameters: std::collections::BTreeSet<usize>,

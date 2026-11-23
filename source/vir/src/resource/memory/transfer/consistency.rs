@@ -164,6 +164,7 @@ mod tests {
             as_string: "optional ownership consistency".into(),
         };
         let mut summary = FunctionSummary {
+            closed_mutex: None,
             effects: None,
             synchronized_result: None,
             modified_parameters: Default::default(),

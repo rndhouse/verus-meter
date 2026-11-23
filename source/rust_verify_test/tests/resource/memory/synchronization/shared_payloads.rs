@@ -1,6 +1,7 @@
 //! Acquisition-relative contents of an owning payload shared by fixed workers.
 use super::rejects;
 
+mod internal;
 mod joined;
 mod repeated;
 

@@ -1051,6 +1051,12 @@ pub(super) fn check(
     let summary = super::summary::FunctionSummary {
         effects: None,
         synchronized_result,
+        closed_mutex: analysis.transitions.closed_mutex_output(
+            function,
+            &modified_parameters,
+            &report.points,
+            inferred.as_ref().map(|i| &i.template),
+        ),
         modified_parameters,
         transfer_required: super::transfer::requires_summary(
             function,

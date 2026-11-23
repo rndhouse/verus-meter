@@ -36,6 +36,11 @@ pub(in super::super) struct Call {
     pub(in super::super) distinct_inputs: BTreeSet<(usize, usize)>,
     /// Actual acquisitions through which the body or a nested call accessed protected data.
     pub(in super::super) payload_borrows: BTreeSet<Interval>,
+    /// A sole release in the callee, instantiated at this call even when the
+    /// caller is another helper operating on a formal mutex parameter.
+    closed: Option<(usize, Interval)>,
+    /// Closed helper updates whose release uses the callee's checked output forest.
+    published: bool,
     /// The native operation permits a non-acquiring result on these intervals.
     attempts: BTreeSet<Interval>,
 }
@@ -66,6 +71,8 @@ impl Call {
             incoming: inputs.intervals(),
             borrowed: BTreeSet::new(),
             distinct_inputs: BTreeSet::new(),
+            closed: None,
+            published: false,
             attempts: BTreeSet::new(),
             payload_borrows: BTreeSet::new(),
         };
@@ -147,6 +154,14 @@ impl Call {
         if let Some(Owned::Mutex(instance)) = summary.synchronized_result {
             call.instance(instance, &expr.span)?;
         }
+        if let Some((parameter, formal)) = summary.closed_mutex {
+            call.closed = Some((
+                parameter,
+                *call.intervals.get(&formal).ok_or_else(|| {
+                    unsupported(&expr.span, "a helper release without its actual acquisition")
+                })?,
+            ));
+        }
         Ok(Some(Box::new(call)))
     }
 
@@ -192,11 +207,36 @@ impl Call {
         access: &SourceVisit<u64>,
     ) -> bool {
         self.visit.same_visit_scope(access)
-            && !self.payload_borrows.contains(&id)
+            && (!self.payload_borrows.contains(&id)
+                || self.published_section().is_some_and(|(_, actual)| actual == id))
             && self
                 .intervals
                 .iter()
                 .any(|(formal, actual)| *actual == id && !self.incoming.contains(formal))
+    }
+
+    pub(in super::super) fn single_release(&self) -> Option<Interval> {
+        self.closed.filter(|_| self.visit.single_visit()).map(|(_, interval)| interval)
+    }
+
+    pub(in super::super) fn publish_section(
+        &mut self,
+        parameter: usize,
+        span: &Span,
+    ) -> Result<Interval, VirErr> {
+        let Some((_, interval)) = self.closed.filter(|(index, _)| *index == parameter) else {
+            return Err(unsupported(span, "a shared release without its checked helper parameter"));
+        };
+        self.published = true;
+        Ok(interval)
+    }
+
+    pub(in super::super) fn published_section(&self) -> Option<(usize, Interval)> {
+        self.closed.filter(|_| self.published)
+    }
+
+    pub(in super::super) fn has_fresh_acquisitions(&self) -> bool {
+        self.intervals.keys().any(|formal| !self.incoming.contains(formal))
     }
 
     pub(in super::super) fn has_intervals(&self) -> bool {

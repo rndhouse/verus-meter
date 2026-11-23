@@ -552,7 +552,14 @@ impl Trace<'_> {
             }
             Operation::Aggregate { fields, tag } => self.construct(value, fields, tag),
             Operation::Call {
-                target, budget, args, borrowed, replaced_inputs, origins, ..
+                target,
+                budget,
+                args,
+                borrowed,
+                replaced_inputs,
+                origins,
+                synchronization,
+                ..
             } => {
                 if self.loop_tokens.is_some() {
                     let candidate = self.scalar(&budget).unwrap_or_else(|| budget.clone());
@@ -560,6 +567,19 @@ impl Trace<'_> {
                     if allocates(&self.summaries.get(&target)?.allocations) {
                         self.loop_allocations.push((span.clone(), budget, candidate));
                     }
+                }
+                if synchronization.is_some_and(|call| call.published_section().is_some()) {
+                    // This unit call's externally owned output has already
+                    // been bound to its mutex release. Argument effects and
+                    // the normal call allowance still belong to this worker.
+                    for (arg, param) in
+                        args.iter().zip(self.functions.get(&target)?.x.params.iter())
+                    {
+                        if param.x.mode == Mode::Exec {
+                            self.value(arg)?;
+                        }
+                    }
+                    return Some(Value::Unit);
                 }
                 for replacement in replaced_inputs {
                     if let Some(input) = &replacement.input {
@@ -613,6 +633,7 @@ impl Trace<'_> {
         let uses_owner = |index| {
             template.borrowed.contains_key(&index)
                 || template.symbols.iter().any(|symbol| match symbol.input {
+                    Input::LockTest => false,
                     Input::Complete => true,
                     Input::Forest(owner)
                     | Input::Property(owner, _, _)
@@ -658,6 +679,12 @@ impl Trace<'_> {
         let mut replacements = HashMap::new();
         let mut opaque_result = false;
         for symbol in &template.symbols {
+            if matches!(symbol.input, Input::LockTest) {
+                self.checked.closed_mutex_section()?;
+                let outcome = self.symbol(&value.span, Input::LockTest, bool_typ());
+                replacements.insert(symbol.name.clone(), outcome);
+                continue;
+            }
             if matches!(symbol.input, Input::Complete) {
                 let forests: Vec<_> = values
                     .values()
@@ -673,7 +700,7 @@ impl Trace<'_> {
             let replacement = match (
                 &symbol.input,
                 values.get(&match &symbol.input {
-                    Input::Complete => unreachable!(),
+                    Input::LockTest | Input::Complete => unreachable!(),
                     Input::Scalar(i)
                     | Input::SliceLength(i)
                     | Input::Forest(i)

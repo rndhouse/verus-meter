@@ -247,6 +247,17 @@ impl Analysis<'_> {
         let mut values = HashMap::new();
         for symbol in &template.symbols {
             let replacement = match &symbol.input {
+                Input::LockTest => {
+                    // Quantify over both possible native outcomes at this call.
+                    self.transfer_scalar_snapshot(
+                        &value.span,
+                        SpannedTyped::new(
+                            &value.span,
+                            &crate::ast_util::bool_typ(),
+                            ExprX::Nondeterministic,
+                        ),
+                    )
+                }
                 Input::Complete => crate::ast_util::mk_bool(
                     &value.span,
                     view == super::super::metadata::View::Complete,

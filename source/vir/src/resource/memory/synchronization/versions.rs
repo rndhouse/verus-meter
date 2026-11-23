@@ -6,6 +6,7 @@ mod calls;
 mod composition;
 mod history;
 mod input;
+mod internal;
 mod outcomes;
 mod recipe;
 mod section;
@@ -61,7 +62,7 @@ struct Binding {
     root: RootId,
     payload_type: Typ,
     entry: Expr,
-    input_origins: Vec<ReturnedStorage>,
+    input_origins: PayloadOrigins,
     access: SourceVisit<AstId>,
     releases: Vec<Release>,
 }
@@ -70,9 +71,31 @@ struct Binding {
 struct Release {
     visit: SourceVisit<Span>,
     contents: Expr,
-    origins: Vec<ReturnedStorage>,
+    origins: PayloadOrigins,
     /// A byte-only view cannot supply ordered children or logical geometry.
     complete: bool,
+}
+
+/// An internal critical section borrows its input from the cell. Its output
+/// origins and fresh allocations belong to the referenced checked helper,
+/// rather than to a fabricated worker-local copy of the payload.
+enum PayloadOrigins {
+    Local(Vec<ReturnedStorage>),
+    Helper(usize),
+}
+
+impl PayloadOrigins {
+    fn verified(
+        &self,
+        checked: &crate::resource::memory::transfer::Checked,
+        site: AstId,
+        interval: Interval,
+    ) -> bool {
+        match self {
+            Self::Local(origins) => !origins.is_empty(),
+            Self::Helper(index) => checked.publishes_at(site, *index, interval),
+        }
+    }
 }
 
 fn complete_contents(payload: &Owner) -> bool {
@@ -111,6 +134,7 @@ impl Versions {
         &self,
         actor: crate::resource::memory::workers::WorkerId,
         entry: &crate::resource::memory::shared::SharedRoots,
+        checked: &crate::resource::memory::transfer::Checked,
         heap: &Heap,
         storage: &Accounting,
         span: &Span,
@@ -127,7 +151,7 @@ impl Versions {
                 != Some(binding.root)
                 || !binding.access.valid_for(Some(actor))
                 || !observed
-                || binding.input_origins.is_empty()
+                || !binding.input_origins.verified(checked, binding.access.site, interval)
                 || !crate::ast_util::types_equal(&binding.entry.typ, &expr::memory_type())
             {
                 return Err(unsupported(
@@ -143,7 +167,7 @@ impl Versions {
                     && matches!(p.condition.boundary, super::local::Boundary::Release(id) if id == interval));
                 if !released
                     || !release.visit.valid_for(Some(actor))
-                    || release.origins.is_empty()
+                    || !release.origins.verified(checked, release.visit.site.id, interval)
                     || !crate::ast_util::types_equal(&binding.entry.typ, &release.contents.typ)
                 {
                     return Err(unsupported(
@@ -158,6 +182,43 @@ impl Versions {
 }
 
 impl Analysis<'_> {
+    fn needs_payload_binding(
+        &self,
+        root: RootId,
+        interval: Interval,
+        typ: &Typ,
+        site: &Span,
+    ) -> Result<bool, VirErr> {
+        if self.growth.shared_occurrences.contains_key(&root) {
+            return Err(unsupported(
+                site,
+                "an imported mutex family without the selected root occurrence",
+            ));
+        }
+        if self.growth.indexed_shared.contains_key(&root)
+            || self.growth.occurrence_peers.contains_key(&root)
+            || self.growth.peer_results.contains_key(&root)
+            || self.growth.section_shared.contains(&root)
+        {
+            return Err(unsupported(
+                site,
+                "a protected worker input with outstanding backing reservations",
+            ));
+        }
+        if self.heap.borrowed.contains_key(&interval.payload_name()) {
+            return Ok(false);
+        }
+        if !self.layouts.plain_protected_payload(typ)
+            || self.transitions.protected_versions.bindings.contains_key(&interval)
+        {
+            return Err(unsupported(
+                site,
+                "an imported payload without a unique representable acquisition input",
+            ));
+        }
+        Ok(true)
+    }
+
     /// Lazily bind only on a path that actually dereferences a live guard.
     /// While that guard is held, no other actor can change these contents.
     pub(in super::super) fn open_imported_payload(
@@ -175,34 +236,10 @@ impl Analysis<'_> {
         if !self.storage.holds_interval(interval) {
             return Err(unsupported(site, "a shared payload access outside its live acquisition"));
         }
-        if self.growth.shared_occurrences.contains_key(&root) {
-            return Err(unsupported(
-                site,
-                "an imported mutex family without the selected root occurrence",
-            ));
-        }
-        if self.growth.indexed_shared.contains_key(&root)
-            || self.growth.occurrence_peers.contains_key(&root)
-            || self.growth.peer_results.contains_key(&root)
-            || self.growth.section_shared.contains(&root)
-        {
-            return Err(unsupported(
-                site,
-                "a protected worker input with outstanding backing reservations",
-            ));
-        }
-        let name = interval.payload_name();
-        if self.heap.borrowed.contains_key(&name) {
+        if !self.needs_payload_binding(root, interval, typ, site)? {
             return Ok(());
         }
-        if !self.layouts.plain_protected_payload(typ)
-            || self.transitions.protected_versions.bindings.contains_key(&interval)
-        {
-            return Err(unsupported(
-                site,
-                "an imported payload without a unique representable acquisition input",
-            ));
-        }
+        let name = interval.payload_name();
         let (entry, payload, fixed_bytes) = self.acquired_owner(typ, site)?;
         let charged = self
             .owner_charges(site, &payload)
@@ -231,7 +268,7 @@ impl Analysis<'_> {
                 root,
                 payload_type: typ.clone(),
                 entry,
-                input_origins,
+                input_origins: PayloadOrigins::Local(input_origins),
                 access,
                 releases: Vec::new(),
             },
@@ -289,12 +326,9 @@ impl Analysis<'_> {
                     crate::ast_util::mk_eq(site, &bytes, &charged),
                     "released shared contents do not account for the transported storage",
                 ));
-                versions
-                    .bindings
-                    .get_mut(&interval)
-                    .expect("acquired input")
-                    .releases
-                    .push(Release { visit, contents, origins, complete });
+                versions.bindings.get_mut(&interval).expect("acquired input").releases.push(
+                    Release { visit, contents, origins: PayloadOrigins::Local(origins), complete },
+                );
                 Some(Suspended {
                     interval,
                     wrapper: storage.owner.expect("acquired mutex"),

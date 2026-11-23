@@ -42,7 +42,7 @@ impl Analysis<'_> {
             if parameter.x.mode == Mode::Exec {
                 if let Some(typ) = self.layouts.borrowed_descriptor(&parameter.x.typ) {
                     let Some(location) = self.call_location(arg, &typ) else {
-                        if self.identity_only_mutex_argument(summary, index, arg, &typ)? {
+                        if self.imported_mutex_argument(summary, index, arg, &typ)? {
                             imported_mutexes.insert(index);
                             continue;
                         }
@@ -60,11 +60,16 @@ impl Analysis<'_> {
             }
         }
         let call_scalars = self.allocation_scalars();
-        // These calls return only a guard. All original regions, including
-        // those forwarded by nested calls, remain with untouched shared roots.
-        let shared_inputs = !imported_mutexes.is_empty()
-            && borrowed.is_empty()
-            && summary.returns_guard_without_payload_transfer();
+        // Original borrowed regions stay with their shared root through a
+        // lock-only guard return or a checked update published at unlock.
+        let internal = summary
+            .closed_mutex
+            .map(|(parameter, _)| parameter)
+            .filter(|index| imported_mutexes.contains(index));
+        let shared_inputs = internal.is_some()
+            || !imported_mutexes.is_empty()
+                && borrowed.is_empty()
+                && summary.returns_guard_without_payload_transfer();
         let transfer =
             if shared_inputs { None } else { self.prepare_transfer_call(expr, callee, args)? };
         let covered = borrowed
@@ -87,7 +92,7 @@ impl Analysis<'_> {
                 complete.then_some(interval)
             })
             .collect();
-        self.check_vector_call(expr, callee, args, &imported_mutexes)?;
+        self.check_vector_call(expr, callee, args, &imported_mutexes, internal)?;
         let result_size = self.layouts.return_size(&expr.typ, &expr.span)?;
         let bound = super::contracts::instantiate(
             callee,
@@ -132,7 +137,7 @@ impl Analysis<'_> {
                 "vector allocation changes inside call arguments; bind the arguments first",
             ));
         }
-        let synchronization = super::synchronization::helpers::Call::instantiate(
+        let mut synchronization = super::synchronization::helpers::Call::instantiate(
             self,
             expr,
             summary,
@@ -245,7 +250,11 @@ impl Analysis<'_> {
             self.storage.commit_call_intervals(c, call, result_sync)?;
         }
         let mut replaced_inputs = Vec::new();
-        if let Some(transfer) = transfer {
+        if let Some(parameter) = internal {
+            let call = synchronization.as_mut().expect("checked mutex acquisition");
+            self.publish_internal_section(expr, callee, args, summary, parameter, call)?;
+            self.result_owner = None;
+        } else if let Some(transfer) = transfer {
             self.result_owner = self.apply_transfer_call(
                 expr,
                 callee,

@@ -21,10 +21,9 @@ impl FunctionSummary {
 }
 
 impl Analysis<'_> {
-    /// A helper which only locks an imported mutex can bind its identity
-    /// before the first protected access. A callee that reads or writes
-    /// the payload needs an actual ownership descriptor at the call.
-    pub(in crate::resource::memory) fn identity_only_mutex_argument(
+    /// Bind an imported mutex without reading its contents before acquisition.
+    /// A payload update needs a checked release interface on this parameter.
+    pub(in crate::resource::memory) fn imported_mutex_argument(
         &self,
         summary: &FunctionSummary,
         index: usize,
@@ -40,8 +39,9 @@ impl Analysis<'_> {
         {
             return Ok(false);
         }
-        if summary.modified_parameters.contains(&index)
-            || effects.ownership.payload_borrows().iter().any(|id| id.instance == formal)
+        if summary.closed_mutex.is_none_or(|(parameter, _)| parameter != index)
+            && (summary.modified_parameters.contains(&index)
+                || effects.ownership.payload_borrows().iter().any(|id| id.instance == formal))
         {
             return Err(unsupported(
                 &arg.span,

@@ -67,6 +67,7 @@ impl Analysis<'_> {
         callee: &Function,
         args: &Exprs,
         imported_mutexes: &std::collections::HashSet<usize>,
+        published: Option<usize>,
     ) -> Result<(), VirErr> {
         let summary = self
             .summaries
@@ -95,6 +96,9 @@ impl Analysis<'_> {
         }
         let worker_parameter = summary.worker_parameter();
         for (index, child) in &summary.vectors.removals.clone() {
+            if Some(*index) == published {
+                continue;
+            }
             let (name, mut path) = self
                 .call_location(&args[*index], &callee.x.params[*index].x.typ)
                 .ok_or_else(|| unsupported(&expr.span, "removal through an aliased collection"))?;

@@ -94,6 +94,12 @@ impl Analysis<'_> {
         let mut values = HashMap::new();
         for symbol in &template.symbols {
             let value = match &symbol.input {
+                Symbol::LockTest => {
+                    return Err(unsupported(
+                        span,
+                        "a worker result depending on an internal lock outcome",
+                    ));
+                }
                 Symbol::Complete => crate::ast_util::mk_bool(
                     span,
                     execution.entry.storage.owner.as_ref().is_none_or(Owner::complete),

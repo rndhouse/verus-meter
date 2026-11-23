@@ -452,6 +452,7 @@ impl Analysis<'_> {
         worker.transitions.protected_versions.validate(
             actor,
             &entry_descriptor.shared,
+            &worker.transitions,
             &worker.heap,
             &worker.storage,
             span,

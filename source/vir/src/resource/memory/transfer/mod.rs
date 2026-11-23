@@ -85,6 +85,8 @@ pub(super) type Origins<T> = BTreeMap<Option<usize>, BTreeMap<super::heap::Owner
 
 #[derive(Clone)]
 pub(super) enum Input {
+    /// Both outcomes of a source lock test are possible at a closed helper release.
+    LockTest,
     /// Complete byte charges permit exact-capacity inference; local views do not.
     Complete,
     /// An immutable snapshot of an executable scalar argument.

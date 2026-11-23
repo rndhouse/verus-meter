@@ -259,30 +259,6 @@ fn a_joined_box_can_come_from_any_successful_repeated_write() {
 }
 
 #[test]
-fn a_shared_mutex_identity_cannot_supply_the_contents_to_a_mutating_helper() {
-    let program = r#"
-        fn append(m: &std::sync::Mutex<Vec<u8>>, b: u8) resources peak(memory) <= 1024 {
-            let r = m.lock();
-            if r.is_err() { return; }
-            let mut g = r.unwrap();
-            g.push(b);
-        }
-        fn work(b: u8) resources peak(memory) <= 16384 {
-            let cell = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
-            let peer = cell.clone();
-            let h = std::thread::spawn(move || { append(&*peer, b); });
-            let result = h.join();
-            drop(cell);
-        }
-    "#;
-    diagnostics(
-        "unbound_helper_write",
-        program,
-        &["without an acquisition-relative ownership interface"],
-    );
-}
-
-#[test]
 fn an_indexed_arc_without_a_protected_contents_relation_stays_opaque() {
     let program = r#"
         fn work(n: u8) resources peak(memory) <= 65536 {

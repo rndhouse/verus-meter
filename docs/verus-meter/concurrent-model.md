@@ -265,9 +265,22 @@ result without inspecting the payload. The call binds the actual mutex and
 the returned acquisition for that worker and loop visit. The mutex retains the
 payload. Its contents enter the worker’s accounting at the first guarded access.
 A helper that takes the guard, replaces the payload and unlocks publishes the
-entire new allocation tree. A helper that receives only the shared mutex and
-also accesses its contents needs an ownership description for its internal
-acquisition. The verifier rejects the call when that description is unavailable.
+entire new allocation tree.
+
+A unit-returning helper can also take the shared mutex itself, acquire it once
+and update the protected contents. For example, it can push a box into a vector
+and release the guard before returning. The verifier applies the helper’s checked
+ownership transformation to the contents at acquisition and publishes the result
+at that same guard’s release. This also works through a forwarding helper. A peer
+may have changed the vector while the call was waiting, and a later holder may
+change it again before the helper returns.
+
+This interface admits a single modified mutex, scalar arguments and a representable
+ownership transformation. A skipped write or a poison branch that returns early
+preserves the incoming contents. If an original allocation leaves the mutex and
+stays live in the helper across unlock, its separate owner needs a lifetime at that
+release. Multiple acquisitions inside the helper likewise need separate release
+descriptions. The verifier rejects an update when it cannot establish this interface.
 
 For fixed workers with a representable mutex history, a conditional write can
 depend on immutable scalar inputs. An arm that skips the write preserves the

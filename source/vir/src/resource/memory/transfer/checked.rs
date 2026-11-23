@@ -351,6 +351,90 @@ pub(in super::super) struct Checked {
 }
 
 impl Checked {
+    pub(in super::super) fn publishes_at(
+        &self,
+        site: AstId,
+        parameter: usize,
+        interval: super::super::synchronization::local::Interval,
+    ) -> bool {
+        matches!(self.operations.get(&site), Some(Operation::Call { synchronization: Some(call), modified, .. })
+            if modified.contains(&parameter) && call.published_section() == Some((parameter, interval)))
+    }
+
+    /// The caller frames the incoming allocations at the mutex. If a helper
+    /// removes an original allocation and keeps it across unlock, the published
+    /// mutex contents alone cannot describe its lifetime.
+    pub(in super::super) fn release_retains_inputs(
+        &self,
+        parameter: usize,
+        interval: super::super::synchronization::local::Interval,
+        points: &[super::super::accounting::Point],
+    ) -> bool {
+        use super::super::synchronization::local::Boundary;
+        let Some(output) = self.outputs.get(&Some(parameter)) else { return false };
+        let mut found = false;
+        for point in points
+            .iter()
+            .filter(|p| matches!(p.condition.boundary, Boundary::Release(id) if id == interval))
+        {
+            found = true;
+            if point.call_point.is_some() {
+                // A forwarding call can reuse the callee's checked release.
+                // Its caller-side region identities are fresh at the return.
+                if !matches!(self.operations.get(&point.span.id),
+                    Some(Operation::Call { synchronization: Some(call), .. })
+                        if call.single_release() == Some(interval))
+                {
+                    return false;
+                }
+            } else if !point.inputs.iter().all(|id| output.values().any(|out| out == id)) {
+                return false;
+            }
+        }
+        found
+    }
+
+    /// A single non-repeating acquisition can export its updated borrowed
+    /// parameter on normal exit. A second acquisition could observe a peer's
+    /// intervention before that exit, even when it locks the same mutex.
+    pub(in super::super) fn closed_mutex_section(
+        &self,
+    ) -> Option<(usize, super::super::synchronization::local::Interval)> {
+        use super::super::synchronization::{Instance, local::View};
+        if self.retained_workers {
+            return None;
+        }
+        let mut section = None;
+        for op in self.operations.values() {
+            let id = match op {
+                Operation::MutexLock { interval, occurrence, .. } if occurrence.single_visit() => {
+                    *interval
+                }
+                Operation::Call { synchronization: Some(call), .. }
+                    if call.has_fresh_acquisitions() =>
+                {
+                    call.single_release()?
+                }
+                Operation::MutexLock { .. }
+                | Operation::WorkerPublish(_)
+                | Operation::WorkerJoin { .. }
+                | Operation::ParameterJoin { .. } => return None,
+                _ => continue,
+            };
+            if section.replace(id).is_some() {
+                return None;
+            }
+        }
+        let interval = section?;
+        let Instance::Input(index) = interval.instance else { return None };
+        if self.synchronization_inputs.input_view(index) != Some(View::Mutex(interval.instance))
+            || self.payload_borrows() != [interval].into()
+        {
+            return None;
+        }
+        Some((index, interval))
+    }
+
     pub(in super::super) fn acquires_at_visit(
         &self,
         id: super::super::synchronization::local::Interval,

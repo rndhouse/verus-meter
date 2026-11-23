@@ -356,6 +356,24 @@ pub(super) fn summarize(
             effect.expressions(&mut storage_names);
         }
     }
+    // The actual predicate is an erased body observation. A single closed
+    // section may export both releases, each specialized to one outcome.
+    if super::super::model::unit(&function.x.outer_ret.x.typ)
+        && checked.closed_mutex_section().is_some()
+    {
+        for op in checked.operations.values() {
+            if let checked::Operation::LockPredicate { observed, .. } = op
+                && let ExprX::Var(name) = &observed.x
+                && names.contains(name)
+            {
+                trace.symbols.push(Symbol {
+                    name: name.clone(),
+                    input: Input::LockTest,
+                    scalar_result_only: false,
+                });
+            }
+        }
+    }
     // A caller can compose the checked effects without describing the
     // scalar result, as long as the missing observation affects only it.
     for symbol in &mut trace.symbols {
