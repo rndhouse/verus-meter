@@ -29,6 +29,10 @@ functionality, not a later extension or a user-accessible trust escape hatch.
 - [ ] Connect both exclusive and bounded-holder facts to compiler-derived per-holder
   footprints. Count failed attempts, waiting storage, retained buffers and repeated
   acquisitions correctly. A permit released early cannot keep covering its buffer.
+  - [x] For a concrete custom guard with a local holder proof, record which
+    executable allocations are live while the guard is intact. Preserve its
+    identity through a direct whole move, a checked helper call and an owned
+    worker capture passed to a checked helper.
 - [ ] Allow developer-supplied invariants and arithmetic lemmas through the normal
   Verus proof path, without manual byte credits or allocation counters.
 
@@ -45,10 +49,8 @@ incompatibility with its existing tokens.
 The source regressions verify a custom boolean CAS protocol, reject issuing its
 witness on failure, reject an unprovable holder count, and check permit identity
 after a conditional return from a worker helper. These functional proofs passed
-with the full vstd verifier. The compiler still needs to attach them to live
-allocation footprints, preserve their bindings through calls and worker visits,
-and account for executable protocol bodies. Keep the integration criteria open
-until memory regressions exercise those paths.
+with the full vstd verifier. To apply a population proof across workers, the
+memory analysis must identify the instance that issued each live guard.
 
 Feature commit `6af4fb2ba` connects the underlying permissioned atomics to
 source byte accounting. The executable CAS regression needs 20 bytes with a
@@ -58,16 +60,30 @@ measures the checked counter helpers from their executable vstd bodies and
 publishes their workspace after full verification and lifetime checking. A
 checked-add caller needs 56 bytes. A vstd build with verification disabled
 cannot supply that footprint. An open atomic invariant counts its executable
-local and still has to restore its invariant. These tests cover the operations
-inside protocols. The live holder-to-allocation relationship remains open.
+local and still has to restore its invariant.
 
 Feature commits `ef824af83` and `5b0e16208` require successful erased Rust
 checking before publishing a helper workspace and account for the custom CAS
 guard’s executable methods. Its acquisition attempt needs 30 bytes and its
 explicit release needs 33. Both reject one byte less. Moving an erased token
 out of a guard can end its eligibility as a whole proof witness while its
-reference slot remains live. The holder-to-footprint work must preserve that
-distinction when it binds actual witnesses to callees and workers.
+reference slot remains live.
+
+Feature commits `be0b04007` and `22e26be27` track which allocations are live
+with a particular intact guard. The regression distinguishes two 64-byte
+boxes in one call by freeing one before release and retaining the other. It checks
+which helper argument owns the guard, distinguishes an owned worker capture from
+a shared borrow, and checks both whole moves and the last statement before
+implicit cleanup. A helper reserving `n` bytes, dropping its vector and then releasing
+the guard verifies at 41 bytes for `n == 0` and `n + 40` for `0 < n <= 500`.
+Reducing either allowance by one byte fails.
+
+Next, bind a returned or conditionally returned holder to its issuing instance
+and capacity through helper calls and worker handoffs. An imported vstd
+`Permit` currently fails the metered parameter layout check. Its executable
+layout and the workspaces of its operations must be available to the analysis.
+Connect those bindings to the semaphore population proof and the RwLock
+reader/writer proofs before TODO 07 uses them to reduce cross-worker peaks.
 
 ## Completion criteria
 
