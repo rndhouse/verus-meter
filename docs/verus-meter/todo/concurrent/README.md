@@ -1,7 +1,7 @@
 # Concurrent symbolic memory analysis TODOs
 
 These tasks track implementation of the concurrent core.
-The [05 integration review](05-function-and-worker-summaries.md#integration-review) records the completed helper and worker checks and the remaining case where a helper locks and updates a shared mutex internally. All four child TODOs are complete. The [final worker audit](complete/03.4.3-validate-and-close-03.md) records the verified worker scope and integration checks.
+The [05 integration review](complete/05-function-and-worker-summaries.md#integration-review) records the checked helper and worker behavior. Next is [06 — Verified protocols and bounded permits](06-verified-protocols-and-bounded-permits.md). The [final worker audit](complete/03.4.3-validate-and-close-03.md) records the verified worker scope and integration checks.
 
 ## Authoritative location
 
@@ -43,7 +43,7 @@ Preserve the semantics and synchronization precision established in 01 throughou
 | [x] | [03.4.2.8 — Index a worker with a forwarded Arc](complete/03.4.2.8-index-a-worker-with-a-forwarded-arc.md) | Preserve the original allocation visit when a receiving worker enters another handle vector. |
 | [x] | [03.4.3 — Validate and close 03](complete/03.4.3-validate-and-close-03.md) | Run integrated checks and reconcile the worker completion criteria. |
 | [x] | [04 — Allocation and synchronization lifetimes](complete/04-allocation-and-synchronization-lifetimes.md) | Compiler-derived containment, escape and release relationships. |
-| [ ] | [05 — Function and worker summaries](05-function-and-worker-summaries.md) | General helper/lifetime composition and protected payloads, extending 03.2's summaries. |
+| [x] | [05 — Function and worker summaries](complete/05-function-and-worker-summaries.md) | General helper/lifetime composition and protected payloads, extending 03.2's summaries. |
 | [x] | [05.1 — Shared contents across workers](complete/05.1-shared-contents-across-workers.md) | Connect a mutex release to the contents visible to its next holder. |
 | [x] | [05.2 — Ownership after unlock](complete/05.2-ownership-after-unlock.md) | Account for removed storage through worker completion, join and final drop. |
 | [x] | [05.3 — Helpers and conditional paths](complete/05.3-helpers-and-conditional-paths.md) | Preserve protected updates, ownership and guard effects on each path through a call. |

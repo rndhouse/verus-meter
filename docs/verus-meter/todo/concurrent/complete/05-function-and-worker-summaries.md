@@ -110,10 +110,10 @@ bounds after join. A helper can release a moved guard or return the same
 acquisition. An allocation that leaves the mutex stays charged on the branch
 that returns it. 05.4 extends this accounting to repeated acquisitions.
 
-- [x] [05.1 — Shared contents across workers](complete/05.1-shared-contents-across-workers.md). Connect the initial contents and feasible releases to the next acquisition of that mutex.
-- [x] [05.2 — Ownership after unlock](complete/05.2-ownership-after-unlock.md). Follow the selected allocation through unlock, worker completion, join and final drop.
-- [x] [05.3 — Helpers and conditional paths](complete/05.3-helpers-and-conditional-paths.md). Preserve each path’s contents, released or returned guard, and escaped ownership across calls.
-- [x] [05.4 — Repeated acquisitions and loop-selected mutexes](complete/05.4-repeated-acquisitions-and-loop-selected-mutexes.md). Apply those relationships to the selected allocation and acquisition on each loop visit.
+- [x] [05.1 — Shared contents across workers](05.1-shared-contents-across-workers.md). Connect the initial contents and feasible releases to the next acquisition of that mutex.
+- [x] [05.2 — Ownership after unlock](05.2-ownership-after-unlock.md). Follow the selected allocation through unlock, worker completion, join and final drop.
+- [x] [05.3 — Helpers and conditional paths](05.3-helpers-and-conditional-paths.md). Preserve each path’s contents, released or returned guard, and escaped ownership across calls.
+- [x] [05.4 — Repeated acquisitions and loop-selected mutexes](05.4-repeated-acquisitions-and-loop-selected-mutexes.md). Apply those relationships to the selected allocation and acquisition on each loop visit.
 
 In `92bd6e071`, a repeated unlock must preserve the proposed set of protected
 contents for every visit. Indexed joins of by-value mutexes retain the selected
@@ -144,28 +144,33 @@ compare direct and factored operations at the same checkpoints.
   worker’s nested vector. Its one-byte reservation survives unlock and dropping
   the selected mutex. A 28-byte claim passes and 27 fails.
 
-One form remains unsupported. A worker that shares a mutex with another owner can
-pass its guard to a mutating helper. If the helper instead receives only
-`&Mutex<Vec<u8>>`, locks it, pushes and unlocks before returning, the caller has
-no checked description of the contents at that internal release. The negative
-regression requires the missing-interface error even with a generous byte bound.
-A future implementation of this form must relate each internal release to its
-actual acquisition, including paths that skip the update and interleavings before
-acquisition. The caller cannot use a snapshot taken before entering the helper.
+Implementation `f8075b48a` closes the internally locking helper case. A worker
+can pass `&Mutex<Vec<_>>` to a helper that locks, appends and unlocks. The
+checked release describes the vector the helper acquired, including earlier
+workers’ writes. A forwarding helper preserves that acquisition. Skipping the
+write preserves the incoming contents.
 
-Validation passed all 1,228 memory integration tests, 88 VIR memory unit tests,
+In `source/rust_verify_test/tests/resource/memory/synchronization/shared_payloads/internal.rs`,
+two writers each push an owned box and a reader pops one. The reader proves 146
+live bytes and rejects 145 across the possible lock orders. A loop that can keep
+appending fails its proposed bound on the mutex contents. The single-release
+interface also rejects a second internal acquisition and an original box kept
+alive in the helper after unlocking. Both need more lifetime information than
+the outgoing vector carries.
+
+Final validation passed 1,231 memory integration tests, 88 VIR memory unit tests,
 47 resource examples and 133 upstream function and closure tests. One VIR test
-and one upstream test are marked ignored. The verifier build, formatting and
-affected Clippy checks passed. TODO 07 still owns the total concurrent peak.
+and one upstream test are marked ignored. The release verifier build, formatting
+and affected Clippy checks passed. TODO 07 owns the total concurrent peak.
 
 ## Completion criteria
 
 - [x] All four children have implementation commits and passing source regressions.
   Check their evidence against the remaining Work and Decisions from TODO 01 items.
-- [ ] Direct and factored operations preserve allocation identity and cost, the
+- [x] Direct and factored operations preserve allocation identity and cost, the
   acquisition actually ended by release, and alias relationships across calls,
-  worker results and loop iterations. The remaining case in the integration
-  review requires the callee’s internal release to describe the updated payload.
+  worker results and loop iterations. The integration review covers both a
+  guard supplied by the worker and a mutex acquired inside its helper.
 - [x] Worker and helper summaries share the same checked effects. Each effect
   follows from an executable body or an explicit trusted contract. Run the
   integrated validation below with the global proof obligation from 07 intact.
@@ -183,7 +188,7 @@ memory checks and upstream function-contract/closure regressions as applicable.
 
 Implement all summary fields specified in `docs/verus-meter/concurrent-model.md`:
 
-- [ ] Complete the scalar/provenance/instance/acquisition/worker binders, alias
+- [x] Complete the scalar/provenance/instance/acquisition/worker binders, alias
   constraints, entry requirements, phase graphs, exit transformations and proof
   dependencies for the full helper surface, extending the foundation from 03.2.
 - [x] Support owning values moved into/out of a mutex-protected shared root,
