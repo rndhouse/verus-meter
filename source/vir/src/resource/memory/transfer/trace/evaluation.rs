@@ -171,6 +171,7 @@ impl Trace<'_> {
                 }
             }
             ExprX::ReadPlace(place, _) => self.place_value(place, &value.typ),
+            ExprX::OpenInvariant(_, _, body, _) => self.value(body),
             ExprX::Block(statements, tail) => self.block(span, statements, tail),
             ExprX::If(condition, yes, no) => self.branch(span, condition, yes, no),
             ExprX::Match(scrutinee, arms, _) => self.match_value(span, scrutinee, arms),

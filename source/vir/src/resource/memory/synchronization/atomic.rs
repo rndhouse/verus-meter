@@ -33,18 +33,11 @@ impl Analysis<'_> {
             return Err(unsupported(&value.span, "an atomic call with an unknown argument layout"));
         }
         let mut operands = Vec::new();
-        let mut arguments = Vec::new();
-        for (i, arg) in args.iter().enumerate() {
-            // The permission is a tracked wrapper. A block or helper producing
-            // that wrapper could still execute code, so only skip erased syntax.
-            if op != AtomicOperation::New && i == 1 {
-                if !matches!(arg.x, ExprX::Ghost { alloc_wrapper: true, tracked: true, .. }) {
-                    return Err(unsupported(&arg.span, "a computed atomic permission argument"));
-                }
-                continue;
-            }
+        for arg in args.iter() {
             operands.push(self.produce(arg)?);
-            arguments.push(arg.clone());
+            if !self.flow.reachable {
+                return Ok(Some(0));
+            }
         }
         let bytes = if !destination && matches!(&*value.typ, TypX::Datatype(_, _, _)) {
             self.layouts.return_size(&value.typ, &value.span)?
@@ -55,10 +48,8 @@ impl Analysis<'_> {
         for operand in operands {
             self.release_value(operand, &value.span);
         }
-        self.transitions.operation(
-            &value.span,
-            checked::Operation::Evaluate { args: std::sync::Arc::new(arguments) },
-        );
+        self.transitions
+            .operation(&value.span, checked::Operation::Evaluate { args: args.clone() });
         Ok(Some(bytes))
     }
 }

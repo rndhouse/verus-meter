@@ -8,7 +8,7 @@ Verus Meter verifies upper bounds on peak source-level memory for supported Rust
 - In the [nested sections example](../examples/resource/memory/contracts/sections.rs), the function keeps an array, a section makes a copy, and an inner section makes scratch space. All three arrays are live at the peak.
 - `assert(current(memory) <= bound)` checks what is live now. `assert(peak(memory) <= bound)` checks the peak so far. Both refer to the nearest budgeted section or function and currently require fixed bounds.
 
-For the sequentially consistent vstd permissioned atomics, a boolean location occupies one model byte and a `usize` location occupies eight. A compare-exchange charges its executable arguments and tagged result. Scratch storage on a failed attempt counts through its ordinary source lifetime. A tracked permission occupies zero bytes. A raw atomic operation by itself establishes no protected allocation lifetime.
+For the sequentially consistent vstd permissioned atomics, a boolean location occupies one model byte and a `usize` location occupies eight. A compare-exchange charges its executable arguments and tagged result. Scratch storage on a failed attempt counts through its ordinary source lifetime. A tracked permission occupies zero bytes. The checked add/subtract methods include the workspace of their verified vstd bodies. Opening an atomic invariant preserves the cost of its executable statements and the ordinary Verus obligation to restore the invariant. A raw atomic operation by itself establishes no protected allocation lifetime.
 
 ## How do I express a bound?
 

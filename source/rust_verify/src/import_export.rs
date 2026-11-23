@@ -3,6 +3,8 @@ use crate::spans::FileStartEndPos;
 use crate::verifier::io_vir_err;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vir::ast::{Krate, Mode, VirErr};
 
@@ -58,48 +60,80 @@ pub(crate) fn import_crates(
     Ok(ImportOutput { vir_crates, metadatas })
 }
 
+/// The ordinary Verus interface is exportable before lifetime and SMT checks.
+/// A memory certificate becomes visible only after both checks succeed for the
+/// whole crate. Keep only the already-pruned export while verification runs.
+pub(crate) struct PendingExport {
+    destination: PathBuf,
+    value: CrateWithMetadata,
+}
+
+impl PendingExport {
+    pub(crate) fn publish(&self) -> Result<(), VirErr> {
+        let directory = self
+            .destination
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let write_error =
+            |e| io_vir_err(format!("writing exported library `{}`", self.destination.display()), e);
+        let mut file = tempfile::NamedTempFile::new_in(directory).map_err(write_error)?;
+        {
+            let mut output = std::io::BufWriter::new(file.as_file_mut());
+            bincode_next::serde::encode_into_std_write(
+                &self.value,
+                &mut output,
+                bincode_next::config::legacy(),
+            )
+            .map_err(|e| crate::util::error(format!("encoding exported library: {e}")))?;
+            output.flush().map_err(write_error)?;
+        }
+        file.persist(&self.destination).map_err(|e| write_error(e.error))?;
+        Ok(())
+    }
+}
+
 pub(crate) fn export_crate(
     args: &Args,
-    export_vir_path_via_cargo: &Option<std::path::PathBuf>,
-    vir_metadata: CrateMetadata,
+    export_vir_path_via_cargo: &Option<PathBuf>,
+    metadata: CrateMetadata,
     vir_crate: Krate,
-) -> Result<(), VirErr> {
-    let export = args.export.as_ref().map(|s| s.clone().into());
-    if let Some(file_path) = export.as_ref().or(export_vir_path_via_cargo.as_ref()) {
-        // for efficiency's sake, prune out elements of AST that won't be needed by importers:
-        let mut kratex = (*vir_crate).clone();
-        kratex.functions.retain(|f| f.x.visibility.restricted_to.is_none());
-        for func in kratex.functions.iter_mut() {
-            let mut functionx = func.x.clone();
-            functionx.decrease_by = None;
-            functionx.return_opaque_type_eqs = Arc::new(vec![]);
-            if (functionx.mode != Mode::Spec || !functionx.body_visibility.is_public())
-                && !matches!(&functionx.kind, vir::ast::FunctionKind::TraitMethodDecl { .. })
-            {
-                functionx.body = None;
-            }
-            *func = func.new_x(functionx);
+) -> Result<Option<PendingExport>, VirErr> {
+    let export = args.export.as_ref().map(PathBuf::from);
+    let Some(destination) = export.or_else(|| export_vir_path_via_cargo.clone()) else {
+        return Ok(None);
+    };
+    let mut kratex = (*vir_crate).clone();
+    kratex.functions.retain(|f| f.x.visibility.restricted_to.is_none());
+    for func in kratex.functions.iter_mut() {
+        let mut functionx = func.x.clone();
+        functionx.decrease_by = None;
+        functionx.return_opaque_type_eqs = Arc::new(vec![]);
+        if (functionx.mode != Mode::Spec || !functionx.body_visibility.is_public())
+            && !matches!(&functionx.kind, vir::ast::FunctionKind::TraitMethodDecl { .. })
+        {
+            functionx.body = None;
         }
-        let vir_crate = Arc::new(kratex);
-
-        let mut file = std::io::BufWriter::new(match std::fs::File::create(file_path) {
-            Ok(file) => file,
-            Err(err) => {
-                return Err(io_vir_err(
-                    format!("could not create exported library file `{:?}`", file_path),
-                    err,
-                ));
-            }
-        });
-        let krate_with_metadata = CrateWithMetadata { krate: vir_crate, metadata: vir_metadata };
-        bincode_next::serde::encode_into_std_write(
-            &krate_with_metadata,
-            &mut file,
-            bincode_next::config::legacy(),
-        )
-        .expect("write crate to file");
-        //serde_json::to_writer(file, &vir_crate).expect("write crate to file");
-        //serde_json::to_writer_pretty(file, &vir_crate).expect("write crate to file");
+        *func = func.new_x(functionx);
     }
-    Ok(())
+    let mut certificates = Vec::new();
+    for (index, fun) in kratex.functions.iter_mut().enumerate() {
+        if let Some(leaf) = fun.x.attrs.resource_leaf {
+            Arc::make_mut(&mut Arc::make_mut(fun).x.attrs).resource_leaf = None;
+            certificates.push((index, leaf));
+        }
+    }
+    let mut export = PendingExport {
+        destination,
+        value: CrateWithMetadata { krate: Arc::new(kratex), metadata },
+    };
+    export.publish()?;
+    if certificates.is_empty() {
+        return Ok(None);
+    }
+    for (index, leaf) in certificates {
+        let fun = &mut Arc::make_mut(&mut export.value.krate).functions[index];
+        Arc::make_mut(&mut Arc::make_mut(fun).x.attrs).resource_leaf = Some(leaf);
+    }
+    Ok(Some(export))
 }

@@ -43,6 +43,9 @@ impl AstVisitor<Walk, VirErr, NoScoper> for Collector<'_> {
             // publication and the worker's own dependencies are separate edges.
             return Ok(());
         }
+        if let ExprX::OpenInvariant(_, _, body, _) = &expr.x {
+            return self.visit_expr(body);
+        }
         // Invariants and decreases are specifications, not executable loop work.
         if let ExprX::Loop { cond, body, .. } = &expr.x {
             if let Some(cond) = cond {

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 pub(super) fn ignored_expression(expr: &Expr) -> bool {
     matches!(
         &expr.x,
-        ExprX::Ghost { alloc_wrapper: false, .. }
+        ExprX::Ghost { .. }
             | ExprX::AssertAssume { .. }
             | ExprX::AssertBy { .. }
             | ExprX::AssertQuery { .. }

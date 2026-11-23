@@ -18,6 +18,7 @@ use vir::resolution_inference::ResolutionInfo;
 pub(crate) fn check(
     ctxt: &Context<'_>,
     krate: &mut KrateX,
+    imports: &[vir::ast::Krate],
     modes: &HashMap<Fun, Arc<ResolutionInfo>>,
     erasure: &HashMap<Fun, Arc<crate::context::ErasureInfo>>,
     trace: bool,
@@ -25,7 +26,7 @@ pub(crate) fn check(
 ) -> Result<(Vec<VirErrAs>, Vec<VirErr>), VirErr> {
     let (global_allocator, vector, option) = identities(ctxt);
     let synchronization_types = synchronization_types(ctxt);
-    let synchronization = synchronization_evidence(
+    let mut synchronization = synchronization_evidence(
         ctxt,
         krate,
         modes,
@@ -33,6 +34,7 @@ pub(crate) fn check(
         synchronization_types,
         lifetime_checks,
     )?;
+    super::protocol::bind_leaf_workspaces(ctxt, krate, imports, &mut synchronization);
     if trace {
         let mut closures: Vec<_> = synchronization.concurrency.closures.values().collect();
         closures.sort_by_key(|closure| closure.id);

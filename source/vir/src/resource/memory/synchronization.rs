@@ -13,6 +13,8 @@ use std::collections::HashMap;
 use vir_macros::ToDebugSNode;
 
 pub(super) mod atomic;
+mod leaf;
+pub use leaf::Leaf;
 pub mod flow;
 pub(super) mod helpers;
 pub(super) mod local;
@@ -87,6 +89,10 @@ pub struct CompilerEvidence {
     pub concurrency: super::concurrency::Evidence,
     /// Resolved native types used for source layouts and primitive contracts.
     pub types: LibraryTypes,
+    /// Closed scalar footprints produced from imported executable vstd bodies.
+    pub imported_leaves: HashMap<crate::ast::Fun, Leaf>,
+    /// Selected local bodies whose measured footprints should be published.
+    pub measure_leaves: std::collections::HashSet<crate::ast::Fun>,
     /// Drop-elaborated transport for local resource-contracted functions.
     pub cleanup: HashMap<crate::ast::Fun, flow::Graph>,
 }

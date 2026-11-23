@@ -23,6 +23,7 @@ rustc_hir_analysis_verus = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
 sha2 = { workspace = true }
+tempfile = { workspace = true }
 sise = { workspace = true }
 vir = { workspace = true }
 

@@ -2344,6 +2344,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sise",
+ "tempfile",
  "vir",
  "win32job",
 ]

@@ -493,6 +493,9 @@ impl Analysis<'_> {
                 return Ok(0);
             }
             _ if super::execution::ignored_expression(expr) => return Ok(0),
+            // Mode checking requires the invariant operand and binder to be
+            // proof-only. Every executable statement in its body still runs.
+            ExprX::OpenInvariant(_, _, body, _) => return self.expr(body),
             ExprX::Block(stmts, tail) => {
                 self.block(expr, stmts, tail, false)?;
                 return Ok(0);

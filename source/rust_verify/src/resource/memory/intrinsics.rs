@@ -16,7 +16,12 @@ pub(crate) fn call<'tcx>(
     rust_item: Option<RustItem>,
     substitutions: GenericArgsRef<'tcx>,
 ) -> Option<ResourceIntrinsic> {
-    if let Some(operation) = super::concurrency::operation(tcx, id, substitutions) {
+    if tcx.is_diagnostic_item(
+        rustc_span::Symbol::intern("verus::vstd::invariant::create_open_invariant_credit"),
+        id,
+    ) {
+        Some(ResourceIntrinsic::InvariantCredit)
+    } else if let Some(operation) = super::concurrency::operation(tcx, id, substitutions) {
         Some(ResourceIntrinsic::Concurrency(operation))
     } else if let Some(operation) = synchronization_call(tcx, id, substitutions) {
         Some(ResourceIntrinsic::Synchronization(operation))

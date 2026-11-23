@@ -5,5 +5,6 @@ mod cleanup;
 pub(crate) mod concurrency;
 pub(crate) mod intrinsics;
 pub(crate) mod pipeline;
+mod protocol;
 mod sites;
 pub(crate) mod temporaries;

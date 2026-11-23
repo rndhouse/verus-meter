@@ -339,6 +339,7 @@ pub struct Verifier {
     dep_tracker: Option<crate::cargo_verus_dep_tracker::DepTracker>,
     import_virs_via_cargo: Option<Vec<(String, String)>>,
     export_vir_path_via_cargo: Option<std::path::PathBuf>,
+    pending_memory_export: Option<crate::import_export::PendingExport>,
     pub(crate) compile: bool,
 
     // If we've already created the log directory, this is the path to it:
@@ -531,6 +532,7 @@ impl Verifier {
             via_cargo_args,
             import_virs_via_cargo: None,
             export_vir_path_via_cargo: None,
+            pending_memory_export: None,
             compile,
 
             created_log_dir: Arc::new(std::sync::Mutex::new(None)),
@@ -580,6 +582,7 @@ impl Verifier {
             dep_tracker: None,
             import_virs_via_cargo: self.import_virs_via_cargo.clone(),
             export_vir_path_via_cargo: self.export_vir_path_via_cargo.clone(),
+            pending_memory_export: None,
             compile: self.compile,
 
             created_log_dir: self.created_log_dir.clone(),
@@ -2784,7 +2787,7 @@ impl Verifier {
             original_files: spans.local_files.clone(),
         };
         if query.memory_export_allowed() {
-            crate::import_export::export_crate(
+            self.pending_memory_export = crate::import_export::export_crate(
                 &self.args,
                 &self.export_vir_path_via_cargo,
                 crate_metadata,
@@ -3300,6 +3303,19 @@ impl VerifierCallbacksEraseMacro {
             }
         }
         for err in std::mem::take(&mut *self.verifier.deferred_errors.lock().unwrap()) {
+            reporter.report_as(&err.to_any(), MessageLevel::Error);
+            self.verifier.encountered_vir_error = true;
+        }
+        if !self.verifier.args.no_verify
+            && !self.verifier.args.no_lifetime
+            && crate::driver::is_verifying_entire_crate(&self.verifier)
+            && !self.verifier.encountered_error
+            && !self.verifier.encountered_vir_error
+            && self.verifier.count_errors == 0
+            && compiler.sess.dcx().has_errors().is_none()
+            && let Some(export) = self.verifier.pending_memory_export.take()
+            && let Err(err) = export.publish()
+        {
             reporter.report_as(&err.to_any(), MessageLevel::Error);
             self.verifier.encountered_vir_error = true;
         }

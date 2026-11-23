@@ -178,6 +178,11 @@ impl Analysis<'_> {
     }
 
     fn produce_inner(&mut self, expr: &Expr) -> Result<Value, VirErr> {
+        // The mode checker enters proof/spec mode inside these constructors.
+        // An executable block or call returning the same type still runs.
+        if matches!(expr.x, ExprX::Ghost { alloc_wrapper: true, .. }) {
+            return Ok(Value::unit());
+        }
         if let Some(value) = self.extract_worker_result(expr)? {
             return Ok(value);
         }

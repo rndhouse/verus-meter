@@ -600,10 +600,12 @@ impl<'tcx> Query<'tcx> {
             return Err(err);
         }
 
+        let other_vir_crates = self.get_other_vir_crates()?;
         // Check all mode-checked local bodies before export or resolution inference.
         let (memory_diagnostics, incomplete_memory) = crate::resource::memory::pipeline::check(
             &pre_crate.ctxt,
             &mut cratex,
+            &other_vir_crates,
             &resource_modes,
             &resource_erasure,
             self.args.trace,
@@ -614,7 +616,6 @@ impl<'tcx> Query<'tcx> {
         self.state.borrow_mut().incomplete_memory = !incomplete_memory.is_empty();
         self.emit_non_blocking_errors(incomplete_memory);
 
-        let other_vir_crates = self.get_other_vir_crates()?;
         vir::traits::set_krate_dyn_compatibility(&other_vir_crates, &mut cratex);
         let krate = Arc::new(cratex);
 

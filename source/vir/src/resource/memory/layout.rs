@@ -35,6 +35,7 @@ pub(super) struct Layouts {
     option: Option<Dt>,
     field_slots: HashMap<Ident, i128>,
     synchronization_types: super::synchronization::LibraryTypes,
+    pub(super) imported_leaves: HashMap<Fun, super::synchronization::Leaf>,
     /// Only actual executable capture types contribute to closure storage.
     closures: std::collections::BTreeMap<usize, ClosureLayout>,
 }
@@ -66,6 +67,7 @@ impl Layouts {
             option,
             field_slots,
             synchronization_types: HashMap::new(),
+            imported_leaves: HashMap::new(),
             closures: Default::default(),
         }
     }
