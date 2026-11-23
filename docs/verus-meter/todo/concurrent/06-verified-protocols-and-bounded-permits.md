@@ -61,6 +61,14 @@ cannot supply that footprint. An open atomic invariant counts its executable
 local and still has to restore its invariant. These tests cover the operations
 inside protocols. The live holder-to-allocation relationship remains open.
 
+Feature commits `ef824af83` and `5b0e16208` require successful erased Rust
+checking before publishing a helper workspace and account for the custom CAS
+guard’s executable methods. Its acquisition attempt needs 30 bytes and its
+explicit release needs 33. Both reject one byte less. Moving an erased token
+out of a guard can end its eligibility as a whole proof witness while its
+reference slot remains live. The holder-to-footprint work must preserve that
+distinction when it binds actual witnesses to callees and workers.
+
 ## Completion criteria
 
 A user-defined protocol implemented with the supported atomics exposes proved
