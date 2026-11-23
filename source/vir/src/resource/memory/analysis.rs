@@ -226,11 +226,15 @@ impl Analysis<'_> {
         let mut locals = Vec::new();
         let mut owned_locals = Vec::new();
         let first_exit = self.flow.exits.len();
+        let mut holders = self.transitions.holders.enter(expr);
         self.storage.event(&expr.span, "enter lexical scope".into());
-        for stmt in stmts.iter() {
+        for (index, stmt) in stmts.iter().enumerate() {
             if !self.flow.reachable {
                 break;
             }
+            let before_implicit_cleanup = tail.is_none() && index + 1 == stmts.len();
+            let start =
+                holders.before_statement(stmt, before_implicit_cleanup, &mut self.storage)?;
             let evaluation = self.enter_temporary_scope(stmt.span.id);
             // Even an early source exit must pass its statement's temporary
             // cleanup before the enclosing lexical scopes unwind.
@@ -377,8 +381,15 @@ impl Analysis<'_> {
                 }
             }
             self.finish_temporary_scope(evaluation);
+            holders.mark(start, &mut self.storage);
+            if self.flow.reachable
+                && let StmtX::Decl { pattern, init: Some(_), els: None, .. } = &stmt.x
+            {
+                holders.initialized(self.bind_holder(pattern, None));
+            }
         }
         if let Some(tail) = tail.as_ref().filter(|_| self.flow.reachable) {
+            holders.finish(&tail.span, &mut self.storage)?;
             if new_value {
                 self.produced = Some(self.produce(tail)?);
             } else if destination {
@@ -771,6 +782,8 @@ pub(super) fn check(
         &modes.var_modes,
     )?;
     let interface = analysis.bind_synchronization_inputs(function);
+    analysis.transitions.holders =
+        super::synchronization::holders::Bindings::bind(function, layouts);
     let mut input_vectors = HashMap::new();
     let worker_parameter = layouts.worker_parameter(function);
     for (index, param) in f.params.iter().enumerate() {

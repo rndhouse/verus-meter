@@ -26,6 +26,7 @@ pub trait Incompatible<Other: Holder>: Holder + Sized {
 /// for the same instance. Borrowing a witness twice cannot supply two owned
 /// elements of the tracked sequence. Capacity counts holders, independently
 /// of the size or lifetime of any allocation.
+#[cfg_attr(verus_keep_ghost, rustc_diagnostic_item = "verus::vstd::resource::holder::BoundedHolder")]
 pub trait BoundedHolder: Holder + Sized {
     /// Immutable holder limit for this instance.
     spec fn capacity(&self) -> nat;

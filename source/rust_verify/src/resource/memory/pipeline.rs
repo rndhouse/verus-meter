@@ -34,6 +34,7 @@ pub(crate) fn check(
         synchronization_types,
         lifetime_checks,
     )?;
+    super::protocol::bind_holder_proofs(ctxt, krate, &mut synchronization);
     super::protocol::bind_leaf_workspaces(ctxt, krate, imports, &mut synchronization);
     if trace {
         let mut closures: Vec<_> = synchronization.concurrency.closures.values().collect();
@@ -110,7 +111,7 @@ pub(crate) fn check(
     let diagnostics = if trace && incomplete.is_empty() {
         reports.into_iter().flat_map(|(span, report)| report.diagnostics(&span)).collect()
     } else if trace {
-        reports.into_iter().flat_map(|(_, report)| report.interval_diagnostics()).collect()
+        reports.into_iter().flat_map(|(_, report)| report.synchronization_diagnostics()).collect()
     } else {
         Vec::new()
     };

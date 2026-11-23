@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 mod calls;
+mod holders;
 mod intervals;
 mod origins;
 pub(super) use origins::ReturnedStorage;
@@ -52,6 +53,9 @@ pub struct MemoryReport {
     pub(super) conditional: bool,
     /// Source observations shared by byte obligations, lifetime profiles and checked body effects.
     pub(super) points: Arc<Vec<Point>>,
+    /// Distinct worker ledgers for synchronization traces. These are never
+    /// flattened into this frame's sequential peak.
+    pub(super) worker_holder_points: Vec<Arc<Vec<Point>>>,
 }
 
 impl MemoryReport {
@@ -80,7 +84,7 @@ impl MemoryReport {
                 )
             },
         ))];
-        result.extend(self.interval_diagnostics());
+        result.extend(self.synchronization_diagnostics());
         result.extend(self.events.iter().map(|event| {
             VirErrAs::Note(note(
                 &event.span,
@@ -243,6 +247,8 @@ pub(super) struct Point {
     pub(super) span: Span,
     pub(super) condition: Condition,
     pub(super) cost: Footprint,
+    /// Owned witnesses still intact at this point in this actor.
+    pub(super) holders: Vec<super::synchronization::holders::Witness>,
     /// Fixed heap constructors individually charged on this reaching path.
     pub(super) fixed_origins: std::collections::BTreeSet<origins::FixedOrigin>,
     /// Identified dynamic backing and aggregate-forest charges on this path.
@@ -261,6 +267,7 @@ impl Point {
             cost,
             condition: Condition { held: path.held.iter().copied().collect(), boundary },
             section_entry: path.section_entry.clone(),
+            holders: Vec::new(),
             fixed_origins: path.fixed_origins(),
             allocations: path.dynamic.keys().copied().collect(),
             values: path.values.keys().copied().collect(),
@@ -303,6 +310,7 @@ impl Accounting {
                 events: Vec::new(),
                 conditional: false,
                 points: Arc::default(),
+                worker_holder_points: Vec::new(),
             },
         }
     }

@@ -118,6 +118,7 @@ pub fn check_crate(
     let mut layouts = layout::Layouts::new(datatypes, global_allocator, vector, option)
         .with_synchronization_types(&synchronization.types)
         .with_closures(&synchronization.concurrency);
+    layouts.holder_proofs.clone_from(&synchronization.holder_proofs);
     layouts.imported_leaves.clone_from(&synchronization.imported_leaves);
     for function in functions.iter().filter(|f| f.x.attrs.resource_contract.is_some()) {
         let empty = HashMap::new();
@@ -215,7 +216,19 @@ pub fn check_crate(
             attrs.resource_contract = None;
         }
     }
-    Ok(reports.into_iter().map(|(f, checked)| (f.span.clone(), checked.report)).collect())
+    Ok(reports
+        .into_iter()
+        .map(|(f, mut checked)| {
+            checked.report.worker_holder_points = checked
+                .growth
+                .worker_executions
+                .values()
+                .filter(|w| !w.effects.ownership.holders.is_empty())
+                .map(|w| w.effects.points.clone())
+                .collect();
+            (f.span.clone(), checked.report)
+        })
+        .collect())
 }
 
 /// Erase metadata after the crate's structural checks and instrumentation succeed.

@@ -115,6 +115,58 @@ impl<'a> BoundedHolder for Guard<'a> {
     }
 }
 
+// Keep two equal-sized allocations so only their source lifetimes distinguish them.
+fn scratch(g: Guard<'_>)
+    resources peak(memory) <= 256,
+{
+    let contained = Box::new([0u8; 64]);
+    let surviving = Box::new([0u8; 64]);
+    drop(contained);
+    g.leave();
+    drop(surviving);
+}
+
+// The callee's guard is argument 1 of this invocation.
+fn relay(released: Guard<'_>, retained: Guard<'_>)
+    resources peak(memory) <= 300,
+{
+    released.leave();
+    scratch(retained);
+}
+
+fn attempt(lock: &Lock)
+    resources peak(memory) <= 512,
+{
+    if let Some(g) = lock.try_enter() {
+        let inside = Box::new([0u8; 45]);
+        drop(inside);
+        scratch(g);
+    } else {
+        let outside = Box::new([0u8; 46]);
+        drop(outside);
+    }
+}
+
+// Removing the tracked field ends the whole witness while the reference remains.
+fn partial(g: Guard<'_>)
+    resources peak(memory) <= 280,
+{
+    let surviving = Box::new([0u8; 51]);
+    let Guard { lock, token: Tracked(unit) } = g;
+    let later = Box::new([0u8; 52]);
+    drop(surviving);
+    drop(later);
+}
+
+fn symbolic(g: Guard<'_>, n: usize)
+    requires n <= 500,
+    resources peak(memory) <= n + 96,
+{
+    let buffer: Vec<u8> = Vec::with_capacity(n);
+    drop(buffer);
+    g.leave();
+}
+
 fn work() {
     let l = Lock::new();
     if let Some(g) = l.try_enter() {

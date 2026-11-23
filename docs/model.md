@@ -10,6 +10,8 @@ Verus Meter verifies upper bounds on peak source-level memory for supported Rust
 
 For the sequentially consistent vstd permissioned atomics, a boolean location occupies one model byte and a `usize` location occupies eight. A compare-exchange charges its executable arguments and tagged result. Scratch storage on a failed attempt counts through its ordinary source lifetime. A tracked permission occupies zero bytes. The checked add/subtract methods include the workspace of their verified vstd bodies. Opening an atomic invariant preserves the cost of its executable statements and the ordinary Verus obligation to restore the invariant. An atomic-backed guard can carry a reference to its issuing instance alongside erased protocol evidence. Copying that reference into a local during release creates a new reference slot. A raw atomic operation by itself establishes no protected allocation lifetime.
 
+For a concrete custom guard with a local `BoundedHolder` proof body, the memory trace can show which allocations are live while the guard is intact. This covers owned inputs, initialized immutable locals and a guard bound on the successful arm of an acquisition. Moving the guard into a checked helper associates the helper’s observations with the actual argument. A worker can supply that argument from a guard moved into its closure. A buffer that survives release stays charged, even when the tracked token occupies zero bytes. Relating these local observations across workers still requires a proof of the issuing instance and its holder limit.
+
 ## How do I express a bound?
 
 - `value_size(T)` measures inline storage. `ref_size(&T)` measures a reference. Both also accept binding names. `return_size(f)` measures the inline size of the declared result.

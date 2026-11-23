@@ -298,6 +298,8 @@ pub(in super::super) struct Checked {
     pub(in super::super) packed_returns: bool,
     /// Incoming guard and mutex binders come from executable formal parameters.
     pub(in super::super) synchronization_inputs: super::super::synchronization::parameters::Inputs,
+    /// Owned protocol witnesses, their source bindings, and population proof dependencies.
+    pub(in super::super) holders: super::super::synchronization::holders::Bindings,
     /// Pairs of formal mutex instances whose ownership updates require separate trees.
     pub(in super::super) distinct_payload_inputs: std::collections::BTreeSet<(usize, usize)>,
     /// Incoming regions moved into a private carried allocation. The closed

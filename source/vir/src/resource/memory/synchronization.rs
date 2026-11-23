@@ -17,6 +17,7 @@ mod leaf;
 pub use leaf::Leaf;
 pub mod flow;
 pub(super) mod helpers;
+pub(super) mod holders;
 pub(super) mod local;
 pub(super) mod optional;
 pub(super) mod parameters;
@@ -95,6 +96,8 @@ pub struct CompilerEvidence {
     pub types: LibraryTypes,
     /// Closed scalar footprints produced from imported executable vstd bodies.
     pub imported_leaves: HashMap<crate::ast::Fun, Leaf>,
+    /// Concrete, local population proof bodies. Their identity is a dependency, not a proved bound.
+    pub holder_proofs: HashMap<Dt, crate::ast::Fun>,
     /// Selected local bodies whose measured footprints should be published.
     pub measure_leaves: std::collections::HashSet<crate::ast::Fun>,
     /// Drop-elaborated transport for local resource-contracted functions.

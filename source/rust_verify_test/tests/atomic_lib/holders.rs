@@ -92,6 +92,85 @@ fn a_custom_exclusive_protocol_needs_the_successful_atomic_transition() {
     assert!(err.errors.iter().any(|d| d.message.contains("precondition not satisfied")));
 }
 
+#[test]
+fn custom_guard_coverage_follows_the_owned_value_and_allocation() {
+    let source = include_str!("exclusive.verus.rs");
+    let trace =
+        verify_one_file("custom_guard_coverage", source.into(), &["--trace", "--no-cheating"])
+            .unwrap();
+    let note = |message: &str| trace.notes.iter().any(|n| n.message == message);
+    assert!(note("64-byte allocation only observed within intact holder input 0"));
+    assert!(note("64-byte allocation also observed outside intact holder input 0"));
+    assert!(note("51-byte allocation also observed outside intact holder input 0"));
+    assert!(!trace.notes.iter().any(|n| n.message.starts_with("52-byte allocation")));
+    assert!(note("dynamic storage region only observed within intact holder input 0"));
+    assert!(note("45-byte allocation only observed within intact holder local"));
+    assert!(!trace.notes.iter().any(|n| n.message.starts_with("46-byte allocation")));
+    let at_call = |line: &str, message: &str| {
+        trace.notes.iter().any(|n| {
+            n.message == message
+                && n.spans.iter().flat_map(|s| &s.text).any(|s| s.text.trim() == line)
+        })
+    };
+    assert!(at_call("scratch(retained);", "checked helper phase with intact holder input 1"));
+    assert!(!at_call("scratch(retained);", "checked helper phase with intact holder input 0"));
+    assert!(at_call("scratch(g);", "checked helper phase with intact holder local"));
+}
+
+#[test]
+fn a_bodyless_population_proof_supplies_no_memory_evidence() {
+    let source = include_str!("exclusive.verus.rs").replace(
+        "    proof fn population_bound(",
+        "    #[verifier::external_body]\n    proof fn population_bound(",
+    );
+    let trace = verify_one_file("unchecked_holder_body", source, &["--trace"]).unwrap();
+    assert!(!trace.notes.iter().any(|n| n.message.contains("intact holder")));
+}
+
+#[test]
+fn a_worker_passes_its_actual_moved_guard_to_the_helper() {
+    let source = include_str!("exclusive.verus.rs").replace(
+        "fn work() {",
+        r#"
+        fn publish(first: Guard<'static>, carried: Guard<'static>) resources peak(memory) <= 1024 {
+            first.leave();
+            let task = move || {
+                let overlap = Box::new([0u8; 41]);
+                scratch(carried);
+                drop(overlap);
+            };
+            let worker = vstd::thread::spawn(task);
+            let done = worker.join();
+        }
+        fn work() {"#,
+    );
+    let shared = source.replace(
+        "fn publish(first: Guard<'static>, carried: Guard<'static>)",
+        "fn inspect(_shared: &Guard<'_>) resources peak(memory) <= 80 { let b = Box::new([0u8; 42]); drop(b); }
+fn publish(first: Guard<'static>, carried: &'static Guard<'static>)",
+    ).replace("scratch(carried);", "inspect(carried);");
+    let trace = verify_one_file("worker_borrowed_holder", shared, &["--trace", "--no-cheating"])
+        .unwrap_err();
+    assert_eq!(trace.errors.len(), 1);
+    assert!(trace.errors[0].message.contains("global lifetime and interference proofs"));
+    assert!(!trace.notes.iter().any(|n| n.message.contains("intact holder capture")));
+    let trace = verify_one_file("worker_holder_footprint", source, &["--trace", "--no-cheating"])
+        .unwrap_err();
+    assert_eq!(trace.errors.len(), 1);
+    assert!(trace.errors[0].message.contains("global lifetime and interference proofs"));
+    assert!(
+        trace
+            .notes
+            .iter()
+            .any(|n| n.message == "checked helper phase with intact holder capture 0")
+    );
+    assert!(
+        trace.notes.iter().any(
+            |n| n.message == "41-byte allocation also observed outside intact holder capture 0"
+        )
+    );
+}
+
 test_verify_one_file! {
     #[test] write_and_read_handles_have_incompatible_roles code! {
         use vstd::prelude::*;

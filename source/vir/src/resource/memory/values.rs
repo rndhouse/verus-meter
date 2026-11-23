@@ -413,6 +413,16 @@ impl Analysis<'_> {
                     },
                 );
             }
+            if !self.layouts.holder_proofs.is_empty()
+                && shared_next.is_none()
+                && let PatternX::Constructor(_, variant, fields) = &arm.x.pattern.x
+                && variant.as_str() == "Some"
+                && let [field] = fields.as_slice()
+                && let PatternX::Var(b) = &field.a.x
+                && slots.iter().any(|(name, _)| *name == b.name)
+            {
+                self.bind_holder(&field.a, Some(&arm.x.body));
+            }
             if new_value {
                 let value = self.produce(&arm.x.body)?;
                 if self.flow.reachable {

@@ -1,0 +1,107 @@
+//! Pair intact protocol witnesses with the actual heap regions on each reaching path.
+use super::{Accounting, MemoryReport, Point};
+use crate::{ast::VirErrAs, resource::memory::synchronization::holders::Witness};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
+
+impl Accounting {
+    /// Annotate only observations made by this frame during the checked source statement.
+    pub(in super::super) fn mark_holders(&mut self, start: usize, inputs: &[Witness]) {
+        if !inputs.is_empty() {
+            for point in &mut Arc::make_mut(&mut self.report.points)[start..] {
+                point.holders.extend_from_slice(inputs);
+            }
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum Region {
+    Fixed(super::origins::FixedOrigin),
+    Dynamic(u64),
+}
+
+impl Witness {
+    fn description(self) -> String {
+        match self {
+            Self::Input(index) => format!("input {index}"),
+            Self::Local(_) => "local".into(),
+            Self::Capture(_, index) => format!("capture {index}"),
+        }
+    }
+}
+
+impl MemoryReport {
+    /// Local observations remain available while the global concurrency proof is pending.
+    pub fn synchronization_diagnostics(&self) -> Vec<VirErrAs> {
+        let mut notes = self.interval_diagnostics();
+        notes.extend(holder_diagnostics(&self.points));
+        for worker in &self.worker_holder_points {
+            notes.extend(holder_diagnostics(worker));
+        }
+        notes
+    }
+}
+
+fn holder_diagnostics(points: &[Point]) -> Vec<VirErrAs> {
+    if !points.iter().any(|p| !p.holders.is_empty()) {
+        return vec![];
+    }
+    // Compare exactly the points carrying each allocation identity. Two
+    // allocations of equal extent can have different lifetimes.
+    let mut regions = BTreeMap::new();
+    let mut calls = BTreeMap::new();
+    for p in points.iter() {
+        let held = p.holders.iter().copied().collect::<BTreeSet<_>>();
+        if p.call_point.is_some() {
+            for &witness in &held {
+                calls.insert((p.span.id, witness), &p.span);
+            }
+        }
+        for region in p
+            .fixed_origins
+            .iter()
+            .copied()
+            .map(Region::Fixed)
+            .chain(p.allocations.iter().copied().map(Region::Dynamic))
+        {
+            let (span, ever, always) = regions
+                .entry(region)
+                .or_insert_with(|| (&p.span, BTreeSet::<Witness>::new(), held.clone()));
+            if ever.is_empty() && !held.is_empty() {
+                *span = &p.span;
+            }
+            ever.extend(&held);
+            always.retain(|id| held.contains(id));
+        }
+    }
+    let mut notes = vec![];
+    for ((_, id), span) in calls {
+        let witness = id.description();
+        notes.push(VirErrAs::Note(crate::messages::note(
+            span,
+            format!("checked helper phase with intact holder {witness}"),
+        )));
+    }
+    for (region, (span, ever, always)) in regions {
+        let allocation = match region {
+            Region::Fixed(origin) => format!("{}-byte allocation", origin.bytes),
+            Region::Dynamic(_) => "dynamic storage region".to_owned(),
+        };
+        for witness in ever {
+            let relation = if always.contains(&witness) {
+                "only observed within"
+            } else {
+                "also observed outside"
+            };
+            let binding = witness.description();
+            notes.push(VirErrAs::Note(crate::messages::note(
+                span,
+                format!("{allocation} {relation} intact holder {binding}"),
+            )));
+        }
+    }
+    notes
+}

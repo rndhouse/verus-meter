@@ -379,6 +379,7 @@ pub(crate) enum VstdItem {
     ThreadSpawn,
     ThreadJoin,
     ThreadJoinHandle,
+    BoundedHolder,
     PAtomicBool,
     PAtomicUsize,
     AtomicGhostBool,
@@ -523,6 +524,7 @@ pub(crate) enum DummyCaptureItem {
 #[rustfmt::skip]
 fn verus_items_map() -> Vec<(&'static str, VerusItem)> {
     vec![
+        ("verus::vstd::resource::holder::BoundedHolder", VerusItem::Vstd(VstdItem::BoundedHolder, None)),
         ("verus::vstd::atomic_ghost::AtomicBool", VerusItem::Vstd(VstdItem::AtomicGhostBool, None)),
         ("verus::vstd::atomic_ghost::AtomicUsize", VerusItem::Vstd(VstdItem::AtomicGhostUsize, None)),
         ("verus::vstd::atomic::PAtomicBool", VerusItem::Vstd(VstdItem::PAtomicBool, None)),

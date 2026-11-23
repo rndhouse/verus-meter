@@ -45,6 +45,12 @@ impl BodyEffects {
         let mut starts = std::collections::BTreeSet::new();
         for phase in self.points.iter() {
             phase.validate(&intervals)?;
+            if phase.holders.iter().any(|i| !self.ownership.holders.valid_for(*i, actor)) {
+                return Err(super::model::unsupported(
+                    &phase.span,
+                    "a holder footprint without an owned witness in this actor",
+                ));
+            }
             if let Boundary::Wait(id) | Boundary::Attempt(id) = phase.condition.boundary {
                 starts.insert(id);
             }

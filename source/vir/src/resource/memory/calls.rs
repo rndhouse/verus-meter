@@ -163,6 +163,8 @@ impl Analysis<'_> {
             return Err(unsupported(&expr.span, "unmatched input allocation nodes"));
         }
         let c = &expr.span;
+        let callee_effects = summary.effects.as_deref();
+        let holder_arguments = self.transitions.holders.forwarded(callee_effects, args);
         let forwarded = summary.return_parameter.and_then(|i| values[i].clone());
         for value in values.into_iter().flatten() {
             self.release_value(value, c);
@@ -220,6 +222,7 @@ impl Analysis<'_> {
             };
             let condition = synchronization.as_ref().map(|call| call.condition(&point.condition));
             let results = point.result.then_some(&result_ids);
+            let start = self.storage.points().len();
             for frame in &frames {
                 frame.observe(
                     &mut self.storage,
@@ -230,6 +233,16 @@ impl Analysis<'_> {
                     Some(index),
                     condition.as_ref().zip(synchronization.as_deref()),
                 )?;
+            }
+            if !holder_arguments.is_empty()
+                && let Some(phase) = callee_effects.and_then(|effects| effects.points.get(index))
+            {
+                let actuals = phase
+                    .holders
+                    .iter()
+                    .filter_map(|i| holder_arguments.get(i).copied())
+                    .collect::<Vec<_>>();
+                self.storage.mark_holders(start, &actuals);
             }
         }
         // The callee phases already describe destruction of moved-in guards.

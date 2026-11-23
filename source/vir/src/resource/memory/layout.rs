@@ -36,6 +36,8 @@ pub(super) struct Layouts {
     field_slots: HashMap<Ident, i128>,
     synchronization_types: super::synchronization::LibraryTypes,
     pub(super) imported_leaves: HashMap<Fun, super::synchronization::Leaf>,
+    /// Nominal concrete holder types and their local population proof obligations.
+    pub(super) holder_proofs: HashMap<Dt, Fun>,
     /// Only actual executable capture types contribute to closure storage.
     closures: std::collections::BTreeMap<usize, ClosureLayout>,
 }
@@ -68,6 +70,7 @@ impl Layouts {
             field_slots,
             synchronization_types: HashMap::new(),
             imported_leaves: HashMap::new(),
+            holder_proofs: HashMap::new(),
             closures: Default::default(),
         }
     }

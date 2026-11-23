@@ -1,11 +1,59 @@
-//! Reviewed verified vstd helpers request a body-derived workspace. Only their
-//! resolved definitions may consume that workspace from an imported crate.
+//! Resolve protocol proof dependencies and the reviewed vstd helpers whose
+//! verified bodies supply importable workspace measurements.
 use crate::context::Context;
 use rustc_span::Symbol;
 use std::collections::HashSet;
 use std::sync::Arc;
 use vir::ast::{Fun, FunX, Krate, KrateX};
 use vir::resource::memory::{BudgetExprX, ResourceContract, synchronization::CompilerEvidence};
+
+/// Record which obligation would justify a bound for this concrete witness.
+/// A method body can still fail verification. Discovery does not certify it.
+pub(super) fn bind_holder_proofs(
+    ctxt: &Context<'_>,
+    krate: &KrateX,
+    evidence: &mut CompilerEvidence,
+) {
+    use vir::ast::{FunctionKind, Mode, TypX};
+    let Some(id) = ctxt
+        .tcx
+        .get_diagnostic_item(Symbol::intern("verus::vstd::resource::holder::BoundedHolder"))
+    else {
+        return;
+    };
+    let Some(method) = ctxt
+        .tcx
+        .associated_items(id)
+        .in_definition_order()
+        .find(|item| ctxt.tcx.item_name(item.def_id).as_str() == "population_bound")
+    else {
+        return;
+    };
+    let declaration = ctxt.def_id_to_vir_path(method.def_id);
+    for f in &krate.functions {
+        let FunctionKind::TraitMethodImpl {
+            method, trait_typ_args, inherit_body_from: None, ..
+        } = &f.x.kind
+        else {
+            continue;
+        };
+        if method.path != declaration
+            || f.x.mode != Mode::Proof
+            || f.x.body.is_none()
+            || f.x.attrs.is_external_body
+            || !f.x.typ_params.is_empty()
+            || !f.x.typ_bounds.is_empty()
+        {
+            continue;
+        }
+        if let [ty] = trait_typ_args.as_slice()
+            && let TypX::Datatype(dt, args, _) = &**ty
+            && args.is_empty()
+        {
+            evidence.holder_proofs.insert(dt.clone(), f.x.name.clone());
+        }
+    }
+}
 
 pub(super) fn bind_leaf_workspaces(
     ctxt: &Context<'_>,
