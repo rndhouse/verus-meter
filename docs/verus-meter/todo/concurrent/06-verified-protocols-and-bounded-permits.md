@@ -53,9 +53,13 @@ until memory regressions exercise those paths.
 Feature commit `6af4fb2ba` connects the underlying permissioned atomics to
 source byte accounting. The executable CAS regression needs 20 bytes with a
 boolean success test and 75 bytes when the failure branch has a 64-byte local.
-Each test rejects a budget one byte smaller. The checked counter helpers and
-the executable bodies inside invariant blocks still need source accounting
-before their footprints can be used by callers.
+Each test rejects a budget one byte smaller. Feature commit `80b2504bd`
+measures the checked counter helpers from their executable vstd bodies and
+publishes their workspace after full verification and lifetime checking. A
+checked-add caller needs 56 bytes. A vstd build with verification disabled
+cannot supply that footprint. An open atomic invariant counts its executable
+local and still has to restore its invariant. These tests cover the operations
+inside protocols. The live holder-to-allocation relationship remains open.
 
 ## Completion criteria
 
