@@ -21,7 +21,7 @@ impl Analysis<'_> {
             {
                 return self.copy_into_destination(place, typ);
             }
-            if !crate::ast_util::types_equal(&expr.typ, typ) {
+            if !super::execution::initializes(expr, typ) {
                 return Err(unsupported(&place.span, "this initializer coercion"));
             }
             return self.initialize_expr(expr);
@@ -108,7 +108,7 @@ impl Analysis<'_> {
         destination: bool,
     ) -> Result<Option<u64>, VirErr> {
         let mut owner = super::heap::Owner::default();
-        let fields: Vec<&Expr> = match &expr.x {
+        let fields: Vec<(Option<&Ident>, &Expr)> = match &expr.x {
             ExprX::Ctor(name, variant, fields, None)
                 if super::iterators::kind(&expr.typ) == Some(super::iterators::Kind::Range) =>
             {
@@ -133,14 +133,14 @@ impl Analysis<'_> {
                         super::iterators::Operation::Range { fields: fields.clone() },
                     ),
                 );
-                fields.iter().map(|field| &field.a).collect()
+                fields.iter().map(|field| (Some(&field.name), &field.a)).collect()
             }
             ExprX::Ctor(_, variant, fields, None) if self.layouts.option(&expr.typ) => {
                 let payload = self.layouts.option_payload(&expr.typ, &expr.span)?;
                 match (variant.as_str(), fields.as_slice()) {
                     ("None", []) => vec![],
                     ("Some", [field]) if crate::ast_util::types_equal(&field.a.typ, payload) => {
-                        vec![&field.a]
+                        vec![(Some(&field.name), &field.a)]
                     }
                     _ => return Err(unsupported(&expr.span, "this Option constructor")),
                 }
@@ -156,26 +156,34 @@ impl Analysis<'_> {
                     return Err(unsupported(&expr.span, "this struct constructor"));
                 }
                 let mut names = std::collections::HashSet::new();
+                let mut runtime = Vec::new();
                 for field in fields.iter() {
                     let decl =
                         variant.fields.iter().find(|f| f.name == field.name).ok_or_else(|| {
                             unsupported(&field.a.span, "this struct initializer field")
                         })?;
                     if !names.insert(field.name.clone())
-                        || !crate::ast_util::types_equal(&decl.a.0, &field.a.typ)
+                        || !super::execution::initializes(&field.a, &decl.a.0)
                     {
                         return Err(unsupported(
                             &field.a.span,
                             "this struct initializer field type",
                         ));
                     }
+                    if decl.a.1 == Mode::Exec
+                        && !matches!(field.a.x, ExprX::Ghost { alloc_wrapper: true, .. })
+                    {
+                        runtime.push((Some(&field.name), &field.a));
+                    }
                 }
-                fields.iter().map(|f| &f.a).collect()
+                runtime
             }
             ExprX::Ctor(_, _, _, Some(_)) => {
                 return Err(unsupported(&expr.span, "struct update syntax"));
             }
-            ExprX::ArrayLiteral(elements) => elements.iter().collect(),
+            ExprX::ArrayLiteral(elements) => {
+                elements.iter().map(|element| (None, element)).collect()
+            }
             ExprX::Call {
                 target: CallTarget::Fun(CallTargetKind::Static, _, _, _, attrs),
                 args,
@@ -186,7 +194,7 @@ impl Analysis<'_> {
             {
                 // Only source array-repeat syntax receives this provenance.
                 // Evaluate the repeated value even for a zero-length array.
-                args.iter().collect()
+                args.iter().map(|arg| (None, arg)).collect()
             }
             _ => return Ok(None),
         };
@@ -200,14 +208,13 @@ impl Analysis<'_> {
             )?;
         }
         let mut transitions = Vec::new();
-        for (index, field) in fields.into_iter().enumerate() {
+        for (name, field) in fields {
             let mut owned_slot = None;
             self.initialize_expr(field)?;
             if self.layouts.owner(&field.typ) {
-                let ExprX::Ctor(_, _, initializers, _) = &expr.x else {
+                let Some(name) = name.cloned() else {
                     return Err(unsupported(&field.span, "owning elements in runtime collections"));
                 };
-                let name = initializers[index].name.clone();
                 let child = self
                     .result_owner
                     .take()

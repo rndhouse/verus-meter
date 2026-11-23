@@ -257,14 +257,19 @@ impl Analysis<'_> {
                             );
                             break 'statement;
                         }
-                        let Some((binding, source_type)) =
-                            super::execution::declaration_binding(pattern, init.as_ref())
+                        let Some((binding, source_type, binding_init)) =
+                            super::execution::declaration_binding(
+                                self.layouts,
+                                pattern,
+                                init.as_ref(),
+                            )
                         else {
                             return Err(unsupported(
                                 &stmt.span,
                                 "destructuring or wildcard declarations",
                             ));
                         };
+                        let init = &binding_init;
                         match self.var_modes.get(&binding.name) {
                             Some(Mode::Spec | Mode::Proof) => break 'statement,
                             Some(Mode::Exec) => {}

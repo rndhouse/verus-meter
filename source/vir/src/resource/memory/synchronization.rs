@@ -61,6 +61,10 @@ pub enum LibraryType {
     AtomicBool,
     /// One sequentially consistent word location. Permissions are erased.
     AtomicUsize,
+    /// Boolean location paired with an erased vstd invariant.
+    AtomicGhostBool,
+    /// Word location paired with an erased vstd invariant.
+    AtomicGhostUsize,
     /// `Mutex<T>`, with state, poison flag and inline T.
     Mutex,
     /// `MutexGuard<T>`, an inline reference with a release effect.
@@ -527,7 +531,12 @@ fn reject_unaccounted_inner(
                     // uses the reviewed scalar layout in every caller.
                     if matches!(
                         self.types.get(name),
-                        Some(LibraryType::AtomicBool | LibraryType::AtomicUsize)
+                        Some(
+                            LibraryType::AtomicBool
+                                | LibraryType::AtomicUsize
+                                | LibraryType::AtomicGhostBool
+                                | LibraryType::AtomicGhostUsize
+                        )
                     ) {
                         return Ok(());
                     }

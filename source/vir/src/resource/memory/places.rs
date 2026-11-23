@@ -55,6 +55,12 @@ impl Analysis<'_> {
                     base_typ = inner;
                 }
                 self.layouts.size(base_typ, &base.span)?;
+                if let TypX::Datatype(name, _, _) = &**base_typ
+                    && *name == op.datatype
+                    && self.layouts.atomic_field(base_typ, &place.typ)
+                {
+                    return self.access_mode(base, base_typ, reading);
+                }
                 let variant = self.layouts.struct_variant(base_typ, &base.span)?;
                 let TypX::Datatype(name, _, _) = &**base_typ else { unreachable!() };
                 if op.datatype != *name

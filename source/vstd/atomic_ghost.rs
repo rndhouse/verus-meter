@@ -15,7 +15,7 @@ pub trait AtomicInvariantPredicate<K, V, G> {
 
 } // verus!
 macro_rules! declare_atomic_type {
-    ($at_ident:ident, $patomic_ty:ident, $perm_ty:ty, $value_ty: ty, $atomic_pred_ty: ident) => {
+    ($at_ident:ident, $patomic_ty:ident, $perm_ty:ty, $value_ty: ty, $atomic_pred_ty: ident $(, $diagnostic:literal)?) => {
         verus!{
 
         pub struct $atomic_pred_ty<Pred> { p: Pred }
@@ -40,6 +40,7 @@ macro_rules! declare_atomic_type {
         ///
         /// See the [`atomic_with_ghost!`] documentation for usage information.
 
+        $(#[cfg_attr(verus_keep_ghost, rustc_diagnostic_item = $diagnostic)])?
         pub struct $at_ident<K, G, Pred>
             //where Pred: AtomicInvariantPredicate<K, $value_ty, G>
         {
@@ -199,7 +200,14 @@ declare_atomic_type!(AtomicU64, PAtomicU64, PermissionU64, u64, AtomicPredU64);
 declare_atomic_type!(AtomicU32, PAtomicU32, PermissionU32, u32, AtomicPredU32);
 declare_atomic_type!(AtomicU16, PAtomicU16, PermissionU16, u16, AtomicPredU16);
 declare_atomic_type!(AtomicU8, PAtomicU8, PermissionU8, u8, AtomicPredU8);
-declare_atomic_type!(AtomicUsize, PAtomicUsize, PermissionUsize, usize, AtomicPredUsize);
+declare_atomic_type!(
+    AtomicUsize,
+    PAtomicUsize,
+    PermissionUsize,
+    usize,
+    AtomicPredUsize,
+    "verus::vstd::atomic_ghost::AtomicUsize"
+);
 
 #[cfg(target_has_atomic = "64")]
 declare_atomic_type!(AtomicI64, PAtomicI64, PermissionI64, i64, AtomicPredI64);
@@ -209,7 +217,14 @@ declare_atomic_type!(AtomicI16, PAtomicI16, PermissionI16, i16, AtomicPredI16);
 declare_atomic_type!(AtomicI8, PAtomicI8, PermissionI8, i8, AtomicPredI8);
 declare_atomic_type!(AtomicIsize, PAtomicIsize, PermissionIsize, isize, AtomicPredIsize);
 
-declare_atomic_type!(AtomicBool, PAtomicBool, PermissionBool, bool, AtomicPredBool);
+declare_atomic_type!(
+    AtomicBool,
+    PAtomicBool,
+    PermissionBool,
+    bool,
+    AtomicPredBool,
+    "verus::vstd::atomic_ghost::AtomicBool"
+);
 
 declare_atomic_type_generic!(AtomicPtr, PAtomicPtr, PermissionPtr<T>, *mut T, AtomicPredPtr);
 

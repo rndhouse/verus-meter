@@ -174,6 +174,12 @@ pub(crate) fn synchronization_type(
         Some(LibraryType::AtomicBool)
     } else if diagnostic("verus::vstd::atomic::PAtomicUsize") {
         Some(LibraryType::AtomicUsize)
+    } else if diagnostic("verus::vstd::atomic_ghost::AtomicBool") {
+        ghost_atomic_representation(tcx, id, "verus::vstd::atomic::PAtomicBool")
+            .then_some(LibraryType::AtomicGhostBool)
+    } else if diagnostic("verus::vstd::atomic_ghost::AtomicUsize") {
+        ghost_atomic_representation(tcx, id, "verus::vstd::atomic::PAtomicUsize")
+            .then_some(LibraryType::AtomicGhostUsize)
     } else if diagnostic("Mutex") {
         Some(LibraryType::Mutex)
     } else if diagnostic("MutexGuard") {
@@ -190,6 +196,28 @@ pub(crate) fn synchronization_type(
             _ => None,
         }
     }
+}
+
+/// The wrapper has the primitive location's layout only while every other
+/// field is a resolved erased wrapper. Check the declaration, including for
+/// imported vstd; a newly added executable field invalidates this rule.
+fn ghost_atomic_representation(tcx: TyCtxt<'_>, id: DefId, location: &str) -> bool {
+    let adt = tcx.adt_def(id);
+    if !adt.is_struct() || adt.has_dtor(tcx) {
+        return false;
+    }
+    let mut locations = 0;
+    for field in adt.all_fields() {
+        let typ = tcx.type_of(field.did).skip_binder();
+        let TyKind::Adt(field_type, _) = typ.kind() else { return false };
+        let is = |name| tcx.is_diagnostic_item(rustc_span::Symbol::intern(name), field_type.did());
+        if is(location) {
+            locations += 1;
+        } else if !is("verus::verus_builtin::Tracked") && !is("verus::verus_builtin::Ghost") {
+            return false;
+        }
+    }
+    locations == 1
 }
 
 /// Only inherent methods of the reviewed permissioned atomics have this contract.

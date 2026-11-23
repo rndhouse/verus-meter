@@ -122,7 +122,7 @@ impl Analysis<'_> {
     ) -> Result<Value, VirErr> {
         let copy = copy || self.layouts.copy_closure(typ);
         if let PlaceX::Temporary(expr) = &place.x {
-            if crate::ast_util::types_equal(&expr.typ, typ) {
+            if super::execution::initializes(expr, typ) {
                 return self.produce(expr);
             }
         } else if !copy && self.layouts.owner(typ) {

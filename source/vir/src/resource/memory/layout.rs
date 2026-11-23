@@ -279,6 +279,23 @@ impl Layouts {
         }
     }
 
+    /// Resolved type of the only executable field in a checked atomic wrapper.
+    pub(super) fn atomic_location(&self, typ: &Typ) -> Option<super::synchronization::LibraryType> {
+        use super::synchronization::LibraryType::*;
+        let TypX::Datatype(name, _, _) = &**typ else { return None };
+        match self.synchronization_types.get(name)? {
+            AtomicGhostBool => Some(AtomicBool),
+            AtomicGhostUsize => Some(AtomicUsize),
+            _ => None,
+        }
+    }
+
+    pub(super) fn atomic_field(&self, wrapper: &Typ, field: &Typ) -> bool {
+        let TypX::Datatype(name, _, _) = &**field else { return false };
+        self.atomic_location(wrapper)
+            .is_some_and(|expected| self.synchronization_types.get(name) == Some(&expected))
+    }
+
     /// Only the compiler-identified standard Result carries primitive outcomes.
     pub(super) fn result_payloads<'t>(&self, typ: &'t Typ) -> Option<(&'t Typ, &'t Typ)> {
         let TypX::Datatype(name, args, _) = &**typ else { return None };
@@ -351,11 +368,9 @@ impl Layouts {
         if !datatype.x.is_struct || !visiting.insert(name.clone()) {
             return false;
         }
-        let owns = datatype
-            .x
-            .variants
-            .iter()
-            .any(|v| v.fields.iter().any(|f| self.owner_inner(&f.a.0, visiting)));
+        let owns = datatype.x.variants.iter().any(|v| {
+            v.fields.iter().any(|f| f.a.1 == Mode::Exec && self.owner_inner(&f.a.0, visiting))
+        });
         visiting.remove(name);
         owns
     }
@@ -539,7 +554,7 @@ impl Layouts {
             }
         } else if self.owner(typ) && !self.vector(typ) {
             for field in self.struct_variant(typ, span)?.fields.iter() {
-                if self.owner(&field.a.0) {
+                if field.a.1 == Mode::Exec && self.owner(&field.a.0) {
                     children.insert(OwnerSlot::Field(field.name.clone()), field.a.0.clone());
                 }
             }
@@ -555,6 +570,35 @@ impl Layouts {
             }
             _ => false,
         }
+    }
+
+    /// A local concrete protocol may wrap a modeled atomic and hand out a
+    /// reference to its instance alongside erased evidence. This establishes
+    /// which fields survive erasure, independently of any holder theorem.
+    fn atomic_backed(&self, typ: &Typ) -> bool {
+        fn visit(layouts: &Layouts, typ: &Typ, seen: &mut HashSet<Dt>) -> bool {
+            if let TypX::Decorate(TypDecoration::Ref, None, inner) = &**typ {
+                return visit(layouts, inner, seen);
+            }
+            let TypX::Datatype(name, _, _) = &**typ else { return false };
+            use super::synchronization::LibraryType::*;
+            if matches!(
+                layouts.synchronization_types.get(name),
+                Some(AtomicBool | AtomicUsize | AtomicGhostBool | AtomicGhostUsize)
+            ) {
+                return true;
+            }
+            let Some(datatype) = layouts.datatypes.get(name) else { return false };
+            if !seen.insert(name.clone()) || !datatype.x.is_struct || datatype.x.variants.len() != 1
+            {
+                return false;
+            }
+            datatype.x.variants[0]
+                .fields
+                .iter()
+                .any(|f| f.a.1 == Mode::Exec && visit(layouts, &f.a.0, seen))
+        }
+        visit(self, typ, &mut HashSet::new())
     }
 
     /// Metadata checks shared by sizing, construction, and field projection.
@@ -580,7 +624,7 @@ impl Layouts {
         if d.proxy.is_some()
             || !matches!(d.transparency, DatatypeTransparency::WhenVisible(_))
             || d.mode != Mode::Exec
-            || d.user_defined_invariant_fn.is_some()
+            || (d.user_defined_invariant_fn.is_some() && !self.atomic_backed(typ))
         {
             return Err(unsupported(span, "opaque, proxy, ghost, or invariant-bearing structs"));
         }
@@ -690,8 +734,10 @@ impl Layouts {
                 self.size_inner(typ, span, visiting)
             };
             let bytes = match kind {
-                LibraryType::AtomicBool => Some(verus_meter_model::BOOL_BYTES),
-                LibraryType::AtomicUsize => Some(WORD_BYTES),
+                LibraryType::AtomicBool | LibraryType::AtomicGhostBool => {
+                    Some(verus_meter_model::BOOL_BYTES)
+                }
+                LibraryType::AtomicUsize | LibraryType::AtomicGhostUsize => Some(WORD_BYTES),
                 LibraryType::Mutex => verus_meter_model::mutex_bytes(size(0, visiting)?),
                 LibraryType::MutexGuard => {
                     size(0, visiting)?;
@@ -771,6 +817,9 @@ impl Layouts {
                 if slice(inner) {
                     self.slice_element(inner, span)?;
                     Ok(verus_meter_model::reference_bytes(true))
+                } else if matches!(&**inner, TypX::Decorate(TypDecoration::Ref, None, target) if self.atomic_location(target).is_some())
+                {
+                    Ok(verus_meter_model::reference_bytes(false))
                 } else if matches!(
                     &**inner,
                     TypX::MutRef(_) | TypX::Decorate(TypDecoration::Ref, ..)
@@ -796,13 +845,28 @@ impl Layouts {
                     return Err(unsupported(span, "recursive struct layouts"));
                 }
                 let mut bytes = 0u64;
+                let protocol = self.atomic_backed(typ);
                 for field in variant.fields.iter() {
                     let (typ, mode, _) = &field.a;
                     if *mode != Mode::Exec {
+                        if protocol {
+                            continue;
+                        }
                         return Err(unsupported(span, "ghost or tracked struct fields"));
                     }
+                    if protocol
+                        && matches!(
+                            &**typ,
+                            TypX::Decorate(TypDecoration::Ghost | TypDecoration::Tracked, None, _)
+                        )
+                    {
+                        continue;
+                    }
+                    let permitted_reference = protocol
+                        && matches!(&**typ, TypX::Decorate(TypDecoration::Ref, None, inner) if self.atomic_backed(inner));
                     if matches!(&**typ, TypX::MutRef(_))
                         || matches!(&**typ, TypX::Decorate(d, _, _) if !matches!(d, TypDecoration::Box | TypDecoration::Arc))
+                            && !permitted_reference
                     {
                         return Err(unsupported(span, "reference or decorated struct fields"));
                     }

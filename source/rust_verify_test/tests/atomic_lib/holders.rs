@@ -77,6 +77,16 @@ test_verify_one_file! {
 fn a_custom_exclusive_protocol_needs_the_successful_atomic_transition() {
     let source = include_str!("exclusive.verus.rs");
     verify_one_file("exclusive_holder", source.into(), &[]).unwrap();
+    for (method, peak) in [("acquire", 30), ("release", 33)] {
+        let short = peak - 1;
+        let body =
+            source.replace(&format!("peak(memory) <= {peak}"), &format!("peak(memory) <= {short}"));
+        let error = verify_one_file(&format!("custom_{method}_bytes"), body, &[]).unwrap_err();
+        crate::common::assert_vir_error_msg(
+            error,
+            &format!("peak {peak} bytes exceeds budget {short} bytes"),
+        );
+    }
     let broken = source.replace("if success.is_ok()", "if success.is_err()");
     let err = verify_one_file("failed_cas_holder", broken, &[]).unwrap_err();
     assert!(err.errors.iter().any(|d| d.message.contains("precondition not satisfied")));

@@ -381,6 +381,8 @@ pub(crate) enum VstdItem {
     ThreadJoinHandle,
     PAtomicBool,
     PAtomicUsize,
+    AtomicGhostBool,
+    AtomicGhostUsize,
     SeqFn(vir::interpreter::SeqFn),
     SetItem(SetItem),
     ISetItem(SetItem),
@@ -521,6 +523,8 @@ pub(crate) enum DummyCaptureItem {
 #[rustfmt::skip]
 fn verus_items_map() -> Vec<(&'static str, VerusItem)> {
     vec![
+        ("verus::vstd::atomic_ghost::AtomicBool", VerusItem::Vstd(VstdItem::AtomicGhostBool, None)),
+        ("verus::vstd::atomic_ghost::AtomicUsize", VerusItem::Vstd(VstdItem::AtomicGhostUsize, None)),
         ("verus::vstd::atomic::PAtomicBool", VerusItem::Vstd(VstdItem::PAtomicBool, None)),
         ("verus::vstd::atomic::PAtomicUsize", VerusItem::Vstd(VstdItem::PAtomicUsize, None)),
         ("verus::vstd::thread::spawn", VerusItem::Vstd(VstdItem::ThreadSpawn, None)),

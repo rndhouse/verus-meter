@@ -37,6 +37,7 @@ impl Lock {
     fn try_enter(&self) -> (g: Option<Guard<'_>>)
         ensures
             g matches Some(g) ==> g.instance_id() == self.domain@,
+        resources peak(memory) <= 30,
     {
         proof {
             use_type_invariant(self);
@@ -69,7 +70,9 @@ impl<'a> Guard<'a> {
         &&& self.token@.frac() == 1real
     }
 
-    fn leave(self) {
+    fn leave(self)
+        resources peak(memory) <= 33,
+    {
         proof {
             use_type_invariant(&self);
             use_type_invariant(self.lock);

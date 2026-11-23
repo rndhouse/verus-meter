@@ -247,6 +247,8 @@ fn synchronization_types(
         "Result",
         "verus::vstd::atomic::PAtomicBool",
         "verus::vstd::atomic::PAtomicUsize",
+        "verus::vstd::atomic_ghost::AtomicBool",
+        "verus::vstd::atomic_ghost::AtomicUsize",
     ] {
         if let Some(id) = tcx.get_diagnostic_item(rustc_span::Symbol::intern(name))
             && let Some(kind) = super::intrinsics::synchronization_type(tcx, id)
