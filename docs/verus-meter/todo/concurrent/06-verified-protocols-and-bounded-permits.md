@@ -50,6 +50,13 @@ allocation footprints, preserve their bindings through calls and worker visits,
 and account for executable protocol bodies. Keep the integration criteria open
 until memory regressions exercise those paths.
 
+Feature commit `6af4fb2ba` connects the underlying permissioned atomics to
+source byte accounting. The executable CAS regression needs 20 bytes with a
+boolean success test and 75 bytes when the failure branch has a 64-byte local.
+Each test rejects a budget one byte smaller. The checked counter helpers and
+the executable bodies inside invariant blocks still need source accounting
+before their footprints can be used by callers.
+
 ## Completion criteria
 
 A user-defined protocol implemented with the supported atomics exposes proved
