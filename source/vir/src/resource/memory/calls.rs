@@ -37,12 +37,17 @@ impl Analysis<'_> {
         // Pin the mutex's actual location before moving any guard argument.
         // Callee profiles and post-call writes use this same acquisition.
         let mut borrowed = std::collections::HashMap::new();
+        let mut imported_mutexes = std::collections::HashSet::new();
         for (index, (arg, parameter)) in args.iter().zip(callee.x.params.iter()).enumerate() {
             if parameter.x.mode == Mode::Exec {
                 if let Some(typ) = self.layouts.borrowed_descriptor(&parameter.x.typ) {
-                    let location = self
-                        .call_location(arg, &typ)
-                        .ok_or_else(|| unsupported(&arg.span, "this borrowed owner argument"))?;
+                    let Some(location) = self.call_location(arg, &typ) else {
+                        if self.identity_only_mutex_argument(summary, index, arg, &typ)? {
+                            imported_mutexes.insert(index);
+                            continue;
+                        }
+                        return Err(unsupported(&arg.span, "this borrowed owner argument"));
+                    };
                     borrowed.insert(
                         index,
                         super::transfer::checked::Place {
@@ -55,7 +60,13 @@ impl Analysis<'_> {
             }
         }
         let call_scalars = self.allocation_scalars();
-        let transfer = self.prepare_transfer_call(expr, callee, args)?;
+        // These calls return only a guard. All original regions, including
+        // those forwarded by nested calls, remain with untouched shared roots.
+        let shared_inputs = !imported_mutexes.is_empty()
+            && borrowed.is_empty()
+            && summary.returns_guard_without_payload_transfer();
+        let transfer =
+            if shared_inputs { None } else { self.prepare_transfer_call(expr, callee, args)? };
         let covered = borrowed
             .keys()
             .filter_map(|&index| {
@@ -76,7 +87,7 @@ impl Analysis<'_> {
                 complete.then_some(interval)
             })
             .collect();
-        self.check_vector_call(expr, callee, args)?;
+        self.check_vector_call(expr, callee, args, &imported_mutexes)?;
         let result_size = self.layouts.return_size(&expr.typ, &expr.span)?;
         let bound = super::contracts::instantiate(
             callee,
@@ -209,7 +220,7 @@ impl Analysis<'_> {
                     &mut self.storage,
                     c,
                     cost.clone(),
-                    Some((&point.inputs, transfer.as_ref())),
+                    (!shared_inputs).then_some((&point.inputs, transfer.as_ref())),
                     results.unwrap_or(&Default::default()),
                     Some(index),
                     condition.as_ref().zip(synchronization.as_deref()),

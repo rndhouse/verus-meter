@@ -351,15 +351,19 @@ pub(in super::super) struct Checked {
 }
 
 impl Checked {
-    pub(in super::super) fn acquisition_visit(
+    pub(in super::super) fn acquires_at_visit(
         &self,
         id: super::super::synchronization::local::Interval,
-    ) -> Option<&super::super::synchronization::local::Occurrence> {
-        self.operations.values().find_map(|op| match op {
-            Operation::MutexLock { interval, occurrence, .. } if *interval == id => {
-                Some(occurrence)
+        visit: &super::super::workers::SourceVisit<AstId>,
+    ) -> bool {
+        self.operations.values().any(|op| match op {
+            Operation::MutexLock { interval, occurrence, .. } => {
+                *interval == id && occurrence.same_visit_scope(visit)
             }
-            _ => None,
+            Operation::Call { synchronization: Some(call), .. } => {
+                call.acquires_at_visit(id, visit)
+            }
+            _ => false,
         })
     }
 

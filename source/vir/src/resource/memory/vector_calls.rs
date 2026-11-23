@@ -66,6 +66,7 @@ impl Analysis<'_> {
         expr: &Expr,
         callee: &Function,
         args: &Exprs,
+        imported_mutexes: &std::collections::HashSet<usize>,
     ) -> Result<(), VirErr> {
         let summary = self
             .summaries
@@ -82,7 +83,10 @@ impl Analysis<'_> {
                 crate::ast_util::mk_ineq(&expr.span, &required, &available, InequalityOp::Le),
             ));
         }
-        for (arg, param) in args.iter().zip(callee.x.params.iter()) {
+        for (index, (arg, param)) in args.iter().zip(callee.x.params.iter()).enumerate() {
+            if imported_mutexes.contains(&index) {
+                continue;
+            }
             if let Some(typ) = self.layouts.borrowed_owner(&param.x.typ) {
                 for path in super::paths::vectors(self.layouts, typ, &arg.span)?.keys() {
                     self.vector_argument(arg, typ, path)?;

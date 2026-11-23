@@ -247,7 +247,7 @@ impl Analysis<'_> {
         site: &Span,
         proofs: &mut Vec<Stmt>,
     ) -> Option<Suspended> {
-        let mut wrapper = self.heap.borrowed.remove(&interval.payload_name())?;
+        let wrapper = self.heap.borrowed.remove(&interval.payload_name())?;
         let visit = match self.local_occurrences(site) {
             Ok(local) => self.source_visit(site.clone(), local),
             Err(error) => {
@@ -255,11 +255,10 @@ impl Analysis<'_> {
                 return None;
             }
         };
-        let payload =
-            wrapper.children.remove(&OwnerSlot::Contents).expect("acquired mutex contents");
-        let origins = self.storage.returned_storage(Some(&payload), &self.growth.elements);
-        let complete = complete_contents(&payload);
-        let current = self.owner_metadata(site, &payload, proofs);
+        let payload = wrapper.children.get(&OwnerSlot::Contents).expect("acquired mutex contents");
+        let origins = self.storage.returned_storage(Some(payload), &self.growth.elements);
+        let complete = complete_contents(payload);
+        let current = self.owner_metadata(site, payload, proofs);
         let (contents, declaration) = expr::local(
             site,
             "released_contents",
@@ -269,10 +268,13 @@ impl Analysis<'_> {
         );
         self.growth.declarations.push(declaration);
         proofs.push(expr::assign(site, &contents, current));
+        // A helper can rebuild the logical mutex descriptor when it replaces
+        // the payload. Retire the complete acquisition view, including its
+        // root charge, and prove its bytes equal the outgoing contents below.
         let storage = Storage {
             typ: crate::ast_util::unit_typ(),
             value: Value::unit(),
-            owner: Some(payload),
+            owner: Some(wrapper),
         };
         let versions = &mut self.transitions.protected_versions;
         match self.storage.take_storage(&storage, &self.growth, site) {
@@ -293,10 +295,11 @@ impl Analysis<'_> {
                     .expect("acquired input")
                     .releases
                     .push(Release { visit, contents, origins, complete });
-                wrapper
-                    .children
-                    .insert(OwnerSlot::Contents, storage.owner.expect("published payload"));
-                Some(Suspended { interval, wrapper, charges: transferred })
+                Some(Suspended {
+                    interval,
+                    wrapper: storage.owner.expect("acquired mutex"),
+                    charges: transferred,
+                })
             }
             Err(err) => {
                 versions.error = Some(err);

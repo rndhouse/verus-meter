@@ -41,12 +41,9 @@ impl<'a> Section<'a> {
     ) -> Option<Self> {
         let effects = &worker.effects.ownership;
         let binding = &effects.protected_versions.bindings[&interval];
-        let acquisition = effects.acquisition_visit(interval)?;
-        if !acquisition.same_visit_scope(&binding.access)
-            || !binding
-                .releases
-                .iter()
-                .all(|r| r.complete && acquisition.same_visit_scope(&r.visit))
+        let access = &binding.access;
+        if !effects.acquires_at_visit(interval, access)
+            || !binding.releases.iter().all(|r| r.complete && access.same_visit_scope(&r.visit))
         {
             return None;
         }
@@ -75,8 +72,8 @@ impl<'a> Section<'a> {
             })
             .collect::<Option<_>>()?;
         Some(Self {
-            repeated: !acquisition.single_visit(),
-            loop_guards: acquisition
+            repeated: !access.single_visit(),
+            loop_guards: access
                 .loops()
                 .flat_map(|site| {
                     schedule

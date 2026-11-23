@@ -1,9 +1,56 @@
 //! Borrow, publish and resume an acquisition-relative payload at a source
 //! branch or checked call, using the same charged tree as a direct guard access.
 use super::*;
-use crate::resource::memory::synchronization::{helpers::Call, local::View, optional::GuardOption};
+use crate::resource::memory::{
+    summary::FunctionSummary,
+    synchronization::{helpers::Call, local::View, optional::GuardOption},
+};
+
+impl FunctionSummary {
+    /// When every borrowed owner is an untouched imported mutex, all original
+    /// input lifetimes stay with those mutexes. Fresh scratch and call allowance
+    /// are still observed at their normal phases, including inside nested calls.
+    pub(in crate::resource::memory) fn returns_guard_without_payload_transfer(&self) -> bool {
+        self.input_paths.is_empty()
+            && self.modified_parameters.is_empty()
+            && self.synchronized_result.and_then(Owned::interval).is_some()
+            && self.effects.as_ref().is_some_and(|body| !body.ownership.retained_workers)
+            && (self.transfer.is_some()
+                || (!self.transfer_required && self.profiles.iter().all(|p| p.inputs.is_empty())))
+    }
+}
 
 impl Analysis<'_> {
+    /// A helper which only locks an imported mutex can bind its identity
+    /// before the first protected access. A callee that reads or writes
+    /// the payload needs an actual ownership descriptor at the call.
+    pub(in crate::resource::memory) fn identity_only_mutex_argument(
+        &self,
+        summary: &FunctionSummary,
+        index: usize,
+        arg: &Expr,
+        typ: &Typ,
+    ) -> Result<bool, VirErr> {
+        let Some(View::Mutex(instance)) = self.synchronization_view(arg) else { return Ok(false) };
+        let Some(payload) = self.layouts.mutex_payload(typ) else { return Ok(false) };
+        let Some(effects) = &summary.effects else { return Ok(false) };
+        let formal = crate::resource::memory::synchronization::Instance::Input(index);
+        if effects.ownership.synchronization_inputs.input_view(index) != Some(View::Mutex(formal))
+            || self.heap.shared.imported_mutex(instance, payload, &arg.span)?.is_none()
+        {
+            return Ok(false);
+        }
+        if summary.modified_parameters.contains(&index)
+            || effects.ownership.payload_borrows().iter().any(|id| id.instance == formal)
+        {
+            return Err(unsupported(
+                &arg.span,
+                "a helper accessing shared mutex contents without an acquisition-relative ownership interface",
+            ));
+        }
+        Ok(true)
+    }
+
     pub(in crate::resource::memory) fn open_guard_arguments(
         &mut self,
         callee: &Function,

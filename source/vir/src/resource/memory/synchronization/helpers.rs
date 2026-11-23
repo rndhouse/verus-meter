@@ -184,6 +184,21 @@ impl Call {
         Ok(())
     }
 
+    /// An interval introduced by this checked call has one caller-visible
+    /// occurrence on return. Incoming guard arguments keep their original visit.
+    pub(in super::super) fn acquires_at_visit(
+        &self,
+        id: Interval,
+        access: &SourceVisit<u64>,
+    ) -> bool {
+        self.visit.same_visit_scope(access)
+            && !self.payload_borrows.contains(&id)
+            && self
+                .intervals
+                .iter()
+                .any(|(formal, actual)| *actual == id && !self.incoming.contains(formal))
+    }
+
     pub(in super::super) fn has_intervals(&self) -> bool {
         !self.intervals.is_empty()
     }

@@ -260,6 +260,15 @@ retains each exit’s byte charge and original ownership regions. Its caller
 selects the returned contents and the remaining mutex contents with the same
 branch condition.
 
+A worker may pass its shared mutex to a helper that returns the native lock
+result without inspecting the payload. The call binds the actual mutex and
+the returned acquisition for that worker and loop visit. The mutex retains the
+payload. Its contents enter the worker’s accounting at the first guarded access.
+A helper that takes the guard, replaces the payload and unlocks publishes the
+entire new allocation tree. A helper that receives only the shared mutex and
+also accesses its contents needs an ownership description for its internal
+acquisition. The verifier rejects the call when that description is unavailable.
+
 For fixed workers with a representable mutex history, a conditional write can
 depend on immutable scalar inputs. An arm that skips the write preserves the
 incoming contents. The verifier checks each proposed transformation at the
