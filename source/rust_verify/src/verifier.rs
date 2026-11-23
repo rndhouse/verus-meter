@@ -2636,6 +2636,24 @@ impl Verifier {
         Ok(())
     }
 
+    /// Publish only after successful verification and Rust's final erasure check.
+    /// A filtered or unchecked invocation still exports the ordinary interface.
+    pub(crate) fn publish_verified_workspace(&mut self) -> Result<(), VirErr> {
+        if !self.args.no_verify
+            && !self.args.no_lifetime
+            && !self.args.no_erasure_check
+            && !self.args.no_trait_conflicts
+            && crate::driver::is_verifying_entire_crate(self)
+            && !self.encountered_error
+            && !self.encountered_vir_error
+            && self.count_errors == 0
+            && let Some(export) = self.pending_memory_export.take()
+        {
+            export.publish()?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn verify_crate<'tcx>(
         &mut self,
         compiler: &Compiler,
@@ -3303,19 +3321,6 @@ impl VerifierCallbacksEraseMacro {
             }
         }
         for err in std::mem::take(&mut *self.verifier.deferred_errors.lock().unwrap()) {
-            reporter.report_as(&err.to_any(), MessageLevel::Error);
-            self.verifier.encountered_vir_error = true;
-        }
-        if !self.verifier.args.no_verify
-            && !self.verifier.args.no_lifetime
-            && crate::driver::is_verifying_entire_crate(&self.verifier)
-            && !self.verifier.encountered_error
-            && !self.verifier.encountered_vir_error
-            && self.verifier.count_errors == 0
-            && compiler.sess.dcx().has_errors().is_none()
-            && let Some(export) = self.verifier.pending_memory_export.take()
-            && let Err(err) = export.publish()
-        {
             reporter.report_as(&err.to_any(), MessageLevel::Error);
             self.verifier.encountered_vir_error = true;
         }
