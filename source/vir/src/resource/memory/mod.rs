@@ -156,6 +156,7 @@ pub fn check_crate(
             &budgets,
             &summaries,
             &synchronization.concurrency,
+            fresh_span,
         )? {
             let empty = HashMap::new();
             concurrency::sites::validate_workers(

@@ -278,6 +278,7 @@ impl Analysis<'_> {
         let parent_loop_counters = std::mem::take(&mut self.growth.loop_counters);
         self.growth.loop_depth = 0;
         let mut worker = Analysis {
+            fresh_span: self.fresh_span,
             worker_inputs: inputs.clone(),
             capture_views: inputs.iter().map(|input| input.name.clone()).collect(),
             evaluations: Default::default(),

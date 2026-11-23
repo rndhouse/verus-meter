@@ -43,6 +43,8 @@ pub(super) struct Checkpoint {
 
 /// One function's evolving ownership state and already checked callee facts.
 pub(super) struct Analysis<'a> {
+    /// Fresh VIR positions for proof checks at implicit source boundaries.
+    pub(super) fresh_span: &'a dyn Fn(&Span) -> Span,
     /// Current actor's lexical capture bindings, used by nested constructions.
     pub(super) worker_inputs: Vec<super::workers::Input>,
     /// Body-local views into a retained closure environment. Moving a view
@@ -228,13 +230,12 @@ impl Analysis<'_> {
         let first_exit = self.flow.exits.len();
         let mut holders = self.transitions.holders.enter(expr);
         self.storage.event(&expr.span, "enter lexical scope".into());
-        for (index, stmt) in stmts.iter().enumerate() {
+        for stmt in stmts {
             if !self.flow.reachable {
                 break;
             }
-            let before_implicit_cleanup = tail.is_none() && index + 1 == stmts.len();
-            let start =
-                holders.before_statement(stmt, before_implicit_cleanup, &mut self.storage)?;
+            let moved_from = self.moved_holder_source(stmt);
+            let start = holders.before_statement(stmt, moved_from, &mut self.storage)?;
             let evaluation = self.enter_temporary_scope(stmt.span.id);
             // Even an early source exit must pass its statement's temporary
             // cleanup before the enclosing lexical scopes unwind.
@@ -385,11 +386,13 @@ impl Analysis<'_> {
             if self.flow.reachable
                 && let StmtX::Decl { pattern, init: Some(_), els: None, .. } = &stmt.x
             {
-                holders.initialized(self.bind_holder(pattern, None));
+                holders.initialized(self.bind_holder(pattern, None, moved_from));
             }
         }
+        if self.flow.reachable {
+            holders.finish(self, expr, tail.as_ref())?;
+        }
         if let Some(tail) = tail.as_ref().filter(|_| self.flow.reachable) {
-            holders.finish(&tail.span, &mut self.storage)?;
             if new_value {
                 self.produced = Some(self.produce(tail)?);
             } else if destination {
@@ -705,6 +708,7 @@ pub(super) fn check(
     budgets: &HashMap<Fun, u64>,
     summaries: &HashMap<Fun, super::summary::FunctionSummary>,
     concurrency: &super::concurrency::Evidence,
+    fresh_span: &dyn Fn(&Span) -> Span,
 ) -> Result<Option<FunctionAnalysis>, VirErr> {
     let Some(&budget) = budgets.get(&function.x.name) else {
         if let Some(body) = &function.x.body {
@@ -742,6 +746,7 @@ pub(super) fn check(
     })?;
     super::control::validate(body, &modes.var_modes)?;
     let mut analysis = Analysis {
+        fresh_span,
         worker_inputs: vec![],
         capture_views: Default::default(),
         evaluations: Default::default(),

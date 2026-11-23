@@ -51,6 +51,9 @@ pub(super) struct VectorState {
 
 #[derive(Default)]
 pub(super) struct Growth {
+    /// Proof positions immediately after a block’s final statement, before
+    /// its locals leave scope. Source blocks with an explicit tail use its span.
+    pub(super) holder_exits: HashMap<crate::messages::AstId, Span>,
     /// Coordinator observations that must share a checked mutex history.
     pub(super) protected_observations: std::collections::BTreeMap<
         super::shared::RootId,

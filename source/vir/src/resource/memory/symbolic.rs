@@ -261,6 +261,24 @@ pub(super) fn instrument(
             }
             let mut checks = growth.before.get(&expr.span.id).cloned().unwrap_or_default();
             let mut rewritten = expr.clone();
+            if let Some(exit) = growth.holder_exits.get(&expr.span.id)
+                && let Some((_, checks)) = sites.get(&exit.id)
+            {
+                // At block entry these byte terms can still be uninitialized.
+                // Check them inside the block, after the final statement and
+                // before source cleanup. No executable value is introduced.
+                let ExprX::Block(stmts, None) = &mut Arc::make_mut(&mut rewritten).x else {
+                    return Err(error(&expr.span, "holder cleanup proof outside its unit block"));
+                };
+                if !seen.obligations.insert(exit.id) {
+                    return Err(error(&expr.span, "ambiguous holder cleanup proof site"));
+                }
+                Arc::make_mut(stmts).extend(
+                    checks.iter().map(|s| {
+                        crate::ast_visitor::map_stmt_spans(s, &mut |span| fresh_span(span))
+                    }),
+                );
+            }
             if let ExprX::Loop {
                 invs,
                 loop_isolation,

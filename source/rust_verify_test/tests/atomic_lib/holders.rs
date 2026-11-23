@@ -101,6 +101,9 @@ fn custom_guard_coverage_follows_the_owned_value_and_allocation() {
     let note = |message: &str| trace.notes.iter().any(|n| n.message == message);
     assert!(note("64-byte allocation only observed within intact holder input 0"));
     assert!(note("64-byte allocation also observed outside intact holder input 0"));
+    assert!(note("61-byte allocation only observed within intact holder input 0"));
+    assert!(note("63-byte allocation only observed within intact holder input 0"));
+    assert!(note("dynamic storage region also observed outside intact holder input 0"));
     assert!(note("51-byte allocation also observed outside intact holder input 0"));
     assert!(!trace.notes.iter().any(|n| n.message.starts_with("52-byte allocation")));
     assert!(note("dynamic storage region only observed within intact holder input 0"));
@@ -115,6 +118,20 @@ fn custom_guard_coverage_follows_the_owned_value_and_allocation() {
     assert!(at_call("scratch(retained);", "checked helper phase with intact holder input 1"));
     assert!(!at_call("scratch(retained);", "checked helper phase with intact holder input 0"));
     assert!(at_call("scratch(g);", "checked helper phase with intact holder local"));
+}
+
+#[test]
+fn symbolic_scratch_and_release_each_need_their_own_peak() {
+    let source = include_str!("exclusive.verus.rs");
+    for (case, allowance) in [
+        ("empty", "if n == 0 { 40 } else { n + 40 }"),
+        ("reserved", "if n == 0 { 41 } else { n + 39 }"),
+    ] {
+        let short = source.replace("if n == 0 { 41 } else { n + 40 }", allowance);
+        let trace = verify_one_file(&format!("short_holder_{case}"), short, &["--no-cheating"])
+            .unwrap_err();
+        crate::common::assert_vir_error_msg(trace, "conditional memory budget exceeded");
+    }
 }
 
 #[test]

@@ -6,10 +6,9 @@ use super::super::{accounting::Accounting, layout::Layouts};
 use crate::{
     ast::*,
     ast_visitor::{AstVisitor, NoScoper, Walk},
-    messages::Span,
 };
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::Arc,
 };
 
@@ -32,6 +31,8 @@ struct Binding {
 #[derive(Default)]
 pub(in super::super) struct Bindings {
     definitions: BTreeMap<Witness, Binding>,
+    /// Immutable names created by a checked whole move share the original witness.
+    moved: HashMap<VarIdent, Witness>,
     /// Only the checked entry of the function or selected match arm opens these scopes.
     entries: BTreeMap<crate::messages::AstId, (Expr, BTreeSet<Witness>)>,
 }
@@ -108,13 +109,21 @@ impl Bindings {
             if !matches!(kind.preliminary_kind, ReadKind::Move(_)) {
                 continue;
             }
-            if let Some((actual, _)) =
-                self.definitions.iter().find(|(_, b)| b.name == *name && b.proof == binding.proof)
-            {
-                actuals.insert(*id, *actual);
+            if let Some(actual) = self.named(name, &binding.proof) {
+                actuals.insert(*id, actual);
             }
         }
         actuals
+    }
+
+    fn named(&self, name: &VarIdent, proof: &Fun) -> Option<Witness> {
+        if let Some(id) = self.moved.get(name) {
+            return (self.definitions[id].proof == *proof).then_some(*id);
+        }
+        self.definitions
+            .iter()
+            .find(|(_, b)| b.name == *name && b.proof == *proof)
+            .map(|(id, _)| *id)
     }
 
     pub(in super::super) fn enter(&self, block: &Expr) -> Scope {
@@ -162,20 +171,15 @@ impl super::super::analysis::Analysis<'_> {
         &mut self,
         pattern: &Pattern,
         arm: Option<&Expr>,
+        moved_from: Option<&VarIdent>,
     ) -> Option<(Witness, VarIdent)> {
-        let PatternX::Var(b) = &pattern.x else { return None };
-        if b.user_mut != Some(false)
-            || !matches!(b.by_ref, ByRef::No)
-            || self.var_modes.get(&b.name) != Some(&Mode::Exec)
-        {
+        let (b, proof) = self.immutable_holder(pattern)?;
+        if !self.slots.contains_key(&b.name) {
             return None;
         }
-        let proof = self.layouts.holder_proof(&b.typ)?.clone();
-        // Never associate a borrowed iteration item or an uninitialized scratch slot.
-        if self.growth.implicit_collection_loop_slots.contains(&b.name)
-            || self.growth.iterator_item_slots.contains(&b.name)
-        {
-            return None;
+        if let Some(id) = moved_from.and_then(|name| self.transitions.holders.named(name, &proof)) {
+            self.transitions.holders.moved.insert(b.name.clone(), id);
+            return Some((id, b.name.clone()));
         }
         let site = pattern.span.id;
         let visit = self.source_visit(site, self.local_occurrences(&pattern.span).ok()?);
@@ -188,6 +192,41 @@ impl super::super::analysis::Analysis<'_> {
             bindings.at_entry(arm, id);
         }
         Some((id, b.name.clone()))
+    }
+
+    /// Only a source-owned, executable binding can carry a population witness.
+    /// Iterator item views and partially initialized slots cannot start a lifetime.
+    fn immutable_holder<'p>(&self, pattern: &'p Pattern) -> Option<(&'p PatternBinding, Fun)> {
+        let PatternX::Var(b) = &pattern.x else { return None };
+        if b.user_mut != Some(false)
+            || !matches!(b.by_ref, ByRef::No)
+            || self.var_modes.get(&b.name) != Some(&Mode::Exec)
+            || self.growth.implicit_collection_loop_slots.contains(&b.name)
+            || self.growth.iterator_item_slots.contains(&b.name)
+        {
+            return None;
+        }
+        Some((b, self.layouts.holder_proof(&b.typ)?.clone()))
+    }
+
+    /// A whole executable move into another immutable name preserves the
+    /// witness continuously. Moving a tracked field or entering proof mode
+    /// cannot use this rule.
+    pub(in super::super) fn moved_holder_source<'s>(&self, stmt: &'s Stmt) -> Option<&'s VarIdent> {
+        if self.transitions.holders.is_empty()
+            || super::super::execution::ignored_statement(stmt, &self.var_modes)
+        {
+            return None;
+        }
+        let StmtX::Decl { pattern, init: Some(source), els: None, .. } = &stmt.x else {
+            return None;
+        };
+        let PlaceX::Local(name) = &source.x else { return None };
+        let (b, proof) = self.immutable_holder(pattern)?;
+        (!b.copy
+            && crate::ast_util::types_equal(&b.typ, &source.typ)
+            && self.transitions.holders.named(name, &proof).is_some())
+        .then_some(name)
     }
 }
 
@@ -242,23 +281,22 @@ impl AstVisitor<Walk, std::convert::Infallible, NoScoper> for Scope {
 
 impl Scope {
     pub(in super::super) fn initialized(&mut self, holder: Option<(Witness, VarIdent)>) {
-        self.0.extend(holder);
+        if let Some((id, name)) = holder {
+            self.0.retain(|(existing, _)| *existing != id);
+            self.0.push((id, name));
+        }
     }
 
     pub(in super::super) fn before_statement(
         &mut self,
         stmt: &Stmt,
-        before_implicit_cleanup: bool,
+        moved_from: Option<&VarIdent>,
         storage: &mut Accounting,
     ) -> Result<usize, VirErr> {
         let start = storage.points().len();
-        if !self.0.is_empty() {
+        if !self.0.is_empty() && moved_from.is_none() {
             let previous = self.0.len();
-            if before_implicit_cleanup {
-                self.0.clear();
-            } else {
-                self.visit_stmt(stmt).unwrap();
-            }
+            self.visit_stmt(stmt).unwrap();
             if self.0.len() != previous {
                 // Release itself need not allocate. Observe all surviving storage
                 // before evaluating the statement that may consume this witness.
@@ -280,16 +318,26 @@ impl Scope {
         }
     }
 
-    /// A tail may transfer a value to the caller. End local coverage at the
-    /// actual tail expression, where the current byte terms are still in scope.
+    /// A tail can transfer the result. With no tail, retain coverage through
+    /// the last statement and observe the survivors just before scope cleanup.
     pub(in super::super) fn finish(
         &self,
-        span: &Span,
-        storage: &mut Accounting,
+        analysis: &mut super::super::analysis::Analysis<'_>,
+        block: &Expr,
+        tail: Option<&Expr>,
     ) -> Result<(), VirErr> {
-        if !self.0.is_empty() {
-            storage.record_live(span)?;
+        if self.0.is_empty() {
+            return Ok(());
         }
-        Ok(())
+        let site = if let Some(tail) = tail {
+            &tail.span
+        } else {
+            analysis
+                .growth
+                .holder_exits
+                .entry(block.span.id)
+                .or_insert_with(|| (analysis.fresh_span)(&block.span))
+        };
+        analysis.storage.record_live(site)
     }
 }

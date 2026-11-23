@@ -158,13 +158,36 @@ fn partial(g: Guard<'_>)
     drop(later);
 }
 
+// Reserving n bytes needs n + 40. At n = 0, release is the peak:
+// the release helper needs 33 bytes while the 8-byte length remains live.
 fn symbolic(g: Guard<'_>, n: usize)
     requires n <= 500,
-    resources peak(memory) <= n + 96,
+    resources peak(memory) <= if n == 0 { 41 } else { n + 40 },
 {
     let buffer: Vec<u8> = Vec::with_capacity(n);
     drop(buffer);
     g.leave();
+}
+
+// Moving the guard transfers the same witness and keeps the existing scratch covered.
+fn rename(g: Guard<'_>)
+    resources peak(memory) <= 256,
+{
+    let data = Box::new([0u8; 61]);
+    let next = g;
+    drop(data);
+    next.leave();
+}
+
+// The last statement runs while the incoming guard is still owned. The retained
+// vector keeps a symbolic byte term live at the implicit end of the block.
+fn lexical(g: Guard<'_>, n: usize)
+    requires n <= 500,
+    resources peak(memory) <= n + 111,
+{
+    let retained: Vec<u8> = Vec::with_capacity(n);
+    let last = Box::new([0u8; 63]);
+    drop(last);
 }
 
 fn work() {
