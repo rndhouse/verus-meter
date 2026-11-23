@@ -32,6 +32,24 @@ functionality, not a later extension or a user-accessible trust escape hatch.
 - [ ] Allow developer-supplied invariants and arithmetic lemmas through the normal
   Verus proof path, without manual byte credits or allocation counters.
 
+## Verified library and custom protocol proofs
+
+Feature commit `69cf54489` implements the fixed-capacity vstd semaphore.
+A successful compare-exchange takes a linear unit token. Explicit release
+consumes it and increments the atomic word. The executable test checks that
+dropping a permit leaves the slot occupied, including across a worker handoff.
+The public holder proof covers any finite collection of owned witnesses from
+the same instance. The existing RwLock proves writer uniqueness and writer/reader
+incompatibility with its existing tokens.
+
+The source regressions verify a custom boolean CAS protocol, reject issuing its
+witness on failure, reject an unprovable holder count, and check permit identity
+after a conditional return from a worker helper. These functional proofs passed
+with the full vstd verifier. The compiler still needs to attach them to live
+allocation footprints, preserve their bindings through calls and worker visits,
+and account for executable protocol bodies. Keep the integration criteria open
+until memory regressions exercise those paths.
+
 ## Completion criteria
 
 A user-defined protocol implemented with the supported atomics exposes proved
@@ -63,7 +81,7 @@ Implement the verification obligations in `docs/verus-meter/concurrent-model.md`
 - [ ] Check initialization, executable transition refinement, invariant-preserved
   holder multiset bounds, witness encapsulation and interference stability. Local
   postconditions or a disconnected abstract state machine are insufficient.
-- [ ] Deliver reusable verified `vstd::resource::semaphore::Semaphore` and unit
+- [x] Deliver reusable verified `vstd::resource::semaphore::Semaphore` and unit
   `Permit` with new/acquire/try_acquire/explicit release, immutable symbolic capacity
   and occupied capacity for discarded unreleased witnesses. Use existing SC
   PAtomicBool/PAtomicUsize facilities; no async runtime dependency is required.
