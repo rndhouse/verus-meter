@@ -3,7 +3,8 @@
 These tasks track implementation of the concurrent core.
 The [07 plan](07-symbolic-concurrent-bound-composition.md) covers total byte bounds in five steps. Fixed workers can now share one scratch allowance when each buffer is allocated and freed while holding the same mutex. [07.1 — Fixed workers and mutual exclusion](complete/07.1-fixed-worker-peak.md)
 The same scratch bound now holds for a symbolic number of workers published in a loop. [07.2 — Symbolic worker counts](complete/07.2-symbolic-worker-counts.md)
-Next is [07.3 — Permits and verified protocols](07.3-permits-and-verified-protocols.md).
+Verified permits and reader/writer roles now constrain which workers’ allocations can coexist. [07.3 — Permits and verified protocols](complete/07.3-permits-and-verified-protocols.md)
+Next is [07.4 — Helpers, retained storage and nested workers](07.4-helpers-and-retained-storage.md).
 The [05 integration review](complete/05-function-and-worker-summaries.md#integration-review) covers helper and worker summaries. The [final worker audit](complete/03.4.3-validate-and-close-03.md) records the verified worker scope and integration checks.
 
 ## Authoritative location
@@ -55,7 +56,7 @@ Preserve the semantics and synchronization precision established in 01 throughou
 | [ ] | [07 — Symbolic concurrent bound composition](07-symbolic-concurrent-bound-composition.md) | Tight total bounds, generated proofs and diagnostics. |
 | [x] | [07.1 — Fixed workers and mutual exclusion](complete/07.1-fixed-worker-peak.md) | Prove a total bound for two workers using one mutex. |
 | [x] | [07.2 — Symbolic worker counts](complete/07.2-symbolic-worker-counts.md) | Extend the same proof from two workers to a symbolic number of workers. |
-| [ ] | [07.3 — Permits and verified protocols](07.3-permits-and-verified-protocols.md) | Use verified capacity and reader/writer guarantees in total bounds. |
+| [x] | [07.3 — Permits and verified protocols](complete/07.3-permits-and-verified-protocols.md) | Use verified capacity and reader/writer guarantees in total bounds. |
 | [ ] | [07.4 — Helpers, retained storage and nested workers](07.4-helpers-and-retained-storage.md) | Preserve tight totals through calls, transfers, repeated acquisition and nested spawns. |
 | [ ] | [07.5 — Sections, checkpoints and diagnostics](07.5-sections-queries-and-diagnostics.md) | Apply the global proof to scoped observations and explain unproved bounds. |
 | [ ] | [08 — Core integration and completion](08-core-integration-and-completion.md) | Full capability audit, regression coverage and user documentation. |
