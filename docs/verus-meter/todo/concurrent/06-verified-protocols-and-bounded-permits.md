@@ -23,7 +23,7 @@ functionality, not a later extension or a user-accessible trust escape hatch.
 - [ ] Integrate existing verified synchronization, including the selected RwLock
   surface, with its actual release semantics. Avoid re-proving library guarantees
   already available; identify any genuinely missing exported proof facts.
-- [ ] Implement the selected bounded-permit protocol/API. Preserve permit instance
+- [x] Implement the selected bounded-permit protocol/API. Preserve permit instance
   and capacity relationships through acquire, move, borrow and release. Model
   every admitted capacity mutation; unsupported mutations must reject explicitly.
   - [x] Meter calls to an existing vstd semaphore's `try_acquire` and `acquire`
@@ -96,12 +96,13 @@ rejects one byte less. A worker can move a permit into a helper and receive it
 back on the successful path. Separate vstd builds with verification or lifetime
 checking disabled supplied neither a holder proof nor an acquisition workspace.
 
-Next, connect **separate acquisitions** to their issuer and symbolic capacity in
-the memory summaries. Verus already proves that a successful vstd acquisition
-returns a permit for its receiver. The memory analysis must carry that fact
-between workers before TODO 07 can apply the holder limit to their combined
-peak. Connect the RwLock reader/writer proofs to their executable acquire and
-release lifetimes as part of 06.
+Feature commit `8defaa5d3` connects independently acquired witnesses to the
+symbolic capacity and instance projections of the actual receiver. A custom
+CAS acquisition and the vstd semaphore use ordinary verified postconditions.
+Two workers acquiring through cloned strong handles report the same backing
+for their 51-byte and 52-byte buffers. Substituting a second semaphore with the
+same capacity reports distinct backings. A conditional issuer assertion cannot
+supply this relation. TODO 07 consumes these facts for the combined peak.
 
 Feature commit `c894af372` measures semaphore construction, including its
 generic atomic wrapper. A caller verifies the returned capacity equals the
