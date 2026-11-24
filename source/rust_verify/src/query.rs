@@ -80,6 +80,8 @@ pub(crate) struct State<'tcx> {
 }
 
 pub(crate) struct Query<'tcx> {
+    /// Source datatypes available to memory queries and executable accounting.
+    memory_datatypes: Vec<vir::ast::Datatype>,
     args: Args,
     reporter: Box<dyn Diagnostics + 'tcx>,
     crate_id: CrateId,
@@ -118,6 +120,11 @@ impl<'tcx> Query<'tcx> {
         crate_id: CrateId,
     ) -> Self {
         Self {
+            memory_datatypes: crate::resource::memory::pipeline::layout_definitions(
+                &pre_crate.ctxt,
+                &pre_crate.krate_without_funs.datatypes,
+                &other_vir_crates,
+            ),
             args,
             reporter,
             crate_id,
@@ -510,7 +517,7 @@ impl<'tcx> Query<'tcx> {
 
         let function = crate::resource::memory::pipeline::resolve_sizes(
             ctxt,
-            &pre_crate.krate_without_funs,
+            &self.memory_datatypes,
             &function,
         )
         .map_err(|e| self.emit_error(e))?;
@@ -606,6 +613,7 @@ impl<'tcx> Query<'tcx> {
             &pre_crate.ctxt,
             &mut cratex,
             &other_vir_crates,
+            &self.memory_datatypes,
             &resource_modes,
             &resource_erasure,
             self.args.trace,

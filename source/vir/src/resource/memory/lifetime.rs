@@ -300,12 +300,17 @@ impl Analysis<'_> {
             ExprX::Call {
                 target: CallTarget::Fun(CallTargetKind::Static, target, _, _, _),
                 ..
-            } if self.budgets.contains_key(target) => {
-                self.call_expr(expr, false)?;
-                return self
-                    .produced
-                    .take()
-                    .ok_or_else(|| unsupported(&expr.span, "a call without a produced result"));
+            } => {
+                let produces_result = match self.layouts.imported_leaves.get(target) {
+                    Some(_) => super::construction::aggregate(&expr.typ),
+                    None => self.budgets.contains_key(target),
+                };
+                if produces_result {
+                    self.call_expr(expr, false)?;
+                    return self.produced.take().ok_or_else(|| {
+                        unsupported(&expr.span, "a call without a produced result")
+                    });
+                }
             }
             _ => {}
         }

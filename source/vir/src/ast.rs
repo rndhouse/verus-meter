@@ -1644,8 +1644,8 @@ pub type FunctionAttrs = Arc<FunctionAttrsX>;
 pub struct FunctionAttrsX {
     /// Experimental memory contract; its variant identifies the cost model.
     pub resource_contract: Option<crate::resource::memory::ResourceContract>,
-    /// Source-derived workspace for a reviewed scalar synchronization helper.
-    pub resource_leaf: Option<crate::resource::memory::synchronization::Leaf>,
+    /// Present on a checked resource proof or an executable helper with a measured inline workspace.
+    pub resource_body: Option<crate::resource::memory::synchronization::CheckedBody>,
     /// Erasure and lifetime checking based on ghost blocks
     pub uses_ghost_blocks: bool,
     /// Inline spec function for SMT

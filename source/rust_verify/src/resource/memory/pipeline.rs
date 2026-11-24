@@ -3,6 +3,7 @@
 //! This requires mode-checked local bodies in their original VIR form, before
 //! resolution inference or simplification rewrites places and control flow.
 
+pub(crate) use super::protocol::layout_definitions;
 use crate::context::Context;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -19,6 +20,7 @@ pub(crate) fn check(
     ctxt: &Context<'_>,
     krate: &mut KrateX,
     imports: &[vir::ast::Krate],
+    memory_datatypes: &[vir::ast::Datatype],
     modes: &HashMap<Fun, Arc<ResolutionInfo>>,
     erasure: &HashMap<Fun, Arc<crate::context::ErasureInfo>>,
     trace: bool,
@@ -34,7 +36,7 @@ pub(crate) fn check(
         synchronization_types,
         lifetime_checks,
     )?;
-    super::protocol::bind_holder_proofs(ctxt, krate, &mut synchronization);
+    super::protocol::bind_holder_proofs(ctxt, krate, imports, &mut synchronization);
     super::protocol::bind_leaf_workspaces(ctxt, krate, imports, &mut synchronization);
     if trace {
         let mut closures: Vec<_> = synchronization.concurrency.closures.values().collect();
@@ -42,7 +44,7 @@ pub(crate) fn check(
         for closure in closures {
             let storage = vir::resource::memory::concurrency::capture_storage(
                 closure,
-                &krate.datatypes,
+                memory_datatypes,
                 global_allocator.clone(),
                 vector.clone(),
                 option.clone(),
@@ -94,7 +96,7 @@ pub(crate) fn check(
     let mut incomplete = Vec::new();
     let reports = vir::resource::memory::check_crate(
         &mut krate.functions,
-        &krate.datatypes,
+        memory_datatypes,
         modes,
         global_allocator,
         vector,
@@ -207,13 +209,13 @@ fn identities(ctxt: &Context<'_>) -> (Option<Dt>, Option<Dt>, Option<Dt>) {
 /// `ref_size` without teaching the rest of Verus about memory accounting.
 pub(crate) fn resolve_sizes(
     ctxt: &Context<'_>,
-    krate: &KrateX,
+    memory_datatypes: &[vir::ast::Datatype],
     function: &vir::ast::Function,
 ) -> Result<vir::ast::Function, VirErr> {
     let (global_allocator, vector, option) = identities(ctxt);
     vir::resource::memory::resolve_sizes(
         function,
-        &krate.datatypes,
+        memory_datatypes,
         global_allocator,
         vector,
         option,

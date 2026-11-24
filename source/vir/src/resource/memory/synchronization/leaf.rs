@@ -1,6 +1,5 @@
-//! Closed inline workspace of verified synchronization helpers that return a
-//! scalar or unit. A caller can supply the result destination. Argument
-//! evaluation still runs at the call site, before the callee takes its slots.
+//! Closed inline workspace of verified synchronization helpers. A caller may
+//! supply the result destination. Arguments are evaluated before the call.
 use super::local::Boundary;
 use crate::ast::*;
 use crate::resource::memory::{
@@ -13,22 +12,32 @@ use crate::resource::memory::{
 use serde::{Deserialize, Serialize};
 use vir_macros::ToDebugSNode;
 
-/// Maximum simultaneous inline bytes of a checked body, split by result lifetime.
+/// Evidence for the specific function carrying this attribute. An executable
+/// body contributes a measured workspace. A proof body is erased. In both cases
+/// importers receive the certificate only after whole-crate verification and
+/// lifetime checking. Keeping the existing fields preserves the export encoding.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, ToDebugSNode)]
-pub struct Leaf {
+pub struct CheckedBody {
     /// Largest charge at a point without an overlap with the returned value.
     before_result: u64,
     /// Largest charge at a point where the returned value already occupies storage.
     with_result: Option<u64>,
 }
 
-impl Leaf {
+impl CheckedBody {
+    /// A local population proof has no executable storage. Its resolved trait
+    /// method and successful verification establish the fact on import.
+    pub fn erased_proof() -> Self {
+        Self::default()
+    }
+
     pub(in crate::resource::memory) fn from_body(
         function: &Function,
         checked: &FunctionAnalysis,
     ) -> Result<Self, VirErr> {
-        let fail =
-            || unsupported(&function.span, "publishing a non-scalar or non-local helper footprint");
+        let fail = || {
+            unsupported(&function.span, "publishing a non-local synchronization helper footprint")
+        };
         let summary = checked.summary.as_ref().ok_or_else(fail)?;
         if checked.incomplete.is_some()
             || summary.transfer_required
@@ -37,7 +46,7 @@ impl Leaf {
         {
             return Err(unsupported(
                 &function.span,
-                "an imported scalar helper with ownership, worker, or helper-call effects",
+                "an imported synchronization helper with ownership, worker, or helper-call effects",
             ));
         }
         let mut leaf = Self::default();
@@ -45,7 +54,7 @@ impl Leaf {
             let total = contracts::constant(&p.cost.total()).ok_or_else(|| {
                 unsupported(
                     &function.span,
-                    "an imported scalar helper with an unresolved symbolic cost",
+                    "an imported synchronization helper with an unresolved symbolic cost",
                 )
             })?;
             let heap =
@@ -90,13 +99,13 @@ impl Analysis<'_> {
             return Ok(Some(0));
         }
         let Some(leaf) = self.layouts.imported_leaves.get(target).copied() else { return Ok(None) };
-        if !types.is_empty()
-            || !impls.is_empty()
-            || !(contracts::scalar(&value.typ) || super::super::model::unit(&value.typ))
-        {
+        let inline_result = contracts::scalar(&value.typ)
+            || super::super::model::unit(&value.typ)
+            || super::super::construction::aggregate(&value.typ) && !self.layouts.owner(&value.typ);
+        if !types.is_empty() || !impls.is_empty() || !inline_result {
             return Err(unsupported(
                 &value.span,
-                "an imported synchronization helper with owning or generic output",
+                "an imported synchronization helper without a concrete inline result",
             ));
         }
         let mut operands = Vec::new();
@@ -104,7 +113,7 @@ impl Analysis<'_> {
             if self.layouts.owner(&arg.typ) {
                 return Err(unsupported(
                     &arg.span,
-                    "an owning argument to a scalar synchronization helper",
+                    "an owning argument to an inline synchronization helper",
                 ));
             }
             operands.push(self.produce(arg)?);
@@ -131,6 +140,11 @@ impl Analysis<'_> {
         let kind = MemoryKind::host_local();
         self.storage.reserve(&value.span, kind.clone(), bytes, "verified helper body")?;
         self.storage.release(&value.span, kind, bytes, "verified helper body");
+        // The profile already included its output wherever the two overlapped.
+        // Only the returned aggregate continues occupying a slot at the caller.
+        if !destination && super::super::construction::aggregate(&value.typ) {
+            self.produced = Some(self.fresh_value(&value.span, &value.typ)?);
+        }
         self.transitions
             .operation(&value.span, checked::Operation::Evaluate { args: args.clone() });
         Ok(Some(0))

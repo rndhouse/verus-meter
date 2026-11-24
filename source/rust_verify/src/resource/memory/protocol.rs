@@ -4,14 +4,46 @@ use crate::context::Context;
 use rustc_span::Symbol;
 use std::collections::HashSet;
 use std::sync::Arc;
-use vir::ast::{Fun, FunX, Krate, KrateX};
+use vir::ast::{Datatype, Dt, Fun, FunX, Krate, KrateX};
 use vir::resource::memory::{BudgetExprX, ResourceContract, synchronization::CompilerEvidence};
+
+const SEMAPHORE: &str = "verus::vstd::resource::semaphore::Semaphore";
+const PERMIT: &str = "verus::vstd::resource::semaphore::Permit";
+
+/// Size queries and the executable pass must see identical source fields, including
+/// the private issuer reference and erased token of an imported permit. Only the
+/// reviewed nominal vstd types extend the local layout universe.
+pub(crate) fn layout_definitions(
+    ctxt: &Context<'_>,
+    local: &[Datatype],
+    imports: &[Krate],
+) -> Vec<Datatype> {
+    let mut definitions = local.to_vec();
+    let imported: HashSet<_> = [SEMAPHORE, PERMIT]
+        .into_iter()
+        .filter_map(|name| {
+            let id = ctxt.tcx.get_diagnostic_item(Symbol::intern(name))?;
+            (!id.is_local()).then(|| Dt::Path(ctxt.def_id_to_vir_path(id)))
+        })
+        .collect();
+    if !imported.is_empty() {
+        definitions.extend(
+            imports
+                .iter()
+                .flat_map(|krate| &krate.datatypes)
+                .filter(|dt| imported.contains(&dt.x.name))
+                .cloned(),
+        );
+    }
+    definitions
+}
 
 /// Record which obligation would justify a bound for this concrete witness.
 /// A method body can still fail verification. Discovery does not certify it.
 pub(super) fn bind_holder_proofs(
     ctxt: &Context<'_>,
-    krate: &KrateX,
+    krate: &mut KrateX,
+    imports: &[Krate],
     evidence: &mut CompilerEvidence,
 ) {
     use vir::ast::{FunctionKind, Mode, TypX};
@@ -30,27 +62,41 @@ pub(super) fn bind_holder_proofs(
         return;
     };
     let declaration = ctxt.def_id_to_vir_path(method.def_id);
-    for f in &krate.functions {
+    let holder = |f: &vir::ast::Function| {
         let FunctionKind::TraitMethodImpl {
             method, trait_typ_args, inherit_body_from: None, ..
         } = &f.x.kind
         else {
-            continue;
+            return None;
         };
         if method.path != declaration
             || f.x.mode != Mode::Proof
-            || f.x.body.is_none()
             || f.x.attrs.is_external_body
             || !f.x.typ_params.is_empty()
             || !f.x.typ_bounds.is_empty()
         {
-            continue;
+            return None;
         }
-        if let [ty] = trait_typ_args.as_slice()
-            && let TypX::Datatype(dt, args, _) = &**ty
-            && args.is_empty()
+        let [ty] = trait_typ_args.as_slice() else { return None };
+        let TypX::Datatype(dt, args, _) = &**ty else { return None };
+        args.is_empty().then(|| dt.clone())
+    };
+    for f in &mut krate.functions {
+        if f.x.body.is_some()
+            && let Some(dt) = holder(f)
         {
-            evidence.holder_proofs.insert(dt.clone(), f.x.name.clone());
+            evidence.holder_proofs.insert(dt, f.x.name.clone());
+            // The exporter withholds this together with executable workspaces
+            // until this proof and the crate's erased Rust checks have passed.
+            Arc::make_mut(&mut Arc::make_mut(f).x.attrs).resource_body =
+                Some(vir::resource::memory::synchronization::CheckedBody::erased_proof());
+        }
+    }
+    for f in imports.iter().flat_map(|krate| &krate.functions) {
+        if f.x.attrs.resource_body.is_some()
+            && let Some(dt) = holder(f)
+        {
+            evidence.holder_proofs.insert(dt, f.x.name.clone());
         }
     }
 }
@@ -71,17 +117,24 @@ pub(super) fn bind_leaf_workspaces(
     {
         record(id);
     }
-    if let Some(id) = tcx.get_diagnostic_item(Symbol::intern("verus::vstd::atomic::PAtomicUsize")) {
-        for imp in tcx.inherent_impls(id) {
-            for item in tcx.associated_items(*imp).in_definition_order() {
-                if matches!(tcx.item_name(item.def_id).as_str(), "fetch_add" | "fetch_sub") {
-                    record(item.def_id);
+    for (name, methods) in [
+        ("verus::vstd::atomic::PAtomicUsize", &["fetch_add", "fetch_sub"][..]),
+        (PERMIT, &["release"][..]),
+        (SEMAPHORE, &["try_acquire", "acquire"][..]),
+    ] {
+        if let Some(id) = tcx.get_diagnostic_item(Symbol::intern(name)) {
+            for imp in tcx.inherent_impls(id) {
+                for item in tcx.associated_items(*imp).in_definition_order() {
+                    if methods.contains(&tcx.item_name(item.def_id).as_str()) {
+                        record(item.def_id);
+                    }
                 }
             }
         }
     }
     for function in imports.iter().flat_map(|krate| &krate.functions) {
-        if let Some(leaf) = function.x.attrs.resource_leaf
+        if function.x.mode == vir::ast::Mode::Exec
+            && let Some(leaf) = function.x.attrs.resource_body
             && reviewed.contains(&function.x.name)
         {
             evidence.imported_leaves.insert(function.x.name.clone(), leaf);

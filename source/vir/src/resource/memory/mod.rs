@@ -174,7 +174,7 @@ pub fn check_crate(
             if synchronization.measure_leaves.contains(&function.x.name) {
                 // The call graph orders these checked bodies before local clients.
                 // Use the same measured workspace on both sides of a crate boundary.
-                let leaf = synchronization::Leaf::from_body(function, &checked)?;
+                let leaf = synchronization::CheckedBody::from_body(function, &checked)?;
                 layouts.imported_leaves.insert(function.x.name.clone(), leaf);
             }
             if let Some(summary) = &checked.summary {
@@ -213,7 +213,7 @@ pub fn check_crate(
                 model::unsupported(&function.span, "an unmeasured synchronization helper")
             })?;
             let attrs = Arc::make_mut(&mut Arc::make_mut(function).x.attrs);
-            attrs.resource_leaf = Some(leaf);
+            attrs.resource_body = Some(leaf);
             attrs.resource_contract = None;
         }
     }

@@ -14,7 +14,7 @@ use vir_macros::ToDebugSNode;
 
 pub(super) mod atomic;
 mod leaf;
-pub use leaf::Leaf;
+pub use leaf::CheckedBody;
 pub mod flow;
 pub(super) mod helpers;
 pub(super) mod holders;
@@ -94,9 +94,10 @@ pub struct CompilerEvidence {
     pub concurrency: super::concurrency::Evidence,
     /// Resolved native types used for source layouts and primitive contracts.
     pub types: LibraryTypes,
-    /// Closed scalar footprints produced from imported executable vstd bodies.
-    pub imported_leaves: HashMap<crate::ast::Fun, Leaf>,
-    /// Concrete, local population proof bodies. Their identity is a dependency, not a proved bound.
+    /// Closed inline workspaces measured from verified executable vstd bodies.
+    pub imported_leaves: HashMap<crate::ast::Fun, CheckedBody>,
+    /// Population proof dependencies for concrete holders. Local proofs must succeed in
+    /// this verification, and an imported proof must carry its own body certificate.
     pub holder_proofs: HashMap<Dt, crate::ast::Fun>,
     /// Selected local bodies whose measured footprints should be published.
     pub measure_leaves: std::collections::HashSet<crate::ast::Fun>,

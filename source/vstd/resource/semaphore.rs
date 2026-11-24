@@ -68,6 +68,7 @@ verus! {
 struct_with_invariants! {
     /// A fixed-capacity semaphore. Its only runtime field is a sequentially
     /// consistent atomic counter. Capacity zero is valid.
+    #[cfg_attr(verus_keep_ghost, rustc_diagnostic_item = "verus::vstd::resource::semaphore::Semaphore")]
     pub struct Semaphore {
         available: AtomicUsize<_, slots::available, _>,
         instance: Tracked<slots::Instance>,
@@ -85,6 +86,7 @@ struct_with_invariants! {
 
 /// One occupied slot. Moving this value transfers the slot. Dropping it
 /// leaves the slot occupied. Only an explicit release returns it.
+#[cfg_attr(verus_keep_ghost, rustc_diagnostic_item = "verus::vstd::resource::semaphore::Permit")]
 pub struct Permit<'a> {
     semaphore: &'a Semaphore,
     witness: Tracked<slots::occupied>,
