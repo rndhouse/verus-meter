@@ -74,8 +74,12 @@ impl Layouts {
         vector: Option<Dt>,
         option: Option<Dt>,
     ) -> Self {
+        // RwLock and its private wrappers expose their allocation tree through
+        // Contents. Their private field names must not renumber unrelated
+        // proof paths or capture slots when these library layouts are imported.
         let fields: std::collections::BTreeSet<_> = datatypes
             .iter()
+            .filter(|d| super::synchronization::RwRecord::of(&d.x.name).is_none())
             .flat_map(|d| d.x.variants.iter().flat_map(|v| v.fields.iter().map(|f| f.name.clone())))
             .collect();
         let field_slots =
