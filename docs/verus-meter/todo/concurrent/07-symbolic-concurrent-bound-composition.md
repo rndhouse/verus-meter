@@ -8,6 +8,20 @@ Prove total symbolic peak bounds using the allocation, worker, synchronization
 and summary information already implemented. Tight synchronization-aware bounds
 must work through the normal compiler analysis for standard and custom protocols.
 
+## Implementation order
+
+Work through these five documents in order. Each child delivers checked behavior
+through the ordinary verifier and pairs an accepted total bound with a failure
+that depends on executable code. Follow the validation and completion procedure
+in the concurrent TODO index for each child. Close 07 after the five children
+and the original checklist below have evidence.
+
+- [ ] [07.1 — Fixed workers and mutual exclusion](07.1-fixed-worker-peak.md). Prove a total bound for two workers using one mutex.
+- [ ] [07.2 — Symbolic worker counts](07.2-symbolic-worker-counts.md). Extend the same proof from two workers to a symbolic number of workers.
+- [ ] [07.3 — Permits and verified protocols](07.3-permits-and-verified-protocols.md). Use verified capacity and reader/writer guarantees in total bounds.
+- [ ] [07.4 — Helpers, retained storage and nested workers](07.4-helpers-and-retained-storage.md). Preserve tight totals through calls, transfers, repeated acquisition and nested spawns.
+- [ ] [07.5 — Sections, checkpoints and diagnostics](07.5-sections-queries-and-diagnostics.md). Apply the global proof to scoped observations and explain unproved bounds.
+
 ## Work
 
 - [ ] Compose simultaneous footprints under verified synchronization constraints,

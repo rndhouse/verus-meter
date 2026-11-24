@@ -1,7 +1,7 @@
 # Concurrent symbolic memory analysis TODOs
 
 These tasks track implementation of the concurrent core.
-[06 — Verified protocols and bounded permits](complete/06-verified-protocols-and-bounded-permits.md) records how verified holder guarantees connect to allocation lifetimes. Next is [07 — Symbolic concurrent bound composition](07-symbolic-concurrent-bound-composition.md), which uses those guarantees to prove total byte bounds.
+[06 — Verified protocols and bounded permits](complete/06-verified-protocols-and-bounded-permits.md) records how verified holder guarantees connect to allocation lifetimes. The [07 plan](07-symbolic-concurrent-bound-composition.md) covers total byte bounds in five steps, beginning with [07.1 — Fixed workers and mutual exclusion](07.1-fixed-worker-peak.md).
 The [05 integration review](complete/05-function-and-worker-summaries.md#integration-review) covers helper and worker summaries. The [final worker audit](complete/03.4.3-validate-and-close-03.md) records the verified worker scope and integration checks.
 
 ## Authoritative location
@@ -51,6 +51,11 @@ Preserve the semantics and synchronization precision established in 01 throughou
 | [x] | [05.4 — Repeated acquisitions and loop-selected mutexes](complete/05.4-repeated-acquisitions-and-loop-selected-mutexes.md) | Preserve the selected mutex and its contents across symbolic iterations. |
 | [x] | [06 — Verified protocols and bounded permits](complete/06-verified-protocols-and-bounded-permits.md) | Verified custom protocols, bounded semaphore permits and RwLock reader/writer effects. |
 | [ ] | [07 — Symbolic concurrent bound composition](07-symbolic-concurrent-bound-composition.md) | Tight total bounds, generated proofs and diagnostics. |
+| [ ] | [07.1 — Fixed workers and mutual exclusion](07.1-fixed-worker-peak.md) | Prove a total bound for two workers using one mutex. |
+| [ ] | [07.2 — Symbolic worker counts](07.2-symbolic-worker-counts.md) | Extend the same proof from two workers to a symbolic number of workers. |
+| [ ] | [07.3 — Permits and verified protocols](07.3-permits-and-verified-protocols.md) | Use verified capacity and reader/writer guarantees in total bounds. |
+| [ ] | [07.4 — Helpers, retained storage and nested workers](07.4-helpers-and-retained-storage.md) | Preserve tight totals through calls, transfers, repeated acquisition and nested spawns. |
+| [ ] | [07.5 — Sections, checkpoints and diagnostics](07.5-sections-queries-and-diagnostics.md) | Apply the global proof to scoped observations and explain unproved bounds. |
 | [ ] | [08 — Core integration and completion](08-core-integration-and-completion.md) | Full capability audit, regression coverage and user documentation. |
 
 03.2 brings forward the worker-summary machinery needed to connect actual bodies
