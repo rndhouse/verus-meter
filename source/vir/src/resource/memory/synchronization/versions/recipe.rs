@@ -40,7 +40,7 @@ pub(super) fn assignment(statement: &Stmt) -> Option<(&VarIdent, &Expr)> {
 
 /// Only erased expressions in the memory algebra can travel between scopes.
 /// Every free variable must be bound by a reaching definition or the entry.
-fn operands(value: &Expr) -> Option<Vec<VarIdent>> {
+pub(in crate::resource::memory) fn operands(value: &Expr) -> Option<Vec<VarIdent>> {
     let mut names = Vec::new();
     crate::ast_visitor::expr_visitor_check(value, &mut |_, node| {
         match &node.x {

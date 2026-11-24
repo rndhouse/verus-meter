@@ -620,6 +620,7 @@ impl Analysis<'_> {
         shared.map_owned(|owner| {
             self.rebind_worker_output(owner, &mut retained, &execution, &expr.span, None)
         })?;
+        let delivered = self.storage.points().len();
         self.storage.receive_storage(retained, &expr.span)?;
         let (waiting, ready) =
             waiting.receive_result(&expr.span, &mut self.storage, execution.result.value.bytes);
@@ -652,6 +653,7 @@ impl Analysis<'_> {
             self.growth.before.entry(expr.span.id).or_default().extend(proofs);
         }
         let mut result = self.collect_worker_result(id, &expr.span)?;
+        self.storage.collected_points(delivered, execution.completion);
         result.owner = result_owner;
         let actors = [id].into();
         let packed = self.pack_worker_result(expr, &actors, result)?;

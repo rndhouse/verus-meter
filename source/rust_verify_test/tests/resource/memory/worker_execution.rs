@@ -2,7 +2,7 @@
 
 mod lifecycle;
 
-use super::support::rejects;
+use super::support::{rejects, verifies};
 
 const GLOBAL: &str = "checked worker effects still require global lifetime and interference proofs";
 
@@ -56,7 +56,7 @@ fn returned_runtime_children_use_the_common_ownership_template() {
 
 #[test]
 fn native_worker_body_is_checked_before_the_global_boundary() {
-    rejects(
+    verifies(
         "checked_native_worker",
         r#"
         fn f() resources peak(memory) <= 1024 {
@@ -66,13 +66,12 @@ fn native_worker_body_is_checked_before_the_global_boundary() {
             let result = handle.join();
         }
     "#,
-        GLOBAL,
     );
 }
 
 #[test]
 fn borrowed_body_cleanup_keeps_its_scalar_result() {
-    rejects(
+    verifies(
         "checked_borrowed_worker",
         r#"
         fn f() resources peak(memory) <= 1024 {
@@ -81,7 +80,6 @@ fn borrowed_body_cleanup_keeps_its_scalar_result() {
             let result = handle.join();
         }
     "#,
-        GLOBAL,
     );
 }
 
@@ -110,7 +108,7 @@ fn worker_allocation_emits_a_real_byte_obligation() {
 #[test]
 fn both_join_apis_preserve_verified_payload_postconditions() {
     for spawn in ["std::thread::spawn", "vstd::thread::spawn"] {
-        rejects(
+        verifies(
             &format!("worker_join_{}", spawn.replace("::", "_")),
             &format!(
                 r#"
@@ -122,14 +120,13 @@ fn both_join_apis_preserve_verified_payload_postconditions() {
             }}
         "#
             ),
-            GLOBAL,
         );
     }
 }
 
 #[test]
 fn worker_helper_returns_owned_storage_through_unwrap() {
-    rejects(
+    verifies(
         "worker_helper_return",
         r#"
         fn helper(input: Box<[u8; 16]>) -> Box<[u8; 16]>
@@ -144,7 +141,6 @@ fn worker_helper_returns_owned_storage_through_unwrap() {
             drop(waiting); drop(result);
         }
     "#,
-        GLOBAL,
     );
 }
 
@@ -188,7 +184,7 @@ fn symbolic_worker_loops_use_captured_inputs() {
 
 #[test]
 fn conditional_allocations_and_early_returns_preserve_capture_cleanup() {
-    rejects(
+    verifies(
         "worker_early_return",
         r#"
         fn f(flag: bool) resources peak(memory) <= 1024 {
@@ -200,7 +196,6 @@ fn conditional_allocations_and_early_returns_preserve_capture_cleanup() {
             let result = handle.join().unwrap(); drop(result);
         }
     "#,
-        GLOBAL,
     );
 }
 
@@ -276,7 +271,7 @@ fn captured_and_returned_vector_keeps_allocation_metadata() {
 
 #[test]
 fn worker_local_symbolic_return_has_a_checked_outgoing_descriptor() {
-    rejects(
+    verifies(
         "worker_new_vector_return",
         r#"
         fn f(n: u16) resources peak(memory) <= n + 256 {
@@ -284,7 +279,6 @@ fn worker_local_symbolic_return_has_a_checked_outgoing_descriptor() {
             let result = handle.join().unwrap(); drop(result);
         }
     "#,
-        GLOBAL,
     );
 }
 
@@ -305,10 +299,7 @@ fn failed_worker_correctness_cannot_establish_join_success() {
         &[],
     )
     .unwrap_err();
-    crate::common::assert_vir_error_msgs(
-        error,
-        &["possible arithmetic underflow/overflow", GLOBAL],
-    );
+    crate::common::assert_vir_error_msg(error, "possible arithmetic underflow/overflow");
 }
 
 #[test]
@@ -364,6 +355,7 @@ fn incomplete_global_proof_blocks_no_verify_and_compilation() {
             verus! {
                 fn f() resources peak(memory) <= 1024 {
                     let handle = std::thread::spawn(move || 1u64);
+                    assert(current(memory) <= 1024);
                     let result = handle.join().unwrap();
                 }
             }
@@ -439,7 +431,7 @@ fn returned_storage_stays_charged_while_the_caller_allocates() {
         &[],
     )
     .unwrap_err();
-    crate::common::assert_vir_error_msgs(error, &["memory budget exceeded", GLOBAL]);
+    crate::common::assert_vir_error_msg(error, "peak 144 bytes exceeds budget 128 bytes");
 }
 
 #[test]
@@ -585,7 +577,7 @@ fn publication_uses_the_completed_buffers_actual_symbolic_capacity() {
         use vstd::prelude::*;
         verus! {
         fn f(b: u16) requires b >= 128,
-            resources peak(memory) <= 2 * b + 59,
+            resources peak(memory) <= 2 * b + 61,
         {
             let scratch = Vec::<u8>::with_capacity(b as usize);
             let h = vstd::thread::spawn(move || Vec::<u8>::with_capacity(b as usize));
@@ -594,16 +586,13 @@ fn publication_uses_the_completed_buffers_actual_symbolic_capacity() {
         }
         }
     "#;
-    let valid = crate::verify_one_file("published_buffer_capacity", code.into(), &[]).unwrap_err();
-    crate::common::assert_vir_error_msg(valid, GLOBAL);
+    // Both the capture and the worker Vec slot can still be live at publication.
+    crate::verify_one_file("published_buffer_capacity", code.into(), &[]).unwrap();
     let error = crate::verify_one_file(
         "published_buffer_capacity_short",
-        code.replace("+ 59", "+ 58"),
+        code.replace("+ 61", "+ 60"),
         &[],
     )
     .unwrap_err();
-    crate::common::assert_vir_error_msgs(
-        error,
-        &["memory budget exceeded before spawn returns", GLOBAL],
-    );
+    crate::common::assert_vir_error_msg(error, "memory budget exceeded");
 }

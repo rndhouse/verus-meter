@@ -1,4 +1,5 @@
 //! Acquisition-relative contents of an owning payload shared by fixed workers.
+use super::super::support::{exceeds, verifies};
 use super::rejects;
 
 mod internal;
@@ -83,13 +84,9 @@ const CHECKPOINT: &str = "at a worker checkpoint with shared backing";
 
 #[test]
 fn direct_and_factored_writes_share_the_cell_independently_of_join_order() {
-    diagnostics("direct_writers", &writers(Write::Push, ALIAS, REVERSED), &[LINKED]);
+    verifies("direct_writers", &writers(Write::Push, ALIAS, REVERSED));
     let joins = "let first = producer.join(); let second = consumer.join();";
-    diagnostics(
-        "factored_writers",
-        &writers(Write::Call, ALIAS, joins),
-        &[LINKED, "mutex intervals awaiting global"],
-    );
+    verifies("factored_writers", &writers(Write::Call, ALIAS, joins));
 }
 
 #[test]
@@ -265,7 +262,7 @@ fn a_dynamic_payload_cannot_be_priced_or_extracted_from_its_initial_state() {
         &[LINKED],
     );
     let joins = format!("{REVERSED} let recovered = std::sync::Arc::into_inner(keep);");
-    diagnostics("coordinator_after_both_joins", &writers(Write::Push, &aliases, &joins), &[LINKED]);
+    verifies("coordinator_after_both_joins", &writers(Write::Push, &aliases, &joins));
 }
 
 #[test]
@@ -292,6 +289,13 @@ fn a_fixed_payload_is_counted_once_both_inside_and_outside_the_guard() {
             let a = first.join();
         }
     "#;
+    let total = program
+        .replace("assert(current(memory) <= OUTSIDE);", "")
+        .replace("assert(current(memory) <= INSIDE);", "");
+    // The old and replacement boxes can coexist at the assignment. The
+    // shared cell and the worker refer to the same old allocation.
+    verifies("fixed_replacement", &total.replace("4096", "148"));
+    exceeds("fixed_replacement_short", &total.replace("4096", "147"));
     // 8 capture bytes + 33 bytes for the Arc backing and inline mutex/box
     // + 32 separately allocated bytes. The guard costs another 8 bytes.
     let at = |outside, inside| program.replace("OUTSIDE", outside).replace("INSIDE", inside);
@@ -319,7 +323,7 @@ fn replacing_a_variable_sized_payload_gives_a_tight_bound_while_locked() {
 
 #[test]
 fn a_single_writer_starts_from_the_shared_vectors_published_contents() {
-    diagnostics(
+    verifies(
         "shared_guarded_vector_requires_an_interference_summary",
         r#"
         fn f() resources peak(memory) <= 2000 {
@@ -335,7 +339,6 @@ fn a_single_writer_starts_from_the_shared_vectors_published_contents() {
             drop(m);
         }
     "#,
-        &["distinct mutexes = 1, linked acquisitions = 1"],
     );
 }
 
@@ -427,7 +430,7 @@ fn try_lock_only_opens_the_payload_on_the_path_that_accesses_it() {
             drop(cell);
         }
     "#;
-    diagnostics("try_lock_payload", program, &["distinct mutexes = 1, linked acquisitions = 1"]);
+    verifies("try_lock_payload", program);
 }
 
 #[test]
@@ -450,4 +453,24 @@ fn an_inner_vector_argument_cannot_supply_the_type_of_the_whole_shared_cell() {
         "#,
         "a guard view inconsistent with its captured mutex payload",
     );
+}
+
+#[test]
+fn released_guards_do_not_free_the_shared_vectors_slots_or_boxes() {
+    let aliases = format!("{ALIAS} let keep = cell.clone();");
+    let joins = format!(
+        "{REVERSED} let workspace = Vec::<u8>::with_capacity(1024);
+        drop(workspace); drop(keep);"
+    );
+    let push = "guard.push(Box::new([1u8; 32]));";
+    let retained = writers(Write::Push, &aliases, &joins)
+        .replace("let removed = guard.pop();", push)
+        .replace("drop(removed);", "");
+    let scratch = retained.replace(push, "let scratch = Box::new([1u8; 32]); drop(scratch);");
+    // The final workspace fixes the peak after both joins. Each push retains
+    // one eight-byte slot and 32 owned bytes in that same shared vector.
+    for (name, program, bytes) in [("scratch", scratch, 1139), ("retained", retained, 1219)] {
+        verifies(name, &program.replace("4096", &bytes.to_string()));
+        exceeds(name, &program.replace("4096", &(bytes - 1).to_string()));
+    }
 }

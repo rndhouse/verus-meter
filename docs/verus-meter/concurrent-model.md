@@ -360,6 +360,25 @@ forms is not required. Use a finite phase abstraction with symbolic multipliciti
 if it loses a necessary correlation, allow a stronger proved invariant/refinement
 or report an unproved bound. Never subtract independently maximized peaks.
 
+For fixed workers joined by their publisher, each observation in the publisher
+selects its outstanding children by their completion tags. A child contributes
+its running phases and its post-cleanup result as alternatives. Delivery moves
+that result into the waiting caller’s ledger. A nested worker uses the same rule
+at its own spawn and join sites, keeping mutex and permit identities visible to
+siblings outside its subtree. A checked helper contributes its caller-relative
+profiles, including its full call allowance. Only a guard known to cover an
+allowance can constrain that allowance. Addition at a worker site uses immutable
+captures or a byte estimate proved against the executable ledger at that site.
+
+For a shared mutex with a checked finite payload history, an unlocked cell can
+hold any forest published at a reachable prefix. The global proof charges that
+forest while the cell owns it. A worker that has opened the cell while holding
+its guard accounts for the contents in its own ledger. At a join, the publisher
+can replace a stale cell charge only for identified allocations covered by the
+same history. A box pushed into a shared vector therefore stays live after
+unlock, with its element slot and owned payload. An incomplete history, an
+unexportable worker cost, or a join in another actor can leave the total unproved.
+
 Source budgets retain existing immutable scalar inputs, arithmetic, conditionals,
 size queries, local verified numeric spec helpers and declared-peak queries.
 Express minimum/maximum with conditionals where needed; no new quantifier or sum

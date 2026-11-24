@@ -134,7 +134,7 @@ fn native_calls_keep_their_executable_function_and_worker_body_scopes() {
 
 #[test]
 fn source_worker_invocation_distinguishes_borrowed_and_owned_environments() {
-    let error = crate::verify_one_file(
+    let trace = crate::verify_one_file(
         "source_worker_invocation",
         r#"
         use vstd::prelude::*;
@@ -157,13 +157,9 @@ fn source_worker_invocation_distinguishes_borrowed_and_owned_environments() {
         .into(),
         &["--trace"],
     )
-    .unwrap_err();
-    crate::common::assert_vir_error_msg(
-        error.clone(),
-        "before concurrent lifetime accounting is available",
-    );
+    .unwrap();
     assert_eq!(
-        error
+        trace
             .notes
             .iter()
             .filter(|note| note
@@ -173,7 +169,7 @@ fn source_worker_invocation_distinguishes_borrowed_and_owned_environments() {
         2,
     );
     assert_eq!(
-        error.notes.iter().filter(|note| note.message.contains(
+        trace.notes.iter().filter(|note| note.message.contains(
             "memory worker invocation: OwnedBody; remaining capture cleanup after body: false; implicit capture order: unspecified"
         )).count(),
         1,
@@ -198,7 +194,7 @@ fn ghost_call_arguments_do_not_create_executable_strong_aliases() {
 
 #[test]
 fn native_worker_sites_keep_local_loop_contexts_separate_from_parent_visits() {
-    let error = crate::verify_one_file(
+    let trace = crate::verify_one_file(
         "worker_loop_call_contexts",
         r#"
         use vstd::prelude::*;
@@ -224,11 +220,7 @@ fn native_worker_sites_keep_local_loop_contexts_separate_from_parent_visits() {
         .into(),
         &["--trace"],
     )
-    .unwrap_err();
-    crate::common::assert_vir_error_msg(
-        error.clone(),
-        "before concurrent lifetime accounting is available",
-    );
+    .unwrap();
     for operation in ["StdSpawn", "StdJoin"] {
         for context in [
             "function body, 1 local loop(s), head",
@@ -237,13 +229,13 @@ fn native_worker_sites_keep_local_loop_contexts_separate_from_parent_visits() {
         ] {
             let marker = format!("memory native call binding: {operation} ({context},");
             assert_eq!(
-                error.notes.iter().filter(|note| note.message.contains(&marker)).count(),
+                trace.notes.iter().filter(|note| note.message.contains(&marker)).count(),
                 1,
                 "{marker}",
             );
         }
     }
-    assert!(!error.notes.iter().any(|note| note.message.contains("memory native call unbound")));
+    assert!(!trace.notes.iter().any(|note| note.message.contains("memory native call unbound")));
 }
 
 #[test]
@@ -979,8 +971,8 @@ fn join_success_is_not_assumed_from_functional_specifications() {
 }
 
 #[test]
-fn worker_capture_bridge_runs_before_the_global_memory_gate() {
-    rejects(
+fn worker_capture_bridge_supports_a_checked_scalar_result() {
+    verifies(
         "worker_capture_bridge",
         r#"
         fn f() resources peak(memory) <= 1000 {
@@ -991,13 +983,12 @@ fn worker_capture_bridge_runs_before_the_global_memory_gate() {
             drop(result);
         }
     "#,
-        "before concurrent lifetime accounting is available",
     );
 }
 
 #[test]
 fn proof_only_uses_do_not_make_runtime_worker_captures() {
-    let error = crate::verify_one_file(
+    let trace = crate::verify_one_file(
         "worker_proof_capture_bridge",
         r#"
         use vstd::prelude::*;
@@ -1017,12 +1008,8 @@ fn proof_only_uses_do_not_make_runtime_worker_captures() {
         .into(),
         &["--trace"],
     )
-    .unwrap_err();
-    crate::common::assert_vir_error_msg(
-        error.clone(),
-        "before concurrent lifetime accounting is available",
-    );
-    assert!(error.notes.iter().any(|note| {
+    .unwrap();
+    assert!(trace.notes.iter().any(|note| {
         note.message.contains("memory closure captures: 0 executable fields, 0 inline source bytes")
     }));
 }
@@ -1063,7 +1050,7 @@ fn nested_worker_dependencies_participate_in_recursion_checks() {
 
 #[test]
 fn moved_owners_and_copied_scalars_have_executable_capture_storage() {
-    let error = crate::verify_one_file(
+    let trace = crate::verify_one_file(
         "worker_mixed_capture_storage",
         r#"
         use vstd::prelude::*;
@@ -1086,12 +1073,8 @@ fn moved_owners_and_copied_scalars_have_executable_capture_storage() {
         .into(),
         &["--trace"],
     )
-    .unwrap_err();
-    crate::common::assert_vir_error_msg(
-        error.clone(),
-        "before concurrent lifetime accounting is available",
-    );
-    assert!(error.notes.iter().any(|note| {
+    .unwrap();
+    assert!(trace.notes.iter().any(|note| {
         note.message
             .contains("memory closure captures: 3 executable fields, 18 inline source bytes")
     }));

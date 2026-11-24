@@ -7,7 +7,7 @@ const GLOBAL: &str = "checked worker effects still require global lifetime and i
 
 #[test]
 fn scalar_worker_results_size_buffers_through_a_checked_helper() {
-    rejects(
+    verifies(
         "scalar_worker_helper_buffers",
         r#"
         fn buffer(size: u16) -> Vec<u8>
@@ -43,7 +43,6 @@ fn scalar_worker_results_size_buffers_through_a_checked_helper() {
             }
         }
         "#,
-        GLOBAL,
     );
 }
 
@@ -95,10 +94,9 @@ fn scalar_worker_observations_preserve_boolean_and_signed_results() {
         ("boolean_worker_results", "bool", "value", "i < 4"),
         ("signed_worker_results", "i16", "value < 0", "if i < 4 { -7i16 } else { 9i16 }"),
     ] {
-        rejects(
+        verifies(
             name,
             &source.replace("TYPE", typ).replace("CONDITION", condition).replace("RESULT", result),
-            GLOBAL,
         );
     }
 }
@@ -807,12 +805,10 @@ fn extraction_checks_the_current_join_result_extent() {
         }
         }
     "#;
-    let accepted =
-        crate::verify_one_file("join_overlap", code.replace("LIMIT", "113"), &[]).unwrap_err();
-    crate::common::assert_vir_error_msg(accepted, GLOBAL);
+    crate::verify_one_file("join_overlap", code.replace("LIMIT", "113"), &[]).unwrap();
     let rejected = crate::verify_one_file("join_overlap_short", code.replace("LIMIT", "112"), &[])
         .unwrap_err();
-    crate::common::assert_vir_error_msgs(rejected, &["memory budget exceeded", GLOBAL]);
+    crate::common::assert_vir_error_msg(rejected, "memory budget exceeded");
 }
 
 #[test]
@@ -917,7 +913,7 @@ fn a_captured_collection_uses_its_enclosing_publication() {
 
 #[test]
 fn nested_worker_loop_contexts_are_independent() {
-    rejects(
+    verifies(
         "nested_worker_loops",
         r#"
         fn f(n: u16) resources peak(memory) <= 2048 {
@@ -936,13 +932,12 @@ fn nested_worker_loop_contexts_are_independent() {
             }
         }
         "#,
-        GLOBAL,
     );
 }
 
 #[test]
 fn nested_workers_join_their_actual_children() {
-    rejects(
+    verifies(
         "nested_worker_results",
         r#"
         fn f() resources peak(memory) <= 1024 {
@@ -955,13 +950,12 @@ fn nested_workers_join_their_actual_children() {
             let result = outer.join().unwrap(); drop(result);
         }
         "#,
-        GLOBAL,
     );
 }
 
 #[test]
 fn nested_construction_moves_the_actual_outer_capture() {
-    rejects(
+    verifies(
         "nested_worker_owned_capture",
         r#"
         fn f() resources peak(memory) <= 1024 {
@@ -973,7 +967,6 @@ fn nested_construction_moves_the_actual_outer_capture() {
             let result = outer.join().unwrap(); drop(result);
         }
         "#,
-        GLOBAL,
     );
 }
 

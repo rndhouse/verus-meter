@@ -5,6 +5,7 @@
 //! This product therefore covers each step, including waits and explicit release,
 //! without ordering independent workers by the compiler's traversal order.
 
+mod actor;
 mod population;
 mod roles;
 use roles::{Class, Constraints, Held};
@@ -13,10 +14,10 @@ use super::{WorkerId, execution::Execution};
 use crate::ast::*;
 use crate::messages::Span;
 use crate::resource::memory::{
-    accounting::{CheckKind, Obligation},
+    accounting::{CheckKind, Obligation, Point},
     analysis::Analysis,
     contracts,
-    footprint::MemoryBudget,
+    footprint::{Footprint, MemoryBudget},
     loops::progress::difference,
     model::unit,
     synchronization::Instance,
@@ -92,103 +93,34 @@ fn maximum_cost(span: &Span, costs: &[Expr]) -> Expr {
     contracts::maximum(span, maximum_cost(span, left), maximum_cost(span, right))
 }
 
-/// Only immutable scalar inputs can be read outside the worker. A vector's
-/// initial reservation is a candidate bound on its current charge. Each use
-/// of that candidate is checked in the worker before it is exported.
-fn export(
-    value: &Expr,
-    reservations: &HashMap<VarIdent, Expr>,
-    captures: &HashMap<VarIdent, Expr>,
-) -> Option<(Expr, Expr)> {
-    let local = simplify::specialize(value, reservations);
-    fn stable(value: &Expr, captures: &HashMap<VarIdent, Expr>) -> bool {
-        match &value.x {
-            ExprX::Const(Constant::Int(_)) => true,
-            ExprX::Var(name) => captures.contains_key(name),
-            ExprX::Binary(BinaryOp::Arith(_), a, b) => stable(a, captures) && stable(b, captures),
-            _ => false,
-        }
-    }
-    stable(&local, captures).then(|| (local.clone(), simplify::specialize(&local, captures)))
+/// Keep the classes of descendants until all peers outside their subtree have
+/// been considered. Child activity comes from this publisher's actual ledger.
+fn outstanding<'a>(
+    point: &Point,
+    children: &'a [(WorkerId, Phases)],
+    analysis: &Analysis<'_>,
+) -> impl Iterator<Item = (WorkerId, &'a Phases)> {
+    children.iter().filter_map(move |(id, phases)| {
+        let worker = &analysis.growth.worker_executions[id];
+        (point.values.contains(&worker.completion)
+            && point.collected_tag != Some(worker.completion)
+            && point.values.is_disjoint(&worker.entry.storage.value.ids))
+        .then_some((*id, phases))
+    })
 }
 
-impl Execution {
-    fn phases(
-        &self,
-        analysis: &Analysis<'_>,
-        parameters: &HashSet<VarIdent>,
-        reservations: &HashMap<VarIdent, Expr>,
-        checks: &mut Vec<Obligation>,
-        constraints: &mut Constraints,
-    ) -> Option<Phases> {
-        let span = &self.entry.definition.span;
-        let initial = self.initial.live_expression(span).total();
-        // Separately owned descendants and results need their own transfer
-        // phases. Imported Arc handles borrow the coordinator's charged backing.
-        let completed = self.retained.live_expression(span).total();
-        let indexed_scalar = analysis.growth.retained_worker_families.contains(&self.actor)
-            && contracts::scalar(&self.result.typ);
-        if self.publication.caller.is_some()
-            || !(unit(&self.result.typ) || indexed_scalar)
-            || self.result.owner.is_some()
-            || contracts::constant(&completed) != Some(self.result.value.bytes)
-            || contracts::constant(&initial) != Some(self.entry.storage.value.bytes)
-            || self.effects.calls.iter().any(|(f, _)| !analysis.protocol_helper(f))
-        {
-            return None;
-        }
-        let mut captures = HashMap::new();
-        for input in &self.inputs {
-            if contracts::scalar(&input.typ) {
-                if let Some(name) = self.immutable_scalars.get(&input.name)
-                    && parameters.contains(name)
-                {
-                    captures.insert(
-                        input.name.clone(),
-                        SpannedTyped::new(span, &input.typ, ExprX::Var(name.clone())),
-                    );
-                }
-            } else if !analysis.layouts.inline_protocol_value(&input.typ)
-                && !matches!(&*input.typ, TypX::Decorate(TypDecoration::Arc, _, item)
-                if contracts::scalar(item) || analysis.layouts.inline_protocol_value(item) || analysis.layouts.mutex_payload(item).is_some_and(|t| contracts::scalar(t) || unit(t)))
-            {
-                return None;
-            }
-        }
-        let native: BTreeSet<_> =
-            self.effects.ownership.mutex_intervals(&analysis.transitions).collect();
-        let mut phases = Phases::default();
-        // Completion releases the working frame but retains the inline result
-        // with its handle until join. Both entry and completion are unrestricted.
-        phases.insert(Held::new(), initial);
-        phases.insert(Held::new(), completed);
-        for p in self.effects.points.iter() {
-            let value = p.cost.total();
-            let (local, exported) = export(&value, reservations, &captures)?;
-            if !simplify::inspect::same_expression(&value, &local) {
-                checks.push(Obligation {
-                    span: p.span.clone(),
-                    cost: p.cost.clone(),
-                    bound: MemoryBudget::total(local),
-                    kind: CheckKind::WorkerState("at a worker phase"),
-                });
-            }
-            let mut held: Held = p
-                .condition
-                .held
-                .iter()
-                .filter(|i| native.contains(i))
-                .map(|i| (Class::Mutex(i.instance), 1))
-                .collect();
-            for witness in &p.holders {
-                if let Some(role) = self.effects.ownership.holders.population_role(*witness) {
-                    let class = constraints.register(analysis, parameters, span, role);
-                    held.insert(class, 1);
-                }
-            }
-            phases.insert(held, exported);
-        }
-        Some(phases)
+impl crate::resource::memory::layout::Layouts {
+    pub(in crate::resource::memory::workers) fn private_worker_buffer(&self, typ: &Typ) -> bool {
+        (self.vector(typ) || matches!(&**typ, TypX::Decorate(TypDecoration::Box, _, _)))
+            && self.plain_protected_payload(typ)
+    }
+
+    /// Fixed completion ledgers with an exportable inline or private result.
+    pub(in crate::resource::memory::workers) fn phase_result(&self, typ: &Typ) -> bool {
+        unit(typ)
+            || contracts::scalar(typ)
+            || self.private_worker_buffer(typ)
+            || (self.option(typ) && self.plain_protected_payload(typ))
     }
 }
 
@@ -203,9 +135,14 @@ impl Analysis<'_> {
                 && !(matches!(&*p.x.typ, TypX::Decorate(TypDecoration::Ref, None, _))
                     && !p.x.user_mut
                     && self.layouts.inline_protocol_value(&p.x.typ))
+        }) || self.calls.iter().any(|(target, _)| {
+            self.summaries.get(target).is_some_and(|s| s.worker_parameter().is_some())
         }) || !unit(&function.x.outer_ret.x.typ)
-            || self.calls.iter().any(|(f, _)| !self.protocol_helper(f))
-            || !self.growth.versioned_shared.is_empty()
+            || self
+                .growth
+                .versioned_shared
+                .keys()
+                .any(|root| !self.transitions.protected_histories.contains_key(root))
         {
             return false;
         }
@@ -236,62 +173,140 @@ impl Analysis<'_> {
             .collect();
         let mut checks = Vec::new();
         let mut constraints = Constraints::default();
-        let mut workers = BTreeMap::new();
-        for (&id, w) in &self.growth.worker_executions {
-            if !self
+        // A completion can be charged in its publisher's subtree only while
+        // its tag stays there. Handle delegation needs a separate routing proof.
+        let mut children = BTreeMap::<Option<WorkerId>, Vec<WorkerId>>::new();
+        for (&id, worker) in &self.growth.worker_executions {
+            let mut joins = self
                 .growth
                 .worker_joins
                 .values()
                 .flatten()
-                .any(|j| j.families.len() == 1 && j.families.contains(&id))
+                .filter(|j| j.families.contains(&id))
+                .peekable();
+            if joins.peek().is_none()
+                || !joins.all(|j| j.families.len() == 1 && j.collects_in(worker.publication.caller))
             {
                 return false;
             }
+            children.entry(worker.publication.caller).or_default().push(id);
+        }
+        let mut order = children.get(&None).cloned().unwrap_or_default();
+        let mut i = 0;
+        while i < order.len() {
+            if let Some(descendants) = children.get(&Some(order[i])) {
+                order.extend(descendants);
+            }
+            i += 1;
+        }
+        if order.len() != self.growth.worker_executions.len() {
+            return false;
+        }
+        let mut subtrees = BTreeMap::<Option<WorkerId>, Vec<(WorkerId, Phases)>>::new();
+        for id in order.into_iter().rev() {
+            let w = &self.growth.worker_executions[&id];
+            let descendants = subtrees.remove(&Some(id)).unwrap_or_default();
             let Some(phases) =
-                w.phases(self, &params, &reservations, &mut checks, &mut constraints)
+                w.phases(self, &params, &reservations, &mut checks, &mut constraints, &descendants)
             else {
                 return false;
             };
-            workers.insert(id, phases);
+            subtrees.entry(w.publication.caller).or_default().push((id, phases));
         }
+        let workers = subtrees.remove(&None).unwrap_or_default();
         if !self.growth.retained_worker_families.is_empty() {
-            return self.compose_population(function, workers, checks, &constraints);
+            // An indexed join needs an occurrence-relative result ledger for
+            // owning payloads. The fixed completion tags below cannot price it.
+            if self.growth.worker_executions.len() != 1
+                || self.growth.worker_executions.values().any(|w| w.result.owner.is_some())
+            {
+                return false;
+            }
+            return self.compose_population(
+                function,
+                workers.into_iter().collect(),
+                checks,
+                &constraints,
+            );
         }
-        let mut cache = BTreeMap::<Vec<WorkerId>, Expr>::new();
-        let mut additions = Vec::new();
-        for p in self.storage.points() {
-            // The tag is reserved while the publisher still owns the closure.
-            // That fork observation already includes its captures. Publication
-            // records another caller point immediately after transferring them.
-            let active: Vec<_> = self
-                .growth
-                .worker_executions
-                .iter()
-                .filter(|(_, w)| {
-                    p.values.contains(&w.completion)
-                        && p.values.is_disjoint(&w.entry.storage.value.ids)
+        let idle: BTreeMap<_, _> = self
+            .transitions
+            .protected_histories
+            .iter()
+            .map(|(&root, history)| {
+                let mut phases = Phases::default();
+                phases.insert(Held::new(), contracts::literal(&function.span, 0));
+                phases.insert(
+                    [(Class::Payload(root), 1)].into(),
+                    history.idle_bytes(&function.span)?,
+                );
+                Some((root, phases))
+            })
+            .collect::<Option<_>>()
+            .expect("a linked history has a publication");
+        let views: Vec<_> = workers
+            .iter()
+            .flat_map(|(id, _)| {
+                let worker = &self.growth.worker_executions[id];
+                worker.versioned_roots().collect::<BTreeSet<_>>().into_iter().map(|root| {
+                    (
+                        worker.completion,
+                        root,
+                        self.published_cell_slots(*id, root).collect::<BTreeSet<_>>(),
+                    )
                 })
-                .map(|(id, _)| *id)
+            })
+            .collect();
+        let native: BTreeSet<_> = self.transitions.mutex_intervals(&self.transitions).collect();
+        let mut cache = BTreeMap::new();
+        let mut additions = Vec::new();
+        let mut cells = Vec::new();
+        for p in self.storage.points() {
+            let actors: Vec<_> = outstanding(p, &workers, self).collect();
+            let mut roots = BTreeSet::new();
+            let mut slots = BTreeSet::new();
+            for (tag, root, ids) in &views {
+                if p.values.contains(tag) {
+                    roots.insert(*root);
+                    slots.extend(ids);
+                }
+            }
+            cells.push(slots);
+            let active: Vec<_> = actors
+                .iter()
+                .map(|(_, phases)| *phases)
+                .chain(roots.iter().map(|root| &idle[root]))
                 .collect();
             if active.is_empty() {
                 additions.push(None);
                 continue;
             }
-            let extra = cache.entry(active.clone()).or_insert_with(|| {
+            // The publisher is also an actor. Preserve a held native guard
+            // across its own helper calls while pricing the outstanding peers.
+            let held: Held = p
+                .condition
+                .held
+                .iter()
+                .filter(|i| native.contains(i))
+                .map(|i| (Class::Mutex(i.instance), 1))
+                .collect();
+            let key = (actors.iter().map(|(id, _)| *id).collect::<Vec<_>>(), roots, held.clone());
+            let extra = cache.entry(key).or_insert_with(|| {
                 let mut product = Phases::default();
-                product.insert(Default::default(), contracts::literal(&p.span, 0));
-                for (index, id) in active.iter().enumerate() {
+                product.insert(held, contracts::literal(&p.span, 0));
+                for (index, worker) in active.iter().enumerate() {
                     let remaining = active[index + 1..]
                         .iter()
-                        .flat_map(|id| workers[id].0.keys().flat_map(|held| held.keys().copied()))
+                        .flat_map(|peer| peer.0.keys().flat_map(|held| held.keys().copied()))
                         .collect();
-                    product = product.together(&workers[id], &remaining, &constraints, &p.span);
+                    product = product.together(worker, &remaining, &constraints, &p.span);
                 }
                 product.peak(&p.span).expect("unrestricted worker entry")
             });
             additions.push(Some(extra.clone()));
         }
         self.obligations.extend(checks);
+        self.storage.replace_published_cells(cells);
         self.storage.include_worker_costs(additions);
         true
     }

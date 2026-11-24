@@ -187,11 +187,35 @@ pub fn check_crate(
             if let Some(summary) = &checked.summary {
                 summaries.insert(function.x.name.clone(), summary.clone());
             }
-            if let Some(error) = &checked.incomplete {
-                incomplete.push(error.clone());
-            }
             graph.validate_calls(function, &checked.effects.calls)?;
             reports.push((function.clone(), checked));
+        }
+    }
+    // Call-graph order is callee-first. Walk it backwards to discharge native
+    // helper intervals only when a complete worker proof consumed their checked
+    // call profiles. Independent ownership or worker errors remain mandatory.
+    let mut covered = std::collections::HashSet::new();
+    for (function, checked) in reports.iter().rev() {
+        if checked.incomplete.is_none()
+            && (checked.report.covers_workers || covered.contains(&function.x.name))
+        {
+            checked.effects.validate(&summaries)?;
+            covered.insert(function.x.name.clone());
+            for body in std::iter::once(&checked.effects)
+                .chain(checked.growth.worker_executions.values().map(|w| &w.effects))
+            {
+                covered.extend(body.calls.iter().map(|(target, _)| target.clone()));
+            }
+        }
+    }
+    for (function, checked) in &reports {
+        if let Some(error) = &checked.incomplete {
+            incomplete.push(error.clone());
+        } else if checked.needs_mutex_caller && !covered.contains(&function.x.name) {
+            incomplete.push(model::unsupported(
+                &function.span,
+                "mutex intervals awaiting global synchronization and lifetime coverage",
+            ));
         }
     }
     // Materialize ordinary proof obligations only after checking all structural

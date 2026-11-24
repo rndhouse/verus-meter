@@ -167,6 +167,8 @@ impl DynamicCharge {
 
 #[derive(Clone, Default)]
 pub(super) struct Live {
+    /// Direct acquired views still charged in this path’s worker ledger.
+    payload_views: std::collections::BTreeSet<super::synchronization::local::Interval>,
     /// Entry acquisitions of the immediately enclosing independently contracted section.
     section_entry: Option<Arc<[super::synchronization::local::Interval]>>,
     owned: origins::FixedOrigins,
@@ -184,7 +186,8 @@ impl Live {
     /// Equal live ledgers preserve future destruction, inputs and held guards.
     /// Numeric equality alone cannot identify transported storage.
     fn same_state(&self, other: &Self) -> bool {
-        self.section_entry == other.section_entry
+        self.payload_views == other.payload_views
+            && self.section_entry == other.section_entry
             && self.fixed == other.fixed
             && self.owned == other.owned
             && self.values == other.values
@@ -216,9 +219,11 @@ impl Live {
             cost =
                 cost.add(span, Footprint::charge(kind.clone(), contracts::literal(span, *amount)));
         }
-        for charge in self.dynamic.values() {
-            cost = cost
-                .add(span, Footprint::charge(charge.kind.clone(), dynamic_amount(&charge.amount)));
+        for (id, charge) in &self.dynamic {
+            cost = cost.add(
+                span,
+                Footprint::allocation(*id, charge.kind.clone(), dynamic_amount(&charge.amount)),
+            );
         }
         cost
     }
@@ -245,12 +250,19 @@ pub(super) struct Point {
     /// Call site and callee profile behind this composed observation. The callee
     /// keeps its own constructors, branches and loop binders in the checked graph.
     pub(super) call_point: Option<usize>,
+    /// The join has imported this completion ledger, although its tag is still live.
+    pub(super) collected_tag: Option<u64>,
+    /// True for observations that price all fixed charges of the reaching path.
+    /// A composed call allowance can instead own only a subset.
+    complete_fixed: bool,
     section_entry: Option<Arc<[super::synchronization::local::Interval]>>,
     pub(super) span: Span,
     pub(super) condition: Condition,
     pub(super) cost: Footprint,
     /// Owned witnesses still intact at this point in this actor.
     pub(super) holders: Vec<super::synchronization::holders::Witness>,
+    /// Direct mutex payload views charged on this reaching path.
+    pub(super) payload_views: std::collections::BTreeSet<super::synchronization::local::Interval>,
     /// Fixed heap constructors individually charged on this reaching path.
     pub(super) fixed_origins: std::collections::BTreeSet<origins::FixedOrigin>,
     /// Identified dynamic backing and aggregate-forest charges on this path.
@@ -266,10 +278,13 @@ impl Point {
         Self {
             span: span.clone(),
             call_point: None,
+            collected_tag: None,
+            complete_fixed: false,
             cost,
             condition: Condition { held: path.held.iter().copied().collect(), boundary },
             section_entry: path.section_entry.clone(),
             holders: Vec::new(),
+            payload_views: path.payload_views.clone(),
             fixed_origins: path.fixed_origins(),
             allocations: path.dynamic.keys().copied().collect(),
             values: path.values.keys().copied().collect(),
@@ -318,6 +333,30 @@ impl Accounting {
         }
     }
 
+    pub(super) fn replace_published_cells(&mut self, cells: Vec<std::collections::BTreeSet<u64>>) {
+        assert_eq!(cells.len(), self.report.points.len());
+        for (point, ids) in Arc::make_mut(&mut self.report.points).iter_mut().zip(cells) {
+            if !ids.is_empty() {
+                point.cost = point.cost.without_allocations(&point.span, &ids);
+                if point.complete_fixed {
+                    let fixed = point
+                        .fixed_origins
+                        .iter()
+                        .filter(|o| o.host_heap && ids.contains(&o.identity))
+                        .map(|o| o.bytes)
+                        .sum();
+                    if fixed != 0 {
+                        point.cost = point.cost.remove(
+                            &point.span,
+                            MemoryKind::host_heap(),
+                            contracts::literal(&point.span, fixed),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// Include all compatible worker phases in the originating caller observation.
     /// The coordinator still owns the completion tags and the canonical shared backing.
     pub(super) fn include_worker_costs(&mut self, additions: Vec<Option<Expr>>) {
@@ -340,6 +379,27 @@ impl Accounting {
     pub(super) fn points(&self) -> &[Point] {
         &self.report.points
     }
+    pub(super) fn payload_view(
+        &mut self,
+        interval: super::synchronization::local::Interval,
+        open: bool,
+    ) {
+        for path in &mut self.paths {
+            if open {
+                path.payload_views.insert(interval);
+            } else {
+                path.payload_views.remove(&interval);
+            }
+        }
+    }
+
+    /// Delivery transfers ownership before the join releases its handle and tag.
+    pub(super) fn collected_points(&mut self, first: usize, tag: u64) {
+        for point in &mut Arc::make_mut(&mut self.report.points)[first..] {
+            point.collected_tag = Some(tag);
+        }
+    }
+
     pub(super) fn restore_live(&mut self, other: &Self) {
         self.paths = other.paths.clone();
     }
@@ -615,7 +675,9 @@ impl Accounting {
 
     fn record_phase(&mut self, span: &Span, cost: Footprint, path: &Live, boundary: Boundary) {
         self.peak_costs.push((span.clone(), cost.clone()));
-        Arc::make_mut(&mut self.report.points).push(Point::from_live(span, cost, path, boundary));
+        let mut point = Point::from_live(span, cost, path, boundary);
+        point.complete_fixed = true;
+        Arc::make_mut(&mut self.report.points).push(point);
         self.report.conditional = true;
     }
     #[cfg(test)]

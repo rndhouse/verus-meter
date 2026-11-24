@@ -102,8 +102,7 @@ fn an_internal_push_uses_an_independent_input_at_each_visit() {
             drop(cell);
         }
     "#;
-    let linked = "distinct mutexes = 1, linked acquisitions = 1";
-    diagnostics("one_internal_push", source, &[HELPER, linked]);
+    super::verifies("one_internal_push", source);
     let repeated = source.replace(
         "append(&*peer, b);",
         r#"
@@ -116,7 +115,7 @@ fn an_internal_push_uses_an_independent_input_at_each_visit() {
     diagnostics(
         "growing_internal_push",
         &repeated,
-        &[HELPER, linked, "a repeated mutex release falls outside its proposed contents"],
+        &["a repeated mutex release falls outside its proposed contents"],
     );
     let twice =
         source.replace("let r = m.lock();", "let first = m.lock(); drop(first); let r = m.lock();");

@@ -65,6 +65,8 @@ pub(in super::super) struct Execution {
     pub(super) result: Storage,
     /// All storage retained by completion, including newly created shared backing.
     pub(super) retained: Accounting,
+    /// Post-cleanup ledger on each normal return, in the original worker scope.
+    pub(super) exits: Vec<(Span, super::super::footprint::Footprint)>,
     /// Entry-to-exit strong-reference relation and newly owned roots.
     pub(super) shared: super::super::shared::SharedRoots,
 }
@@ -177,6 +179,10 @@ impl Analysis<'_> {
             .values()
             .flat_map(|worker| worker.versioned_roots())
             .collect();
+        if self.compose_workers(function) {
+            self.worker_obligations()?;
+            return Ok(None);
+        }
         if !versions.is_empty() {
             let count = versions.len();
             let roots: std::collections::BTreeSet<_> = versions.into_iter().collect();
@@ -187,10 +193,6 @@ impl Analysis<'_> {
                     roots.len()
                 ),
             )));
-        }
-        if self.compose_workers(function) {
-            self.worker_obligations()?;
-            return Ok(None);
         }
         Ok(Some(unsupported(
             span,
@@ -260,9 +262,9 @@ impl Analysis<'_> {
                 span,
             )?;
         }
-        if self.current_worker.is_none() && unit(result_type) {
-            // The fixed-worker envelope needs the caller immediately after
-            // transfer, even when it makes no allocation before blocking.
+        // An eligible publisher can block immediately after transferring the
+        // captures. Other result protocols use their own publication proofs.
+        if self.layouts.phase_result(result_type) {
             self.storage.record_live(span)?;
         }
         let publication = self.publication_state(span, actor, at_fork)?;
@@ -406,6 +408,7 @@ impl Analysis<'_> {
         // An implicit capture group has no promised release order for exclusion.
         let mut cleanup_error = None;
         let mut capture_cleanup = Vec::new();
+        let mut exits = Vec::new();
         worker.cleanup_edges(0, |worker, exit| {
             let exit = exit.unwrap_or(&body.span).clone();
             if worker.flow.reachable {
@@ -456,6 +459,12 @@ impl Analysis<'_> {
                     worker.release_value(storage.value, span);
                 }
                 Err(error) => cleanup_error = Some(error),
+            }
+            if worker.flow.reachable
+                && worker.layouts.owner(result_type)
+                && worker.layouts.phase_result(result_type)
+            {
+                exits.push((exit.clone(), worker.storage.live_expression(&exit)));
             }
         });
         if let Some(error) = cleanup_error {
@@ -569,6 +578,7 @@ impl Analysis<'_> {
             transfer,
             transfer_required,
             capture_cleanup,
+            exits,
             synchronization: closure.body.clone(),
             requirements: requires.clone(),
             obligations: worker.obligations,

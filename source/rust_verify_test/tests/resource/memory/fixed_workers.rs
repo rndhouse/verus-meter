@@ -118,3 +118,5 @@ fn a_failed_try_lock_does_not_cover_scratch() {
     verifies("failed_attempt_pair", &pair("2 * b + 256", "left.clone()", &attempt));
     exceeds("failed_attempt_pair_short", &pair("b + 256", "left.clone()", &attempt));
 }
+
+mod composition;

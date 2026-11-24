@@ -63,10 +63,10 @@ fn both_spawn_apis_require_the_workers_precondition() {
             }}
             "#
         );
-        assert_vir_error_msg(verify_one_file(api, program.clone(), &[]).unwrap_err(), GLOBAL);
+        verify_one_file(api, program.clone(), &[]).unwrap();
         let unchecked = program.replace("requires n > 0,", "");
         let error = verify_one_file(&format!("{api}_unchecked"), unchecked, &[]).unwrap_err();
-        assert_vir_error_msgs(error, &["precondition not satisfied", GLOBAL]);
+        assert_vir_error_msg(error, "precondition not satisfied");
     }
 }
 

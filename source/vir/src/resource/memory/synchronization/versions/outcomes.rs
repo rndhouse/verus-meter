@@ -7,6 +7,8 @@ use crate::resource::memory::{elements::References, workers::WorkerId};
 
 pub(in crate::resource::memory) struct Observation {
     pub(super) snapshot: Expr,
+    /// Fresh charge identities for the cell reconstituted in the joining ledger.
+    cell: Vec<ReturnedStorage>,
     /// The returning worker, or the surviving cell at this join.
     pub(in crate::resource::memory) result: Option<WorkerId>,
     /// A release at this join must belong to a published worker.
@@ -20,6 +22,32 @@ fn storage(owner: Owner) -> Storage {
 }
 
 impl Analysis<'_> {
+    /// The physical slots in this publisher's seed or joined view are covered
+    /// by the cell phase while this particular mutator's tag remains live.
+    /// Parent access or unique extraction during that interval is rejected
+    /// by history linking and the Arc ownership checks.
+    pub(in crate::resource::memory) fn published_cell_slots(
+        &self,
+        actor: WorkerId,
+        root: RootId,
+    ) -> impl Iterator<Item = u64> + '_ {
+        self.growth
+            .protected_seeds
+            .get(&(actor, root))
+            .into_iter()
+            .map(|seed| &seed.origins)
+            .chain(
+                self.growth
+                    .protected_observations
+                    .get(&root)
+                    .into_iter()
+                    .flatten()
+                    .filter(move |o| o.published.contains(&actor))
+                    .map(|o| &o.cell),
+            )
+            .flat_map(|views| ReturnedStorage::common_payload_ids(views))
+    }
+
     pub(in crate::resource::memory) fn freeze_protected_returns(
         &mut self,
         body: &Span,
@@ -125,6 +153,7 @@ impl Analysis<'_> {
         completed.insert(joining);
         self.growth.protected_observations.entry(root).or_default().push(Observation {
             snapshot: snapshot.clone(),
+            cell: Vec::new(),
             result,
             published,
             completed,
@@ -177,6 +206,8 @@ impl Analysis<'_> {
         self.storage.take_storage(&storage(old), &self.growth, site)?;
         let memory = self.history_observation(site, root, None, joining)?;
         let new = self.owner_from_metadata(site, &typ, memory, metadata::View::Complete, false)?;
+        self.growth.protected_observations.get_mut(&root).unwrap().last_mut().unwrap().cell =
+            self.storage.returned_storage(Some(&new), &self.growth.elements);
         self.heap
             .root_mut(&root.binder())
             .unwrap()

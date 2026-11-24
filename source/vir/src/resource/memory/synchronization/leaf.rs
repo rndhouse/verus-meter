@@ -40,6 +40,7 @@ impl CheckedBody {
         };
         let summary = checked.summary.as_ref().ok_or_else(fail)?;
         if checked.incomplete.is_some()
+            || checked.needs_mutex_caller
             || summary.transfer_required
             || !checked.effects.calls.is_empty()
             || !checked.growth.worker_executions.is_empty()

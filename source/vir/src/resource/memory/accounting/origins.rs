@@ -12,6 +12,8 @@ pub(in super::super) struct FixedOrigin {
     pub(in super::super) site: u64,
     /// Source-model extent of the original fixed allocation.
     pub(in super::super) bytes: u64,
+    /// Only modeled host heap allocations participate in native mutex payload forests.
+    pub(in super::super) host_heap: bool,
     /// Fresh analysis binder, instantiated in the enclosing actor and loop visit.
     pub(in super::super) identity: u64,
 }
@@ -46,7 +48,15 @@ impl Accounting {
         let identity =
             NEXT_ORIGIN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) | (1u64 << 62);
         for path in &mut self.paths {
-            path.owned.insert(identity, FixedOrigin { site: span.id, identity, bytes });
+            path.owned.insert(
+                identity,
+                FixedOrigin {
+                    site: span.id,
+                    identity,
+                    bytes,
+                    host_heap: kind == MemoryKind::host_heap(),
+                },
+            );
         }
         self.reserve(span, kind, bytes, reason)?;
         Ok(Some(identity))
@@ -198,6 +208,36 @@ impl Accounting {
 }
 
 impl ReturnedStorage {
+    /// A replacement in another ledger must be justified on every reaching
+    /// path. A byte-identical alternative with another origin stays charged.
+    pub(in crate::resource::memory) fn common_payload_ids(views: &[Self]) -> BTreeSet<u64> {
+        let physical = |view: &Self| -> BTreeSet<_> {
+            view.nodes
+                .values()
+                .flatten()
+                .filter_map(|region| match region {
+                    ReturnedRegion::Dynamic(id) => Some(*id),
+                    ReturnedRegion::Fixed(origin) if origin.host_heap => Some(origin.identity),
+                    _ => None,
+                })
+                .collect()
+        };
+        let Some((first, others)) = views.split_first() else { return BTreeSet::new() };
+        let mut ids = physical(first);
+        for view in others {
+            let alternative = physical(view);
+            ids.retain(|id| alternative.contains(id));
+        }
+        ids
+    }
+
+    pub(in crate::resource::memory) fn dynamic_ids(&self) -> impl Iterator<Item = u64> + '_ {
+        self.nodes.values().flatten().filter_map(|region| match region {
+            ReturnedRegion::Dynamic(id) => Some(*id),
+            _ => None,
+        })
+    }
+
     /// A caller may materialize a summary charge and split its forest. Its
     /// structural result path must exist in the callee's checked output or
     /// have an explicit projected node in a checked runtime forest.

@@ -47,6 +47,19 @@ pub(in crate::resource::memory) struct History {
 }
 
 impl History {
+    /// Between holders the cell owns one complete published forest. Include
+    /// every possible prefix, since outstanding workers may not have run.
+    pub(in crate::resource::memory) fn idle_bytes(
+        &self,
+        span: &crate::messages::Span,
+    ) -> Option<Expr> {
+        use crate::resource::memory::{contracts, transfer::simplify};
+        self.candidates()
+            .into_iter()
+            .map(|state| simplify::forest_bytes(span, state))
+            .reduce(|a, b| contracts::maximum(span, a, b))
+    }
+
     pub(super) fn acquisitions(&self) -> usize {
         self.incoming.len()
     }

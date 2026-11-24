@@ -170,6 +170,7 @@ impl Analysis<'_> {
             return Err(unsupported(site, "a duplicate returned guard payload"));
         }
         self.storage.receive_storage(saved.charges.clone(), site)?;
+        self.storage.payload_view(saved.interval, true);
         self.heap.borrowed.insert(name, saved.wrapper.clone());
         Ok(())
     }

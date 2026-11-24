@@ -66,6 +66,12 @@ pub(in super::super) struct Join {
     record: Option<Expr>,
 }
 
+impl Join {
+    pub(super) fn collects_in(&self, caller: Option<WorkerId>) -> bool {
+        self.phases.caller == caller
+    }
+}
+
 /// The same three states apply to a formal input handle. Such a helper
 /// preserves its operand and wait edge without claiming a successful result.
 pub(in super::super) struct JoinPhases {

@@ -288,3 +288,30 @@ fn a_live_writer_and_an_unresolved_result_history_remain_outside_the_interface()
         "a joined outcome without a complete checked history",
     );
 }
+
+#[test]
+fn a_popped_box_moves_from_the_mutex_through_completion_to_the_joiner() {
+    use super::{exceeds, verifies};
+
+    let receipt = r#"
+        let second = consumer.join();
+        let first = producer.join();
+        let kept = second.unwrap();
+        drop(keep);
+        BEFORE
+        let workspace = Vec::<u8>::with_capacity(1024);
+        drop(workspace);
+        AFTER
+    "#;
+    let source = workers("Box<[u8; 32]>", "new()", INSERT, "let item = guard.pop();", receipt);
+    // The joiner can own the 9-byte Option and the 32-byte payload after the
+    // cell itself is gone. Moving the actual drop changes this reachable peak.
+    for (name, before, after, peak) in [
+        ("retain_popped_box", "", "drop(kept);", 1106),
+        ("release_popped_box", "drop(kept);", "", 1065),
+    ] {
+        let work = source.replace("BEFORE", before).replace("AFTER", after);
+        verifies(name, &work.replace("4096", &peak.to_string()));
+        exceeds(name, &work.replace("4096", &(peak - 1).to_string()));
+    }
+}

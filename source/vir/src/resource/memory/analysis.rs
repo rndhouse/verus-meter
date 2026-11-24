@@ -18,6 +18,9 @@ pub(super) struct FunctionAnalysis {
     /// unavailable. A helper can expose its local ownership transformation
     /// to checked callers while this error prevents crate verification.
     pub(super) incomplete: Option<VirErr>,
+    /// A native mutex helper has a checked local summary. Its acquisition
+    /// identities still need a checked call path into a composed domain.
+    pub(super) needs_mutex_caller: bool,
     /// Local actor effects exist even when no general call summary is admissible.
     pub(super) effects: std::sync::Arc<super::summary::BodyEffects>,
     /// Declared bound when it must be proved as a formula rather than a constant.
@@ -1002,6 +1005,7 @@ pub(super) fn check(
                 report,
                 summary: None,
                 incomplete: Some(error.clone()),
+                needs_mutex_caller: false,
                 effects,
                 symbolic_bound,
                 obligations: analysis.obligations,
@@ -1201,15 +1205,9 @@ pub(super) fn check(
         report,
         summary: Some(summary),
         incomplete: incomplete.or_else(|| {
-            if summary_has_lock {
-                Some(unsupported(
-                    &function.span,
-                    "mutex intervals awaiting global synchronization and lifetime coverage",
-                ))
-            } else {
-                worker_parameter.map(|_| super::workers::parameter_domain_error(&function.span))
-            }
+            worker_parameter.map(|_| super::workers::parameter_domain_error(&function.span))
         }),
+        needs_mutex_caller: summary_has_lock,
         effects,
         symbolic_bound,
         obligations: analysis.obligations,

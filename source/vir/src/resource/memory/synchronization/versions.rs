@@ -13,6 +13,7 @@ mod section;
 
 pub(in crate::resource::memory) use history::History;
 pub(in crate::resource::memory) use outcomes::Observation;
+pub(in crate::resource::memory) use recipe::operands;
 
 /// Actual contents and allocation origins observed at a fixed publication.
 #[derive(Clone)]
@@ -118,6 +119,10 @@ impl Interval {
 impl Versions {
     pub(in super::super) fn result_root(&self) -> Option<RootId> {
         (!self.returns.is_empty()).then(|| self.bindings.values().next().unwrap().root)
+    }
+
+    pub(in crate::resource::memory) fn root_of(&self, interval: Interval) -> Option<RootId> {
+        self.bindings.get(&interval).map(|b| b.root)
     }
 
     pub(in super::super) fn roots(&self) -> impl Iterator<Item = RootId> + '_ {
@@ -273,6 +278,7 @@ impl Analysis<'_> {
                 releases: Vec::new(),
             },
         );
+        self.storage.payload_view(interval, true);
         self.storage.record_live(site)
     }
 
@@ -313,6 +319,7 @@ impl Analysis<'_> {
             value: Value::unit(),
             owner: Some(wrapper),
         };
+        self.storage.payload_view(interval, false);
         let versions = &mut self.transitions.protected_versions;
         match self.storage.take_storage(&storage, &self.growth, site) {
             Ok(transferred) => {

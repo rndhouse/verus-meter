@@ -488,18 +488,27 @@ impl Checked {
                 _ => None,
             })
             .collect();
-        self.operations.values().filter_map(move |operation| match operation {
-            Operation::MutexLock { interval, occurrence, .. }
-                if (occurrence.single_visit() || shared.contains(&interval.instance))
-                    && matches!(
-                        interval.instance,
-                        super::super::synchronization::Instance::Fresh(_)
-                    ) =>
-            {
-                Some(*interval)
+        let mut intervals = std::collections::BTreeSet::new();
+        for operation in self.operations.values() {
+            match operation {
+                Operation::MutexLock { interval, occurrence, .. }
+                    if (occurrence.single_visit() || shared.contains(&interval.instance))
+                        && matches!(
+                            interval.instance,
+                            super::super::synchronization::Instance::Fresh(_)
+                        ) =>
+                {
+                    intervals.insert(*interval);
+                }
+                Operation::Call { synchronization: Some(call), .. } => {
+                    // A formal mutex in a helper excludes peers only after
+                    // substitution to the same actual shared construction.
+                    intervals.extend(call.acquisitions().filter(|i| shared.contains(&i.instance)));
+                }
+                _ => {}
             }
-            _ => None,
-        })
+        }
+        intervals.into_iter()
     }
 
     pub(in super::super) fn locks_mutex(&self) -> bool {

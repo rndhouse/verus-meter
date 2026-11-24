@@ -79,6 +79,8 @@ pub struct Footprint {
 #[derive(Clone)]
 enum Node {
     Charge(MemoryKind, Expr),
+    /// A live dynamic charge in this ledger, before conversion to a call profile.
+    Allocation(u64, MemoryKind, Expr),
     Allowance(Expr),
     Add(Footprint, Footprint),
     Remove(Footprint, MemoryKind, Expr),
@@ -96,6 +98,22 @@ impl Footprint {
     pub(super) fn charge(kind: MemoryKind, amount: Expr) -> Self {
         Self { total: amount.clone(), node: Arc::new(Node::Charge(kind, amount)) }
     }
+    pub(super) fn allocation(id: u64, kind: MemoryKind, amount: Expr) -> Self {
+        Self { total: amount.clone(), node: Arc::new(Node::Allocation(id, kind, amount)) }
+    }
+
+    /// Replace only directly additive charges whose physical identities are
+    /// priced by the shared history. Opaque allowances retain their full cost.
+    pub(super) fn without_allocations(&self, span: &Span, ids: &BTreeSet<u64>) -> Self {
+        match &*self.node {
+            Node::Allocation(id, _, _) if ids.contains(id) => Self::zero(span),
+            Node::Add(left, right) => {
+                left.without_allocations(span, ids).add(span, right.without_allocations(span, ids))
+            }
+            _ => self.clone(),
+        }
+    }
+
     /// An aggregate contract can spend its entire allowance in any kind. It
     /// must not be attributed to whichever kinds its current body happens to use.
     pub(super) fn allowance(amount: Expr) -> Self {
@@ -151,12 +169,8 @@ impl Footprint {
             return contracts::literal(span, 0);
         }
         match &*self.node {
-            Node::Charge(kind, amount) => {
-                if selection.contains(kind) {
-                    amount.clone()
-                } else {
-                    contracts::literal(span, 0)
-                }
+            Node::Charge(kind, amount) | Node::Allocation(_, kind, amount) => {
+                if selection.contains(kind) { amount.clone() } else { contracts::literal(span, 0) }
             }
             Node::Allowance(amount) => amount.clone(),
             Node::Add(a, b) => {
@@ -184,7 +198,9 @@ impl Footprint {
         f: &impl Fn(&Expr) -> Result<Expr, VirErr>,
     ) -> Result<Self, VirErr> {
         Ok(match &*self.node {
-            Node::Charge(kind, amount) => Self::charge(kind.clone(), f(amount)?),
+            Node::Charge(kind, amount) | Node::Allocation(_, kind, amount) => {
+                Self::charge(kind.clone(), f(amount)?)
+            }
             Node::Allowance(amount) => Self::allowance(f(amount)?),
             Node::Add(a, b) => a.map(span, f)?.add(span, b.map(span, f)?),
             Node::Remove(a, kind, amount) => a.map(span, f)?.remove(span, kind.clone(), f(amount)?),

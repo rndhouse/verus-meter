@@ -114,3 +114,46 @@ fn worker_observation(value: &Expr) -> Option<Expr> {
     }
     None
 }
+
+/// Evaluate host-heap bytes in a finite history of published mutex contents.
+pub(in crate::resource::memory) fn forest_bytes(
+    span: &crate::messages::Span,
+    state: &Expr,
+) -> Expr {
+    use super::expr;
+    use inspect::{call, path};
+    // Partition finite concatenations before computing their cost. Every
+    // record under a known prefix has the same first path component.
+    fn select(span: &crate::messages::Span, forest: &Expr, filter: &str) -> Expr {
+        if let Some(parts) = call(forest, "add") {
+            return simplify(&expr::add(
+                span,
+                select(span, &parts[0], filter),
+                select(span, &parts[1], filter),
+            ));
+        }
+        if let Some(parts) = call(forest, "prefix")
+            && let Some(path) = path(&parts[1])
+            && let Some(first) = path.first()
+            && let crate::ast::ExprX::Const(crate::ast::Constant::Int(index)) = &first.x
+        {
+            return if (*index >= 0.into()) == (filter == "runtime") {
+                forest.clone()
+            } else {
+                expr::empty(span, expr::record_type())
+            };
+        }
+        simplify(&expr::operation(span, filter, vec![forest.clone()], expr::memory_type()))
+    }
+
+    let forest = crate::ast_visitor::map_expr_visitor(state, &|e| {
+        for filter in ["runtime", "nonruntime"] {
+            if let Some(args) = call(e, filter) {
+                return Ok(select(span, &args[0], filter));
+            }
+        }
+        Ok(e.clone())
+    })
+    .expect("infallible payload projection");
+    simplify(&expr::cost(span, forest, expr::integer(span, 0)))
+}

@@ -6,6 +6,8 @@ use crate::resource::memory::synchronization::holders::{Issuer, PopulationRole};
 pub(super) enum Class {
     Mutex(Instance),
     Protocol(usize),
+    /// Exactly one ledger can own the protected contents at a time.
+    Payload(crate::resource::memory::shared::RootId),
 }
 
 /// Each count is the number of distinct actors charged to this class.
@@ -49,6 +51,7 @@ impl Constraints {
     pub(super) fn excludes(&self, a: Class, b: Class) -> bool {
         match (a, b) {
             (Class::Mutex(a), Class::Mutex(b)) => a == b,
+            (Class::Payload(a), Class::Payload(b)) => a == b,
             (Class::Protocol(a), Class::Protocol(b)) => self.0[a].0.excludes(&self.0[b].0),
             _ => false,
         }
@@ -99,17 +102,5 @@ impl Constraints {
             remaining.contains(a) || remaining.iter().any(|b| self.excludes(*a, *b))
         });
         Some((held, conditions))
-    }
-}
-
-impl Analysis<'_> {
-    /// Protocol helpers already have a checked call profile, including their
-    /// full allowance and any unrestricted wait. Their bodies must be available.
-    pub(super) fn protocol_helper(&self, target: &Fun) -> bool {
-        self.summaries.get(target).is_some_and(|s| s.effects.is_some())
-            && self.functions.get(target).is_some_and(|f| {
-                self.layouts.inline_protocol_value(&f.x.outer_ret.x.typ)
-                    || f.x.params.iter().any(|p| self.layouts.inline_protocol_value(&p.x.typ))
-            })
     }
 }

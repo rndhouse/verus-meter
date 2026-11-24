@@ -252,6 +252,12 @@ impl Call {
         }
     }
 
+    pub(in super::super) fn acquisitions(&self) -> impl Iterator<Item = Interval> + '_ {
+        self.intervals
+            .iter()
+            .filter_map(|(formal, actual)| (!self.incoming.contains(formal)).then_some(*actual))
+    }
+
     pub(in super::super) fn incoming_actuals(&self) -> impl Iterator<Item = Interval> + '_ {
         self.incoming.iter().map(|id| self.intervals[id])
     }

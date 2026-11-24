@@ -102,16 +102,8 @@ fn a_worker_instantiates_the_same_helper_on_its_captured_mutex() {
         "reentrant blocking acquisition",
     );
     let source = program.replace("ACTION", "drop(before); nested(&*m);");
-    let error = verify_one_file(
-        "worker_helper",
-        format!("use vstd::prelude::*; verus! {{ {source} }}"),
-        &[],
-    )
-    .unwrap_err();
-    crate::common::assert_vir_error_msgs(
-        error,
-        &["mutex intervals awaiting global", "checked worker effects still require global"],
-    );
+    verify_one_file("worker_helper", format!("use vstd::prelude::*; verus! {{ {source} }}"), &[])
+        .unwrap();
 }
 
 #[test]
