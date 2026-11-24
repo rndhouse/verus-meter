@@ -2,7 +2,9 @@
 //! Each binder identifies an executable value in its actor and visit. Applying
 //! a population bound additionally requires its theorem and instance identity.
 
+mod issuer;
 mod returns;
+pub(in super::super) use issuer::{Captured, Issuer};
 
 use super::super::{accounting::Accounting, layout::Layouts};
 use crate::{
@@ -19,13 +21,17 @@ use std::{
 pub(in super::super) enum Witness {
     Input(usize),
     Local(crate::messages::AstId),
+    /// An acquisition inside a checked invocation, scoped to that call visit.
+    Call(u64),
     /// Field of the worker's actual closure environment, frozen at construction.
     Capture(super::super::closures::observations::EnvironmentId, usize),
 }
 
 struct Binding {
-    name: VarIdent,
+    name: Option<VarIdent>,
     proof: Fun,
+    /// Verified projections of the actual issuer, when its origin is known.
+    issuer: Option<Issuer>,
     /// Present for locals, whose births must be instantiated at each visit.
     visit: Option<super::super::workers::SourceVisit<crate::messages::AstId>>,
 }
@@ -33,6 +39,7 @@ struct Binding {
 #[derive(Default)]
 pub(in super::super) struct Bindings {
     definitions: BTreeMap<Witness, Binding>,
+    receivers: HashMap<VarIdent, Issuer>,
     /// Immutable names created by a checked whole move share the original witness.
     moved: HashMap<VarIdent, Witness>,
     /// Source relation shared by the continuing and explicit returns of this actor.
@@ -60,12 +67,23 @@ impl Bindings {
         for (index, param) in function.x.params.iter().enumerate() {
             if param.x.mode == Mode::Exec
                 && !param.x.user_mut
+                && layouts.protocol_receiver(&param.x.typ)
+            {
+                bindings.receivers.insert(param.x.name.clone(), Issuer::Input(index));
+            }
+            if param.x.mode == Mode::Exec
+                && !param.x.user_mut
                 && let Some(proof) = layouts.holder_proof(&param.x.typ)
             {
                 let id = Witness::Input(index);
                 bindings.definitions.insert(
                     id,
-                    Binding { name: param.x.name.clone(), proof: proof.clone(), visit: None },
+                    Binding {
+                        name: Some(param.x.name.clone()),
+                        proof: proof.clone(),
+                        issuer: None,
+                        visit: None,
+                    },
                 );
                 bindings.at_entry(body, id, &param.x.name);
             }
@@ -92,6 +110,7 @@ impl Bindings {
     ) -> bool {
         self.definitions.get(&id).is_some_and(|binding| match (id, &binding.visit) {
             (Witness::Local(site), Some(visit)) => site == visit.site && visit.valid_for(actor),
+            (Witness::Call(_), Some(visit)) => visit.valid_for(actor),
             (Witness::Input(_), None) => actor.is_none(),
             (Witness::Capture(_, _), Some(visit)) => actor.is_some() && visit.valid_for(actor),
             _ => false,
@@ -128,7 +147,7 @@ impl Bindings {
         }
         self.definitions
             .iter()
-            .find(|(_, b)| b.name == *name && b.proof == *proof)
+            .find(|(_, b)| b.name.as_ref() == Some(name) && b.proof == *proof)
             .map(|(id, _)| *id)
     }
 
@@ -156,18 +175,31 @@ impl super::super::analysis::Analysis<'_> {
         environment: super::super::closures::observations::EnvironmentId,
         index: usize,
         site: crate::messages::AstId,
+        owned_body: bool,
     ) {
-        if capture.mode != super::super::concurrency::CaptureMode::Move
+        let captured = self.growth.environments.protocol(environment, index);
+        if capture.projection.is_empty()
+            && crate::ast_util::types_equal(&capture.source_typ, &capture.typ)
+            && let Some(Captured::Receiver(issuer)) = captured
+        {
+            self.transitions.holders.import_receiver(name, issuer);
+        }
+        if !owned_body
+            || capture.mode != super::super::concurrency::CaptureMode::Move
             || !capture.projection.is_empty()
             || !crate::ast_util::types_equal(&capture.source_typ, &capture.typ)
         {
             return;
         }
         let Some(proof) = self.layouts.holder_proof(&capture.typ) else { return };
+        let issuer = match captured {
+            Some(Captured::Holder(i)) => Some(i),
+            _ => None,
+        };
         let visit = self.source_visit(site, vec![]);
         self.transitions.holders.definitions.insert(
             Witness::Capture(environment, index),
-            Binding { name: name.clone(), proof: proof.clone(), visit: Some(visit) },
+            Binding { name: Some(name.clone()), proof: proof.clone(), issuer, visit: Some(visit) },
         );
     }
 
@@ -186,6 +218,17 @@ impl super::super::analysis::Analysis<'_> {
         if !self.slots.contains_key(&b.name) {
             return None;
         }
+        if self.layouts.protocol_receiver(&b.typ) {
+            let inherited = source.and_then(|p| self.issuer_place(p));
+            let issuer = inherited.or_else(|| {
+                let visit =
+                    self.source_visit(pattern.span.id, self.local_occurrences(&pattern.span).ok()?);
+                visit.single_visit().then(|| Issuer::Fixed(Accounting::fresh_allocation()))
+            });
+            if let Some(issuer) = issuer {
+                self.transitions.holders.receivers.insert(b.name.clone(), issuer);
+            }
+        }
         if self.layouts.option(&b.typ) {
             if !b.copy
                 && let Some(source) = source
@@ -197,9 +240,10 @@ impl super::super::analysis::Analysis<'_> {
             return None;
         }
         let proof = self.layouts.holder_proof(&b.typ)?.clone();
+        let origin =
+            source.map_or(returns::Origin::Unknown, |s| self.holder_place_origin(s, &proof));
         if !b.copy
-            && let Some(source) = source
-            && let returns::Origin::Owned(id) = self.holder_place_origin(source, &proof)
+            && let returns::Origin::Owned(id) = origin
         {
             self.transitions.holders.moved.insert(b.name.clone(), id);
             if let Some(arm) = arm {
@@ -211,9 +255,15 @@ impl super::super::analysis::Analysis<'_> {
         let visit = self.source_visit(site, self.local_occurrences(&pattern.span).ok()?);
         let id = Witness::Local(site);
         let bindings = &mut self.transitions.holders;
-        bindings
-            .definitions
-            .insert(id, Binding { name: b.name.clone(), proof, visit: Some(visit) });
+        bindings.definitions.insert(
+            id,
+            Binding {
+                name: Some(b.name.clone()),
+                proof,
+                issuer: origin.issuer(bindings),
+                visit: Some(visit),
+            },
+        );
         if let Some(arm) = arm {
             bindings.at_entry(arm, id, &b.name);
         }

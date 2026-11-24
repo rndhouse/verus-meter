@@ -81,4 +81,16 @@ fn layouts() {
     assert(value_size(Semaphore) == 8);
 }
 
+fn two(a: &Semaphore, b: &Semaphore) resources peak(memory) <= 512, {
+    let g = wait(a);
+    let one = Box::new([0u8; 47]);
+    drop(one);
+    g.release();
+    if let Some(q) = attempt(b) {
+        let two = Box::new([0u8; 48]);
+        drop(two);
+        q.release();
+    }
+}
+
 } // verus!

@@ -1,6 +1,6 @@
 //! Identity of the whole guard on a successful return. All reaching returns
 //! must agree on its origin before a caller may substitute its own argument.
-use super::{Bindings, Witness};
+use super::{Bindings, Issuer, Witness};
 use crate::ast::*;
 use crate::resource::memory::analysis::Analysis;
 
@@ -12,14 +12,24 @@ pub(super) enum Origin {
     #[default]
     Empty,
     Owned(Witness),
+    Issued(Issuer),
     Unknown,
 }
 
 impl Origin {
+    pub(super) fn issuer(self, bindings: &Bindings) -> Option<Issuer> {
+        match self {
+            Self::Issued(i) => Some(i),
+            Self::Owned(w) => bindings.definitions.get(&w)?.issuer,
+            _ => None,
+        }
+    }
+
     fn join(self, other: Self) -> Self {
         match (self, other) {
             (Self::Empty, x) | (x, Self::Empty) => x,
             (Self::Owned(a), Self::Owned(b)) if a == b => self,
+            (Self::Issued(a), Self::Issued(b)) if a == b => self,
             _ => Self::Unknown,
         }
     }
@@ -88,6 +98,22 @@ impl Analysis<'_> {
                 post_args: None,
                 body: None,
             } => {
+                let bindings = self
+                    .summaries
+                    .get(fun)
+                    .and_then(|s| s.effects.as_ref())
+                    .map(|body| &body.ownership.holders);
+                let issuer = self.layouts.issuer_parameters.get(fun).copied().or_else(|| {
+                    match bindings?.returned.issuer(bindings?)? {
+                        Issuer::Input(i) => Some(i),
+                        _ => None,
+                    }
+                });
+                if let Some(issuer) =
+                    issuer.and_then(|i| args.get(i)).and_then(|e| self.issuer_expr(e))
+                {
+                    return Origin::Issued(issuer);
+                }
                 let source = self
                     .summaries
                     .get(fun)
@@ -102,7 +128,7 @@ impl Analysis<'_> {
 
     /// Called for each reachable explicit return and once for normal fallthrough.
     pub(in crate::resource::memory) fn record_holder_return(&mut self, result: &Expr) {
-        if self.transitions.holders.is_empty() {
+        if self.layouts.holder_proofs.is_empty() {
             return;
         }
         if let Some(proof) = self.holder_result_proof(&result.typ) {

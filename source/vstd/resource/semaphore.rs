@@ -2,7 +2,9 @@
 //! The atomic counter stores the number of available slots. Its ghost state
 //! connects every successful decrement to one outstanding, linear witness.
 use super::Loc;
-use super::holder::{BoundedHolder, Holder};
+use super::holder::{
+    BoundedHolder, BoundedInstance, Holder, ProtocolInstance, issued, issued_on_success,
+};
 use crate::atomic_ghost::*;
 use crate::prelude::*;
 use verus_state_machines_macros::tokenized_state_machine_vstd;
@@ -92,6 +94,18 @@ pub struct Permit<'a> {
     witness: Tracked<slots::occupied>,
 }
 
+impl ProtocolInstance for Semaphore {
+    open spec fn protocol_id(&self) -> Loc {
+        self.id()
+    }
+}
+
+impl BoundedInstance for Semaphore {
+    open spec fn holder_limit(&self) -> nat {
+        self.capacity()
+    }
+}
+
 impl Semaphore {
     /// Identity of the tokenized protocol created with this semaphore.
     pub closed spec fn id(&self) -> Loc {
@@ -120,6 +134,7 @@ impl Semaphore {
     /// the compare-exchange can make this attempt return `None`.
     pub fn try_acquire(&self) -> (result: Option<Permit<'_>>)
         ensures
+            issued_on_success(result, self),
             result matches Some(p) ==> p.semaphore() == *self && self.capacity() > 0,
     {
         proof {
@@ -156,6 +171,7 @@ impl Semaphore {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn acquire(&self) -> (p: Permit<'_>)
         ensures
+            issued(p, self),
             p.semaphore() == *self && self.capacity() > 0,
     {
         loop {

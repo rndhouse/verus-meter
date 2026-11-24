@@ -99,6 +99,11 @@ pub struct CompilerEvidence {
     /// Population proof dependencies for concrete holders. Local proofs must succeed in
     /// this verification, and an imported proof must carry its own body certificate.
     pub holder_proofs: HashMap<Dt, crate::ast::Fun>,
+    /// Verified acquisition postconditions indexed by the executable callee.
+    /// The index is the immutable parameter supplying instance and capacity.
+    pub issuer_parameters: HashMap<crate::ast::Fun, usize>,
+    /// Receiver datatypes used in verified acquisition contracts.
+    pub issuer_types: std::collections::HashSet<Dt>,
     /// Selected local bodies whose measured footprints should be published.
     pub measure_leaves: std::collections::HashSet<crate::ast::Fun>,
     /// Drop-elaborated transport for local resource-contracted functions.

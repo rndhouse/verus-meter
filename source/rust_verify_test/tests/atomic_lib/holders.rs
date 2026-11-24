@@ -124,6 +124,7 @@ fn custom_guard_coverage_follows_the_owned_value_and_allocation() {
     assert!(!trace.notes.iter().any(|n| n.message.starts_with("52-byte allocation")));
     assert!(note("dynamic storage region only observed within intact holder input 0"));
     assert!(note("45-byte allocation only observed within intact holder local"));
+    assert!(note("45-byte allocation observed with holder issued by input 0"));
     assert!(!trace.notes.iter().any(|n| n.message.starts_with("46-byte allocation")));
     let at_call = |line: &str, message: &str| {
         trace.notes.iter().any(|n| {
@@ -134,6 +135,26 @@ fn custom_guard_coverage_follows_the_owned_value_and_allocation() {
     assert!(at_call("scratch(retained);", "checked helper phase with intact holder input 1"));
     assert!(!at_call("scratch(retained);", "checked helper phase with intact holder input 0"));
     assert!(at_call("scratch(g);", "checked helper phase with intact holder local"));
+}
+
+#[test]
+fn a_conditional_contract_cannot_identify_an_issuer() {
+    let source = include_str!("exclusive.verus.rs")
+        .replace("issued_on_success(g, self),", "false ==> issued_on_success(g, self),");
+    let trace =
+        verify_one_file("conditional_contract", source, &["--trace", "--no-cheating"]).unwrap();
+    assert!(
+        trace
+            .notes
+            .iter()
+            .any(|n| n.message == "45-byte allocation only observed within intact holder local")
+    );
+    assert!(
+        !trace
+            .notes
+            .iter()
+            .any(|n| n.message.starts_with("45-byte allocation observed with holder issued by"))
+    );
 }
 
 #[test]

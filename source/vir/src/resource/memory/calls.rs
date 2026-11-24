@@ -104,6 +104,7 @@ impl Analysis<'_> {
             false,
         )
         .unwrap_or_else(|_| super::contracts::literal(&expr.span, envelope));
+        let holder_arguments = self.call_holders(expr, args, summary.effects.as_deref());
         let argument_revision = self.growth.revision();
         let mut values = vec![None; args.len()];
         let mut transferred = vec![None; args.len()];
@@ -164,7 +165,7 @@ impl Analysis<'_> {
         }
         let c = &expr.span;
         let callee_effects = summary.effects.as_deref();
-        let holder_arguments = self.transitions.holders.forwarded(callee_effects, args);
+
         let forwarded = summary.return_parameter.and_then(|i| values[i].clone());
         for value in values.into_iter().flatten() {
             self.release_value(value, c);

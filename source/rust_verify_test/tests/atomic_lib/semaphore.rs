@@ -8,6 +8,8 @@ fn verified_permit_follows_its_input_across_a_conditional_return() {
     let trace =
         verify_one_file("metered_permit", SOURCE.into(), &["--trace", "--no-cheating"]).unwrap();
     for message in [
+        "47-byte allocation observed with holder issued by input 0",
+        "48-byte allocation observed with holder issued by input 1",
         "73-byte allocation only observed within intact holder input 0",
         "74-byte allocation also observed outside intact holder input 0",
         "dynamic storage region only observed within intact holder input 0",
@@ -61,4 +63,51 @@ fn a_worker_can_retain_and_release_its_captured_permit() {
     assert!(trace.notes.iter().any(|n| {
         n.message.starts_with("75-byte allocation only observed within intact holder capture ")
     }));
+}
+
+#[test]
+fn independent_acquisitions_use_the_actual_shared_backing() {
+    let worker_pair = code_str! {
+        verus! {
+            fn pair(k: usize) resources peak(memory) <= 2048, {
+                let s = std::sync::Arc::new(Semaphore::new(k));
+                let a = s.clone();
+                let r = vstd::thread::spawn(move || {
+                    let g = wait(&a);
+                    let data = Box::new([0u8; 51]);
+                    drop(data);
+                    g.release();
+                });
+                let t = vstd::thread::spawn(move || {
+                    if let Some(g) = s.try_acquire() {
+                        let data = Box::new([0u8; 52]);
+                        drop(data);
+                        g.release();
+                    }
+                });
+                let first = r.join();
+                let second = t.join();
+            }
+        }
+    };
+    for (case, workers) in [
+        ("cloned", worker_pair.to_string()),
+        ("separate", worker_pair.replace("s.clone()", "std::sync::Arc::new(Semaphore::new(k))")),
+    ] {
+        let trace =
+            verify_one_file(case, format!("{SOURCE}\n{workers}"), &["--trace", "--no-cheating"])
+                .unwrap_err();
+        assert_eq!(trace.errors.len(), 1);
+        assert!(trace.errors[0].message.contains("global lifetime and interference proofs"));
+        let backing = |bytes| {
+            let prefix =
+                format!("{bytes}-byte allocation observed with holder issued by shared backing ");
+            trace
+                .notes
+                .iter()
+                .find_map(|n| n.message.strip_prefix(&prefix))
+                .expect("checked issuer")
+        };
+        assert_eq!(backing(51) == backing(52), case == "cloned");
+    }
 }

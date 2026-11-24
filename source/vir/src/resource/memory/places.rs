@@ -4,7 +4,7 @@ use super::analysis::Analysis;
 use super::model::{slice, unsupported};
 use crate::ast::*;
 
-fn arc_borrow_adapter(from: &Typ, to: &Typ) -> bool {
+pub(super) fn arc_borrow_adapter(from: &Typ, to: &Typ) -> bool {
     let TypX::Decorate(TypDecoration::Ref, None, source) = &**from else { return false };
     let TypX::Decorate(TypDecoration::Arc, _, payload) = &**source else { return false };
     let TypX::Decorate(TypDecoration::Ref, None, target) = &**to else { return false };

@@ -2,7 +2,7 @@ use vstd::atomic_ghost::*;
 use vstd::prelude::*;
 use vstd::resource::Loc;
 use vstd::resource::frac::FracGhost;
-use vstd::resource::holder::{BoundedHolder, Holder};
+use vstd::resource::holder::{BoundedHolder, BoundedInstance, Holder, ProtocolInstance, issued_on_success};
 
 verus! {
 
@@ -26,6 +26,14 @@ struct Guard<'a> {
     token: Tracked<FracGhost<()>>,
 }
 
+impl ProtocolInstance for Lock {
+    closed spec fn protocol_id(&self) -> Loc { self.domain@ }
+}
+
+impl BoundedInstance for Lock {
+    open spec fn holder_limit(&self) -> nat { 1 }
+}
+
 impl Lock {
     fn new() -> (s: Self) {
         let tracked token = FracGhost::<()>::new(());
@@ -36,6 +44,7 @@ impl Lock {
 
     fn try_enter(&self) -> (g: Option<Guard<'_>>)
         ensures
+            issued_on_success(g, self),
             g matches Some(g) ==> g.instance_id() == self.domain@,
         resources peak(memory) <= 30,
     {

@@ -27,6 +27,7 @@ impl Witness {
     fn description(self) -> String {
         match self {
             Self::Input(index) => format!("input {index}"),
+            Self::Call(_) => "helper acquisition".into(),
             Self::Local(_) => "local".into(),
             Self::Capture(_, index) => format!("capture {index}"),
         }
@@ -37,9 +38,9 @@ impl MemoryReport {
     /// Local observations remain available while the global concurrency proof is pending.
     pub fn synchronization_diagnostics(&self) -> Vec<VirErrAs> {
         let mut notes = self.interval_diagnostics();
-        notes.extend(holder_diagnostics(&self.points));
-        for worker in &self.worker_holder_points {
-            notes.extend(holder_diagnostics(worker));
+        for body in &self.holder_effects {
+            notes.extend(holder_diagnostics(&body.points));
+            notes.extend(issuer_notes(body));
         }
         notes
     }
@@ -104,4 +105,33 @@ fn holder_diagnostics(points: &[Point]) -> Vec<VirErrAs> {
         }
     }
     notes
+}
+
+/// Display issuer evidence only at points containing an intact witness and an
+/// executable allocation. Keep worker and publishing function scopes separate.
+fn issuer_notes(body: &super::super::summary::BodyEffects) -> Vec<VirErrAs> {
+    use super::super::synchronization::holders::Issuer;
+    let mut notes = BTreeMap::new();
+    for point in body.points.iter() {
+        for holder in &point.holders {
+            let Some(issuer) = body.ownership.holders.issuer(*holder) else { continue };
+            for origin in &point.fixed_origins {
+                let source = match issuer {
+                    Issuer::Input(i) => format!("input {i}"),
+                    Issuer::Fixed(id) => format!("fixed binding {id}"),
+                    Issuer::Shared(root) => format!("shared backing {}", root.serial()),
+                };
+                notes.entry((*origin, *holder, issuer)).or_insert_with(|| {
+                    VirErrAs::Note(crate::messages::note(
+                        &point.span,
+                        format!(
+                            "{}-byte allocation observed with holder issued by {source}",
+                            origin.bytes
+                        ),
+                    ))
+                });
+            }
+        }
+    }
+    notes.into_values().collect()
 }

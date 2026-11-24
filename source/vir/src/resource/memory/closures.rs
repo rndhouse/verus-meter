@@ -167,6 +167,7 @@ impl Analysis<'_> {
         for (index, capture) in captures.iter().enumerate() {
             let place =
                 self.worker_capture_place(self.layouts.capture_place(capture, &expr.span)?)?;
+            let protocol = self.capture_protocol(&place);
             let scalar = self.observe_capture_scalar(&place, &capture.typ, &expr.span)?;
             let projections = self.observe_capture_projections(&place, &expr.span)?;
             let owns = self.layouts.owner(&capture.typ);
@@ -219,6 +220,7 @@ impl Analysis<'_> {
                 },
             ));
             observations.push(observations::Field {
+                protocol,
                 scalar,
                 projections,
                 environment: value.environment,

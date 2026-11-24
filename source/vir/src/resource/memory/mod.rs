@@ -119,6 +119,8 @@ pub fn check_crate(
         .with_synchronization_types(&synchronization.types)
         .with_closures(&synchronization.concurrency);
     layouts.measured_leaves.clone_from(&synchronization.measure_leaves);
+    layouts.issuer_types.clone_from(&synchronization.issuer_types);
+    layouts.issuer_parameters.clone_from(&synchronization.issuer_parameters);
     layouts.holder_proofs.clone_from(&synchronization.holder_proofs);
     layouts.imported_leaves.clone_from(&synchronization.imported_leaves);
     for function in functions.iter().filter(|f| f.x.attrs.resource_contract.is_some()) {
@@ -221,12 +223,10 @@ pub fn check_crate(
     Ok(reports
         .into_iter()
         .map(|(f, mut checked)| {
-            checked.report.worker_holder_points = checked
-                .growth
-                .worker_executions
-                .values()
-                .filter(|w| !w.effects.ownership.holders.is_empty())
-                .map(|w| w.effects.points.clone())
+            checked.report.holder_effects = std::iter::once(&checked.effects)
+                .chain(checked.growth.worker_executions.values().map(|w| &w.effects))
+                .filter(|body| !body.ownership.holders.is_empty())
+                .cloned()
                 .collect();
             (f.span.clone(), checked.report)
         })

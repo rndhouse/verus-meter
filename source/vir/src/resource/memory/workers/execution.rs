@@ -334,15 +334,15 @@ impl Analysis<'_> {
                     "worker input substituted for a different capture path",
                 ));
             }
-            if entry.invocation == super::super::concurrency::invocation::Invocation::OwnedBody
-                && !mutable.contains(&input.name)
-            {
+            if !mutable.contains(&input.name) {
                 worker.bind_holder_capture(
                     &input.name,
                     &closure.captures[index],
                     entry.storage.value.environment.unwrap(),
                     index,
                     definition.span.id,
+                    entry.invocation
+                        == super::super::concurrency::invocation::Invocation::OwnedBody,
                 );
             }
             worker.var_modes.insert(input.name.clone(), Mode::Exec);

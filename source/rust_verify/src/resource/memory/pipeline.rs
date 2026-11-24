@@ -38,6 +38,7 @@ pub(crate) fn check(
     )?;
     super::protocol::bind_holder_proofs(ctxt, krate, imports, &mut synchronization);
     super::protocol::bind_leaf_workspaces(ctxt, krate, imports, &mut synchronization);
+    super::protocol::bind_issuers(krate, imports, &mut synchronization);
     if trace {
         let mut closures: Vec<_> = synchronization.concurrency.closures.values().collect();
         closures.sort_by_key(|closure| closure.id);

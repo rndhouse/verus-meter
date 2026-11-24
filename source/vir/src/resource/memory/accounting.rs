@@ -53,9 +53,9 @@ pub struct MemoryReport {
     pub(super) conditional: bool,
     /// Source observations shared by byte obligations, lifetime profiles and checked body effects.
     pub(super) points: Arc<Vec<Point>>,
-    /// Distinct worker ledgers for synchronization traces. These are never
-    /// flattened into this frame's sequential peak.
-    pub(super) worker_holder_points: Vec<Arc<Vec<Point>>>,
+    /// Separate actor ledgers with verified protocol witnesses. Reuse the
+    /// checked effects when a developer requests a synchronization trace.
+    pub(super) holder_effects: Vec<Arc<super::summary::BodyEffects>>,
 }
 
 impl MemoryReport {
@@ -310,7 +310,7 @@ impl Accounting {
                 events: Vec::new(),
                 conditional: false,
                 points: Arc::default(),
-                worker_holder_points: Vec::new(),
+                holder_effects: Vec::new(),
             },
         }
     }

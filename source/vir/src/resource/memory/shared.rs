@@ -133,6 +133,8 @@ pub(super) fn selected_record(span: &Span, identity: Expr) -> Expr {
 
 #[derive(Clone)]
 struct Root {
+    /// One fixed construction of a verified protocol receiver.
+    fixed_issuer: bool,
     /// Fixed holders seen on this source path. Only a native receipt proves a
     /// published holder has completed, even if its handle left this ledger.
     payload_joins: BTreeMap<WorkerId, bool>,
@@ -155,6 +157,7 @@ impl Root {
         let mutex =
             storage.children.get(&OwnerSlot::Contents).and_then(|child| child.mutex_instance());
         Self {
+            fixed_issuer: false,
             payload_joins: BTreeMap::new(),
             strong: 1,
             mutex,
@@ -394,6 +397,10 @@ impl SharedRoots {
         {
             *joined = true;
         }
+    }
+
+    pub(super) fn fixed_issuer(&self, id: RootId) -> bool {
+        self.roots.get(&id).is_some_and(|root| root.fixed_issuer)
     }
 
     pub(super) fn protected_type(&self, id: RootId) -> Option<Typ> {
@@ -803,6 +810,7 @@ impl SharedRoots {
                     Root {
                         payload_joins: BTreeMap::new(),
                         strong,
+                        fixed_issuer: enclosing.roots[&id].fixed_issuer,
                         mutex: enclosing.roots[&id].mutex,
                         protected_type: enclosing.roots[&id].protected_type.clone(),
                         storage: Backing::Imported { entry: strong },
@@ -1006,6 +1014,14 @@ impl Analysis<'_> {
                 );
             }
             let handle = self.heap.shared.insert(storage);
+            if self.layouts.protocol_receiver(payload)
+                && self.local_occurrences(&expr.span).is_ok_and(|coordinates| {
+                    self.source_visit(expr.span.id, coordinates).single_visit()
+                })
+            {
+                let root = handle.shared.unwrap().known().unwrap();
+                self.heap.shared.roots.get_mut(&root).unwrap().fixed_issuer = true;
+            }
             let root = handle.shared.and_then(StrongLink::known).expect("new strong owner");
             self.heap.shared.roots.get_mut(&root).unwrap().protected_type =
                 self.layouts.mutex_payload(payload).cloned();

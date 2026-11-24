@@ -38,6 +38,10 @@ pub(super) struct Layouts {
     /// Local reviewed bodies measured uniformly over erased protocol parameters.
     pub(super) measured_leaves: HashSet<Fun>,
     pub(super) imported_leaves: HashMap<Fun, super::synchronization::CheckedBody>,
+    /// Parameter whose instance and capacity projections apply to a successful result.
+    pub(super) issuer_parameters: HashMap<Fun, usize>,
+    /// Receiver datatypes used in verified acquisition contracts.
+    pub(super) issuer_types: HashSet<Dt>,
     /// Nominal concrete holder types and their resolved population proofs.
     pub(super) holder_proofs: HashMap<Dt, Fun>,
     /// Only actual executable capture types contribute to closure storage.
@@ -74,6 +78,8 @@ impl Layouts {
             measured_leaves: HashSet::new(),
             imported_leaves: HashMap::new(),
             holder_proofs: HashMap::new(),
+            issuer_parameters: HashMap::new(),
+            issuer_types: HashSet::new(),
             closures: Default::default(),
         }
     }

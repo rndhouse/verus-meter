@@ -16,6 +16,8 @@ pub(in super::super) struct EnvironmentId(u64);
 /// Observations of a field, separate from its inline charge and owned tree.
 #[derive(Clone)]
 pub(super) struct Field {
+    /// Verified receiver projections frozen from the actual source binding.
+    pub(super) protocol: Option<super::super::synchronization::holders::Captured>,
     /// Native scalar frozen at construction, including mutable parent bindings.
     /// Aggregate scalars need separately checked projections before use.
     pub(super) scalar: Option<Expr>,
@@ -50,6 +52,14 @@ pub(in super::super) struct Environments {
 }
 
 impl Environments {
+    pub(in super::super) fn protocol(
+        &self,
+        id: EnvironmentId,
+        field: usize,
+    ) -> Option<super::super::synchronization::holders::Captured> {
+        self.records.get(&id)?.fields.get(field)?.protocol
+    }
+
     pub(in super::super) fn projections(
         &self,
         id: EnvironmentId,

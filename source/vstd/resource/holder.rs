@@ -44,4 +44,28 @@ pub trait BoundedHolder: Holder + Sized {
     ;
 }
 
+/// Logical projections of one executable protocol instance. Pure projections
+/// can be used concurrently through a shared reference to the same value.
+pub trait ProtocolInstance {
+    spec fn protocol_id(&self) -> Loc;
+}
+
+/// The immutable limit used by a particular bounded protocol.
+pub trait BoundedInstance: ProtocolInstance {
+    spec fn holder_limit(&self) -> nat;
+}
+
+/// A checked acquisition can expose this postcondition on its actual result.
+pub open spec fn issued<H: BoundedHolder, I: BoundedInstance>(holder: H, instance: &I) -> bool {
+    holder.instance_id() == instance.protocol_id() && holder.capacity() == instance.holder_limit()
+}
+
+/// A failed attempt supplies no witness and makes no claim about occupied slots.
+pub open spec fn issued_on_success<H: BoundedHolder, I: BoundedInstance>(
+    result: Option<H>,
+    instance: &I,
+) -> bool {
+    result matches Some(h) ==> issued(h, instance)
+}
+
 } // verus!

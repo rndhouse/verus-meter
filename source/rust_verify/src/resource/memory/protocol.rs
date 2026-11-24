@@ -152,3 +152,67 @@ pub(super) fn bind_leaf_workspaces(
         }
     }
 }
+
+/// Match an unconditional postcondition of the nominal vstd predicate on the
+/// whole result and one executable shared input. No fact under an implication,
+/// a user predicate or a projection of another return value qualifies.
+pub(super) fn bind_issuers(krate: &KrateX, imports: &[Krate], evidence: &mut CompilerEvidence) {
+    use vir::ast::*;
+    fn name(expr: &Expr) -> Option<&VarIdent> {
+        match &expr.x {
+            ExprX::Var(name) => Some(name),
+            ExprX::ReadPlace(place, _) if vir::ast_util::types_equal(&place.typ, &expr.typ) => {
+                let PlaceX::Local(name) = &place.x else { return None };
+                Some(name)
+            }
+            _ => None,
+        }
+    }
+    let direct = vir::fun!(CrateId::Vstd => "resource", "holder"; "issued");
+    let optional = vir::fun!(CrateId::Vstd => "resource", "holder"; "issued_on_success");
+    let local = krate.functions.iter().filter(|f| f.x.body.is_some());
+    let certified = imports
+        .iter()
+        .flat_map(|k| &k.functions)
+        .filter(|f| evidence.imported_leaves.contains_key(&f.x.name));
+    for f in local.chain(certified) {
+        if f.x.mode != Mode::Exec
+            || f.x.attrs.is_external_body
+            || !matches!(f.x.kind, FunctionKind::Static)
+        {
+            continue;
+        }
+        for post in f.x.ensure.0.iter() {
+            let ExprX::Call {
+                target: CallTarget::Fun(CallTargetKind::Static, fun, _, _, _),
+                args,
+                post_args: None,
+                body: None,
+            } = &post.x
+            else {
+                continue;
+            };
+            if *fun != direct && *fun != optional {
+                continue;
+            }
+            let [result, issuer] = args.as_slice() else { continue };
+            if name(result) != Some(&f.x.inner_ret.x.name)
+                || !vir::ast_util::types_equal(&result.typ, &f.x.inner_ret.x.typ)
+            {
+                continue;
+            }
+            if let Some(index) = f.x.params.iter().position(|p| {
+                p.x.mode == Mode::Exec
+                    && !p.x.user_mut
+                    && matches!(&*p.x.typ, TypX::Decorate(TypDecoration::Ref, None, _))
+                    && name(issuer) == Some(&p.x.name)
+                    && vir::ast_util::types_equal(&issuer.typ, &p.x.typ)
+            }) {
+                let TypX::Decorate(_, _, receiver) = &*issuer.typ else { continue };
+                let TypX::Datatype(dt, _, _) = &**receiver else { continue };
+                evidence.issuer_types.insert(dt.clone());
+                evidence.issuer_parameters.insert(f.x.name.clone(), index);
+            }
+        }
+    }
+}
