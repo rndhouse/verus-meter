@@ -77,7 +77,9 @@ impl Layouts {
         let fields: std::collections::BTreeSet<_> = datatypes
             .iter()
             .flat_map(|d| d.x.variants.iter().flat_map(|v| v.fields.iter().map(|f| f.name.clone())))
+            .chain(["0", "1"].map(|field| std::sync::Arc::new(field.to_owned())))
             .collect();
+        // Built-in writer result tuples have no nominal datatype declaration.
         let field_slots =
             fields.into_iter().enumerate().map(|(i, name)| (name, -2 - i as i128)).collect();
         Self {
@@ -465,7 +467,8 @@ impl Layouts {
             {
                 return true;
             }
-            if matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _))
+            if super::synchronization::RwRecord::payload(typ).is_some_and(|(_, p)| layouts.owner(p))
+                || matches!(&**typ, TypX::Decorate(TypDecoration::Arc, _, _))
                 || layouts.join_handle(typ).is_some()
                 || (layouts.result_payloads(typ).is_some() && !layouts.scalar_result(typ))
             {

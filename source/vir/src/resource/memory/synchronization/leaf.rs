@@ -98,16 +98,18 @@ impl Analysis<'_> {
                 .operation(&value.span, checked::Operation::Evaluate { args: args.clone() });
             return Ok(Some(0));
         }
+        let Some(leaf) = self.workspace_for(target, types, &value.span)? else { return Ok(None) };
         if self.layouts.workspace.is_none()
-            && self.layouts.template_sources.contains_key(target)
+            && let Some(source) = self
+                .layouts
+                .template_sources
+                .get(target)
+                .and_then(|f| f.x.attrs.resource_template.as_ref())
             && types.first().is_some_and(|ty| self.layouts.owner(ty))
         {
-            return Err(unsupported(
-                &value.span,
-                "a reader/writer operation without its persistent payload transfer",
-            ));
+            self.rw_payload_call(source.method, value, args, leaf, destination)?;
+            return Ok(Some(0));
         }
-        let Some(leaf) = self.workspace_for(target, types, &value.span)? else { return Ok(None) };
         let borrowed_result = self
             .layouts
             .template_sources
@@ -147,6 +149,19 @@ impl Analysis<'_> {
         for operand in operands {
             self.release_value(operand, &value.span);
         }
+        self.charge_workspace(leaf, value, destination)?;
+        self.transitions
+            .operation(&value.span, checked::Operation::Evaluate { args: args.clone() });
+        Ok(Some(0))
+    }
+    /// Charge the measured callee profile after evaluating all arguments. A
+    /// destination covers the returned inline value at overlapping phases.
+    pub(in crate::resource::memory) fn charge_workspace(
+        &mut self,
+        leaf: CheckedBody,
+        value: &Expr,
+        destination: bool,
+    ) -> Result<(), VirErr> {
         let result = self.layouts.size(&value.typ, &value.span)?;
         let from_callee = if let Some(bytes) = leaf.with_result {
             if destination {
@@ -168,8 +183,6 @@ impl Analysis<'_> {
         if !destination && super::super::construction::aggregate(&value.typ) {
             self.produced = Some(self.fresh_value(&value.span, &value.typ)?);
         }
-        self.transitions
-            .operation(&value.span, checked::Operation::Evaluate { args: args.clone() });
-        Ok(Some(0))
+        Ok(())
     }
 }

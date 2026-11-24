@@ -103,7 +103,11 @@ impl crate::resource::memory::analysis::Analysis<'_> {
                     "an erased writer result binding",
                 ));
             }
-            let slot = self.fresh_value(&field.span, &field.typ)?;
+            let site = match &source.x {
+                PlaceX::Temporary(call) => &call.span,
+                _ => &source.span,
+            };
+            let slot = self.fresh_value(site, &field.typ)?;
             self.slots.insert(binding.name.clone(), slot);
             locals.push((field.span.clone(), binding.name.clone()));
             if self.layouts.owner(&binding.typ) {

@@ -50,6 +50,34 @@ impl Trace<'_> {
                         if let Some(init) = init {
                             self.place_value(init, &pattern.typ)?;
                         }
+                    } else if matches!(
+                        self.checked.patterns.get(&pattern.span.id),
+                        Some(checked::Pattern::WriterPair)
+                    ) {
+                        let fields =
+                            crate::resource::memory::synchronization::rwlock::write_pattern(
+                                pattern,
+                            )?;
+                        let Value::Owner(pair) = self.place_value(init.as_ref()?, &pattern.typ)?
+                        else {
+                            return None;
+                        };
+                        self.used.insert((checked::Kind::Pattern, pattern.span.id));
+                        for (i, field) in fields.into_iter().enumerate() {
+                            let PatternX::Var(binding) = &field.x else { return None };
+                            let slot = OwnerSlot::Field(Arc::new(i.to_string()));
+                            let value = self.extracted_field(
+                                &field.span,
+                                pair.clone(),
+                                &field.typ,
+                                false,
+                                slot,
+                            )?;
+                            self.state.values.insert(binding.name.clone(), value);
+                            if !locals.contains(&binding.name) {
+                                locals.push(binding.name.clone());
+                            }
+                        }
                     } else {
                         let Some((binding, source_type, binding_init)) =
                             execution::declaration_binding(self.layouts, pattern, init.as_ref())

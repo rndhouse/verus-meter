@@ -66,3 +66,78 @@ fn readers_share_while_a_writer_excludes_a_reader_on_the_same_instance() {
         );
     }
 }
+
+#[test]
+fn owned_buffers_survive_release_moves_and_helper_returns() {
+    let program = format!("{SOURCE}\n{}", include_str!("rwlock_owned.verus.rs"));
+    verify_one_file("rwlock_buffers", program.clone(), &["--no-cheating"]).unwrap();
+    let too_small = program.replace("2 * n + 1500", "n + 1500");
+    let failure = verify_one_file("rwlock_overlap", too_small, &["--no-cheating"]).unwrap_err();
+    assert_vir_error_msg(failure, "conditional memory budget exceeded");
+}
+
+#[test]
+fn populated_cell_destruction_never_reclaims_its_payload() {
+    for body in ["drop(cell);", "if early { return; } let value = cell.into_inner(); drop(value);"]
+    {
+        let code = format!(
+            "{SOURCE}\nverus! {{ fn leak(cell: RwLock<Vec<u8>, Any>, early: bool) resources peak(memory) <= 1024, {{ {body} }} }}"
+        );
+        let failure = verify_one_file("rwlock_retained", code, &["--no-cheating"]).unwrap_err();
+        assert_vir_error_msg(failure, "discarding a populated RwLock");
+    }
+}
+
+#[test]
+fn writer_replaces_only_its_own_cell() {
+    let body = code_str! {
+        verus! {
+            fn swap(n: usize) requires n == 4096, resources peak(memory) <= n + 1500, {
+                let a: Vec<u8> = Vec::with_capacity(n);
+                let b: Vec<u8> = Vec::with_capacity(1);
+                let left = RwLock::<_, Any>::new(a, Ghost(Any));
+                let right = RwLock::<_, Any>::new(b, Ghost(Any));
+                let (a, x) = left.acquire_write();
+                let (b, y) = right.acquire_write();
+                x.release_write(a); y.release_write(b);
+                let first = left.into_inner(); drop(first);
+                let other: Vec<u8> = Vec::with_capacity(n);
+                let second = right.into_inner();
+                drop(other); drop(second);
+            }
+        }
+    };
+    let program = format!("{SOURCE}\n{body}");
+    verify_one_file("rwlock_instance", program.clone(), &["--no-cheating"]).unwrap();
+    let swap = program.replace(
+        "x.release_write(a); y.release_write(b);",
+        "x.release_write(b); y.release_write(a);",
+    );
+    assert_ne!(program, swap);
+    let failure = verify_one_file("rwlock_swap", swap, &["--no-cheating"]).unwrap_err();
+    assert_vir_error_msg(failure, "conditional memory budget exceeded");
+}
+
+#[test]
+fn a_worker_receives_the_existing_payload_when_the_lock_moves() {
+    let body = code_str! {
+        verus! {
+            fn moved(n: usize) requires n == 4096, resources peak(memory) <= n + 2048, {
+                let a: Vec<u8> = Vec::with_capacity(n);
+                let cell = RwLock::<_, Any>::new(a, Ghost(Any));
+                let j = vstd::thread::spawn(move || {
+                    let (old, writer) = cell.acquire_write();
+                    writer.release_write(old);
+                    let value = cell.into_inner();
+                    drop(value);
+                });
+                let done = j.join();
+            }
+        }
+    };
+    let trace =
+        verify_one_file("rwlock_moved", format!("{SOURCE}\n{body}"), &["--trace", "--no-cheating"])
+            .unwrap_err();
+    assert_eq!(trace.errors.len(), 1);
+    assert!(trace.errors[0].message.contains("global lifetime and interference proofs"));
+}

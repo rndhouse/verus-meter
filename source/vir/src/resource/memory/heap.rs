@@ -55,6 +55,9 @@ pub(super) type OwnerPath = Vec<OwnerSlot>;
 /// its inline storage belongs to the enclosing value or allocation layout.
 #[derive(Clone)]
 pub(super) struct Owner {
+    /// Protocol location for a reader/writer cell, or an access to that cell.
+    /// Handles never own a second copy of the cell's payload.
+    pub(super) rw_location: Option<super::synchronization::rw_payload::Location>,
     /// A source mutex identity or a returned acquisition, transported with its owner.
     pub(super) synchronization: Option<super::synchronization::local::Owned>,
     /// The exact protected view that a returned Some guard can reopen.
@@ -110,6 +113,7 @@ pub(super) struct Owner {
 impl Default for Owner {
     fn default() -> Self {
         Self {
+            rw_location: None,
             synchronization: None,
             suspended_payload: None,
             selected_worker: None,
@@ -139,7 +143,8 @@ impl Default for Owner {
 
 impl Owner {
     pub(super) fn same_synchronization(&self, other: &Owner) -> bool {
-        self.synchronization == other.synchronization
+        self.rw_location == other.rw_location
+            && self.synchronization == other.synchronization
             && match (&self.suspended_payload, &other.suspended_payload) {
                 (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
                 (None, None) => true,
@@ -150,7 +155,11 @@ impl Owner {
     /// Byte-free owner nodes and forests still carry strong/worker lifetimes.
     pub(super) fn references(&self) -> super::elements::References {
         use super::elements::References;
-        if self.shared.is_some() || self.worker.is_some() || self.joined.is_some() {
+        if self.rw_location.is_some()
+            || self.shared.is_some()
+            || self.worker.is_some()
+            || self.joined.is_some()
+        {
             return References::Unclassified;
         }
         let own = match self.selected_worker {
@@ -433,7 +442,8 @@ impl Analysis<'_> {
         capacities: &HashMap<super::paths::LocalPath, Expr>,
         worker_parameter: bool,
     ) -> Result<Owner, VirErr> {
-        if super::synchronization::RwRecord::payload(typ).is_some() {
+        let record = super::synchronization::RwRecord::payload(typ).map(|(kind, _)| kind);
+        if record.is_some_and(|kind| kind != super::synchronization::RwRecord::Lock) {
             return Err(unsupported(
                 span,
                 "an owned permissioned payload without its incoming occupancy and release evidence",
@@ -470,6 +480,7 @@ impl Analysis<'_> {
             ));
         }
         let mut owner = Owner {
+            rw_location: record.map(|_| super::synchronization::rw_payload::Location::fresh_cell()),
             view: super::metadata::View::Local,
             geometry_known: !self.layouts.cardinality(typ),
             ..Default::default()
@@ -723,6 +734,12 @@ impl Analysis<'_> {
         inputs: bool,
         proofs: &mut Vec<Stmt>,
     ) {
+        if owner.populated_rw_cell() {
+            // vstd's PCell contains ManuallyDrop. Ordinary destruction frees
+            // the inline slot but never drops this separately owned value.
+            self.growth.unreclaimed_cell.get_or_insert_with(|| span.clone());
+            return;
+        }
         if let Some(interval) =
             owner.synchronization.and_then(super::synchronization::local::Owned::interval)
         {

@@ -12,14 +12,22 @@ impl Trace<'_> {
         typ: &Typ,
         observed_scalar: bool,
     ) -> Option<Value> {
+        self.extracted_field(span, node, typ, observed_scalar, OwnerSlot::Contents)
+    }
+
+    pub(super) fn extracted_field(
+        &self,
+        span: &Span,
+        node: Node,
+        typ: &Typ,
+        observed_scalar: bool,
+        slot: OwnerSlot,
+    ) -> Option<Value> {
         if super::super::super::model::unit(typ) {
             return Some(Value::Unit);
         }
-        let memory = expr::subtree(
-            span,
-            node.memory,
-            expr::path(span, [self.layouts.metadata_slot(&OwnerSlot::Contents)]),
-        );
+        let memory =
+            expr::subtree(span, node.memory, expr::path(span, [self.layouts.metadata_slot(&slot)]));
         if contracts::scalar(typ) {
             return Some(if observed_scalar {
                 Value::Scalar(expr::observed_scalar(span, memory, typ)?)
@@ -31,8 +39,7 @@ impl Trace<'_> {
             .minima
             .into_iter()
             .filter_map(|(path, floor)| {
-                path.strip_prefix(&[Step::Fixed(OwnerSlot::Contents)])
-                    .map(|rest| (rest.to_vec(), floor))
+                path.strip_prefix(&[Step::Fixed(slot.clone())]).map(|rest| (rest.to_vec(), floor))
             })
             .collect();
         Some(Value::Owner(Node { origin: None, typ: typ.clone(), memory, minima }))
@@ -41,6 +48,17 @@ impl Trace<'_> {
     /// A box and a present Option both own their payload at Contents. Only the
     /// box allocates backing; the Option records the observed presence tag.
     fn wrapped_owner(&self, value: &Expr, child: Value, bytes: u64, tag: i128) -> Value {
+        self.wrapped_at(value, child, bytes, tag, OwnerSlot::Contents)
+    }
+
+    fn wrapped_at(
+        &self,
+        value: &Expr,
+        child: Value,
+        bytes: u64,
+        tag: i128,
+        slot: OwnerSlot,
+    ) -> Value {
         let span = &value.span;
         let record = allocated(
             span,
@@ -57,11 +75,11 @@ impl Trace<'_> {
                 expr::prefix(
                     span,
                     child.memory,
-                    expr::path(span, [self.layouts.metadata_slot(&OwnerSlot::Contents)]),
+                    expr::path(span, [self.layouts.metadata_slot(&slot)]),
                 ),
             );
             minima.extend(child.minima.into_iter().map(|(path, floor)| {
-                (std::iter::once(Step::Fixed(OwnerSlot::Contents)).chain(path).collect(), floor)
+                (std::iter::once(Step::Fixed(slot.clone())).chain(path).collect(), floor)
             }));
         }
         Value::Owner(Node { origin: None, typ: value.typ.clone(), memory, minima })
@@ -75,6 +93,24 @@ impl Trace<'_> {
         let span = &value.span;
         use checked::Operation;
         match operation {
+            Operation::RwWrite { receiver, slot, replacement } => {
+                self.value(&receiver)?;
+                let location = self.checked_location(&slot)?;
+                if let Some(value) = replacement {
+                    let Value::Owner(child) = self.value(&value)? else { return None };
+                    self.set(span, &location, child)?;
+                    Some(Value::Unit)
+                } else {
+                    let child = self.take(span, &location, &slot.typ)?;
+                    Some(self.wrapped_at(
+                        value,
+                        Value::Owner(child),
+                        0,
+                        0,
+                        OwnerSlot::Field(Arc::new("0".into())),
+                    ))
+                }
+            }
             Operation::GuardBorrow { source, .. } => {
                 match &source.x {
                     ExprX::BorrowMut(place) | ExprX::TwoPhaseBorrowMut(place) => {

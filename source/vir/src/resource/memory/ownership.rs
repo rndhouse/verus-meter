@@ -68,6 +68,15 @@ pub(super) fn summarize(
         path: &mut super::heap::OwnerPath,
         capacities: &mut std::collections::BTreeMap<super::heap::OwnerPath, Expr>,
     ) -> Result<ReturnedOwner, VirErr> {
+        if let Some(location) = owner.rw_location
+            && !(matches!(location, super::synchronization::rw_payload::Location::Cell(_))
+                && owner.children.contains_key(&super::heap::OwnerSlot::Contents))
+        {
+            return Err(unsupported(
+                &function.span,
+                "exporting a reader/writer payload without its cell identity",
+            ));
+        }
         if owner.worker.is_some() {
             return Err(unsupported(
                 &function.span,
@@ -409,6 +418,19 @@ impl Analysis<'_> {
             .get(path)
             .map(|capacity| contracts::substitute(capacity, callee, args, &self.stable_scalars))
             .transpose()?;
+        if matches!(super::synchronization::RwRecord::payload(typ), Some((super::synchronization::RwRecord::Lock, p)) if self.layouts.owner(p))
+        {
+            if !owner.children.contains_key(&super::heap::OwnerSlot::Contents) {
+                return Err(unsupported(
+                    &expr.span,
+                    "an RwLock result without its checked payload",
+                ));
+            }
+            // Moving a lock by value cannot leave a borrowing handle behind.
+            owner
+                .rw_location
+                .get_or_insert_with(super::synchronization::rw_payload::Location::fresh_cell);
+        }
         self.attach_vector_result(&expr.span, typ, &mut owner, capacity)?;
         if self.layouts.cardinality(typ) && owner.source.is_none() && owner.geometry.is_none() {
             owner.geometry_known = false;

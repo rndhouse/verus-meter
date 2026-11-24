@@ -18,6 +18,7 @@ pub use leaf::CheckedBody;
 pub mod flow;
 pub(super) mod helpers;
 pub(super) mod holders;
+pub(super) mod rw_payload;
 pub(super) mod rwlock;
 pub use rwlock::RwRecord;
 mod workspace;

@@ -51,6 +51,8 @@ pub(super) struct VectorState {
 
 #[derive(Default)]
 pub(super) struct Growth {
+    /// A populated permissioned cell was destroyed without extracting its payload.
+    pub(super) unreclaimed_cell: Option<Span>,
     /// Proof positions immediately after a block’s final statement, before
     /// its locals leave scope. Source blocks with an explicit tail use its span.
     pub(super) holder_exits: HashMap<crate::messages::AstId, Span>,

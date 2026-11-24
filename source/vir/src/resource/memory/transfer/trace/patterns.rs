@@ -119,7 +119,7 @@ impl Trace<'_> {
             }
             // A forest stores byte ownership, not the native Result discriminant.
             // A cross-call substitution needs the source outcome binder.
-            checked::Pattern::LockOutcome { .. } => None,
+            checked::Pattern::LockOutcome { .. } | checked::Pattern::WriterPair => None,
             checked::Pattern::Absent => {
                 let Value::Owner(node) = value else { return None };
                 Some(mk_eq(span, &property(span, node.memory, "length"), &expr::integer(span, 0)))

@@ -272,6 +272,12 @@ impl Analysis<'_> {
                                 &mut locals,
                                 &mut owned_locals,
                             )?;
+                            if self.layouts.owner(&pattern.typ) {
+                                self.transitions.pattern(
+                                    &pattern.span,
+                                    super::transfer::checked::Pattern::WriterPair,
+                                );
+                            }
                             break 'statement;
                         }
                         let Some((binding, source_type, binding_init)) =
@@ -833,6 +839,12 @@ pub(super) fn check(
                     &capacities,
                     worker_parameter == Some(index),
                 )?;
+                if borrowed.is_some() && owner.contains_rw_cell() {
+                    return Err(unsupported(
+                        &param.span,
+                        "a borrowed RwLock payload without a checked shared version",
+                    ));
+                }
                 let separate_guard = borrowed.is_some() && layouts.owner(&param.x.typ);
                 if separate_guard {
                     let mut guard = super::heap::Owner {
@@ -902,11 +914,15 @@ pub(super) fn check(
     let result = analysis.produce(body)?;
     analysis.check_indexed_exits(&body.span);
     analysis.drop_guard_parameters(function, &interface);
+    analysis.check_populated_cell_exits(&function.span)?;
     analysis.prepare_guard_returns(function, &body.span)?;
     if analysis.flow.reachable {
         analysis.record_holder_return(body);
     }
     let result = analysis.finish_returns(&function.span, result)?;
+    if let Some(site) = &analysis.growth.unreclaimed_cell {
+        return Err(super::synchronization::rw_payload::unreclaimed(site));
+    }
     let synchronized_result = analysis.finish_synchronization_interface(function, &interface)?;
     if !analysis.heap.temporaries.is_empty() || !analysis.evaluations.is_empty() {
         return Err(unsupported(&function.span, "unclosed compiler receiver-temporary scopes"));

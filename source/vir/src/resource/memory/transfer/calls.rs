@@ -80,7 +80,7 @@ impl Analysis<'_> {
                     .writable_guard_payload(typ)
                     .or_else(|| self.layouts.mutex_payload(super::super::paths::referent(typ)))
                     .is_some_and(|payload| self.layouts.vector(payload)),
-                None => false,
+                Some(View::ReadPayload(_)) | None => false,
             }
         });
         if !required && !protected_write {
@@ -524,8 +524,14 @@ impl Analysis<'_> {
                 .children
                 .keys()
                 .any(|(parameter, _)| *parameter == index);
-            let mut predicted =
-                self.adopt_transfer_node(&value.span, node, prepared.view, zero, prepared.ordered)?;
+            let mut predicted = self.adopt_transfer_node(
+                &value.span,
+                node,
+                prepared.view,
+                zero,
+                prepared.ordered,
+                None,
+            )?;
             let mut owner = if replacement {
                 // The checked child effect replaces protected contents. Its
                 // enclosing mutex, including the domain's canonical shared root,
@@ -599,6 +605,7 @@ impl Analysis<'_> {
                             prepared.view,
                             zero,
                             prepared.ordered,
+                            None,
                         )?;
                         let old = original.elements.as_mut().unwrap();
                         let new = predicted.elements.as_mut().unwrap();
@@ -619,6 +626,7 @@ impl Analysis<'_> {
                         prepared.view,
                         zero,
                         prepared.ordered,
+                        self.summaries[&function.x.name].allocations.returned.as_ref(),
                     )
                 }
             })
@@ -709,6 +717,7 @@ impl Analysis<'_> {
         view: super::super::metadata::View,
         zero: bool,
         ordered: bool,
+        result: Option<&super::super::allocations::ReturnedOwner>,
     ) -> Result<Owner, VirErr> {
         let mut proofs = Vec::new();
         super::proofs::forest_views(span, &node.memory, &mut proofs, ordered)?;
@@ -732,8 +741,14 @@ impl Analysis<'_> {
             proofs.push(crate::def::Spanned::new(span.clone(), StmtX::Expr(check)));
         }
         self.growth.before.entry(span.id).or_default().extend(proofs);
-        let mut owner =
-            self.owner_from_metadata(span, &node.typ, node.memory.clone(), view, zero)?;
+        let mut owner = self.owner_from_result_metadata(
+            span,
+            &node.typ,
+            node.memory.clone(),
+            view,
+            zero,
+            result,
+        )?;
         owner.visit_mut(&mut |owner| {
             owner.geometry_known = true;
         });
@@ -754,6 +769,14 @@ impl Analysis<'_> {
             }
         }
         geometry(self, span, &mut owner, node.memory.clone());
+        owner.visit(&mut |cell| {
+            if cell.populated_rw_cell()
+                && let Some(child) = cell.children.get(&super::super::heap::OwnerSlot::Contents)
+                && let Some(vector) = child.vector
+            {
+                self.growth.vectors[vector].protected_length = child.geometry.clone();
+            }
+        });
         self.install_owner_minima(&mut owner, &node.minima);
         self.preserve_transfer_extents(span, &node.typ, node.memory, &mut owner)?;
         Ok(owner)

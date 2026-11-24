@@ -272,6 +272,7 @@ impl Analysis<'_> {
         // A mutex payload has no unguarded source projection. Its backing
         // remains in the owner tree with the observations taken at construction.
         if self.layouts.mutex_payload(typ).is_some()
+            || super::super::synchronization::RwRecord::payload(typ).is_some()
             || self.layouts.option(typ)
             || owner.closure.is_some()
         {

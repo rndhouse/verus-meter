@@ -42,6 +42,8 @@ pub(in super::super) enum View {
     Mutex(Instance),
     Guard(Interval),
     Payload(Interval),
+    /// A shared borrow of the initialized cell, issued by a verified reader.
+    ReadPayload(u64),
 }
 
 impl Owned {
@@ -144,8 +146,18 @@ impl Analysis<'_> {
             ExprX::ReadPlace(place, _)
             | ExprX::BorrowMut(place)
             | ExprX::TwoPhaseBorrowMut(place) => self.synchronization_place(place),
-            ExprX::Call { target: CallTarget::Fun(_, _, _, _, attrs), args, .. } => {
+            ExprX::Call { target: CallTarget::Fun(_, target, _, _, attrs), args, .. } => {
                 let [source] = args.as_slice() else { return None };
+                if self
+                    .layouts
+                    .template_sources
+                    .get(target)
+                    .and_then(|f| f.x.attrs.resource_template.as_ref())
+                    .is_some_and(|s| s.method == super::WorkspaceMethod::Borrow)
+                    && let Some(super::rw_payload::Location::Reader(id)) = self.rw_receiver(source)
+                {
+                    return Some(View::ReadPayload(id));
+                }
                 match attrs.resource_intrinsic {
                     Some(ResourceIntrinsic::Concurrency(
                         super::super::concurrency::Operation::ArcBorrow,

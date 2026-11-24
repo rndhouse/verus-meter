@@ -245,6 +245,45 @@ impl Analysis<'_> {
         view: super::View,
         zero_charge: bool,
     ) -> Result<Owner, VirErr> {
+        self.owner_from_result_metadata(span, typ, memory, view, zero_charge, None)
+    }
+
+    /// A moved lock can receive a fresh local cell identity only if body
+    /// analysis exported an occupied slot at exactly this result path.
+    pub(in super::super) fn owner_from_result_metadata(
+        &mut self,
+        span: &Span,
+        typ: &Typ,
+        memory: Expr,
+        view: super::View,
+        zero_charge: bool,
+        result: Option<&super::super::allocations::ReturnedOwner>,
+    ) -> Result<Owner, VirErr> {
+        use super::super::{
+            allocations::ReturnedOwner,
+            heap::OwnerSlot,
+            synchronization::{RwRecord, rw_payload::Location},
+        };
+        let children = match result {
+            Some(ReturnedOwner::Input { children, .. } | ReturnedOwner::Node { children, .. }) => {
+                Some(children)
+            }
+            _ => None,
+        };
+        let mut rw_location = None;
+        if let Some((kind, p)) = RwRecord::payload(typ)
+            && self.layouts.owner(p)
+        {
+            if kind != RwRecord::Lock
+                || !children.is_some_and(|slots| slots.contains_key(&OwnerSlot::Contents))
+            {
+                return Err(super::super::model::unsupported(
+                    span,
+                    "a reconstructed permissioned cell without its occupancy or release evidence",
+                ));
+            }
+            rw_location = Some(Location::fresh_cell());
+        }
         if self.layouts.join_handle(typ).is_some() {
             return self.worker_from_metadata(span, typ, memory, view, zero_charge, None);
         }
@@ -262,6 +301,7 @@ impl Analysis<'_> {
         ));
         let mut rest = memory.clone();
         let mut owner = Owner {
+            rw_location,
             view,
             // A local-charge forest can omit untouched incoming descriptors.
             // Only a complete forest establishes the executable cardinality;
@@ -280,10 +320,16 @@ impl Analysis<'_> {
             let path = expr::path(span, [self.layouts.metadata_slot(&slot)]);
             self.metadata_partition(span, rest.clone(), path.clone());
             let child = expr::subtree(span, rest.clone(), path.clone());
-            owner.children.insert(
-                slot,
-                self.owner_from_metadata(span, &child_type, child, view, zero_charge)?,
-            );
+            let shape = children.and_then(|slots| slots.get(&slot));
+            let child = self.owner_from_result_metadata(
+                span,
+                &child_type,
+                child,
+                view,
+                zero_charge,
+                shape,
+            )?;
+            owner.children.insert(slot, child);
             rest = expr::without(span, rest, path);
         }
         if self.layouts.owning_elements(typ) {

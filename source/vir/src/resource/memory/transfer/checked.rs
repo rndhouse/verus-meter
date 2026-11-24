@@ -121,6 +121,8 @@ pub(in super::super) struct WorkerPublication {
 /// One executable ownership rule, with layout decisions supplied by accounting.
 #[derive(Clone)]
 pub(in super::super) enum Operation {
+    /// A verified writer transfers one whole payload from or to this checked cell slot.
+    RwWrite { receiver: Expr, slot: Place, replacement: Option<Expr> },
     /// A compiler-resolved native dereference borrows this existing acquisition.
     GuardBorrow { source: Expr, interval: super::super::synchronization::local::Interval },
     /// Actual discriminant of the lock Result at a native is_ok/is_err test.
@@ -252,6 +254,8 @@ pub(in super::super) enum Operation {
 /// Pattern ownership decisions made while checking the actual match arm.
 #[derive(Clone)]
 pub(in super::super) enum Pattern {
+    /// Destructuring binds the value taken from the cell and the separate writer.
+    WriterPair,
     /// The source tag chooses an acquiring or non-acquiring arm. An unsplit
     /// try-lock error preserves both possibilities.
     LockOutcome {
@@ -625,6 +629,7 @@ impl Checked {
                     }
                 }
             }
+            Operation::RwWrite { slot, .. } => self.mutations.push(slot.location.clone()),
             Operation::Push { receiver, .. } | Operation::Remove { receiver, .. } => {
                 self.mutations.push(receiver.location.clone());
             }
