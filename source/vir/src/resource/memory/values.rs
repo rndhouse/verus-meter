@@ -421,7 +421,7 @@ impl Analysis<'_> {
                 && let PatternX::Var(b) = &field.a.x
                 && slots.iter().any(|(name, _)| *name == b.name)
             {
-                self.bind_holder(&field.a, Some(&arm.x.body), None);
+                self.bind_holder(&field.a, Some(&arm.x.body), Some(scrutinee));
             }
             if new_value {
                 let value = self.produce(&arm.x.body)?;

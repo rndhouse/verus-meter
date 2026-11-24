@@ -178,6 +178,11 @@ impl Analysis<'_> {
         if let Some(protection) = protection {
             self.heap.unprotect(protection);
         }
+        if target == Target::Return
+            && let Some(result) = result
+        {
+            self.record_holder_return(result);
+        }
         self.transitions.exits.insert(expr.span.id, target.clone());
         self.flow.exits.push(Edge {
             target,

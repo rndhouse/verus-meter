@@ -190,6 +190,61 @@ fn lexical(g: Guard<'_>, n: usize)
     drop(last);
 }
 
+// The returned witness belongs to the selected input, even through another
+// helper. The failure branch consumes that same input before returning None.
+fn carry(g: Guard<'_>) -> (q: Guard<'_>)
+    ensures q == g,
+    resources peak(memory) <= 16,
+{
+    g
+}
+
+fn keep_guard<'a>(unused: Guard<'a>, selected: Guard<'a>, keep: bool) -> (q: Option<Guard<'a>>)
+    ensures q matches Some(p) ==> p == selected,
+    resources peak(memory) <= 128,
+{
+    unused.leave();
+    if keep { Some(carry(selected)) } else { selected.leave(); None }
+}
+
+fn resume<'a>(a: Guard<'a>, b: Guard<'a>, keep: bool)
+    resources peak(memory) <= 256,
+{
+    let ghost issuer = a.instance_id();
+    let ghost limit = a.capacity();
+    let result = keep_guard(b, a, keep);
+    if let Some(q) = result {
+        assert(q.instance_id() == issuer && q.capacity() == limit);
+        let data = Box::new([0u8; 67]);
+        let survives = Box::new([0u8; 66]);
+        drop(data);
+        q.leave();
+        drop(survives);
+    }
+}
+
+// Both guards have the same Rust type. An early return can select a different
+// issuer from the tail, so neither caller input identifies every result.
+fn choose_guard<'a>(a: Guard<'a>, b: Guard<'a>, left: bool) -> Guard<'a>
+    resources peak(memory) <= 128,
+{
+    if left {
+        b.leave();
+        return a;
+    }
+    a.leave();
+    b
+}
+
+fn use_choice<'a>(a: Guard<'a>, b: Guard<'a>, left: bool)
+    resources peak(memory) <= 256,
+{
+    let q = choose_guard(a, b, left);
+    let data = Box::new([0u8; 68]);
+    drop(data);
+    q.leave();
+}
+
 fn work() {
     let l = Lock::new();
     if let Some(g) = l.try_enter() {

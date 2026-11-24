@@ -2,13 +2,15 @@
 //! Each binder identifies an executable value in its actor and visit. Applying
 //! a population bound additionally requires its theorem and instance identity.
 
+mod returns;
+
 use super::super::{accounting::Accounting, layout::Layouts};
 use crate::{
     ast::*,
     ast_visitor::{AstVisitor, NoScoper, Walk},
 };
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
     sync::Arc,
 };
 
@@ -33,8 +35,12 @@ pub(in super::super) struct Bindings {
     definitions: BTreeMap<Witness, Binding>,
     /// Immutable names created by a checked whole move share the original witness.
     moved: HashMap<VarIdent, Witness>,
+    /// Source relation shared by the continuing and explicit returns of this actor.
+    returned: returns::Origin,
+    /// A named, immutable Option carries the relation only on its Some arm.
+    options: HashMap<VarIdent, returns::Origin>,
     /// Only the checked entry of the function or selected match arm opens these scopes.
-    entries: BTreeMap<crate::messages::AstId, (Expr, BTreeSet<Witness>)>,
+    entries: BTreeMap<crate::messages::AstId, (Expr, BTreeMap<Witness, VarIdent>)>,
 }
 
 impl Layouts {
@@ -61,18 +67,18 @@ impl Bindings {
                     id,
                     Binding { name: param.x.name.clone(), proof: proof.clone(), visit: None },
                 );
-                bindings.at_entry(body, id);
+                bindings.at_entry(body, id, &param.x.name);
             }
         }
         bindings
     }
 
-    fn at_entry(&mut self, block: &Expr, id: Witness) {
+    fn at_entry(&mut self, block: &Expr, id: Witness, name: &VarIdent) {
         self.entries
             .entry(block.span.id)
-            .or_insert_with(|| (block.clone(), BTreeSet::new()))
+            .or_insert_with(|| (block.clone(), BTreeMap::new()))
             .1
-            .insert(id);
+            .insert(id, name.clone());
     }
 
     pub(in super::super) fn is_empty(&self) -> bool {
@@ -131,8 +137,8 @@ impl Bindings {
         if let Some((entry, ids)) = self.entries.get(&block.span.id)
             && Arc::ptr_eq(block, entry)
         {
-            for id in ids {
-                scope.0.push((*id, self.definitions[id].name.clone()));
+            for (id, name) in ids {
+                scope.0.push((*id, name.clone()));
             }
         }
         scope
@@ -171,14 +177,34 @@ impl super::super::analysis::Analysis<'_> {
         &mut self,
         pattern: &Pattern,
         arm: Option<&Expr>,
-        moved_from: Option<&VarIdent>,
+        source: Option<&Place>,
     ) -> Option<(Witness, VarIdent)> {
-        let (b, proof) = self.immutable_holder(pattern)?;
+        if self.layouts.holder_proofs.is_empty() {
+            return None;
+        }
+        let b = self.immutable_binding(pattern)?;
         if !self.slots.contains_key(&b.name) {
             return None;
         }
-        if let Some(id) = moved_from.and_then(|name| self.transitions.holders.named(name, &proof)) {
+        if self.layouts.option(&b.typ) {
+            if !b.copy
+                && let Some(source) = source
+                && let Some(proof) = self.holder_result_proof(&b.typ)
+            {
+                let origin = self.holder_place_origin(source, proof);
+                self.transitions.holders.options.insert(b.name.clone(), origin);
+            }
+            return None;
+        }
+        let proof = self.layouts.holder_proof(&b.typ)?.clone();
+        if !b.copy
+            && let Some(source) = source
+            && let returns::Origin::Owned(id) = self.holder_place_origin(source, &proof)
+        {
             self.transitions.holders.moved.insert(b.name.clone(), id);
+            if let Some(arm) = arm {
+                self.transitions.holders.at_entry(arm, id, &b.name);
+            }
             return Some((id, b.name.clone()));
         }
         let site = pattern.span.id;
@@ -189,14 +215,14 @@ impl super::super::analysis::Analysis<'_> {
             .definitions
             .insert(id, Binding { name: b.name.clone(), proof, visit: Some(visit) });
         if let Some(arm) = arm {
-            bindings.at_entry(arm, id);
+            bindings.at_entry(arm, id, &b.name);
         }
         Some((id, b.name.clone()))
     }
 
     /// Only a source-owned, executable binding can carry a population witness.
     /// Iterator item views and partially initialized slots cannot start a lifetime.
-    fn immutable_holder<'p>(&self, pattern: &'p Pattern) -> Option<(&'p PatternBinding, Fun)> {
+    fn immutable_binding<'p>(&self, pattern: &'p Pattern) -> Option<&'p PatternBinding> {
         let PatternX::Var(b) = &pattern.x else { return None };
         if b.user_mut != Some(false)
             || !matches!(b.by_ref, ByRef::No)
@@ -206,7 +232,7 @@ impl super::super::analysis::Analysis<'_> {
         {
             return None;
         }
-        Some((b, self.layouts.holder_proof(&b.typ)?.clone()))
+        Some(b)
     }
 
     /// A whole executable move into another immutable name preserves the
@@ -222,10 +248,11 @@ impl super::super::analysis::Analysis<'_> {
             return None;
         };
         let PlaceX::Local(name) = &source.x else { return None };
-        let (b, proof) = self.immutable_holder(pattern)?;
+        let b = self.immutable_binding(pattern)?;
+        let proof = self.layouts.holder_proof(&b.typ)?;
         (!b.copy
             && crate::ast_util::types_equal(&b.typ, &source.typ)
-            && self.transitions.holders.named(name, &proof).is_some())
+            && self.transitions.holders.named(name, proof).is_some())
         .then_some(name)
     }
 }

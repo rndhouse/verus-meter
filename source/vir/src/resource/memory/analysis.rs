@@ -384,9 +384,9 @@ impl Analysis<'_> {
             self.finish_temporary_scope(evaluation);
             holders.mark(start, &mut self.storage);
             if self.flow.reachable
-                && let StmtX::Decl { pattern, init: Some(_), els: None, .. } = &stmt.x
+                && let StmtX::Decl { pattern, init: Some(source), els: None, .. } = &stmt.x
             {
-                holders.initialized(self.bind_holder(pattern, None, moved_from));
+                holders.initialized(self.bind_holder(pattern, None, Some(source)));
             }
         }
         if self.flow.reachable {
@@ -886,6 +886,9 @@ pub(super) fn check(
     analysis.check_indexed_exits(&body.span);
     analysis.drop_guard_parameters(function, &interface);
     analysis.prepare_guard_returns(function, &body.span)?;
+    if analysis.flow.reachable {
+        analysis.record_holder_return(body);
+    }
     let result = analysis.finish_returns(&function.span, result)?;
     let synchronized_result = analysis.finish_synchronization_interface(function, &interface)?;
     if !analysis.heap.temporaries.is_empty() || !analysis.evaluations.is_empty() {

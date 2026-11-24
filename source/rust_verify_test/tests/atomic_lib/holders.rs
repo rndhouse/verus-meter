@@ -101,6 +101,22 @@ fn custom_guard_coverage_follows_the_owned_value_and_allocation() {
     let note = |message: &str| trace.notes.iter().any(|n| n.message == message);
     assert!(note("64-byte allocation only observed within intact holder input 0"));
     assert!(note("64-byte allocation also observed outside intact holder input 0"));
+    assert!(note("67-byte allocation only observed within intact holder input 0"));
+    assert!(note("66-byte allocation also observed outside intact holder input 0"));
+    assert!(
+        !trace
+            .notes
+            .iter()
+            .any(|n| n.message.starts_with("67-byte allocation") && n.message.ends_with("input 1"))
+    );
+    assert!(note("68-byte allocation only observed within intact holder local"));
+    assert!(
+        !trace
+            .notes
+            .iter()
+            .any(|n| n.message.starts_with("68-byte allocation")
+                && n.message.contains("holder input"))
+    );
     assert!(note("61-byte allocation only observed within intact holder input 0"));
     assert!(note("63-byte allocation only observed within intact holder input 0"));
     assert!(note("dynamic storage region also observed outside intact holder input 0"));
@@ -118,6 +134,21 @@ fn custom_guard_coverage_follows_the_owned_value_and_allocation() {
     assert!(at_call("scratch(retained);", "checked helper phase with intact holder input 1"));
     assert!(!at_call("scratch(retained);", "checked helper phase with intact holder input 0"));
     assert!(at_call("scratch(g);", "checked helper phase with intact holder local"));
+}
+
+#[test]
+fn returning_the_other_guard_changes_the_proved_issuer() {
+    let source = include_str!("exclusive.verus.rs")
+        .replace("keep_guard(b, a, keep)", "keep_guard(a, b, keep)");
+    let trace = verify_one_file("wrong_returned_issuer", source, &["--trace", "--no-cheating"])
+        .unwrap_err();
+    assert!(
+        trace
+            .notes
+            .iter()
+            .any(|n| n.message == "67-byte allocation only observed within intact holder input 1")
+    );
+    assert_vir_error_msg(trace, "assertion failed");
 }
 
 #[test]
@@ -161,6 +192,19 @@ fn a_worker_passes_its_actual_moved_guard_to_the_helper() {
         }
         fn work() {"#,
     );
+    let returned = source.replace(
+        "scratch(carried);",
+        r#"
+                let moved = carry(carried);
+                let data = Box::new([0u8; 69]);
+                drop(data);
+                scratch(moved);"#,
+    );
+    let trace = verify_one_file("worker_returned_holder", returned, &["--trace", "--no-cheating"])
+        .unwrap_err();
+    assert_eq!(trace.errors.len(), 1);
+    assert!(trace.errors[0].message.contains("global lifetime and interference proofs"));
+    assert!(trace.notes.iter().any(|n| n.message == "69-byte allocation only observed within intact holder capture 0"));
     let shared = source.replace(
         "fn publish(first: Guard<'static>, carried: Guard<'static>)",
         "fn inspect(_shared: &Guard<'_>) resources peak(memory) <= 80 { let b = Box::new([0u8; 42]); drop(b); }
