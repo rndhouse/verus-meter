@@ -10,6 +10,16 @@ use std::sync::Arc;
 use vir::ast::{Dt, Fun, KrateX, VirErr, VirErrAs};
 use vir::resolution_inference::ResolutionInfo;
 
+/// Memory diagnostics and the time at which the crate can safely be exported.
+pub(crate) struct Checks {
+    /// Optional source accounting traces.
+    pub(crate) diagnostics: Vec<VirErrAs>,
+    /// Structural proof gaps that still prevent acceptance and export.
+    pub(crate) incomplete: Vec<VirErr>,
+    /// Earliest publication point if every structural obligation is covered.
+    pub(crate) export: crate::import_export::ExportTiming,
+}
+
 /// Prepare a crate's memory guarantees for verification alongside its other proofs.
 ///
 /// The memory analysis checks supported operations and accounting rules, then adds
@@ -23,9 +33,8 @@ pub(crate) fn check(
     memory_datatypes: &[vir::ast::Datatype],
     modes: &HashMap<Fun, Arc<ResolutionInfo>>,
     erasure: &HashMap<Fun, Arc<crate::context::ErasureInfo>>,
-    trace: bool,
-    lifetime_checks: bool,
-) -> Result<(Vec<VirErrAs>, Vec<VirErr>), VirErr> {
+    args: &crate::config::Args,
+) -> Result<Checks, VirErr> {
     let (global_allocator, vector, option) = identities(ctxt);
     let synchronization_types = synchronization_types(ctxt);
     let mut synchronization = synchronization_evidence(
@@ -34,13 +43,13 @@ pub(crate) fn check(
         modes,
         erasure,
         synchronization_types,
-        lifetime_checks,
+        !args.no_lifetime,
     )?;
     super::protocol::bind_holder_proofs(krate, imports, &mut synchronization);
     super::protocol::bind_leaf_workspaces(ctxt, krate, imports, &mut synchronization);
     super::protocol::bind_workspaces(ctxt, krate, imports, modes, &mut synchronization);
     super::protocol::bind_issuers(krate, imports, &mut synchronization);
-    if trace {
+    if args.trace {
         let mut closures: Vec<_> = synchronization.concurrency.closures.values().collect();
         closures.sort_by_key(|closure| closure.id);
         for closure in closures {
@@ -112,14 +121,25 @@ pub(crate) fn check(
         &mut incomplete,
     )?;
     vir::resource::memory::erase_annotations(&mut krate.functions)?;
-    let diagnostics = if trace && incomplete.is_empty() {
+    let export = if let Some((span, _)) = reports.iter().find(|(_, report)| report.covers_workers) {
+        if args.no_verify || args.no_erasure_check || args.no_trait_conflicts {
+            return Err(vir::messages::error(
+                span,
+                "concurrent memory bounds require verification of worker bodies and erased Rust code",
+            ));
+        }
+        crate::import_export::ExportTiming::AfterVerification
+    } else {
+        crate::import_export::ExportTiming::Ordinary
+    };
+    let diagnostics = if args.trace && incomplete.is_empty() {
         reports.into_iter().flat_map(|(span, report)| report.diagnostics(&span)).collect()
-    } else if trace {
+    } else if args.trace {
         reports.into_iter().flat_map(|(_, report)| report.synchronization_diagnostics()).collect()
     } else {
         Vec::new()
     };
-    Ok((diagnostics, incomplete))
+    Ok(Checks { diagnostics, incomplete, export })
 }
 
 /// Obtain cleanup only for actual runtime synchronization. Ordinary sequential

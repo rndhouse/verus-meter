@@ -469,6 +469,25 @@ impl Checked {
         })
     }
 
+    /// Only a checked native acquisition of one concrete mutex can exclude
+    /// another fixed worker phase on that mutex.
+    pub(in super::super) fn fixed_mutex_intervals(
+        &self,
+    ) -> impl Iterator<Item = super::super::synchronization::local::Interval> + '_ {
+        self.operations.values().filter_map(|operation| match operation {
+            Operation::MutexLock { interval, occurrence, .. }
+                if occurrence.single_visit()
+                    && matches!(
+                        interval.instance,
+                        super::super::synchronization::Instance::Fresh(_)
+                    ) =>
+            {
+                Some(*interval)
+            }
+            _ => None,
+        })
+    }
+
     pub(in super::super) fn locks_mutex(&self) -> bool {
         self.synchronization_inputs.has_guards()
             || self.operations.values().any(|op| match op {

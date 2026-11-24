@@ -361,7 +361,7 @@ pub fn run(
         return (verifier, stats, Err(()));
     }
 
-    if let Err(error) = verifier.publish_verified_workspace() {
+    if let Err(error) = verifier.publish_verified_memory() {
         eprintln!("error: {}", error.note);
         verifier.encountered_vir_error = true;
         return (verifier, stats, Err(()));

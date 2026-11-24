@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 
 mod body;
 mod captures;
+mod envelope;
 pub(super) mod execution;
 mod identity;
 mod inputs;

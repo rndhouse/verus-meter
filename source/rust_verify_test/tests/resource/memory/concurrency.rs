@@ -95,7 +95,7 @@ fn a_family_count_cannot_hide_repeated_worker_identities() {
 
 #[test]
 fn native_calls_keep_their_executable_function_and_worker_body_scopes() {
-    let error = crate::verify_one_file(
+    let trace = crate::verify_one_file(
         "native_worker_call_bindings",
         r#"
         use vstd::prelude::*;
@@ -115,11 +115,7 @@ fn native_calls_keep_their_executable_function_and_worker_body_scopes() {
         .into(),
         &["--trace"],
     )
-    .unwrap_err();
-    crate::common::assert_vir_error_msg(
-        error.clone(),
-        "before concurrent lifetime accounting is available",
-    );
+    .unwrap();
     for marker in [
         "ArcNew (function body",
         "ArcNew (closure body",
@@ -128,12 +124,12 @@ fn native_calls_keep_their_executable_function_and_worker_body_scopes() {
         "StdJoin (function body",
     ] {
         assert_eq!(
-            error.notes.iter().filter(|note| note.message.contains(marker)).count(),
+            trace.notes.iter().filter(|note| note.message.contains(marker)).count(),
             1,
             "{marker}"
         );
     }
-    assert!(!error.notes.iter().any(|note| note.message.contains("memory native call unbound")));
+    assert!(!trace.notes.iter().any(|note| note.message.contains("memory native call unbound")));
 }
 
 #[test]

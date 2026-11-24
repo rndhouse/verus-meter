@@ -45,7 +45,7 @@ impl Phase {
 /// The child's separate entry ledger owns all moved captures. The caller
 /// retains the handle slot, completion tag and other source temporaries.
 pub(in super::super) struct Publication {
-    caller: Option<WorkerId>,
+    pub(super) caller: Option<WorkerId>,
     site: Binding,
     span: Span,
     pub(super) occurrence: Expr,
@@ -287,8 +287,8 @@ impl Analysis<'_> {
                 ));
             }
             // A synchronized execution exports every source phase, including
-            // waiting and newly unrestricted storage at release. Until global
-            // composition each such phase still owes its full local allowance.
+            // waiting and newly unrestricted storage at release. Preserve these
+            // local checks independently of the whole-operation proof.
             for point in execution.effects.points.iter() {
                 self.obligations.push(Obligation {
                     span: point.span.clone(),

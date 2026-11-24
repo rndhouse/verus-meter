@@ -37,6 +37,8 @@ pub(in super::super) struct Execution {
     /// identities and source/compiler capture paths. It survives collection.
     pub(super) entry: super::body::Entry,
     pub(super) publication: super::states::Publication,
+    /// Live in the coordinator from the actual publication until collection.
+    pub(super) completion: u64,
     /// Immutable charge observations at publication, before body mutations.
     pub(super) initial: Accounting,
     /// Capture-to-source substitutions and immutable construction observations.
@@ -93,9 +95,8 @@ impl Execution {
 }
 
 impl Analysis<'_> {
-    /// Keep the missing global proof explicit after checking actual source
-    /// effects. Structurally valid local executions do not establish an envelope
-    /// over simultaneous worker states or synchronization containment.
+    /// Validate the transported source effects before attempting their global
+    /// composition. Other domains keep their existing local proof obligations.
     pub(in super::super) fn check_worker_domain(
         &mut self,
         function: &Function,
@@ -187,15 +188,18 @@ impl Analysis<'_> {
                 ),
             )));
         }
+        if self.compose_fixed_workers(function) {
+            self.worker_obligations()?;
+            return Ok(None);
+        }
         Ok(Some(unsupported(
             span,
             "concurrent contracts before concurrent lifetime accounting is available: checked worker effects still require global lifetime and interference proofs",
         )))
     }
 
-    /// These are necessary local inequalities, not the simultaneous envelope.
-    /// Prove them at the original worker operations under the original closure
-    /// preconditions. The deferred global diagnostic still prevents acceptance.
+    /// Check local inequalities in the original worker scope. They also apply
+    /// to domains whose global envelope still needs further evidence.
     pub(in super::super) fn worker_obligations(&mut self) -> Result<(), VirErr> {
         for worker in self.growth.worker_executions.values() {
             self.obligations.extend(worker.obligations.iter().cloned());
@@ -255,6 +259,11 @@ impl Analysis<'_> {
                 self.storage.take_storage(&completion, &self.growth, span)?,
                 span,
             )?;
+        }
+        if self.current_worker.is_none() && unit(result_type) {
+            // The fixed-worker envelope needs the caller immediately after
+            // transfer, even when it makes no allocation before blocking.
+            self.storage.record_live(span)?;
         }
         let publication = self.publication_state(span, actor, at_fork)?;
         let initial = storage.clone();
@@ -531,6 +540,7 @@ impl Analysis<'_> {
                 .map(|i| (i.name.clone(), i.source.0.clone()))
                 .collect(),
             inputs,
+            completion: self.heap.workers.records[&actor].completion,
             entry: entry_descriptor,
             publication,
             initial,

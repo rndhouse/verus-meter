@@ -17,6 +17,7 @@ mod control_flow;
 mod element_transfers;
 mod elements;
 mod exit_ownership;
+mod fixed_workers;
 mod for_loops;
 mod growth;
 mod heap;

@@ -60,9 +60,9 @@ pub(crate) fn import_crates(
     Ok(ImportOutput { vir_crates, metadatas })
 }
 
-/// The ordinary Verus interface is exportable before lifetime and SMT checks.
-/// A memory certificate becomes visible only after both checks succeed for the
-/// whole crate. Keep only the already-pruned export while verification runs.
+/// Hold the pruned interface until the crate verifies and Rust checks the
+/// erased program. Ordinary library exports can add workspace certificates at
+/// that point. An interface relying on worker proofs is published in full then.
 pub(crate) struct PendingExport {
     destination: PathBuf,
     value: CrateWithMetadata,
@@ -93,11 +93,20 @@ impl PendingExport {
     }
 }
 
+/// A crate exposing a concurrent memory contract needs its SMT and Rust
+/// lifetime checks to succeed before the interface itself can be imported.
+#[derive(Clone, Copy)]
+pub(crate) enum ExportTiming {
+    Ordinary,
+    AfterVerification,
+}
+
 pub(crate) fn export_crate(
     args: &Args,
     export_vir_path_via_cargo: &Option<PathBuf>,
     metadata: CrateMetadata,
     vir_crate: Krate,
+    timing: ExportTiming,
 ) -> Result<Option<PendingExport>, VirErr> {
     let export = args.export.as_ref().map(PathBuf::from);
     let Some(destination) = export.or_else(|| export_vir_path_via_cargo.clone()) else {
@@ -127,9 +136,11 @@ pub(crate) fn export_crate(
         destination,
         value: CrateWithMetadata { krate: Arc::new(kratex), metadata },
     };
-    export.publish()?;
-    if certificates.is_empty() {
-        return Ok(None);
+    if matches!(timing, ExportTiming::Ordinary) {
+        export.publish()?;
+        if certificates.is_empty() {
+            return Ok(None);
+        }
     }
     for (index, body, template) in certificates {
         let fun = &mut Arc::make_mut(&mut export.value.krate).functions[index];

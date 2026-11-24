@@ -1,6 +1,6 @@
 //! Native acquisition outcomes and mutex identities on local and worker paths.
 
-use super::rejects;
+use super::{rejects, verifies};
 
 #[test]
 fn blocking_reacquisition_requires_the_previous_guard_to_be_released() {
@@ -31,11 +31,7 @@ fn worker_uses_the_mutex_instance_carried_by_its_arc_capture() {
             let done = worker.join();
         }
     "#;
-    rejects(
-        "worker_lock_instance",
-        &source.replace("SECOND", "drop(alias);"),
-        "checked worker effects still require global",
-    );
+    verifies("worker_lock_instance", &source.replace("SECOND", "drop(alias);"));
     rejects(
         "worker_lock_alias",
         &source.replace("SECOND", "let again = alias.lock();"),

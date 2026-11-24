@@ -1,6 +1,4 @@
-//! Source-driven worker proofs. The global rejection must remain even when all
-//! generated local obligations verify; deliberately short bounds must also fail
-//! at the actual executable allocation, independently of that rejection.
+//! Worker body proofs, accepted fixed-worker peaks and the remaining ownership boundaries.
 
 mod lifecycle;
 
@@ -106,7 +104,7 @@ fn worker_allocation_emits_a_real_byte_obligation() {
         &[],
     )
     .unwrap_err();
-    crate::common::assert_vir_error_msgs(error, &["memory budget exceeded", GLOBAL]);
+    crate::common::assert_vir_error_msg(error, "peak 273 bytes exceeds budget 128 bytes");
 }
 
 #[test]
@@ -568,19 +566,15 @@ fn a_worker_can_complete_before_spawn_returns() {
     // Returning unit makes the 64 bytes transient. They still overlap the
     // publishing frame while the child executes this straight-line body.
     let temporary = program.replace("move || [0u8; 64]", "move || { let _buf = [0u8; 64]; () }");
-    let valid =
-        crate::verify_one_file("publication_running_worker", temporary.clone(), &[]).unwrap_err();
-    crate::common::assert_vir_error_msg(valid, GLOBAL);
+    crate::verify_one_file("publication_running_worker", temporary.clone(), &[]).unwrap();
     let error = crate::verify_one_file(
         "publication_running_short",
         temporary.replace("{ 100 }", "{ 99 }"),
         &[],
     )
     .unwrap_err();
-    crate::common::assert_vir_error_msgs(
-        error,
-        &["memory budget exceeded before spawn returns", GLOBAL],
-    );
+    assert!(error.errors.iter().all(|e| e.message.contains("memory budget exceeded")));
+    assert!(!error.errors.is_empty());
     let zero = program.replace("b >= 128,", "b >= 128, !start,").replace("{ 100 }", "{ 50 }");
     let valid = crate::verify_one_file("publication_zero_workers", zero, &[]).unwrap_err();
     crate::common::assert_vir_error_msg(valid, GLOBAL);

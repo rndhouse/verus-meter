@@ -2637,8 +2637,9 @@ impl Verifier {
     }
 
     /// Publish only after successful verification and Rust's final erasure check.
-    /// A filtered or unchecked invocation still exports the ordinary interface.
-    pub(crate) fn publish_verified_workspace(&mut self) -> Result<(), VirErr> {
+    /// This can publish a complete concurrent interface or upgrade a library
+    /// interface with its checked workspace certificates.
+    pub(crate) fn publish_verified_memory(&mut self) -> Result<(), VirErr> {
         if !self.args.no_verify
             && !self.args.no_lifetime
             && !self.args.no_erasure_check
@@ -2804,12 +2805,13 @@ impl Verifier {
             crate_id: spans.local_crate.as_u64(),
             original_files: spans.local_files.clone(),
         };
-        if query.memory_export_allowed() {
+        if let Some(timing) = query.memory_export() {
             self.pending_memory_export = crate::import_export::export_crate(
                 &self.args,
                 &self.export_vir_path_via_cargo,
                 crate_metadata,
                 local_crate.clone(),
+                timing,
             )
             .map_err(map_err_diagnostics)?;
         }

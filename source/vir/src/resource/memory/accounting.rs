@@ -49,6 +49,8 @@ pub struct MemoryReport {
     // fits. Actual reservations and declared budgets still use the u64 model.
     pub peak: u128,
     pub budget: u64,
+    /// This operation relies on verified worker bodies and their simultaneous byte bounds.
+    pub covers_workers: bool,
     pub events: Vec<MemoryEvent>,
     pub(super) conditional: bool,
     /// Source observations shared by byte obligations, lifetime profiles and checked body effects.
@@ -307,11 +309,27 @@ impl Accounting {
             report: MemoryReport {
                 peak: 0,
                 budget,
+                covers_workers: false,
                 events: Vec::new(),
                 conditional: false,
                 points: Arc::default(),
                 holder_effects: Vec::new(),
             },
+        }
+    }
+
+    /// Include all compatible worker phases in the originating caller observation.
+    /// The coordinator still owns the completion tags and the canonical shared backing.
+    pub(super) fn include_worker_costs(&mut self, additions: Vec<Option<Expr>>) {
+        self.report.covers_workers = true;
+        assert_eq!(self.report.points.len(), additions.len());
+        for (point, extra) in Arc::make_mut(&mut self.report.points).iter_mut().zip(additions) {
+            if let Some(extra) = extra {
+                point.cost = point.cost.add(&point.span, Footprint::allowance(extra));
+                if let Some(bytes) = contracts::constant(&point.cost.total()) {
+                    self.report.peak = self.report.peak.max(u128::from(bytes));
+                }
+            }
         }
     }
 
