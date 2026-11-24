@@ -36,8 +36,9 @@ pub(crate) fn check(
         synchronization_types,
         lifetime_checks,
     )?;
-    super::protocol::bind_holder_proofs(ctxt, krate, imports, &mut synchronization);
+    super::protocol::bind_holder_proofs(krate, imports, &mut synchronization);
     super::protocol::bind_leaf_workspaces(ctxt, krate, imports, &mut synchronization);
+    super::protocol::bind_workspaces(ctxt, krate, imports, modes, &mut synchronization);
     super::protocol::bind_issuers(krate, imports, &mut synchronization);
     if trace {
         let mut closures: Vec<_> = synchronization.concurrency.closures.values().collect();

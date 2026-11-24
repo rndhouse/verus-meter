@@ -118,7 +118,10 @@ pub fn check_crate(
     let mut layouts = layout::Layouts::new(datatypes, global_allocator, vector, option)
         .with_synchronization_types(&synchronization.types)
         .with_closures(&synchronization.concurrency);
+    layouts.template_sources.clone_from(&synchronization.templates);
+    layouts.workspace_primitives.clone_from(&synchronization.workspace_primitives);
     layouts.measured_leaves.clone_from(&synchronization.measure_leaves);
+    layouts.writer_issuers.clone_from(&synchronization.writer_issuers);
     layouts.issuer_types.clone_from(&synchronization.issuer_types);
     layouts.issuer_parameters.clone_from(&synchronization.issuer_parameters);
     layouts.holder_proofs.clone_from(&synchronization.holder_proofs);
@@ -153,7 +156,7 @@ pub fn check_crate(
     for function in &ordered {
         if let Some(checked) = analysis::check(
             function,
-            modes.get(&function.x.name).map(Arc::as_ref),
+            modes.get(&function.x.name).map(|m| &m.var_modes),
             &function_map,
             &layouts,
             &budgets,

@@ -98,14 +98,33 @@ impl Analysis<'_> {
                 .operation(&value.span, checked::Operation::Evaluate { args: args.clone() });
             return Ok(Some(0));
         }
-        let Some(leaf) = self.layouts.imported_leaves.get(target).copied() else { return Ok(None) };
-        let inline_result = contracts::scalar(&value.typ)
+        if self.layouts.workspace.is_none()
+            && self.layouts.template_sources.contains_key(target)
+            && types.first().is_some_and(|ty| self.layouts.owner(ty))
+        {
+            return Err(unsupported(
+                &value.span,
+                "a reader/writer operation without its persistent payload transfer",
+            ));
+        }
+        let Some(leaf) = self.workspace_for(target, types, &value.span)? else { return Ok(None) };
+        let borrowed_result = self
+            .layouts
+            .template_sources
+            .get(target)
+            .and_then(|f| f.x.attrs.resource_template.as_ref())
+            .is_some_and(|s| s.method == super::WorkspaceMethod::Borrow)
+            && matches!(&*value.typ,TypX::Decorate(TypDecoration::Ref,None,payload) if !self.layouts.owner(payload));
+        let inline_result = borrowed_result
+            || self.layouts.workspace.is_some() && !self.layouts.owner(&value.typ)
+            || contracts::scalar(&value.typ)
             || super::super::model::unit(&value.typ)
             || super::super::construction::aggregate(&value.typ) && !self.layouts.owner(&value.typ);
         // A measured atomic wrapper constructor is uniform in its erased
         // invariant, tracked state and predicate. Its returned location has
         // the same concrete primitive layout at every instantiation.
-        let erased_constructor = self.layouts.atomic_location(&value.typ).is_some();
+        let erased_constructor = self.layouts.atomic_location(&value.typ).is_some()
+            || self.layouts.template_sources.contains_key(target);
         if ((!types.is_empty() || !impls.is_empty()) && !erased_constructor) || !inline_result {
             return Err(unsupported(
                 &value.span,

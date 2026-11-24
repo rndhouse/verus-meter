@@ -55,6 +55,12 @@ pub trait BoundedInstance: ProtocolInstance {
     spec fn holder_limit(&self) -> nat;
 }
 
+/// The actual handle takes its role on this instance. Multiple handles of
+/// the same role may coexist unless a separate population theorem bounds it.
+pub open spec fn role_of<H: Holder, I: ProtocolInstance>(holder: H, instance: &I) -> bool {
+    holder.instance_id() == instance.protocol_id()
+}
+
 /// A checked acquisition can expose this postcondition on its actual result.
 pub open spec fn issued<H: BoundedHolder, I: BoundedInstance>(holder: H, instance: &I) -> bool {
     holder.instance_id() == instance.protocol_id() && holder.capacity() == instance.holder_limit()

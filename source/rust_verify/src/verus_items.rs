@@ -379,6 +379,11 @@ pub(crate) enum VstdItem {
     ThreadSpawn,
     ThreadJoin,
     ThreadJoinHandle,
+    RwLock,
+    ReadHandle,
+    WriteHandle,
+    PCell,
+    MaybeUninitCell,
     BoundedHolder,
     Semaphore,
     Permit,
@@ -526,6 +531,11 @@ pub(crate) enum DummyCaptureItem {
 #[rustfmt::skip]
 fn verus_items_map() -> Vec<(&'static str, VerusItem)> {
     vec![
+        ("verus::vstd::cell::pcell_maybe_uninit::PCell", VerusItem::Vstd(VstdItem::MaybeUninitCell, None)),
+        ("verus::vstd::cell::pcell::PCell", VerusItem::Vstd(VstdItem::PCell, None)),
+        ("verus::vstd::rwlock::WriteHandle", VerusItem::Vstd(VstdItem::WriteHandle, None)),
+        ("verus::vstd::rwlock::ReadHandle", VerusItem::Vstd(VstdItem::ReadHandle, None)),
+        ("verus::vstd::rwlock::RwLock", VerusItem::Vstd(VstdItem::RwLock, None)),
         ("verus::vstd::resource::semaphore::Semaphore", VerusItem::Vstd(VstdItem::Semaphore, None)),
         ("verus::vstd::resource::semaphore::Permit", VerusItem::Vstd(VstdItem::Permit, None)),
         ("verus::vstd::resource::holder::BoundedHolder", VerusItem::Vstd(VstdItem::BoundedHolder, None)),

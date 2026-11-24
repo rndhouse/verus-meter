@@ -80,6 +80,7 @@ fn example_pcell() {
 
 #[verifier::external_body]
 #[verifier::accept_recursive_types(T)]
+#[cfg_attr(verus_keep_ghost, rustc_diagnostic_item = "verus::vstd::cell::pcell::PCell")]
 pub struct PCell<T: ?Sized> {
     // Unlike UnsafeCell, a PCell's drop should NOT drop the contents (since we do not have
     // the permissions to access the contents). To prevent this, we need to use ManuallyDrop

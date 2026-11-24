@@ -278,6 +278,7 @@ fn handle_autospec<'tcx>(
                 attrs: Arc::new(FunctionAttrsX {
                     resource_contract: None,
                     resource_body: None,
+                    resource_template: None,
                     uses_ghost_blocks: vattrs.verus_macro,
                     inline: false,
                     broadcast_forall: false,
@@ -1540,6 +1541,7 @@ fn make_attributes<'tcx>(
     let fattrs = FunctionAttrsX {
         resource_contract: None,
         resource_body: None,
+        resource_template: None,
         uses_ghost_blocks,
         inline: vattrs.inline,
         no_auto_trigger: vattrs.no_auto_trigger,

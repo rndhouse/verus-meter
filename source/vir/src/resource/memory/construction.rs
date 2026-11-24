@@ -11,6 +11,7 @@ use crate::ast::*;
 
 pub(super) fn aggregate(typ: &Typ) -> bool {
     matches!(&**typ, TypX::Primitive(Primitive::Array, _) | TypX::Datatype(Dt::Path(_), _, _))
+        || super::synchronization::RwRecord::write_pair(typ).is_some()
 }
 
 impl Analysis<'_> {
@@ -48,6 +49,11 @@ impl Analysis<'_> {
             {
                 let value = self.take_value(place)?;
                 self.release_value(value, &expr.span);
+                // The generic payload moved directly into the reserved field.
+                // Its descendants are transferred by the caller's ownership rule.
+                if self.layouts.workspace.is_some() && matches!(&*expr.typ, TypX::TypParam(_)) {
+                    return Ok(());
+                }
             }
         }
         if self.layouts.owner(&expr.typ) {
@@ -109,6 +115,25 @@ impl Analysis<'_> {
     ) -> Result<Option<u64>, VirErr> {
         let mut owner = super::heap::Owner::default();
         let fields: Vec<(Option<&Ident>, &Expr)> = match &expr.x {
+            ExprX::Ctor(Dt::Tuple(2), _, fields, None) if self.layouts.workspace.is_some() => {
+                let TypX::Datatype(Dt::Tuple(2), types, _) = &*expr.typ else { return Ok(None) };
+                self.layouts.size(&expr.typ, &expr.span)?;
+                if fields.len() != 2 || types.len() != 2 {
+                    return Err(unsupported(&expr.span, "this workspace tuple"));
+                }
+                for (i, field) in fields.iter().enumerate() {
+                    if field.name.as_str() != i.to_string()
+                        || !super::execution::initializes(&field.a, &types[i])
+                    {
+                        return Err(unsupported(&expr.span, "this workspace tuple component"));
+                    }
+                }
+                fields
+                    .iter()
+                    .filter(|f| !matches!(f.a.x, ExprX::Ghost { alloc_wrapper: true, .. }))
+                    .map(|f| (Some(&f.name), &f.a))
+                    .collect()
+            }
             ExprX::Ctor(name, variant, fields, None)
                 if super::iterators::kind(&expr.typ) == Some(super::iterators::Kind::Range) =>
             {

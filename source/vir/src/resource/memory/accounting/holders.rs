@@ -42,6 +42,29 @@ impl MemoryReport {
             notes.extend(holder_diagnostics(&body.points));
             notes.extend(issuer_notes(body));
         }
+        // Compare actual worker/frame ledgers only when tracing. A pair of
+        // read roles has no exclusion theorem and adds no constraint.
+        for (i, body) in self.holder_effects.iter().enumerate() {
+            let left = observed_roles(body);
+            if left.is_empty() {
+                continue;
+            }
+            for other in &self.holder_effects[i + 1..] {
+                let right = observed_roles(other);
+                for (&a, site) in &left {
+                    for b in right.keys() {
+                        if body
+                            .ownership
+                            .holders
+                            .exclusion(a, &other.ownership.holders, *b)
+                            .is_some()
+                        {
+                            notes.push(VirErrAs::Note(crate::messages::note(site,"verified incompatible holder roles on the same issuer across actors")));
+                        }
+                    }
+                }
+            }
+        }
         notes
     }
 }
@@ -134,4 +157,17 @@ fn issuer_notes(body: &super::super::summary::BodyEffects) -> Vec<VirErrAs> {
         }
     }
     notes.into_values().collect()
+}
+
+fn observed_roles(
+    body: &super::super::summary::BodyEffects,
+) -> BTreeMap<Witness, &crate::messages::Span> {
+    let mut roles = BTreeMap::new();
+    for p in body.points.iter().filter(|p| !p.fixed_origins.is_empty() || !p.allocations.is_empty())
+    {
+        for w in &p.holders {
+            roles.entry(*w).or_insert(&p.span);
+        }
+    }
+    roles
 }

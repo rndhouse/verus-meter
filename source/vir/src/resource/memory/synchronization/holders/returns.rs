@@ -1,6 +1,6 @@
 //! Identity of the whole guard on a successful return. All reaching returns
 //! must agree on its origin before a caller may substitute its own argument.
-use super::{Bindings, Issuer, Witness};
+use super::{Bindings, Issuer, Role, Witness};
 use crate::ast::*;
 use crate::resource::memory::analysis::Analysis;
 
@@ -36,14 +36,14 @@ impl Origin {
 }
 
 impl Bindings {
-    fn returned_input(&self, proof: &Fun) -> Option<usize> {
+    fn returned_input(&self, proof: &Role) -> Option<usize> {
         let Origin::Owned(id @ Witness::Input(i)) = self.returned else { return None };
         (self.definitions.get(&id)?.proof == *proof).then_some(i)
     }
 }
 
 impl Analysis<'_> {
-    pub(super) fn holder_result_proof(&self, ty: &Typ) -> Option<&Fun> {
+    pub(super) fn holder_result_proof(&self, ty: &Typ) -> Option<Role> {
         let payload = match &**ty {
             TypX::Datatype(_, args, _) if self.layouts.option(ty) => args.first()?,
             _ => ty,
@@ -51,7 +51,7 @@ impl Analysis<'_> {
         self.layouts.holder_proof(payload)
     }
 
-    pub(super) fn holder_place_origin(&self, place: &Place, proof: &Fun) -> Origin {
+    pub(super) fn holder_place_origin(&self, place: &Place, proof: &Role) -> Origin {
         match &place.x {
             PlaceX::Local(name) => {
                 let bindings = &self.transitions.holders;
@@ -66,7 +66,7 @@ impl Analysis<'_> {
         }
     }
 
-    fn holder_origin(&self, expr: &Expr, proof: &Fun) -> Origin {
+    fn holder_origin(&self, expr: &Expr, proof: &Role) -> Origin {
         match &expr.x {
             ExprX::ReadPlace(place, kind)
                 if matches!(kind.preliminary_kind, ReadKind::Move(_))
@@ -132,7 +132,7 @@ impl Analysis<'_> {
             return;
         }
         if let Some(proof) = self.holder_result_proof(&result.typ) {
-            let origin = self.holder_origin(result, proof);
+            let origin = self.holder_origin(result, &proof);
             let returned = &mut self.transitions.holders.returned;
             *returned = returned.join(origin);
         }

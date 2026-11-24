@@ -6,7 +6,6 @@ use super::layout::Layouts;
 use super::model::{arithmetic, eligible, unit, unsupported};
 use crate::ast::*;
 use crate::messages::{Span, error};
-use crate::resolution_inference::ResolutionInfo;
 use std::collections::{HashMap, HashSet};
 
 /// Checked facts and proof work awaiting publication by the crate-wide pass.
@@ -262,6 +261,19 @@ impl Analysis<'_> {
                             );
                             break 'statement;
                         }
+                        if els.is_none()
+                            && let Some(source) = init
+                            && let Some(fields) =
+                                super::synchronization::rwlock::write_pattern(pattern)
+                        {
+                            self.split_writer_result(
+                                source,
+                                fields,
+                                &mut locals,
+                                &mut owned_locals,
+                            )?;
+                            break 'statement;
+                        }
                         let Some((binding, source_type, binding_init)) =
                             super::execution::declaration_binding(
                                 self.layouts,
@@ -386,7 +398,11 @@ impl Analysis<'_> {
             if self.flow.reachable
                 && let StmtX::Decl { pattern, init: Some(source), els: None, .. } = &stmt.x
             {
-                holders.initialized(self.bind_holder(pattern, None, Some(source)));
+                if let Some([_, handle]) = super::synchronization::rwlock::write_pattern(pattern) {
+                    holders.initialized(self.bind_writer_holder(handle, source));
+                } else {
+                    holders.initialized(self.bind_holder(pattern, None, Some(source)));
+                }
             }
         }
         if self.flow.reachable {
@@ -556,6 +572,13 @@ impl Analysis<'_> {
                 };
             }
             ExprX::BorrowMut(place) => return self.borrow(place, &expr.typ),
+            ExprX::UnaryOpr(
+                UnaryOpr::IntegerTypeBound(IntegerTypeBoundKind::ArchWordBits),
+                operand,
+            ) if matches!(&operand.x, ExprX::Const(Constant::Int(_))) => {}
+            ExprX::UnaryOpr(UnaryOpr::IntegerTypeBound(_), operand) => {
+                operands = self.expr(operand)?;
+            }
             ExprX::Unary(UnaryOp::Not, arg) => operands = self.expr(arg)?,
             ExprX::Unary(UnaryOp::Clip { .. }, _)
                 if super::model::widening_integer_cast(expr).is_some() =>
@@ -702,7 +725,7 @@ impl Analysis<'_> {
 
 pub(super) fn check(
     function: &Function,
-    modes: Option<&ResolutionInfo>,
+    modes: Option<&HashMap<VarIdent, Mode>>,
     functions: &HashMap<Fun, Function>,
     layouts: &Layouts,
     budgets: &HashMap<Fun, u64>,
@@ -744,7 +767,7 @@ pub(super) fn check(
     let modes = modes.ok_or_else(|| {
         unsupported(&function.span, "functions without execution-mode information")
     })?;
-    super::control::validate(body, &modes.var_modes)?;
+    super::control::validate(body, modes)?;
     let mut analysis = Analysis {
         fresh_span,
         worker_inputs: vec![],
@@ -761,7 +784,7 @@ pub(super) fn check(
         budgets,
         layouts,
         functions,
-        var_modes: modes.var_modes.clone(),
+        var_modes: modes.clone(),
         storage: Accounting::new(&function.span, budget),
         calls: Vec::new(),
         checkpoints: Vec::new(),
@@ -778,14 +801,8 @@ pub(super) fn check(
     }
     layouts.return_size(&f.outer_ret.x.typ, &function.span)?;
 
-    let capacities = super::inference::infer(
-        function,
-        layouts,
-        summaries,
-        functions,
-        &analysis.bound,
-        &modes.var_modes,
-    )?;
+    let capacities =
+        super::inference::infer(function, layouts, summaries, functions, &analysis.bound, modes)?;
     let interface = analysis.bind_synchronization_inputs(function);
     analysis.transitions.holders =
         super::synchronization::holders::Bindings::bind(function, layouts);
@@ -907,7 +924,7 @@ pub(super) fn check(
                 layouts,
                 functions,
                 summaries,
-                &modes.var_modes,
+                modes,
                 &analysis.transitions,
             )?;
             if let Some(inferred) = &inferred {
@@ -1045,7 +1062,7 @@ pub(super) fn check(
             layouts,
             functions,
             summaries,
-            &modes.var_modes,
+            modes,
             &analysis.transitions,
         )?;
         if let Some(inferred) = &inferred {

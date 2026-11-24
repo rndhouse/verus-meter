@@ -117,6 +117,7 @@ pub(super) fn eligible(
         || !matches!(f.kind, FunctionKind::Static)
         || !matches!(f.item_kind, ItemKind::Function)
         || ((!f.typ_params.is_empty() || !f.typ_bounds.is_empty())
+            && !layouts.workspace.as_ref().is_some_and(|(active, _, _)| active == &f.name)
             && !(layouts.measured_leaves.contains(&f.name)
                 && layouts.atomic_location(&f.outer_ret.x.typ).is_some()))
         || f.attrs.is_async

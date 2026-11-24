@@ -49,13 +49,17 @@ pub(super) fn declaration_binding<'a>(
         return Some((binding, &binding.typ, Some(projection)));
     }
     let PlaceX::Temporary(call) = &init?.x else { return None };
-    let ExprX::Call { target: CallTarget::Fun(CallTargetKind::Static, _, _, _, attrs), .. } =
-        &call.x
+    let ExprX::Call {
+        target: CallTarget::Fun(CallTargetKind::Static, target, _, _, attrs), ..
+    } = &call.x
     else {
         return None;
     };
     if attrs.resource_intrinsic
         != Some(ResourceIntrinsic::Atomic(super::synchronization::AtomicOperation::New))
+        && !(layouts.workspace.is_some()
+            && (layouts.template_sources.contains_key(target)
+                || layouts.workspace_primitives.contains(target)))
     {
         return None;
     }

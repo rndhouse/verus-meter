@@ -47,6 +47,7 @@ fn example_pcell_maybe_uninit() {
 } // verus!
 */
 
+#[cfg_attr(verus_keep_ghost, rustc_diagnostic_item = "verus::vstd::cell::pcell_maybe_uninit::PCell")]
 pub struct PCell<V>(pc::PCell<MaybeUninit<V>>);
 
 /// Permission object associated with a [`PCell<V>`].

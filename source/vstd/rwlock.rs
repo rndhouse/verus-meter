@@ -10,7 +10,9 @@ use super::modes::*;
 use super::multiset::*;
 use super::prelude::*;
 use super::set::*;
-use crate::resource::holder::{BoundedHolder, Holder};
+use crate::resource::holder::{
+    BoundedHolder, BoundedInstance, Holder, ProtocolInstance, issued, role_of,
+};
 use crate::tokens::UniqueValueToken;
 use core::marker::PhantomData;
 use verus_state_machines_macros::tokenized_state_machine_vstd;
@@ -346,6 +348,7 @@ struct_with_invariants!{
     ```
     */
 
+    #[cfg_attr(verus_keep_ghost, rustc_diagnostic_item = "verus::vstd::rwlock::RwLock")]
     pub struct RwLock<V, Pred: RwLockPredicate<V>> {
         cell: un::PCell<V>,
         exc: AtomicBool<_, RwLockToks::flag_exc<(Pred, CellId), un::PointsTo<V>, InternalPred<V, Pred>>, _>,
@@ -382,6 +385,7 @@ struct_with_invariants!{
 /// **Warning:** The lock is _NOT_ released automatically when the handle
 /// is dropped. You must call [`release_write`](WriteHandle::release_write).
 /// Verus does not check that lock is released.
+#[cfg_attr(verus_keep_ghost, rustc_diagnostic_item = "verus::vstd::rwlock::WriteHandle")]
 pub struct WriteHandle<'a, V, Pred: RwLockPredicate<V>> {
     handle: Tracked<RwLockToks::writer<(Pred, CellId), un::PointsTo<V>, InternalPred<V, Pred>>>,
     perm: Tracked<un::PointsTo<V>>,
@@ -393,9 +397,22 @@ pub struct WriteHandle<'a, V, Pred: RwLockPredicate<V>> {
 /// **Warning:** The lock is _NOT_ released automatically when the handle
 /// is dropped. You must call [`release_read`](ReadHandle::release_read).
 /// Verus does not check that lock is released.
+#[cfg_attr(verus_keep_ghost, rustc_diagnostic_item = "verus::vstd::rwlock::ReadHandle")]
 pub struct ReadHandle<'a, V, Pred: RwLockPredicate<V>> {
     handle: Tracked<RwLockToks::reader<(Pred, CellId), un::PointsTo<V>, InternalPred<V, Pred>>>,
     rwlock: &'a RwLock<V, Pred>,
+}
+
+impl<V, Pred: RwLockPredicate<V>> ProtocolInstance for RwLock<V, Pred> {
+    open spec fn protocol_id(&self) -> crate::resource::Loc {
+        self.id()
+    }
+}
+
+impl<V, Pred: RwLockPredicate<V>> BoundedInstance for RwLock<V, Pred> {
+    open spec fn holder_limit(&self) -> nat {
+        1
+    }
 }
 
 impl<'a, V, Pred: RwLockPredicate<V>> crate::resource::holder::Holder for WriteHandle<'a, V, Pred> {
@@ -605,6 +622,7 @@ impl<V, Pred: RwLockPredicate<V>> RwLock<V, Pred> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn acquire_write(&self) -> (ret: (V, WriteHandle<'_, V, Pred>))
         ensures
+            issued(ret.1, self),
             ({
                 let val = ret.0;
                 let write_handle = ret.1;
@@ -695,6 +713,7 @@ impl<V, Pred: RwLockPredicate<V>> RwLock<V, Pred> {
     #[verifier::exec_allows_no_decreases_clause]
     pub fn acquire_read(&self) -> (read_handle: ReadHandle<'_, V, Pred>)
         ensures
+            role_of(read_handle, self),
             read_handle.rwlock() == *self,
             self.inv(read_handle.view()),
     {

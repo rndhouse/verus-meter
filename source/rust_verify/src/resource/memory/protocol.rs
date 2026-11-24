@@ -26,77 +26,94 @@ pub(crate) fn layout_definitions(
             (!id.is_local()).then(|| Dt::Path(ctxt.def_id_to_vir_path(id)))
         })
         .collect();
-    if !imported.is_empty() {
-        definitions.extend(
-            imports
-                .iter()
-                .flat_map(|krate| &krate.datatypes)
-                .filter(|dt| imported.contains(&dt.x.name))
-                .cloned(),
-        );
-    }
+    definitions.extend(
+        imports
+            .iter()
+            .flat_map(|krate| &krate.datatypes)
+            .filter(|dt| {
+                imported.contains(&dt.x.name)
+                    || vir::resource::memory::synchronization::RwRecord::of(&dt.x.name).is_some()
+            })
+            .cloned(),
+    );
     definitions
 }
 
 /// Record which obligation would justify a bound for this concrete witness.
 /// A method body can still fail verification. Discovery does not certify it.
 pub(super) fn bind_holder_proofs(
-    ctxt: &Context<'_>,
     krate: &mut KrateX,
     imports: &[Krate],
     evidence: &mut CompilerEvidence,
 ) {
-    use vir::ast::{FunctionKind, Mode, TypX};
-    let Some(id) = ctxt
-        .tcx
-        .get_diagnostic_item(Symbol::intern("verus::vstd::resource::holder::BoundedHolder"))
-    else {
-        return;
+    use vir::ast::*;
+    let population =
+        vir::fun!(CrateId::Vstd => "resource", "holder", "BoundedHolder"; "population_bound");
+    let incompatible =
+        vir::fun!(CrateId::Vstd => "resource", "holder", "Incompatible"; "distinct_instances");
+    let declarations: std::collections::HashMap<_, _> = krate
+        .datatypes
+        .iter()
+        .chain(imports.iter().flat_map(|k| &k.datatypes))
+        .map(|d| (d.x.name.clone(), d))
+        .collect();
+    // Erased lifetimes leave a concrete guard or a universally quantified
+    // nominal record. A specialized implementation (or an extra bound on
+    // its parameters) cannot supply a theorem at other instantiations.
+    let universal = |f: &Function, ty: &Typ| {
+        let TypX::Datatype(dt, args, _) = &**ty else { return None };
+        let d = declarations.get(dt)?;
+        (args.len() == f.x.typ_params.len() && d.x.typ_params.len() == args.len()
+            && args.iter().zip(f.x.typ_params.iter().zip(d.x.typ_params.iter())).all(|(arg,(p,(formal,_)))|
+                matches!(&**arg, TypX::TypParam(v) if v == p && v == formal))
+            && f.x.typ_bounds.iter().all(|bound| d.x.typ_bounds.iter().any(|b|
+                vir::ast_util::generic_bounds_equal(bound, b)))).then(|| dt.clone())
     };
-    let Some(method) = ctxt
-        .tcx
-        .associated_items(id)
-        .in_definition_order()
-        .find(|item| ctxt.tcx.item_name(item.def_id).as_str() == "population_bound")
-    else {
-        return;
-    };
-    let declaration = ctxt.def_id_to_vir_path(method.def_id);
-    let holder = |f: &vir::ast::Function| {
+    let mut register = |f: &Function| {
         let FunctionKind::TraitMethodImpl {
             method, trait_typ_args, inherit_body_from: None, ..
         } = &f.x.kind
         else {
-            return None;
+            return false;
         };
-        if method.path != declaration
-            || f.x.mode != Mode::Proof
-            || f.x.attrs.is_external_body
-            || !f.x.typ_params.is_empty()
-            || !f.x.typ_bounds.is_empty()
-        {
-            return None;
+        if f.x.mode != Mode::Proof || f.x.attrs.is_external_body {
+            return false;
         }
-        let [ty] = trait_typ_args.as_slice() else { return None };
-        let TypX::Datatype(dt, args, _) = &**ty else { return None };
-        args.is_empty().then(|| dt.clone())
+        match trait_typ_args.as_slice() {
+            [ty] if *method == population => {
+                let Some(dt) = universal(f, ty) else { return false };
+                evidence.holder_proofs.entry(dt).or_default().population = Some(f.x.name.clone());
+            }
+            [first, other] if *method == incompatible => {
+                let (Some(left), Some(right)) = (universal(f, first), universal(f, other)) else {
+                    return false;
+                };
+                evidence
+                    .holder_proofs
+                    .entry(left.clone())
+                    .or_default()
+                    .exclusions
+                    .insert(right.clone(), (f.x.name.clone(), true));
+                evidence
+                    .holder_proofs
+                    .entry(right)
+                    .or_default()
+                    .exclusions
+                    .insert(left, (f.x.name.clone(), false));
+            }
+            _ => return false,
+        }
+        true
     };
     for f in &mut krate.functions {
-        if f.x.body.is_some()
-            && let Some(dt) = holder(f)
-        {
-            evidence.holder_proofs.insert(dt, f.x.name.clone());
-            // The exporter withholds this together with executable workspaces
-            // until this proof and the crate's erased Rust checks have passed.
+        if f.x.body.is_some() && register(f) {
             Arc::make_mut(&mut Arc::make_mut(f).x.attrs).resource_body =
                 Some(vir::resource::memory::synchronization::CheckedBody::erased_proof());
         }
     }
-    for f in imports.iter().flat_map(|krate| &krate.functions) {
-        if f.x.attrs.resource_body.is_some()
-            && let Some(dt) = holder(f)
-        {
-            evidence.holder_proofs.insert(dt, f.x.name.clone());
+    for f in imports.iter().flat_map(|k| &k.functions) {
+        if f.x.attrs.resource_body.is_some() {
+            register(f);
         }
     }
 }
@@ -168,13 +185,14 @@ pub(super) fn bind_issuers(krate: &KrateX, imports: &[Krate], evidence: &mut Com
             _ => None,
         }
     }
+    let role = vir::fun!(CrateId::Vstd => "resource", "holder"; "role_of");
     let direct = vir::fun!(CrateId::Vstd => "resource", "holder"; "issued");
     let optional = vir::fun!(CrateId::Vstd => "resource", "holder"; "issued_on_success");
     let local = krate.functions.iter().filter(|f| f.x.body.is_some());
-    let certified = imports
-        .iter()
-        .flat_map(|k| &k.functions)
-        .filter(|f| evidence.imported_leaves.contains_key(&f.x.name));
+    let certified = imports.iter().flat_map(|k| &k.functions).filter(|f| {
+        evidence.imported_leaves.contains_key(&f.x.name)
+            || evidence.templates.contains_key(&f.x.name)
+    });
     for f in local.chain(certified) {
         if f.x.mode != Mode::Exec
             || f.x.attrs.is_external_body
@@ -192,13 +210,19 @@ pub(super) fn bind_issuers(krate: &KrateX, imports: &[Krate], evidence: &mut Com
             else {
                 continue;
             };
-            if *fun != direct && *fun != optional {
+            if *fun != direct && *fun != optional && *fun != role {
                 continue;
             }
             let [result, issuer] = args.as_slice() else { continue };
-            if name(result) != Some(&f.x.inner_ret.x.name)
-                || !vir::ast_util::types_equal(&result.typ, &f.x.inner_ret.x.typ)
-            {
+            let whole = name(result) == Some(&f.x.inner_ret.x.name)
+                && vir::ast_util::types_equal(&result.typ, &f.x.inner_ret.x.typ);
+            let writer = matches!(&result.x, ExprX::ReadPlace(p,_) if matches!(&p.x, PlaceX::Field(op, base)
+                if op.datatype == Dt::Tuple(2) && op.field.as_str()=="1" && !op.get_variant &&
+                matches!(op.check, VariantCheck::None) && matches!(&base.x, PlaceX::Local(n) if *n == f.x.inner_ret.x.name) &&
+                vir::ast_util::types_equal(&base.typ, &f.x.inner_ret.x.typ) &&
+                vir::resource::memory::synchronization::RwRecord::write_pair(&base.typ)
+                    .is_some_and(|(_,handle)|vir::ast_util::types_equal(handle,&result.typ))));
+            if !whole && !writer {
                 continue;
             }
             if let Some(index) = f.x.params.iter().position(|p| {
@@ -211,8 +235,102 @@ pub(super) fn bind_issuers(krate: &KrateX, imports: &[Krate], evidence: &mut Com
                 let TypX::Decorate(_, _, receiver) = &*issuer.typ else { continue };
                 let TypX::Datatype(dt, _, _) = &**receiver else { continue };
                 evidence.issuer_types.insert(dt.clone());
-                evidence.issuer_parameters.insert(f.x.name.clone(), index);
+                if writer {
+                    evidence.writer_issuers.insert(f.x.name.clone(), index);
+                } else {
+                    evidence.issuer_parameters.insert(f.x.name.clone(), index);
+                }
             }
+        }
+    }
+}
+
+/// Delay frame measurement until a concrete caller supplies its payload width.
+/// The exporter withholds these original mode-checked bodies until verification
+/// and erased Rust checks succeed, just as it withholds a measured workspace.
+pub(super) fn bind_workspaces(
+    ctxt: &Context<'_>,
+    krate: &mut KrateX,
+    imports: &[Krate],
+    modes: &std::collections::HashMap<Fun, Arc<vir::resolution_inference::ResolutionInfo>>,
+    evidence: &mut CompilerEvidence,
+) {
+    let tcx = ctxt.tcx;
+    use vir::resource::memory::synchronization::WorkspaceMethod;
+    let mut selected = std::collections::HashMap::new();
+    for (ty, methods) in [
+        (
+            "verus::vstd::rwlock::RwLock",
+            &["new", "acquire_read", "acquire_write", "into_inner"][..],
+        ),
+        ("verus::vstd::rwlock::ReadHandle", &["borrow", "release_read"][..]),
+        ("verus::vstd::rwlock::WriteHandle", &["release_write"][..]),
+        ("verus::vstd::cell::pcell_maybe_uninit::PCell", &["new", "take", "put", "borrow"][..]),
+        ("verus::vstd::cell::pcell::PCell", &["replace"][..]),
+    ] {
+        let Some(id) = tcx.get_diagnostic_item(Symbol::intern(ty)) else { continue };
+        for imp in tcx.inherent_impls(id) {
+            for item in tcx.associated_items(*imp).in_definition_order() {
+                let name = tcx.item_name(item.def_id);
+                if methods.contains(&name.as_str()) {
+                    let method = if ty.starts_with("verus::vstd::cell::") {
+                        WorkspaceMethod::Cell
+                    } else {
+                        match name.as_str() {
+                            "new" => WorkspaceMethod::New,
+                            "acquire_read" => WorkspaceMethod::Read,
+                            "acquire_write" => WorkspaceMethod::Write,
+                            "borrow" => WorkspaceMethod::Borrow,
+                            "release_read" => WorkspaceMethod::ReleaseRead,
+                            "release_write" => WorkspaceMethod::ReleaseWrite,
+                            "into_inner" => WorkspaceMethod::IntoInner,
+                            _ => unreachable!(),
+                        }
+                    };
+                    selected.insert(
+                        Arc::new(FunX { path: ctxt.def_id_to_vir_path(item.def_id) }),
+                        method,
+                    );
+                }
+                if ty == "verus::vstd::cell::pcell::PCell"
+                    && ["new", "borrow", "borrow_mut"].contains(&name.as_str())
+                {
+                    evidence
+                        .workspace_primitives
+                        .insert(Arc::new(FunX { path: ctxt.def_id_to_vir_path(item.def_id) }));
+                }
+            }
+        }
+    }
+    if let Some(id) = tcx.lang_items().maybe_uninit() {
+        for imp in tcx.inherent_impls(id) {
+            for item in tcx.associated_items(*imp).in_definition_order() {
+                if ["new", "uninit", "assume_init", "assume_init_ref"]
+                    .contains(&tcx.item_name(item.def_id).as_str())
+                {
+                    evidence
+                        .workspace_primitives
+                        .insert(Arc::new(FunX { path: ctxt.def_id_to_vir_path(item.def_id) }));
+                }
+            }
+        }
+    }
+    if let Some(id) = tcx.get_diagnostic_item(Symbol::intern("mem_swap")) {
+        evidence.workspace_primitives.insert(Arc::new(FunX { path: ctxt.def_id_to_vir_path(id) }));
+    }
+    for f in &mut krate.functions {
+        if let Some(&method) = selected.get(&f.x.name)
+            && let Some(source) = modes.get(&f.x.name).and_then(|m| {
+                vir::resource::memory::synchronization::WorkspaceSource::capture(method, f, m)
+            })
+        {
+            Arc::make_mut(&mut Arc::make_mut(f).x.attrs).resource_template = Some(Arc::new(source));
+            evidence.templates.insert(f.x.name.clone(), f.clone());
+        }
+    }
+    for f in imports.iter().flat_map(|k| &k.functions) {
+        if selected.contains_key(&f.x.name) && f.x.attrs.resource_template.is_some() {
+            evidence.templates.insert(f.x.name.clone(), f.clone());
         }
     }
 }

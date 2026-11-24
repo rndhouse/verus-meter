@@ -12,7 +12,7 @@ impl Analysis<'_> {
         destination: bool,
     ) -> Result<Option<u64>, VirErr> {
         let ExprX::Call {
-            target: CallTarget::Fun(CallTargetKind::Static, _, _, _, attr),
+            target: CallTarget::Fun(CallTargetKind::Static, target, _, _, attr),
             args,
             post_args: None,
             body: None,
@@ -20,21 +20,36 @@ impl Analysis<'_> {
         else {
             return Ok(None);
         };
-        let Some(ResourceIntrinsic::Atomic(op)) = attr.resource_intrinsic else { return Ok(None) };
-        let arity = match op {
-            AtomicOperation::New => 1,
-            AtomicOperation::Load => 2,
-            AtomicOperation::Store
-            | AtomicOperation::FetchAddWrapping
-            | AtomicOperation::FetchSubWrapping => 3,
-            AtomicOperation::CompareExchange | AtomicOperation::CompareExchangeWeak => 4,
-        };
-        if args.len() != arity {
-            return Err(unsupported(&value.span, "an atomic call with an unknown argument layout"));
+        match attr.resource_intrinsic {
+            Some(ResourceIntrinsic::Atomic(op)) => {
+                let arity = match op {
+                    AtomicOperation::New => 1,
+                    AtomicOperation::Load => 2,
+                    AtomicOperation::Store
+                    | AtomicOperation::FetchAddWrapping
+                    | AtomicOperation::FetchSubWrapping => 3,
+                    AtomicOperation::CompareExchange | AtomicOperation::CompareExchangeWeak => 4,
+                };
+                if args.len() != arity {
+                    return Err(unsupported(
+                        &value.span,
+                        "an atomic call with an unknown argument layout",
+                    ));
+                }
+            }
+            _ if self.layouts.workspace.is_some()
+                && self.layouts.workspace_primitives.contains(target) => {}
+            _ => return Ok(None),
         }
         let mut operands = Vec::new();
         for arg in args.iter() {
-            operands.push(self.produce(arg)?);
+            let value = if let ExprX::TwoPhaseBorrowMut(p) = &arg.x {
+                self.borrow(p, &arg.typ)?;
+                self.fresh_value(&arg.span, &arg.typ)?
+            } else {
+                self.produce(arg)?
+            };
+            operands.push(value);
             if !self.flow.reachable {
                 return Ok(Some(0));
             }

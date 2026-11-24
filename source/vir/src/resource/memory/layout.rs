@@ -12,6 +12,7 @@ enum LayoutNode {
     Closure(usize),
 }
 
+#[derive(Clone)]
 struct ClosureLayout {
     /// Copy in the original checked program is a sufficient, but not necessary,
     /// condition after proof-only captures disappear.
@@ -28,7 +29,16 @@ pub(super) enum AllocationLayout {
     Sequence { element: u64 },
 }
 
+#[derive(Clone)]
 pub(super) struct Layouts {
+    /// Closed source measurement of the current generic method. Its payload is
+    /// opaque to executable code and has the caller's actual inline width.
+    pub(super) workspace: Option<(Fun, Ident, u64)>,
+    pub(super) template_sources: HashMap<Fun, Function>,
+    pub(super) workspace_primitives: HashSet<Fun>,
+    pub(super) measuring: HashSet<Fun>,
+    pub(super) workspace_cache:
+        std::rc::Rc<std::cell::RefCell<HashMap<(Fun, u64), super::synchronization::CheckedBody>>>,
     datatypes: HashMap<Dt, Datatype>,
     global_allocator: Option<Dt>,
     vector: Option<Dt>,
@@ -40,10 +50,12 @@ pub(super) struct Layouts {
     pub(super) imported_leaves: HashMap<Fun, super::synchronization::CheckedBody>,
     /// Parameter whose instance and capacity projections apply to a successful result.
     pub(super) issuer_parameters: HashMap<Fun, usize>,
+    /// Issuer of the second field of a writer's returned payload/handle pair.
+    pub(super) writer_issuers: HashMap<Fun, usize>,
     /// Receiver datatypes used in verified acquisition contracts.
     pub(super) issuer_types: HashSet<Dt>,
     /// Nominal concrete holder types and their resolved population proofs.
-    pub(super) holder_proofs: HashMap<Dt, Fun>,
+    pub(super) holder_proofs: HashMap<Dt, super::synchronization::RoleProofs>,
     /// Only actual executable capture types contribute to closure storage.
     closures: std::collections::BTreeMap<usize, ClosureLayout>,
 }
@@ -79,6 +91,12 @@ impl Layouts {
             imported_leaves: HashMap::new(),
             holder_proofs: HashMap::new(),
             issuer_parameters: HashMap::new(),
+            writer_issuers: HashMap::new(),
+            workspace: None,
+            template_sources: HashMap::new(),
+            workspace_primitives: HashSet::new(),
+            measuring: HashSet::new(),
+            workspace_cache: Default::default(),
             issuer_types: HashSet::new(),
             closures: Default::default(),
         }
@@ -342,6 +360,10 @@ impl Layouts {
         if super::iterators::owns_vector_storage(typ) {
             return Err(unsupported(span, "returning a consuming iterator"));
         }
+        if self.workspace.is_some() && matches!(&**typ, TypX::Decorate(TypDecoration::Ref, None, _))
+        {
+            return self.size(typ, span);
+        }
         if !self.owner(typ) && matches!(&**typ, TypX::Decorate(..) | TypX::MutRef(_)) {
             return Err(unsupported(span, "reference return values"));
         }
@@ -353,6 +375,12 @@ impl Layouts {
     }
 
     fn owner_inner(&self, typ: &Typ, visiting: &mut HashSet<Dt>) -> bool {
+        if let Some((_, payload)) = super::synchronization::RwRecord::payload(typ) {
+            return self.owner_inner(payload, visiting);
+        }
+        if let Some((payload, _)) = super::synchronization::RwRecord::write_pair(typ) {
+            return self.owner_inner(payload, visiting);
+        }
         if self.guard_owner(typ)
             || self.mutex_payload(typ).is_some()
             || (self.result_payloads(typ).is_some() && !self.scalar_result(typ))
@@ -520,6 +548,32 @@ impl Layouts {
     ) -> Result<std::collections::BTreeMap<super::heap::OwnerSlot, Typ>, VirErr> {
         use super::heap::OwnerSlot;
         let mut children = std::collections::BTreeMap::new();
+        use super::synchronization::RwRecord;
+        if let Some((record, payload)) = RwRecord::payload(typ) {
+            if self.owner(payload)
+                && matches!(
+                    record,
+                    RwRecord::Lock
+                        | RwRecord::Cell
+                        | RwRecord::MaybeUninit
+                        | RwRecord::PrimitiveCell
+                )
+            {
+                children.insert(OwnerSlot::Contents, payload.clone());
+            }
+            return Ok(children);
+        }
+        if let Some((value, handle)) = RwRecord::write_pair(typ) {
+            for (index, ty) in [value, handle].into_iter().enumerate() {
+                if self.owner(ty) {
+                    children.insert(
+                        OwnerSlot::Field(std::sync::Arc::new(index.to_string())),
+                        ty.clone(),
+                    );
+                }
+            }
+            return Ok(children);
+        }
         if super::iterators::owns_vector_storage(typ) {
             return Ok(children);
         }
@@ -615,7 +669,11 @@ impl Layouts {
 
     /// Metadata checks shared by sizing, construction, and field projection.
     /// Field layout validation is performed by `size` before using the variant.
-    pub(super) fn struct_variant(&self, typ: &Typ, span: &Span) -> Result<&Variant, VirErr> {
+    pub(super) fn struct_variant(
+        &self,
+        typ: &Typ,
+        span: &Span,
+    ) -> Result<std::borrow::Cow<'_, Variant>, VirErr> {
         let TypX::Datatype(name @ Dt::Path(_), args, _) = &**typ else {
             return Err(unsupported(span, "this struct type"));
         };
@@ -638,7 +696,9 @@ impl Layouts {
                 .iter()
                 .zip(args.iter())
                 .all(|((name, _), ty)| matches!(&**ty, TypX::TypParam(t) if t == name));
-        if !identity_arguments
+        let record = super::synchronization::RwRecord::of(name);
+        if record.is_none()
+            && !identity_arguments
             && (!args.is_empty() || !d.typ_params.is_empty() || !d.typ_bounds.is_empty())
         {
             return Err(unsupported(span, "generic struct layouts"));
@@ -650,7 +710,27 @@ impl Layouts {
         {
             return Err(unsupported(span, "opaque, proxy, ghost, or invariant-bearing structs"));
         }
-        Ok(&d.variants[0])
+        if record.is_some() && !args.is_empty() {
+            if args.len() != d.typ_params.len() {
+                return Err(unsupported(span, "an incomplete RwLock instantiation"));
+            }
+            let mut variant = d.variants[0].clone();
+            variant.fields = std::sync::Arc::new(
+                variant
+                    .fields
+                    .iter()
+                    .map(|f| {
+                        f.new_a((
+                            crate::sst_util::subst_typ_for_datatype(&d.typ_params, args, &f.a.0),
+                            f.a.1,
+                            f.a.2.clone(),
+                        ))
+                    })
+                    .collect(),
+            );
+            return Ok(std::borrow::Cow::Owned(variant));
+        }
+        Ok(std::borrow::Cow::Borrowed(&d.variants[0]))
     }
 
     pub(super) fn size(&self, typ: &Typ, span: &Span) -> Result<u64, VirErr> {
@@ -746,6 +826,20 @@ impl Layouts {
         span: &Span,
         visiting: &mut HashSet<LayoutNode>,
     ) -> Result<u64, VirErr> {
+        if let Some((v, guard)) = super::synchronization::RwRecord::write_pair(typ) {
+            return self
+                .size_inner(v, span, visiting)?
+                .checked_add(self.size_inner(guard, span, visiting)?)
+                .ok_or_else(|| {
+                    unsupported(span, "a writer result exceeding the source size limit")
+                });
+        }
+        if let TypX::TypParam(p) = &**typ
+            && let Some((_, formal, width)) = &self.workspace
+            && p == formal
+        {
+            return Ok(*width);
+        }
         if let TypX::Datatype(name, args, _) = &**typ
             && let Some(kind) = self.synchronization_types.get(name)
         {
@@ -776,6 +870,20 @@ impl Layouts {
                 }
             };
             return bytes.ok_or_else(|| unsupported(span, "primitive sizes exceeding u64"));
+        }
+        if let TypX::Datatype(dt, args, _) = &**typ
+            && matches!(
+                super::synchronization::RwRecord::of(dt),
+                Some(
+                    super::synchronization::RwRecord::PrimitiveCell
+                        | super::synchronization::RwRecord::MaybeUninit
+                )
+            )
+        {
+            let [payload] = args.as_slice() else {
+                return Err(unsupported(span, "this permissioned cell layout"));
+            };
+            return self.size_inner(payload, span, visiting);
         }
         match &**typ {
             TypX::AnonymousClosure(_, _, _, id) => {

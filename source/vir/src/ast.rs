@@ -1646,6 +1646,8 @@ pub struct FunctionAttrsX {
     pub resource_contract: Option<crate::resource::memory::ResourceContract>,
     /// Present on a checked resource proof or an executable helper with a measured inline workspace.
     pub resource_body: Option<crate::resource::memory::synchronization::CheckedBody>,
+    /// Verified executable source retained only for reviewed parametric workspace measurements.
+    pub resource_template: Option<Arc<crate::resource::memory::synchronization::WorkspaceSource>>,
     /// Erasure and lifetime checking based on ghost blocks
     pub uses_ghost_blocks: bool,
     /// Inline spec function for SMT

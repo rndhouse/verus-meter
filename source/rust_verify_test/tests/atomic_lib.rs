@@ -1141,5 +1141,7 @@ test_verify_one_file! {
 
 #[path = "atomic_lib/holders.rs"]
 mod holders;
+#[path = "atomic_lib/rwlock.rs"]
+mod rwlock;
 #[path = "atomic_lib/semaphore.rs"]
 mod semaphore;

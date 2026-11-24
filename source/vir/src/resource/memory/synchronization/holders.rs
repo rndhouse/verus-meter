@@ -29,7 +29,7 @@ pub(in super::super) enum Witness {
 
 struct Binding {
     name: Option<VarIdent>,
-    proof: Fun,
+    proof: Role,
     /// Verified projections of the actual issuer, when its origin is known.
     issuer: Option<Issuer>,
     /// Present for locals, whose births must be instantiated at each visit.
@@ -50,13 +50,24 @@ pub(in super::super) struct Bindings {
     entries: BTreeMap<crate::messages::AstId, (Expr, BTreeMap<Witness, VarIdent>)>,
 }
 
+/// Concrete type arguments are part of a role. A generic reader/writer
+/// incompatibility theorem only relates matching instantiations.
+#[derive(Clone)]
+struct Role {
+    typ: Typ,
+    theorems: super::RoleProofs,
+}
+
+impl PartialEq for Role {
+    fn eq(&self, other: &Self) -> bool {
+        crate::ast_util::types_equal(&self.typ, &other.typ) && self.theorems == other.theorems
+    }
+}
+
 impl Layouts {
-    fn holder_proof(&self, ty: &Typ) -> Option<&Fun> {
-        let TypX::Datatype(dt, args, _) = &**ty else { return None };
-        if !args.is_empty() {
-            return None;
-        }
-        self.holder_proofs.get(dt)
+    fn holder_proof(&self, ty: &Typ) -> Option<Role> {
+        let TypX::Datatype(dt, _, _) = &**ty else { return None };
+        Some(Role { typ: ty.clone(), theorems: self.holder_proofs.get(dt)?.clone() })
     }
 }
 
@@ -78,12 +89,7 @@ impl Bindings {
                 let id = Witness::Input(index);
                 bindings.definitions.insert(
                     id,
-                    Binding {
-                        name: Some(param.x.name.clone()),
-                        proof: proof.clone(),
-                        issuer: None,
-                        visit: None,
-                    },
+                    Binding { name: Some(param.x.name.clone()), proof, issuer: None, visit: None },
                 );
                 bindings.at_entry(body, id, &param.x.name);
             }
@@ -141,7 +147,7 @@ impl Bindings {
         actuals
     }
 
-    fn named(&self, name: &VarIdent, proof: &Fun) -> Option<Witness> {
+    fn named(&self, name: &VarIdent, proof: &Role) -> Option<Witness> {
         if let Some(id) = self.moved.get(name) {
             return (self.definitions[id].proof == *proof).then_some(*id);
         }
@@ -199,7 +205,7 @@ impl super::super::analysis::Analysis<'_> {
         let visit = self.source_visit(site, vec![]);
         self.transitions.holders.definitions.insert(
             Witness::Capture(environment, index),
-            Binding { name: Some(name.clone()), proof: proof.clone(), issuer, visit: Some(visit) },
+            Binding { name: Some(name.clone()), proof, issuer, visit: Some(visit) },
         );
     }
 
@@ -234,12 +240,12 @@ impl super::super::analysis::Analysis<'_> {
                 && let Some(source) = source
                 && let Some(proof) = self.holder_result_proof(&b.typ)
             {
-                let origin = self.holder_place_origin(source, proof);
+                let origin = self.holder_place_origin(source, &proof);
                 self.transitions.holders.options.insert(b.name.clone(), origin);
             }
             return None;
         }
-        let proof = self.layouts.holder_proof(&b.typ)?.clone();
+        let proof = self.layouts.holder_proof(&b.typ)?;
         let origin =
             source.map_or(returns::Origin::Unknown, |s| self.holder_place_origin(s, &proof));
         if !b.copy
@@ -302,7 +308,7 @@ impl super::super::analysis::Analysis<'_> {
         let proof = self.layouts.holder_proof(&b.typ)?;
         (!b.copy
             && crate::ast_util::types_equal(&b.typ, &source.typ)
-            && self.transitions.holders.named(name, proof).is_some())
+            && self.transitions.holders.named(name, &proof).is_some())
         .then_some(name)
     }
 }

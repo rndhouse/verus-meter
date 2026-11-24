@@ -35,12 +35,64 @@ impl Bindings {
         self.definitions.get(&id)?.issuer
     }
 
+    /// The proof is instantiated at both actual witness types. A matching
+    /// concrete issuer and equal type arguments are necessary even when a
+    /// nominal theorem is shared by all instantiations.
+    pub(in crate::resource::memory) fn exclusion(
+        &self,
+        left: Witness,
+        other: &Bindings,
+        right: Witness,
+    ) -> Option<&Fun> {
+        let lhs = self.definitions.get(&left)?;
+        let rhs = other.definitions.get(&right)?;
+        if lhs.issuer? != rhs.issuer? {
+            return None;
+        }
+        let (TypX::Datatype(_, la, _), TypX::Datatype(dt, ra, _)) =
+            (&*lhs.proof.typ, &*rhs.proof.typ)
+        else {
+            return None;
+        };
+        if la.len() != ra.len()
+            || !la.iter().zip(ra.iter()).all(|(a, b)| crate::ast_util::types_equal(a, b))
+        {
+            return None;
+        }
+        lhs.proof.theorems.exclusions.get(dt).map(|(theorem, _)| theorem)
+    }
+
     pub(in crate::resource::memory) fn import_receiver(&mut self, name: &VarIdent, issuer: Issuer) {
         self.receivers.insert(name.clone(), issuer);
     }
 }
 
 impl Analysis<'_> {
+    pub(in crate::resource::memory) fn bind_writer_holder(
+        &mut self,
+        handle: &Pattern,
+        source: &Place,
+    ) -> Option<(Witness, VarIdent)> {
+        let (w, name) = self.bind_holder(handle, None, None)?;
+        if let PlaceX::Temporary(value) = &source.x
+            && let ExprX::Call {
+                target: CallTarget::Fun(CallTargetKind::Static, fun, _, _, _),
+                args,
+                post_args: None,
+                body: None,
+            } = &value.x
+            && let Some(issuer) = self
+                .layouts
+                .writer_issuers
+                .get(fun)
+                .and_then(|i| args.get(*i))
+                .and_then(|a| self.issuer_expr(a))
+        {
+            self.transitions.holders.definitions.get_mut(&w)?.issuer = Some(issuer)
+        }
+        Some((w, name))
+    }
+
     /// Import only the phases during which the callee owned this witness. Its
     /// local binder cannot be used to open an enclosing lexical scope.
     pub(in crate::resource::memory) fn call_holders(
@@ -108,6 +160,6 @@ impl Analysis<'_> {
         }
         let proof = self.layouts.holder_proof(&place.typ)?;
         let bindings = &self.transitions.holders;
-        bindings.issuer(bindings.named(name, proof)?).map(Captured::Holder)
+        bindings.issuer(bindings.named(name, &proof)?).map(Captured::Holder)
     }
 }

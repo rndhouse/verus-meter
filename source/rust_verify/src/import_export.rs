@@ -118,9 +118,9 @@ pub(crate) fn export_crate(
     }
     let mut certificates = Vec::new();
     for (index, fun) in kratex.functions.iter_mut().enumerate() {
-        if let Some(body) = fun.x.attrs.resource_body {
-            Arc::make_mut(&mut Arc::make_mut(fun).x.attrs).resource_body = None;
-            certificates.push((index, body));
+        if fun.x.attrs.resource_body.is_some() || fun.x.attrs.resource_template.is_some() {
+            let attrs = Arc::make_mut(&mut Arc::make_mut(fun).x.attrs);
+            certificates.push((index, attrs.resource_body.take(), attrs.resource_template.take()));
         }
     }
     let mut export = PendingExport {
@@ -131,9 +131,11 @@ pub(crate) fn export_crate(
     if certificates.is_empty() {
         return Ok(None);
     }
-    for (index, body) in certificates {
+    for (index, body, template) in certificates {
         let fun = &mut Arc::make_mut(&mut export.value.krate).functions[index];
-        Arc::make_mut(&mut Arc::make_mut(fun).x.attrs).resource_body = Some(body);
+        let attrs = Arc::make_mut(&mut Arc::make_mut(fun).x.attrs);
+        attrs.resource_body = body;
+        attrs.resource_template = template;
     }
     Ok(Some(export))
 }

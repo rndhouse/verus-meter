@@ -18,6 +18,10 @@ pub use leaf::CheckedBody;
 pub mod flow;
 pub(super) mod helpers;
 pub(super) mod holders;
+pub(super) mod rwlock;
+pub use rwlock::RwRecord;
+mod workspace;
+pub use workspace::{WorkspaceMethod, WorkspaceSource};
 pub(super) mod local;
 pub(super) mod optional;
 pub(super) mod parameters;
@@ -82,6 +86,17 @@ pub enum LibraryType {
     VstdJoinHandle,
 }
 
+/// Verified theorem dependencies for a nominal witness. A role can have
+/// incompatible peers without a bound on how many of its own kind may exist.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct RoleProofs {
+    /// Finite population theorem, if established for this role.
+    pub population: Option<crate::ast::Fun>,
+    /// Peer role and its incompatibility theorem. The boolean is true when
+    /// this role supplies the method receiver. Both roles share type arguments.
+    pub exclusions: std::collections::BTreeMap<Dt, (crate::ast::Fun, bool)>,
+}
+
 /// Resolved library identities; unrelated types cannot receive opaque layouts.
 pub type LibraryTypes = HashMap<Dt, LibraryType>;
 
@@ -98,12 +113,18 @@ pub struct CompilerEvidence {
     pub imported_leaves: HashMap<crate::ast::Fun, CheckedBody>,
     /// Population proof dependencies for concrete holders. Local proofs must succeed in
     /// this verification, and an imported proof must carry its own body certificate.
-    pub holder_proofs: HashMap<Dt, crate::ast::Fun>,
+    pub holder_proofs: HashMap<Dt, RoleProofs>,
     /// Verified acquisition postconditions indexed by the executable callee.
     /// The index is the immutable parameter supplying instance and capacity.
     pub issuer_parameters: HashMap<crate::ast::Fun, usize>,
+    /// Issuer of the second field of a writer's returned payload/handle pair.
+    pub writer_issuers: HashMap<crate::ast::Fun, usize>,
     /// Receiver datatypes used in verified acquisition contracts.
     pub issuer_types: std::collections::HashSet<Dt>,
+    /// Compiler-resolved vstd methods with a certified parametric workspace body.
+    pub templates: HashMap<crate::ast::Fun, crate::ast::Function>,
+    /// Reviewed opaque operations permitted only inside a verified workspace.
+    pub workspace_primitives: std::collections::HashSet<crate::ast::Fun>,
     /// Selected local bodies whose measured footprints should be published.
     pub measure_leaves: std::collections::HashSet<crate::ast::Fun>,
     /// Drop-elaborated transport for local resource-contracted functions.

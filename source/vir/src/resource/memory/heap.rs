@@ -433,6 +433,12 @@ impl Analysis<'_> {
         capacities: &HashMap<super::paths::LocalPath, Expr>,
         worker_parameter: bool,
     ) -> Result<Owner, VirErr> {
+        if super::synchronization::RwRecord::payload(typ).is_some() {
+            return Err(unsupported(
+                span,
+                "an owned permissioned payload without its incoming occupancy and release evidence",
+            ));
+        }
         if super::iterators::owns_vector_storage(typ) {
             return Err(unsupported(span, "taking a consuming iterator as a parameter"));
         }
