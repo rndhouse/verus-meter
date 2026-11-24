@@ -19,7 +19,7 @@ and the original checklist below have evidence.
 - [x] [07.1 — Fixed workers and mutual exclusion](complete/07.1-fixed-worker-peak.md). Prove a total bound for two workers using one mutex.
 - [x] [07.2 — Symbolic worker counts](complete/07.2-symbolic-worker-counts.md). Extend the same proof from two workers to a symbolic number of workers.
 - [x] [07.3 — Permits and verified protocols](complete/07.3-permits-and-verified-protocols.md). Use verified capacity and reader/writer guarantees in total bounds.
-- [ ] [07.4 — Helpers, retained storage and nested workers](07.4-helpers-and-retained-storage.md). Preserve tight totals through calls, transfers, repeated acquisition and nested spawns.
+- [x] [07.4 — Helpers, retained storage and nested workers](complete/07.4-helpers-and-retained-storage.md). Preserve tight totals through calls, transfers, repeated acquisition and nested spawns.
 - [ ] [07.5 — Sections, checkpoints and diagnostics](07.5-sections-queries-and-diagnostics.md). Apply the global proof to scoped observations and explain unproved bounds.
 
 ## Work
@@ -33,7 +33,7 @@ and the original checklist below have evidence.
 - [x] Support unconstrained `n * b`, exclusive `b` for nonzero `n`, and
   `min(n, k) * b` under the required per-holder/capacity/lifetime conditions.
   Zero workers contribute zero scratch. Include all other storage in total bounds.
-- [ ] Preserve conditions through branches, calls, worker overlap and sequential
+- [x] Preserve conditions through branches, calls, worker overlap and sequential
   reuse. Check storage held while blocked and every modeled intermediate peak,
   including two explicitly created buffers whose lifetimes overlap. For a
   guarded push, compose the vector's documented slot and payload charges.
