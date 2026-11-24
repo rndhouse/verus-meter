@@ -26,6 +26,9 @@ functionality, not a later extension or a user-accessible trust escape hatch.
 - [ ] Implement the selected bounded-permit protocol/API. Preserve permit instance
   and capacity relationships through acquire, move, borrow and release. Model
   every admitted capacity mutation; unsupported mutations must reject explicitly.
+  - [x] Meter calls to an existing vstd semaphore's `try_acquire` and `acquire`
+    methods and to `Permit::release` using their verified executable workspaces.
+  - [ ] Meter `Semaphore::new(k)`, including its generic atomic constructor.
 - [ ] Connect both exclusive and bounded-holder facts to compiler-derived per-holder
   footprints. Count failed attempts, waiting storage, retained buffers and repeated
   acquisitions correctly. A permit released early cannot keep covering its buffer.
@@ -33,6 +36,9 @@ functionality, not a later extension or a user-accessible trust escape hatch.
     executable allocations are live while the guard is intact. Preserve its
     identity through a direct whole move, a checked helper call and an owned
     worker capture passed to a checked helper.
+  - [x] Preserve the actual input witness through direct and conditional helper
+    returns, including a permit moved into a worker. Check every successful
+    return path before attributing the result to a particular input.
 - [ ] Allow developer-supplied invariants and arithmetic lemmas through the normal
   Verus proof path, without manual byte credits or allocation counters.
 
@@ -78,12 +84,24 @@ implicit cleanup. A helper reserving `n` bytes, dropping its vector and then rel
 the guard verifies at 41 bytes for `n == 0` and `n + 40` for `0 < n <= 500`.
 Reducing either allowance by one byte fails.
 
-Next, bind a returned or conditionally returned holder to its issuing instance
-and capacity through helper calls and worker handoffs. An imported vstd
-`Permit` currently fails the metered parameter layout check. Its executable
-layout and the workspaces of its operations must be available to the analysis.
-Connect those bindings to the semaphore population proof and the RwLock
-reader/writer proofs before TODO 07 uses them to reduce cross-worker peaks.
+Feature commit `93c4099e7` follows an existing guard returned directly or in
+`Some`. A helper may release it and return `None` on another path. Swapping
+two same-typed arguments changes which input covers the buffer and fails the
+original issuer assertion. If an early return and the tail can return different
+guards, the result has its own local lifetime with no single input attribution.
+
+Feature commit `d8abf4812` meters the imported vstd permit. The test callers
+need 81 bytes for `try_acquire`, 98 for `acquire` and 72 for `release`. Each
+rejects one byte less. A worker can move a permit into a helper and receive it
+back on the successful path. Separate vstd builds with verification or lifetime
+checking disabled supplied neither a holder proof nor an acquisition workspace.
+
+Next, connect **separate acquisitions** to their issuer and symbolic capacity in
+the memory summaries. Verus already proves that a successful vstd acquisition
+returns a permit for its receiver. The memory analysis must carry that fact
+between workers before TODO 07 can apply the holder limit to their combined
+peak. Meter semaphore construction and connect the RwLock reader/writer proofs
+to their executable acquire and release lifetimes as part of 06.
 
 ## Completion criteria
 
