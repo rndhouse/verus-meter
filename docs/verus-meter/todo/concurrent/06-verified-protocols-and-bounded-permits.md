@@ -28,7 +28,7 @@ functionality, not a later extension or a user-accessible trust escape hatch.
   every admitted capacity mutation; unsupported mutations must reject explicitly.
   - [x] Meter calls to an existing vstd semaphore's `try_acquire` and `acquire`
     methods and to `Permit::release` using their verified executable workspaces.
-  - [ ] Meter `Semaphore::new(k)`, including its generic atomic constructor.
+  - [x] Meter `Semaphore::new(k)`, including its generic atomic constructor.
 - [ ] Connect both exclusive and bounded-holder facts to compiler-derived per-holder
   footprints. Count failed attempts, waiting storage, retained buffers and repeated
   acquisitions correctly. A permit released early cannot keep covering its buffer.
@@ -100,8 +100,12 @@ Next, connect **separate acquisitions** to their issuer and symbolic capacity in
 the memory summaries. Verus already proves that a successful vstd acquisition
 returns a permit for its receiver. The memory analysis must carry that fact
 between workers before TODO 07 can apply the holder limit to their combined
-peak. Meter semaphore construction and connect the RwLock reader/writer proofs
-to their executable acquire and release lifetimes as part of 06.
+peak. Connect the RwLock reader/writer proofs to their executable acquire and
+release lifetimes as part of 06.
+
+Feature commit `c894af372` measures semaphore construction, including its
+generic atomic wrapper. A caller verifies the returned capacity equals the
+symbolic input and needs 40 bytes. A 39-byte bound fails.
 
 ## Completion criteria
 
