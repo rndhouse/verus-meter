@@ -108,6 +108,13 @@ Feature commit `c894af372` measures semaphore construction, including its
 generic atomic wrapper. A caller verifies the returned capacity equals the
 symbolic input and needs 40 bytes. A 39-byte bound fails.
 
+Feature commit `660d3973c` measures the seven public RwLock methods, including
+their verified permissioned-cell helpers, at the concrete payload width. The
+tests compare simultaneous reader/reader and writer/reader roles on one lock
+and on two distinct locks. For inline payloads, each operation has a passing
+byte bound and a failing bound one byte smaller. Persistent ownership of a
+separately allocated payload remains to be checked.
+
 ## Completion criteria
 
 A user-defined protocol implemented with the supported atomics exposes proved
