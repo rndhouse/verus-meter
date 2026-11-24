@@ -11,16 +11,16 @@ functionality, not a later extension or a user-accessible trust escape hatch.
 
 ## Work
 
-- [ ] Implement the verification interface designed in 01–02. Connect executable
+- [x] Implement the verification interface designed in 01–02. Connect executable
   synchronization transitions to proved invariants and owned protocol evidence.
   Establish initialization and preservation, including interference between workers.
-- [ ] Make contract acceptance depend on verified behavior. Merely declaring a
+- [x] Make contract acceptance depend on verified behavior. Merely declaring a
   protocol, naming a function `lock`, or writing an unrelated abstract state
   machine must not establish exclusion for executable allocations.
-- [ ] Reuse applicable vstd invariant, atomic and tokenized state-machine facilities.
+- [x] Reuse applicable vstd invariant, atomic and tokenized state-machine facilities.
   Maintain namespace/atomicity rules and the supported memory orderings from 01.
   Do not hold atomic invariants open over allocation or blocking calls.
-- [ ] Integrate existing verified synchronization, including the selected RwLock
+- [x] Integrate existing verified synchronization, including the selected RwLock
   surface, with its actual release semantics. Avoid re-proving library guarantees
   already available; identify any genuinely missing exported proof facts.
 - [x] Implement the selected bounded-permit protocol/API. Preserve permit instance
@@ -29,7 +29,7 @@ functionality, not a later extension or a user-accessible trust escape hatch.
   - [x] Meter calls to an existing vstd semaphore's `try_acquire` and `acquire`
     methods and to `Permit::release` using their verified executable workspaces.
   - [x] Meter `Semaphore::new(k)`, including its generic atomic constructor.
-- [ ] Connect both exclusive and bounded-holder facts to compiler-derived per-holder
+- [x] Connect both exclusive and bounded-holder facts to compiler-derived per-holder
   footprints. Count failed attempts, waiting storage, retained buffers and repeated
   acquisitions correctly. A permit released early cannot keep covering its buffer.
   - [x] For a concrete custom guard with a local holder proof, record which
@@ -39,7 +39,7 @@ functionality, not a later extension or a user-accessible trust escape hatch.
   - [x] Preserve the actual input witness through direct and conditional helper
     returns, including a permit moved into a worker. Check every successful
     return path before attributing the result to a particular input.
-- [ ] Allow developer-supplied invariants and arithmetic lemmas through the normal
+- [x] Allow developer-supplied invariants and arithmetic lemmas through the normal
   Verus proof path, without manual byte credits or allocation counters.
 
 ## Verified library and custom protocol proofs
@@ -55,8 +55,8 @@ incompatibility with its existing tokens.
 The source regressions verify a custom boolean CAS protocol, reject issuing its
 witness on failure, reject an unprovable holder count, and check permit identity
 after a conditional return from a worker helper. These functional proofs passed
-with the full vstd verifier. To apply a population proof across workers, the
-memory analysis must identify the instance that issued each live guard.
+with the full vstd verifier. Applying the population proof across workers requires
+the identity of the executable receiver that issued each live guard.
 
 Feature commit `6af4fb2ba` connects the underlying permissioned atomics to
 source byte accounting. The executable CAS regression needs 20 bytes with a
@@ -112,8 +112,33 @@ Feature commit `660d3973c` measures the seven public RwLock methods, including
 their verified permissioned-cell helpers, at the concrete payload width. The
 tests compare simultaneous reader/reader and writer/reader roles on one lock
 and on two distinct locks. For inline payloads, each operation has a passing
-byte bound and a failing bound one byte smaller. Persistent ownership of a
-separately allocated payload remains to be checked.
+byte bound and a failing bound one byte smaller.
+
+## RwLock payloads and worker interference
+
+Feature commits `b6e3dcb9d` and `f42521978` connect the verified operations to
+the existing ownership analysis. A shared read lends the current payload. A
+writer takes its entire allocation tree and explicit release publishes the
+supplied tree to the same lock. An old buffer kept by the worker remains live
+alongside its replacement. The regressions cover nested boxes, locks moved into
+workers, owning helper returns and reader handles passed through helpers.
+Destroying a populated lock with an owned allocation rejects because vstd's
+underlying permissioned cell suppresses the payload destructor.
+
+Two workers can write through different handles to one fixed shared lock. The
+analysis links both acquisitions to the lock's history. In the reader/writer
+regression the writer replaces a 79-byte buffer with an 821-byte buffer. After
+join the 1,200-byte checkpoint passes and a 600-byte checkpoint fails.
+Discarding the writer cannot publish the replacement. A separately verified
+vstd build lacking the writer/writer theorem also fails to authorize the
+exclusive interval. The executable examples in
+`source/rust_verify_test/tests/atomic_lib/` are `rwlock_owned.verus.rs` and
+`rwlock_shared.verus.rs`.
+
+A helper that consumes an independently supplied writer with an owned payload
+still needs a checked destination cell. Unknown destinations reject. The
+source-level peaks and checked holder facts feed TODO 07, which owns the
+whole-program inequality across all workers.
 
 ## Completion criteria
 
@@ -139,20 +164,32 @@ properties in the acceptance tests through ordinary verification without `assume
 Run the README memory checks plus relevant atomic/invariant/mode regressions.
 End-to-end symbolic memory bounds using these proofs are required in 07–08.
 
+Validation on the implementation branch at `28d574474` passed all 1,238 memory
+integration tests, 47 resource examples and 59 atomic-library tests. The vstd
+verification run checked 2,438 obligations with zero errors. The VIR memory
+unit tests, mode, mutable-reference and invariant suites passed, as did formatting,
+Clippy and strict VIR rustdoc. The metered Verus fixtures ran through the verifier.
+
+The RwLock integration exposed a regression in an existing worker handoff proof.
+The fix keeps private RwLock fields out of the numbering used to identify unrelated
+closure captures. At the default solver limit, the 246-byte checkpoint verifies
+and the 245-byte checkpoint fails with both the default seed and seed 4. The
+enclosing worker contract still requires the global proof in 07.
+
 ## Decisions from TODO 01
 
 Implement the verification obligations in `docs/verus-meter/concurrent-model.md`:
 
-- [ ] Check initialization, executable transition refinement, invariant-preserved
+- [x] Check initialization, executable transition refinement, invariant-preserved
   holder multiset bounds, witness encapsulation and interference stability. Local
   postconditions or a disconnected abstract state machine are insufficient.
 - [x] Deliver reusable verified `vstd::resource::semaphore::Semaphore` and unit
   `Permit` with new/acquire/try_acquire/explicit release, immutable symbolic capacity
   and occupied capacity for discarded unreleased witnesses. Use existing SC
   PAtomicBool/PAtomicUsize facilities; no async runtime dependency is required.
-- [ ] Support the selected vstd RwLock read/write APIs with explicit release and
+- [x] Support the selected vstd RwLock read/write APIs with explicit release and
   persistent payload ownership. Readers do not gain writer-style exclusion.
-- [ ] Account for executable fields/locals of verified bodies. Only reviewed opaque
+- [x] Account for executable fields/locals of verified bodies. Only reviewed opaque
   primitive contracts use the source abstraction table; custom code has no blanket
   zero-workspace exemption.
 

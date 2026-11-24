@@ -1,7 +1,8 @@
 # Concurrent symbolic memory analysis TODOs
 
 These tasks track implementation of the concurrent core.
-The [05 integration review](complete/05-function-and-worker-summaries.md#integration-review) records the checked helper and worker behavior. Next is [06 — Verified protocols and bounded permits](06-verified-protocols-and-bounded-permits.md). The [final worker audit](complete/03.4.3-validate-and-close-03.md) records the verified worker scope and integration checks.
+[06 — Verified protocols and bounded permits](complete/06-verified-protocols-and-bounded-permits.md) records how verified holder guarantees connect to allocation lifetimes. Next is [07 — Symbolic concurrent bound composition](07-symbolic-concurrent-bound-composition.md), which uses those guarantees to prove total byte bounds.
+The [05 integration review](complete/05-function-and-worker-summaries.md#integration-review) covers helper and worker summaries. The [final worker audit](complete/03.4.3-validate-and-close-03.md) records the verified worker scope and integration checks.
 
 ## Authoritative location
 
@@ -48,7 +49,7 @@ Preserve the semantics and synchronization precision established in 01 throughou
 | [x] | [05.2 — Ownership after unlock](complete/05.2-ownership-after-unlock.md) | Account for removed storage through worker completion, join and final drop. |
 | [x] | [05.3 — Helpers and conditional paths](complete/05.3-helpers-and-conditional-paths.md) | Preserve protected updates, ownership and guard effects on each path through a call. |
 | [x] | [05.4 — Repeated acquisitions and loop-selected mutexes](complete/05.4-repeated-acquisitions-and-loop-selected-mutexes.md) | Preserve the selected mutex and its contents across symbolic iterations. |
-| [ ] | [06 — Verified protocols and bounded permits](06-verified-protocols-and-bounded-permits.md) | Custom Verus protocols and the selected semaphore interface. |
+| [x] | [06 — Verified protocols and bounded permits](complete/06-verified-protocols-and-bounded-permits.md) | Verified custom protocols, bounded semaphore permits and RwLock reader/writer effects. |
 | [ ] | [07 — Symbolic concurrent bound composition](07-symbolic-concurrent-bound-composition.md) | Tight total bounds, generated proofs and diagnostics. |
 | [ ] | [08 — Core integration and completion](08-core-integration-and-completion.md) | Full capability audit, regression coverage and user documentation. |
 
