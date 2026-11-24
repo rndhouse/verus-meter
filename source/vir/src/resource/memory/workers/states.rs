@@ -47,7 +47,7 @@ impl Phase {
 pub(in super::super) struct Publication {
     pub(super) caller: Option<WorkerId>,
     site: Binding,
-    span: Span,
+    pub(super) span: Span,
     pub(super) occurrence: Expr,
     caller_frame: Footprint,
     /// Before splitting the captures, each path contributes one combined cost.
@@ -285,6 +285,14 @@ impl Analysis<'_> {
                     &publication.span,
                     "a publication state outside its source worker",
                 ));
+            }
+            // A composed worker already proves its local phases against the
+            // exported costs. The whole-operation allowance is meaningful at
+            // publication. An empty population owes no scratch.
+            if self.storage.covers_workers()
+                && !self.growth.worker_occurrences[&execution.actor].is_empty()
+            {
+                continue;
             }
             // A synchronized execution exports every source phase, including
             // waiting and newly unrestricted storage at release. Preserve these

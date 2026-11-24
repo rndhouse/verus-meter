@@ -32,3 +32,14 @@ pub(super) fn exact_peak(name: &str, code: &str, peak: u64) {
         assert_vir_error_msg(err, &format!("peak {peak} bytes exceeds budget {short} bytes"));
     }
 }
+
+/// Either worker and its enclosing operation can independently exceed a bound.
+pub(super) fn exceeds(name: &str, body: &str) {
+    let err = verify_one_file(name, source(body), &[]).unwrap_err();
+    assert!(!err.errors.is_empty());
+    assert!(
+        err.errors.iter().all(|e| e.message.contains("memory budget exceeded")),
+        "{:?}",
+        err.errors
+    );
+}

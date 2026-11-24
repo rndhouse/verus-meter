@@ -333,6 +333,10 @@ impl Accounting {
         }
     }
 
+    pub(super) fn covers_workers(&self) -> bool {
+        self.report.covers_workers
+    }
+
     pub(super) fn points(&self) -> &[Point] {
         &self.report.points
     }

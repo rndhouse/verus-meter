@@ -1,9 +1,11 @@
-//! A fixed worker is represented by its byte bounds in each native mutex state.
+//! Each worker has a checked byte bound in each native mutex state.
 //! A coordinator point selects its outstanding actors by their completion tags.
 //! Advancing one actor stays inside its checked local observations. Mutual
 //! exclusion rules out simultaneous ownership of the same mutex by two actors.
 //! This product therefore covers each step, including waits and explicit release,
 //! without ordering independent workers by the compiler's traversal order.
+
+mod population;
 
 use super::{WorkerId, execution::Execution};
 use crate::ast::*;
@@ -60,16 +62,18 @@ impl Phases {
     }
 
     fn peak(&self, span: &Span) -> Option<Expr> {
-        fn maximum(span: &Span, costs: &[&Expr]) -> Expr {
-            if let [one] = costs {
-                return (*one).clone();
-            }
-            let (left, right) = costs.split_at(costs.len() / 2);
-            contracts::maximum(span, maximum(span, left), maximum(span, right))
-        }
-        let costs: Vec<_> = self.0.values().flatten().collect();
-        (!costs.is_empty()).then(|| maximum(span, &costs))
+        let costs: Vec<_> = self.0.values().flatten().cloned().collect();
+        (!costs.is_empty()).then(|| maximum_cost(span, &costs))
     }
+}
+
+/// Balance maxima so later expression walks stay shallow even with many paths.
+fn maximum_cost(span: &Span, costs: &[Expr]) -> Expr {
+    if let [one] = costs {
+        return one.clone();
+    }
+    let (left, right) = costs.split_at(costs.len() / 2);
+    contracts::maximum(span, maximum_cost(span, left), maximum_cost(span, right))
 }
 
 /// Only immutable scalar inputs can be read outside the worker. A vector's
@@ -93,7 +97,7 @@ fn export(
 }
 
 impl Execution {
-    fn fixed_phases(
+    fn phases(
         &self,
         analysis: &Analysis<'_>,
         parameters: &HashSet<VarIdent>,
@@ -104,10 +108,13 @@ impl Execution {
         let initial = self.initial.live_expression(span).total();
         // Separately owned descendants and results need their own transfer
         // phases. Imported Arc handles borrow the coordinator's charged backing.
+        let completed = self.retained.live_expression(span).total();
+        let indexed_scalar = analysis.growth.retained_worker_families.contains(&self.actor)
+            && contracts::scalar(&self.result.typ);
         if self.publication.caller.is_some()
-            || !analysis.growth.worker_occurrences.get(&self.actor)?.is_empty()
-            || !unit(&self.result.typ)
-            || contracts::constant(&self.retained.live_expression(span).total()) != Some(0)
+            || !(unit(&self.result.typ) || indexed_scalar)
+            || self.result.owner.is_some()
+            || contracts::constant(&completed) != Some(self.result.value.bytes)
             || contracts::constant(&initial) != Some(self.entry.storage.value.bytes)
             || !self.effects.calls.is_empty()
             || !self.effects.ownership.holders.is_empty()
@@ -131,11 +138,13 @@ impl Execution {
                 return None;
             }
         }
-        let native: BTreeSet<_> = self.effects.ownership.fixed_mutex_intervals().collect();
+        let native: BTreeSet<_> =
+            self.effects.ownership.mutex_intervals(&analysis.transitions).collect();
         let mut phases = Phases::default();
-        // Enter with captures intact and no acquired guard. Unit completion
-        // contributes zero, so this unrestricted alternative also covers it.
+        // Completion releases the working frame but retains the inline result
+        // with its handle until join. Both entry and completion are unrestricted.
         phases.insert(BTreeSet::new(), initial);
+        phases.insert(BTreeSet::new(), completed);
         for p in self.effects.points.iter() {
             let value = p.cost.total();
             let (local, exported) = export(&value, reservations, &captures)?;
@@ -144,7 +153,7 @@ impl Execution {
                     span: p.span.clone(),
                     cost: p.cost.clone(),
                     bound: MemoryBudget::total(local),
-                    kind: CheckKind::WorkerState("at a fixed worker phase"),
+                    kind: CheckKind::WorkerState("at a worker phase"),
                 });
             }
             let held = p
@@ -161,33 +170,30 @@ impl Execution {
 }
 
 impl Analysis<'_> {
-    /// Combine closed direct publications. Ineligible domains keep the existing
+    /// Combine closed worker domains. Ineligible domains keep the existing
     /// deferred diagnostic and all their independently checked local obligations.
-    pub(super) fn compose_fixed_workers(&mut self, function: &Function) -> bool {
+    pub(super) fn compose_workers(&mut self, function: &Function) -> bool {
         let params = contracts::inputs(function);
         if function.x.params.iter().any(|p| p.x.mode == Mode::Exec && !params.contains(&p.x.name))
             || !unit(&function.x.outer_ret.x.typ)
             || !self.calls.is_empty()
-            || !self.growth.retained_worker_families.is_empty()
             || !self.growth.versioned_shared.is_empty()
         {
             return false;
         }
         let body = function.x.body.as_ref().expect("checked executable body");
-        // Scoped observations require a subtree proof. Loop publication and
-        // nested lifecycles have a different occurrence domain as well.
-        let mut scoped_or_repeated = false;
+        // Scoped observations require a separate subtree proof.
+        let mut scoped = false;
         crate::ast_visitor::expr_visitor_walk(body, &mut |e| {
-            scoped_or_repeated |= matches!(
+            scoped |= matches!(
                 e.x,
-                ExprX::Loop { .. }
-                    | ExprX::ResourceSection(_)
+                ExprX::ResourceSection(_)
                     | ExprX::ResourceAssert(_)
                     | ExprX::ResourceAssertCurrent(_)
             );
             crate::visitor::VisitorControlFlow::Recurse
         });
-        if scoped_or_repeated {
+        if scoped {
             return false;
         }
         let reservations = self
@@ -212,10 +218,13 @@ impl Analysis<'_> {
             {
                 return false;
             }
-            let Some(phases) = w.fixed_phases(self, &params, &reservations, &mut checks) else {
+            let Some(phases) = w.phases(self, &params, &reservations, &mut checks) else {
                 return false;
             };
             workers.insert(id, phases);
+        }
+        if !self.growth.retained_worker_families.is_empty() {
+            return self.compose_population(function, workers, checks);
         }
         let mut cache = BTreeMap::<Vec<WorkerId>, Expr>::new();
         let mut additions = Vec::new();

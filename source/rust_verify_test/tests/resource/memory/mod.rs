@@ -14,6 +14,7 @@ mod concurrency;
 mod conditional;
 mod conditional_loops;
 mod control_flow;
+mod counted_workers;
 mod element_transfers;
 mod elements;
 mod exit_ownership;

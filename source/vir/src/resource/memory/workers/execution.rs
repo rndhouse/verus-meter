@@ -188,7 +188,7 @@ impl Analysis<'_> {
                 ),
             )));
         }
-        if self.compose_fixed_workers(function) {
+        if self.compose_workers(function) {
             self.worker_obligations()?;
             return Ok(None);
         }

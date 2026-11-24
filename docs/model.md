@@ -48,5 +48,21 @@ scratch in the bound. A buffer allocated before locking or kept after unlocking 
 overlap another worker's buffer. The checks also include handle slots, captures and
 live caller storage. To use a symbolic vector reservation in the combined peak,
 the verifier checks that the reservation still covers the vector's charge at that
-point. Symbolic worker populations, worker helper calls and concurrent checkpoints
-still require further composition. [Executable cases](../source/rust_verify_test/tests/resource/memory/fixed_workers.rs)
+point. [Executable cases](../source/rust_verify_test/tests/resource/memory/fixed_workers.rs)
+
+A counted loop can publish workers from one spawn site into handle vectors and
+join them in a drain loop. The verifier counts actual publications and joins,
+then proves how many workers the vectors represent at each loop boundary.
+For up to `n` workers reserving `b` bytes each, unrestricted scratch can reach
+`n * b`. If each buffer is allocated and freed under the same mutex constructed
+outside the loop, scratch is zero for no workers and at most `b` otherwise.
+Joining each worker before the next spawn also permits reuse. The total includes
+caller storage, handles, captures, shared backing and any inline scalar results
+awaiting collection. Ordinary loop invariants and arithmetic proofs can establish
+collection lengths and the range of a symbolic product. [Counted worker regressions](../source/rust_verify_test/tests/resource/memory/counted_workers.rs)
+
+The collected population uses an immutable upper bound from the publishing loop's
+condition. Verus checks it at every spawn. At a compound expression that can
+spawn or join, the proof may charge that ceiling to cover changes during operand
+evaluation. Multiple publishing families in one collection, owned results, worker
+helper calls and scoped concurrent checkpoints still require further composition.

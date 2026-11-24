@@ -471,12 +471,26 @@ impl Checked {
 
     /// Only a checked native acquisition of one concrete mutex can exclude
     /// another fixed worker phase on that mutex.
-    pub(in super::super) fn fixed_mutex_intervals(
+    pub(in super::super) fn mutex_intervals(
         &self,
+        caller: &Self,
     ) -> impl Iterator<Item = super::super::synchronization::local::Interval> + '_ {
-        self.operations.values().filter_map(|operation| match operation {
+        // A constructor in the caller outside repeated visits names a single
+        // runtime object across the entire worker population. A repeated
+        // constructor or a lock private to each child gives no such exclusion.
+        let shared: std::collections::BTreeSet<_> = caller
+            .operations
+            .values()
+            .filter_map(|op| match op {
+                Operation::MutexNew { instance, occurrence, .. } if occurrence.single_visit() => {
+                    Some(*instance)
+                }
+                _ => None,
+            })
+            .collect();
+        self.operations.values().filter_map(move |operation| match operation {
             Operation::MutexLock { interval, occurrence, .. }
-                if occurrence.single_visit()
+                if (occurrence.single_visit() || shared.contains(&interval.instance))
                     && matches!(
                         interval.instance,
                         super::super::synchronization::Instance::Fresh(_)

@@ -1,18 +1,5 @@
 //! Whole-function contracts over actual fixed workers and source mutex guards.
-use super::support::verifies;
-
-/// Either worker and its enclosing operation can independently exceed a bound.
-fn exceeds(name: &str, body: &str) {
-    let err =
-        crate::verify_one_file(name, format!("use vstd::prelude::*; verus! {{ {body} }}"), &[])
-            .unwrap_err();
-    assert!(!err.errors.is_empty());
-    assert!(
-        err.errors.iter().all(|e| e.message.contains("memory budget exceeded")),
-        "{:?}",
-        err.errors
-    );
-}
+use super::support::{exceeds, verifies};
 
 fn pair(bound: &str, peer: &str, body: &str) -> String {
     let worker = |lock| body.replace("LOCK", lock);

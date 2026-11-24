@@ -168,7 +168,7 @@ fn shared_return_keeps_its_backing_after_the_environment_drops() {
 
 #[test]
 fn symbolic_worker_loops_use_captured_inputs() {
-    rejects(
+    super::support::verifies(
         "worker_symbolic_loop",
         r#"
         fn f(n: u16) resources peak(memory) <= 4096 {
@@ -183,7 +183,6 @@ fn symbolic_worker_loops_use_captured_inputs() {
             let result = handle.join();
         }
     "#,
-        GLOBAL,
     );
 }
 

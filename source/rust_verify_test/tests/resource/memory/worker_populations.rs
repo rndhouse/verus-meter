@@ -1,7 +1,7 @@
-//! Population tests use executable spawn, transfer and join operations. Local
-//! obligations must run without lifting the global concurrent proof boundary.
+//! Exercise executable spawn, transfer and join operations. Each supported
+//! population proves its total and preserves the selected worker’s result.
 
-use super::support::rejects;
+use super::support::{exceeds, rejects, verifies};
 
 const GLOBAL: &str = "checked worker effects still require global lifetime and interference proofs";
 
@@ -65,19 +65,8 @@ fn scalar_worker_results_do_not_hide_an_oversized_allocation() {
             }
         }
         "#;
-    rejects("scalar_worker_buffers", &source.replace("EXTRA", "0"), GLOBAL);
-    let enlarged = source.replace("EXTRA", "200_000");
-    let error = crate::verify_one_file(
-        "scalar_worker_buffers_too_large",
-        format!("use vstd::prelude::*; verus! {{ {enlarged} }}"),
-        &[],
-    )
-    .unwrap_err();
-    assert!(error.errors.iter().any(|error| error.message.contains("memory budget exceeded")));
-    assert!(error.errors.iter().any(|error| error.message.contains(GLOBAL)));
-    assert!(error.errors.iter().all(|error| {
-        error.message.contains("memory budget exceeded") || error.message.contains(GLOBAL)
-    }));
+    verifies("scalar_worker_buffers", &source.replace("EXTRA", "0"));
+    exceeds("scalar_worker_buffers_too_large", &source.replace("EXTRA", "200_000"));
 }
 
 #[test]
@@ -178,25 +167,20 @@ fn scalar_worker_functional_proofs_support_input_dependent_allocations() {
             }
         }
         "#;
-    rejects("worker_scalar_functional_bounds", source, GLOBAL);
+    verifies("worker_scalar_functional_bounds", source);
     // An explicit match must receive the selected occurrence even when Err
     // comes first. Its arm-local binding supplies the executable capacity.
     let matched = source.replace(
         "handles.pop().unwrap().join().unwrap()",
         "match handles.pop().unwrap().join() { Err(_) => 0u16, Ok(size) => size }",
     );
-    rejects("worker_scalar_match_bounds", &matched, GLOBAL);
+    verifies("worker_scalar_match_bounds", &matched);
 
     let false_contract = source.replace("result == i { i }", "result == i { 2000u16 }");
-    let error = crate::verify_one_file(
+    rejects(
         "worker_scalar_false_contract",
-        format!("use vstd::prelude::*; verus! {{ {false_contract} }}"),
-        &[],
-    )
-    .unwrap_err();
-    crate::common::assert_vir_error_msgs(
-        error,
-        &["unable to prove post-condition of closure", GLOBAL],
+        &false_contract,
+        "unable to prove post-condition of closure",
     );
 
     // Change the executable result and its functional proof together. The
@@ -204,17 +188,7 @@ fn scalar_worker_functional_proofs_support_input_dependent_allocations() {
     let enlarged = matched
         .replace("value == j", "value == 2000")
         .replace("result == i { i }", "result == 2000 { 2000u16 }");
-    let error = crate::verify_one_file(
-        "worker_scalar_functional_bounds_too_large",
-        format!("use vstd::prelude::*; verus! {{ {enlarged} }}"),
-        &[],
-    )
-    .unwrap_err();
-    assert!(error.errors.iter().any(|error| error.message.contains("memory budget exceeded")));
-    assert!(error.errors.iter().any(|error| error.message.contains(GLOBAL)));
-    assert!(error.errors.iter().all(|error| {
-        error.message.contains("memory budget exceeded") || error.message.contains(GLOBAL)
-    }));
+    exceeds("worker_scalar_functional_bounds_too_large", &enlarged);
 }
 
 #[test]
@@ -883,7 +857,10 @@ fn repeated_workers_cannot_hide_body_allocations() {
         &[],
     )
     .unwrap_err();
-    crate::common::assert_vir_error_msgs(error, &["memory budget exceeded", GLOBAL]);
+    crate::common::assert_vir_error_msg(
+        error,
+        "memory budget exceeded: peak 277 bytes exceeds budget 128 bytes",
+    );
 }
 
 #[test]
