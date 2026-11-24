@@ -141,3 +141,30 @@ fn a_worker_receives_the_existing_payload_when_the_lock_moves() {
     assert_eq!(trace.errors.len(), 1);
     assert!(trace.errors[0].message.contains("global lifetime and interference proofs"));
 }
+
+#[test]
+fn shared_writer_publishes_the_payload_recovered_after_join() {
+    let program = format!("{SOURCE}\n{}", include_str!("rwlock_shared.verus.rs"));
+    let verify =
+        |name, code| verify_one_file(name, code, &["--trace", "--no-cheating"]).unwrap_err();
+    let checked = verify("rwlock_shared", program.clone());
+    assert_eq!(checked.errors.len(), 1);
+    assert!(checked.errors[0].message.contains("global interference proofs"));
+    assert!(checked.errors[0].message.contains("linked acquisitions = 1"));
+
+    let short = verify("rwlock_shared_short", program.replace("<= 1200", "<= 600"));
+    assert!(short.errors.iter().any(|e| e.message.contains("conditional memory budget exceeded")));
+
+    let abandoned = verify(
+        "rwlock_shared_abandoned",
+        program.replace("guard.release_write(new);", "drop(guard); drop(new);"),
+    );
+    assert_vir_error_msg(abandoned, "an acquired payload without its outgoing contents");
+
+    let two = program.replace("let guard = read.acquire_read();\n        let view = guard.borrow();\n        let count = view.len();\n        guard.release_read();",
+        "let (old, guard) = read.acquire_write(); guard.release_write(Vec::<u8>::with_capacity(601)); drop(old);");
+    assert_ne!(two, program);
+    let writers = verify("rwlock_shared_writers", two);
+    assert_eq!(writers.errors.len(), 1);
+    assert!(writers.errors[0].message.contains("linked acquisitions = 2"));
+}

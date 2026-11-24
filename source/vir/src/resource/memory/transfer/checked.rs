@@ -122,7 +122,16 @@ pub(in super::super) struct WorkerPublication {
 #[derive(Clone)]
 pub(in super::super) enum Operation {
     /// A verified writer transfers one whole payload from or to this checked cell slot.
-    RwWrite { receiver: Expr, slot: Place, replacement: Option<Expr> },
+    RwWrite {
+        receiver: Expr,
+        slot: Place,
+        replacement: Option<Expr>,
+        /// An imported payload has a checked exclusive acquisition in this worker.
+        acquired: Option<(
+            super::super::synchronization::local::Interval,
+            super::super::workers::SourceVisit<AstId>,
+        )>,
+    },
     /// A compiler-resolved native dereference borrows this existing acquisition.
     GuardBorrow { source: Expr, interval: super::super::synchronization::local::Interval },
     /// Actual discriminant of the lock Result at a native is_ok/is_err test.
@@ -447,6 +456,9 @@ impl Checked {
         visit: &super::super::workers::SourceVisit<AstId>,
     ) -> bool {
         self.operations.values().any(|op| match op {
+            Operation::RwWrite { acquired: Some((interval, occurrence)), .. } => {
+                *interval == id && occurrence.same_visit_scope(visit)
+            }
             Operation::MutexLock { interval, occurrence, .. } => {
                 *interval == id && occurrence.same_visit_scope(visit)
             }
@@ -509,6 +521,20 @@ impl Checked {
                 }
                 Operation::Call { synchronization: Some(call), .. } => {
                     call.validate(*site, actor, &mut intervals, &mut attempts, span)?;
+                    continue;
+                }
+                Operation::RwWrite {
+                    acquired: Some((interval, visit)), replacement: None, ..
+                } => {
+                    if *site != visit.site
+                        || !visit.valid_for(actor)
+                        || !intervals.insert(*interval)
+                    {
+                        return Err(super::super::model::unsupported(
+                            span,
+                            "an invalid verified writer acquisition",
+                        ));
+                    }
                     continue;
                 }
                 Operation::MutexNew { instance, occurrence, .. } => {

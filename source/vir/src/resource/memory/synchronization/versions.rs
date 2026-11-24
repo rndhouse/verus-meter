@@ -107,7 +107,7 @@ fn complete_contents(payload: &Owner) -> bool {
 }
 
 impl Interval {
-    fn payload_name(self) -> VarIdent {
+    pub(in crate::resource::memory::synchronization) fn payload_name(self) -> VarIdent {
         VarIdent(
             std::sync::Arc::new("$memory_acquired_payload".into()),
             VarIdentDisambiguate::VirTemp(self.acquisition.0),

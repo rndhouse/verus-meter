@@ -443,7 +443,12 @@ impl Analysis<'_> {
         worker_parameter: bool,
     ) -> Result<Owner, VirErr> {
         let record = super::synchronization::RwRecord::payload(typ).map(|(kind, _)| kind);
-        if record.is_some_and(|kind| kind != super::synchronization::RwRecord::Lock) {
+        if record.is_some_and(|kind| {
+            !matches!(
+                kind,
+                super::synchronization::RwRecord::Lock | super::synchronization::RwRecord::Reader
+            )
+        }) {
             return Err(unsupported(
                 span,
                 "an owned permissioned payload without its incoming occupancy and release evidence",
@@ -480,7 +485,13 @@ impl Analysis<'_> {
             ));
         }
         let mut owner = Owner {
-            rw_location: record.map(|_| super::synchronization::rw_payload::Location::fresh_cell()),
+            rw_location: record.map(|kind| {
+                if kind == super::synchronization::RwRecord::Reader {
+                    super::synchronization::rw_payload::Location::ObservedReader
+                } else {
+                    super::synchronization::rw_payload::Location::fresh_cell()
+                }
+            }),
             view: super::metadata::View::Local,
             geometry_known: !self.layouts.cardinality(typ),
             ..Default::default()

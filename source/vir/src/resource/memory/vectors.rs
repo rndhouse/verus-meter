@@ -395,6 +395,19 @@ impl Analysis<'_> {
         index: bool,
         intrinsic: Option<ResourceIntrinsic>,
     ) -> Result<u64, VirErr> {
+        if intrinsic == Some(ResourceIntrinsic::VecLen)
+            && self.synchronization_view(receiver)
+                == Some(super::synchronization::local::View::ObservedRead)
+        {
+            // This executable shared borrow observes the real vector. Its backing stays
+            // charged to the cell; an opaque read supplies no caller-relative forest.
+            self.discard(receiver)?;
+            self.transitions.operation(
+                &expr.span,
+                super::transfer::checked::Operation::Evaluate { args: args.clone() },
+            );
+            return Ok(0);
+        }
         let resolved = self.vector_receiver(receiver, &expr.span)?;
         let state_id = resolved.state;
         let typ = resolved.typ.clone();

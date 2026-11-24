@@ -14,16 +14,25 @@ use vir_macros::ToDebugSNode;
 /// Public payload transitions and the internal verified cell workspaces they call.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToDebugSNode)]
 pub enum WorkspaceMethod {
+    /// Initialize the cell with the supplied value.
     New,
+    /// Obtain a shared reading handle.
     Read,
+    /// Take the value with its exclusive writing handle.
     Write,
+    /// Borrow the current value through a reader.
     Borrow,
+    /// Explicitly release a reader.
     ReleaseRead,
+    /// Publish the supplied replacement and release the writer.
     ReleaseWrite,
+    /// Take the value from an owned lock.
     IntoInner,
+    /// Internal permissioned-cell implementation used by the public methods.
     Cell,
 }
 
+/// Verified executable source reanalyzed at a concrete call-site payload width.
 #[derive(Clone, Debug, Serialize, Deserialize, ToDebugSNode)]
 pub struct WorkspaceSource {
     pub(in crate::resource::memory) method: WorkspaceMethod,

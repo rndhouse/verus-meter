@@ -69,6 +69,11 @@ pub(super) fn summarize(
         capacities: &mut std::collections::BTreeMap<super::heap::OwnerPath, Expr>,
     ) -> Result<ReturnedOwner, VirErr> {
         if let Some(location) = owner.rw_location
+            && !matches!(
+                location,
+                super::synchronization::rw_payload::Location::Reader(_)
+                    | super::synchronization::rw_payload::Location::ObservedReader
+            )
             && !(matches!(location, super::synchronization::rw_payload::Location::Cell(_))
                 && owner.children.contains_key(&super::heap::OwnerSlot::Contents))
         {
@@ -430,6 +435,12 @@ impl Analysis<'_> {
             owner
                 .rw_location
                 .get_or_insert_with(super::synchronization::rw_payload::Location::fresh_cell);
+        }
+        if matches!(super::synchronization::RwRecord::payload(typ), Some((super::synchronization::RwRecord::Reader, p)) if self.layouts.owner(p))
+        {
+            owner
+                .rw_location
+                .get_or_insert(super::synchronization::rw_payload::Location::ObservedReader);
         }
         self.attach_vector_result(&expr.span, typ, &mut owner, capacity)?;
         if self.layouts.cardinality(typ) && owner.source.is_none() && owner.geometry.is_none() {

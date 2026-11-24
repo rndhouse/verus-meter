@@ -11,7 +11,7 @@ use super::multiset::*;
 use super::prelude::*;
 use super::set::*;
 use crate::resource::holder::{
-    BoundedHolder, BoundedInstance, Holder, ProtocolInstance, issued, role_of,
+    BoundedHolder, BoundedInstance, Holder, Incompatible, ProtocolInstance, issued, role_of,
 };
 use crate::tokens::UniqueValueToken;
 use core::marker::PhantomData;
@@ -452,10 +452,20 @@ impl<'a, V, Pred: RwLockPredicate<V>> crate::resource::holder::BoundedHolder for
             let tracked mut first = population.tracked_pop();
             let tracked second = population.tracked_borrow(0);
             assert(*second == before[0]);
-            use_type_invariant(&first);
-            use_type_invariant(second);
-            first.handle.borrow_mut().unique(second.handle.borrow());
+            first.distinct_instances(second);
         }
+    }
+}
+
+impl<'a, 'b, V, Pred: RwLockPredicate<V>> Incompatible<WriteHandle<'b, V, Pred>> for WriteHandle<
+    'a,
+    V,
+    Pred,
+> {
+    proof fn distinct_instances(tracked &mut self, tracked other: &WriteHandle<'b, V, Pred>) {
+        use_type_invariant(&*self);
+        use_type_invariant(other);
+        self.handle.borrow_mut().unique(other.handle.borrow());
     }
 }
 

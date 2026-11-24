@@ -93,7 +93,7 @@ impl Trace<'_> {
         let span = &value.span;
         use checked::Operation;
         match operation {
-            Operation::RwWrite { receiver, slot, replacement } => {
+            Operation::RwWrite { receiver, slot, replacement, .. } => {
                 self.value(&receiver)?;
                 let location = self.checked_location(&slot)?;
                 if let Some(value) = replacement {

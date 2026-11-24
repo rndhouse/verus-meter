@@ -77,9 +77,7 @@ impl Layouts {
         let fields: std::collections::BTreeSet<_> = datatypes
             .iter()
             .flat_map(|d| d.x.variants.iter().flat_map(|v| v.fields.iter().map(|f| f.name.clone())))
-            .chain(["0", "1"].map(|field| std::sync::Arc::new(field.to_owned())))
             .collect();
-        // Built-in writer result tuples have no nominal datatype declaration.
         let field_slots =
             fields.into_iter().enumerate().map(|(i, name)| (name, -2 - i as i128)).collect();
         Self {
@@ -116,7 +114,17 @@ impl Layouts {
     pub(super) fn metadata_slot(&self, slot: &super::heap::OwnerSlot) -> i128 {
         match slot {
             super::heap::OwnerSlot::Contents => -1,
-            super::heap::OwnerSlot::Field(name) => self.field_slots[name],
+            super::heap::OwnerSlot::Field(name) => {
+                *self.field_slots.get(name).unwrap_or_else(|| {
+                    // Built-in tuple fields need no datatype declaration. Keep these
+                    // slots outside the range of all usize-sized field/capture tables.
+                    match name.as_str() {
+                        "0" => &i128::MIN,
+                        "1" => &(i128::MIN + 1),
+                        _ => unreachable!("missing checked datatype field"),
+                    }
+                })
+            }
             super::heap::OwnerSlot::Capture(index) => {
                 -2 - self.field_slots.len() as i128 - *index as i128
             }
@@ -207,6 +215,14 @@ impl Layouts {
 
     pub(super) fn borrowed_owner<'t>(&self, typ: &'t Typ) -> Option<&'t Typ> {
         let inner = super::paths::referent(typ);
+        // A verified reader can only lend its payload. A shared lock parameter
+        // grants access to a payload forest only with a checked writer version.
+        use super::synchronization::RwRecord;
+        if matches!(&**typ, TypX::Decorate(TypDecoration::Ref, None, _))
+            && matches!(RwRecord::payload(inner), Some((RwRecord::Lock | RwRecord::Reader, _)))
+        {
+            return None;
+        }
         if let Some(payload) = self.writable_guard_payload(typ) {
             return self.owner(payload).then_some(inner);
         }

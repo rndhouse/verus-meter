@@ -18,6 +18,10 @@ pub(in crate::resource::memory) enum Location {
     Cell(u64),
     Reader(u64),
     Writer(u64),
+    /// A real borrowed/returned reader for which the local frame has no payload forest.
+    ObservedReader,
+    /// The current payload came from the version at this exclusive acquisition.
+    SharedWriter(super::local::Interval),
 }
 
 impl Location {
@@ -88,7 +92,7 @@ impl Analysis<'_> {
             search(name.clone(), root);
         }
         for root in self.heap.shared.allocation_ids() {
-            if (!write || self.current_worker.is_none() && !self.heap.workers.shares_root(root))
+            if (!write || !self.heap.workers.shares_root(root))
                 && !self.growth.indexed_shared.contains_key(&root)
                 && let Some(backing) = self.heap.shared.backing_at(&root.binder())
             {
@@ -110,14 +114,11 @@ impl Analysis<'_> {
             && places::arc_borrow_adapter(&e.typ, &p.typ)
         {
             let (name, path) = paths::expr(e, &e.typ)?;
-            let root = self.heap.root(&name)?.at(&path)?.shared?.known()?;
-            return self
-                .heap
-                .shared
-                .backing_at(&root.binder())?
-                .children
-                .get(&OwnerSlot::Contents)?
-                .rw_location;
+            let link = self.heap.root(&name)?.at(&path)?.shared?;
+            let super::Instance::Fresh(id) = self.heap.shared.mutex_instance(link)? else {
+                return None;
+            };
+            return Some(Location::Cell(id));
         }
         let (name, path) = paths::expr(value, &value.typ)?;
         self.heap.root(&name)?.at(&path)?.rw_location
@@ -151,8 +152,7 @@ impl Analysis<'_> {
                 if (method == WorkspaceMethod::New && index == 0)
                     || (method == WorkspaceMethod::ReleaseWrite && index == 1)
                 {
-                    self.freeze_owner_geometry(arg, &mut child);
-                    self.protect_vector_length(arg, &mut child);
+                    self.freeze_rw_payload(arg, &mut child);
                 }
                 Some(child)
             } else {
@@ -177,41 +177,71 @@ impl Analysis<'_> {
                 cell.children.insert(OwnerSlot::Contents, child);
                 Some(cell)
             }
-            WorkspaceMethod::Read | WorkspaceMethod::Write => {
+            WorkspaceMethod::Read => {
+                let payload = super::RwRecord::payload(&call.typ).ok_or_else(fail)?.1;
+                let location = match receiver {
+                    Some(Location::Cell(id)) if !self.rw_observed_read(id, payload, span)? => {
+                        let (name, path) = self.rw_cell_path(id, span)?;
+                        let cell =
+                            self.heap.root(&name).and_then(|r| r.at(&path)).ok_or_else(fail)?;
+                        if !cell.populated_rw_cell() {
+                            return Err(fail());
+                        }
+                        Location::Reader(id)
+                    }
+                    // A returned read handle certifies an initialized cell at the real
+                    // receiver. No ownership or geometry is imported on this path.
+                    Some(Location::Cell(_)) | None => Location::ObservedReader,
+                    _ => return Err(fail()),
+                };
+                Some(Owner { rw_location: Some(location), ..Default::default() })
+            }
+            WorkspaceMethod::Write => {
                 let Some(Location::Cell(id)) = receiver else { return Err(fail()) };
-                let (name, path) =
-                    self.rw_cell_access(id, method == WorkspaceMethod::Write, span)?;
+                let (ty, handle) = super::RwRecord::write_pair(&call.typ).ok_or_else(fail)?;
+                let shared = self.rw_acquire_shared(call, id, ty, handle)?;
+                let (where_, (name, path)) = match shared {
+                    Some(interval) => {
+                        (Location::SharedWriter(interval), (interval.payload_name(), vec![]))
+                    }
+                    None => (Location::Writer(id), self.rw_cell_access(id, true, span)?),
+                };
                 let cell =
                     self.heap.root_mut(&name).and_then(|r| r.at_mut(&path)).ok_or_else(fail)?;
-                if !cell.children.contains_key(&OwnerSlot::Contents) {
-                    return Err(fail());
-                }
-                if method == WorkspaceMethod::Read {
-                    Some(Owner { rw_location: Some(Location::Reader(id)), ..Default::default() })
+                let value = cell.children.remove(&OwnerSlot::Contents).ok_or_else(fail)?;
+                let visit = if let Some(interval) = shared {
+                    Some((interval, self.source_visit(span.id, self.local_occurrences(span)?)))
                 } else {
-                    let value = cell.children.remove(&OwnerSlot::Contents).ok_or_else(fail)?;
-                    let (payload, _) = super::RwRecord::write_pair(&call.typ).ok_or_else(fail)?;
-                    operation = write_transition(&args[0], name, path, payload, None);
-                    let writer =
-                        Owner { rw_location: Some(Location::Writer(id)), ..Default::default() };
-                    Some(Owner {
-                        children: [
-                            (OwnerSlot::Field(Arc::new("0".into())), value),
-                            (OwnerSlot::Field(Arc::new("1".into())), writer),
-                        ]
-                        .into(),
-                        ..Default::default()
-                    })
-                }
+                    None
+                };
+                operation = write_transition(&args[0], name, path, ty, None, visit);
+                let writer = Owner { rw_location: Some(where_), ..Default::default() };
+                Some(Owner {
+                    children: [
+                        (OwnerSlot::Field(Arc::new("0".into())), value),
+                        (OwnerSlot::Field(Arc::new("1".into())), writer),
+                    ]
+                    .into(),
+                    ..Default::default()
+                })
             }
             WorkspaceMethod::ReleaseWrite => {
                 let writer = owners[0].take().ok_or_else(fail)?;
-                let Some(Location::Writer(id)) = writer.rw_location else { return Err(fail()) };
-                let (name, path) = self.rw_cell_access(id, true, span)?;
+                let (name, path) = match writer.rw_location {
+                    Some(Location::Writer(id)) => self.rw_cell_access(id, true, span)?,
+                    Some(Location::SharedWriter(interval)) => (interval.payload_name(), vec![]),
+                    _ => return Err(fail()),
+                };
                 let cell =
                     self.heap.root_mut(&name).and_then(|r| r.at_mut(&path)).ok_or_else(fail)?;
-                operation =
-                    write_transition(&args[0], name, path, &args[1].typ, Some(args[1].clone()));
+                operation = write_transition(
+                    &args[0],
+                    name,
+                    path,
+                    &args[1].typ,
+                    Some(args[1].clone()),
+                    None,
+                );
                 if cell
                     .children
                     .insert(OwnerSlot::Contents, owners[1].take().ok_or_else(fail)?)
@@ -219,16 +249,30 @@ impl Analysis<'_> {
                 {
                     return Err(fail());
                 }
+                if let Some(Location::SharedWriter(interval)) = writer.rw_location {
+                    self.rw_release_shared(interval, span)?;
+                    // The measured frame does not split at the atomic unlock. Its
+                    // tail can overlap the next writer, so observe it after release too.
+                    self.charge_workspace(leaf, call, destination)?;
+                }
                 None
             }
             WorkspaceMethod::Borrow => {
-                let Some(Location::Reader(id)) = receiver else { return Err(fail()) };
-                self.rw_cell_path(id, span)?;
+                match receiver {
+                    Some(Location::Reader(id)) => {
+                        self.rw_cell_path(id, span)?;
+                    }
+                    Some(Location::ObservedReader) | None => {}
+                    _ => return Err(fail()),
+                }
                 None
             }
             WorkspaceMethod::ReleaseRead => {
                 let reader = owners[0].take().ok_or_else(fail)?;
-                if !matches!(reader.rw_location, Some(Location::Reader(_))) {
+                if !matches!(
+                    reader.rw_location,
+                    Some(Location::Reader(_) | Location::ObservedReader)
+                ) {
                     return Err(fail());
                 }
                 None
@@ -262,12 +306,17 @@ fn write_transition(
     mut path: crate::resource::memory::heap::OwnerPath,
     typ: &Typ,
     replacement: Option<Expr>,
+    acquired: Option<(
+        super::local::Interval,
+        crate::resource::memory::workers::SourceVisit<crate::messages::AstId>,
+    )>,
 ) -> checked::Operation {
     path.push(OwnerSlot::Contents);
     checked::Operation::RwWrite {
         receiver: receiver.clone(),
         slot: checked::Place { source: receiver.clone(), typ: typ.clone(), location: (name, path) },
         replacement,
+        acquired,
     }
 }
 

@@ -154,8 +154,14 @@ struct Root {
 
 impl Root {
     fn owned(storage: Owner) -> Self {
-        let mutex =
-            storage.children.get(&OwnerSlot::Contents).and_then(|child| child.mutex_instance());
+        let mutex = storage.children.get(&OwnerSlot::Contents).and_then(|child| {
+            child.mutex_instance().or_else(|| match child.rw_location {
+                Some(super::synchronization::rw_payload::Location::Cell(id)) => {
+                    Some(super::synchronization::Instance::Fresh(id))
+                }
+                _ => None,
+            })
+        });
         Self {
             fixed_issuer: false,
             payload_joins: BTreeMap::new(),
@@ -1024,7 +1030,11 @@ impl Analysis<'_> {
             }
             let root = handle.shared.and_then(StrongLink::known).expect("new strong owner");
             self.heap.shared.roots.get_mut(&root).unwrap().protected_type =
-                self.layouts.mutex_payload(payload).cloned();
+                self.layouts.mutex_payload(payload).cloned().or_else(|| {
+                    let (record, ty) = super::synchronization::RwRecord::payload(payload)?;
+                    (record == super::synchronization::RwRecord::Lock && self.layouts.owner(ty))
+                        .then(|| ty.clone())
+                });
             let coordinates = self.actor_coordinates(self.local_occurrences(&expr.span)?);
             if !coordinates.is_empty() {
                 let identity = root.occurrence(&expr.span, &coordinates);

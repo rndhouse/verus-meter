@@ -80,7 +80,7 @@ impl Analysis<'_> {
                     .writable_guard_payload(typ)
                     .or_else(|| self.layouts.mutex_payload(super::super::paths::referent(typ)))
                     .is_some_and(|payload| self.layouts.vector(payload)),
-                Some(View::ReadPayload(_)) | None => false,
+                Some(View::ReadPayload(_) | View::ObservedRead) | None => false,
             }
         });
         if !required && !protected_write {

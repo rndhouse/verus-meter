@@ -1,4 +1,4 @@
-// A concrete payload exercises all six verified RwLock workspaces.
+// Concrete payloads exercise the seven public RwLock and handle operations.
 use vstd::prelude::*;
 use vstd::rwlock::{ReadHandle, RwLock, RwLockPredicate, WriteHandle};
 

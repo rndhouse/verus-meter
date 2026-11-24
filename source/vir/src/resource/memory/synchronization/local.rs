@@ -44,6 +44,8 @@ pub(in super::super) enum View {
     Payload(Interval),
     /// A shared borrow of the initialized cell, issued by a verified reader.
     ReadPayload(u64),
+    /// Read through a live handle while the backing belongs to another actor.
+    ObservedRead,
 }
 
 impl Owned {
@@ -154,9 +156,16 @@ impl Analysis<'_> {
                     .get(target)
                     .and_then(|f| f.x.attrs.resource_template.as_ref())
                     .is_some_and(|s| s.method == super::WorkspaceMethod::Borrow)
-                    && let Some(super::rw_payload::Location::Reader(id)) = self.rw_receiver(source)
                 {
-                    return Some(View::ReadPayload(id));
+                    match self.rw_receiver(source) {
+                        Some(super::rw_payload::Location::Reader(id)) => {
+                            return Some(View::ReadPayload(id));
+                        }
+                        Some(super::rw_payload::Location::ObservedReader) | None => {
+                            return Some(View::ObservedRead);
+                        }
+                        _ => {}
+                    }
                 }
                 match attrs.resource_intrinsic {
                     Some(ResourceIntrinsic::Concurrency(

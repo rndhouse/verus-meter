@@ -25,6 +25,24 @@ fn replace(cell: BufferCell, new: Vec<u8>) -> BufferCell
     cell
 }
 
+fn guard<'a>(cell: &'a BufferCell) -> ReadHandle<'a, Vec<u8>, Any>
+    resources peak(memory) <= 512,
+{
+    cell.acquire_read()
+}
+
+fn inspect(guard: &ReadHandle<Vec<u8>, Any>) -> usize
+    resources peak(memory) <= 512,
+{
+    guard.borrow().len()
+}
+
+fn finish_read(guard: ReadHandle<Vec<u8>, Any>)
+    resources peak(memory) <= 512,
+{
+    guard.release_read();
+}
+
 fn buffers(n: usize)
     requires n == 4096,
     resources peak(memory) <= 2 * n + 1500,
@@ -33,10 +51,9 @@ fn buffers(n: usize)
     let cell = wrap(a);
     let new: Vec<u8> = Vec::with_capacity(n);
     let cell = replace(cell, new);
-    let r = cell.acquire_read();
-    let view = r.borrow();
-    let count = view.len();
-    r.release_read();
+    let r = guard(&cell);
+    let count = inspect(&r);
+    finish_read(r);
     let value = unwrap(cell);
     let other: Vec<u8> = Vec::with_capacity(n);
     drop(value);
