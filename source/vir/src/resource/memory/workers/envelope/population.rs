@@ -17,9 +17,17 @@ use crate::resource::memory::{growth::select, metadata::expr};
 /// Distribute the population over additive workspace (e.g. n*b + n*24).
 /// Keep multiplication in mathematical integers, as in loop byte proofs.
 fn scale(span: &Span, count: &Expr, cost: &Expr) -> Expr {
+    // Split on the cheaper of capacity and worker count before multiplying.
+    // Verus can then reuse the ordinary n*b and k*b terms in the budget.
+    if let ExprX::If(condition, a, Some(b)) = &count.x {
+        return select(span, condition.clone(), scale(span, a, cost), scale(span, b, cost));
+    }
     match &cost.x {
         ExprX::Binary(BinaryOp::Arith(ArithOp::Add(_)), a, b) => {
             contracts::add(span, scale(span, count, a), scale(span, count, b))
+        }
+        ExprX::Binary(BinaryOp::Arith(ArithOp::Sub(_)), a, b) => {
+            contracts::subtract(span, scale(span, count, a), scale(span, count, b))
         }
         ExprX::If(condition, a, Some(b)) => {
             select(span, condition.clone(), scale(span, count, a), scale(span, count, b))
@@ -29,16 +37,15 @@ fn scale(span: &Span, count: &Expr, cost: &Expr) -> Expr {
 }
 
 impl Phases {
-    /// Partition the occurrences by one held mutex, or by the unrestricted
-    /// state (including completion). Their counts sum to the outstanding
-    /// population. Mutual exclusion limits each assigned mutex class to one.
-    /// A phase holding several locks can safely use any one of them.
-    fn population_peak(&self, span: &Span, count: &Expr) -> Expr {
-        let free = &self.0[&BTreeSet::new()];
+    /// Assign each occurrence to one intact holder or the unrestricted state.
+    /// The sum of these counts equals the outstanding population. A verified
+    /// limit bounds how many distinct actors can occupy its class.
+    fn population_peak(&self, span: &Span, count: &Expr, constraints: &Constraints) -> Expr {
+        let free = &self.0[&Held::new()];
         let baseline = maximum_cost(span, free);
-        let mut groups = BTreeMap::<Instance, Vec<Expr>>::new();
+        let mut groups = BTreeMap::<Class, Vec<Expr>>::new();
         for (held, costs) in &self.0 {
-            if let Some(&instance) = held.first() {
+            if let Some(&instance) = held.keys().next() {
                 groups.entry(instance).or_default().extend(costs.iter().cloned());
             }
         }
@@ -48,11 +55,30 @@ impl Phases {
         }
         let zero = contracts::literal(span, 0);
         let mut exclusive = unrestricted;
-        for group in groups.values() {
-            let guarded = maximum_cost(span, group);
-            let excess = contracts::subtract(span, guarded, baseline.clone());
-            exclusive =
-                contracts::add(span, exclusive, contracts::maximum(span, zero.clone(), excess));
+        // Assign each observation to one class so several buffers under one
+        // permit are priced together. Incompatible classes contribute at most
+        // the larger of their totals. Unpaired classes may all coexist.
+        let mut contributions = BTreeMap::new();
+        for (class, group) in groups {
+            let guarded = maximum_cost(span, &group);
+            let excess = contracts::maximum(
+                span,
+                zero.clone(),
+                contracts::subtract(span, guarded, baseline.clone()),
+            );
+            let term = match constraints.limit(span, class) {
+                Some(k) if contracts::constant(&k) == Some(1) => excess,
+                Some(k) => scale(span, &contracts::minimum(span, count.clone(), k), &excess),
+                None => scale(span, count, &excess),
+            };
+            contributions.insert(class, term);
+        }
+        while let Some((class, mut term)) = contributions.pop_first() {
+            let peer = contributions.keys().copied().find(|b| constraints.excludes(class, *b));
+            if let Some(peer) = peer {
+                term = contracts::maximum(span, term, contributions.remove(&peer).unwrap());
+            }
+            exclusive = contracts::add(span, exclusive, term);
         }
         // Small populations cannot fill all the mutex classes. The independent
         // bound also yields exactly zero when no occurrence has been published.
@@ -67,6 +93,7 @@ impl Analysis<'_> {
         function: &Function,
         workers: BTreeMap<WorkerId, Phases>,
         checks: Vec<Obligation>,
+        constraints: &Constraints,
     ) -> bool {
         // One homogeneous family. A selected join must consume precisely one
         // member. Mixed families need their own counted membership relation.
@@ -96,8 +123,8 @@ impl Analysis<'_> {
         // Use the checked immutable ceiling for observations attached to
         // an expression containing spawn or join. Its operands can change the
         // live population before the observed Rust storage reaches its peak.
-        let envelope = phases.population_peak(span, &limit);
-        let actual = phases.population_peak(span, &pending);
+        let envelope = phases.population_peak(span, &limit, constraints);
+        let actual = phases.population_peak(span, &pending, constraints);
         // Both expressions bound the same population. Keeping the known
         // ceiling also lets ordinary arithmetic use a declared n*b directly.
         let bounded = contracts::minimum(span, actual, envelope.clone());

@@ -121,6 +121,7 @@ impl Semaphore {
     pub fn new(capacity: usize) -> (s: Self)
         ensures
             s.capacity() == capacity,
+            s.holder_limit() == capacity,
     {
         let tracked (Tracked(instance), Tracked(available), _) = slots::Instance::initialize(
             capacity as nat,

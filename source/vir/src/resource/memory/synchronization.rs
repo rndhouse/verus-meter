@@ -94,6 +94,8 @@ pub enum LibraryType {
 pub struct RoleProofs {
     /// Finite population theorem, if established for this role.
     pub population: Option<crate::ast::Fun>,
+    /// Literal spec definition shared by all values of this concrete role.
+    pub constant_capacity: Option<u64>,
     /// Peer role and its incompatibility theorem. The boolean is true when
     /// this role supplies the method receiver. Both roles share type arguments.
     pub exclusions: std::collections::BTreeMap<Dt, (crate::ast::Fun, bool)>,
@@ -117,8 +119,10 @@ pub struct CompilerEvidence {
     /// this verification, and an imported proof must carry its own body certificate.
     pub holder_proofs: HashMap<Dt, RoleProofs>,
     /// Verified acquisition postconditions indexed by the executable callee.
-    /// The index is the immutable parameter supplying instance and capacity.
-    pub issuer_parameters: HashMap<crate::ast::Fun, usize>,
+    /// The pair identifies the immutable issuer argument and whether the result shares its capacity.
+    pub issuer_parameters: HashMap<crate::ast::Fun, (usize, bool)>,
+    /// Executable constructors proving the returned instance’s holder limit equals the indexed argument.
+    pub capacity_parameters: HashMap<crate::ast::Fun, usize>,
     /// Issuer of the second field of a writer's returned payload/handle pair.
     pub writer_issuers: HashMap<crate::ast::Fun, usize>,
     /// Receiver datatypes used in verified acquisition contracts.

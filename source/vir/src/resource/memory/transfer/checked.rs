@@ -616,9 +616,22 @@ impl Checked {
 
     /// Local construction outside the actor's repeatable loops.
     pub(in super::super) fn owns_fixed_root(&self, root: super::super::shared::RootId) -> bool {
-        self.operations
-            .values()
-            .any(|op| matches!(op, Operation::StrongNew { root: owned, coordinates, .. } if *owned == root && coordinates.is_empty()))
+        self.fixed_shared_payload(root).is_some()
+    }
+
+    /// Constructor operand of a single coordinator-owned Arc allocation.
+    pub(in super::super) fn fixed_shared_payload(
+        &self,
+        id: super::super::shared::RootId,
+    ) -> Option<&Expr> {
+        self.operations.values().find_map(|op| match op {
+            Operation::StrongNew { root, payload, coordinates }
+                if *root == id && coordinates.is_empty() =>
+            {
+                Some(payload)
+            }
+            _ => None,
+        })
     }
 
     /// This join recovered the payload of a uniquely transported Arc.

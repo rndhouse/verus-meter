@@ -48,8 +48,10 @@ pub(super) struct Layouts {
     /// Local reviewed bodies measured uniformly over erased protocol parameters.
     pub(super) measured_leaves: HashSet<Fun>,
     pub(super) imported_leaves: HashMap<Fun, super::synchronization::CheckedBody>,
-    /// Parameter whose instance and capacity projections apply to a successful result.
-    pub(super) issuer_parameters: HashMap<Fun, usize>,
+    /// Immutable issuer argument and whether its capacity also applies to a successful result.
+    pub(super) issuer_parameters: HashMap<Fun, (usize, bool)>,
+    /// Executable constructors proving the returned instance’s holder limit equals the indexed argument.
+    pub(super) capacity_parameters: HashMap<Fun, usize>,
     /// Issuer of the second field of a writer's returned payload/handle pair.
     pub(super) writer_issuers: HashMap<Fun, usize>,
     /// Receiver datatypes used in verified acquisition contracts.
@@ -95,6 +97,7 @@ impl Layouts {
             imported_leaves: HashMap::new(),
             holder_proofs: HashMap::new(),
             issuer_parameters: HashMap::new(),
+            capacity_parameters: HashMap::new(),
             writer_issuers: HashMap::new(),
             workspace: None,
             template_sources: HashMap::new(),

@@ -18,17 +18,17 @@ fn checked_generic_workspaces_include_ownership_and_explicit_release_frames() {
 fn readers_share_while_a_writer_excludes_a_reader_on_the_same_instance() {
     let pair = code_str! {
         verus! {
-            fn workers() resources peak(memory) <= 1024, {
+            fn workers() resources peak(memory) <= 2400, {
                 let lock = std::sync::Arc::new(RwLock::<u32, Any>::new(1, Ghost(Any)));
                 let peer = lock.clone();
                 let a = vstd::thread::spawn(move || {
                     let r = lock.acquire_read();
-                    let x = Box::new([0u8; 51]); drop(x);
+                    let x = Box::new([0u8; 2000]); drop(x);
                     r.release_read();
                 });
                 let b = vstd::thread::spawn(move || {
                     let (v, w) = peer.acquire_write();
-                    let y = Box::new([0u8; 52]); drop(y);
+                    let y = Box::new([0u8; 2000]); drop(y);
                     w.release_write(v);
                 });
                 let a_done = a.join();
@@ -36,29 +36,33 @@ fn readers_share_while_a_writer_excludes_a_reader_on_the_same_instance() {
             }
         }
     };
-    for (code, exclusive) in [
-        (pair.to_string(), true),
-        (
-            pair.replace(
-                "lock.clone()",
-                "std::sync::Arc::new(RwLock::<u32, Any>::new(1, Ghost(Any)))",
-            ),
-            false,
-        ),
-        (
-            pair.replace("let (v, w) = peer.acquire_write();", "let w = peer.acquire_read();")
-                .replace("w.release_write(v)", "w.release_read()"),
-            false,
-        ),
+    let writer = "let (v, w) = peer.acquire_write();";
+    let readers = pair
+        .replace(writer, "let w = peer.acquire_read();")
+        .replace("w.release_write(v)", "w.release_read()");
+    let writers = pair
+        .replace("let r = lock.acquire_read();", "let (v, r) = lock.acquire_write();")
+        .replace("r.release_read()", "r.release_write(v)");
+    let independent =
+        pair.replace("lock.clone()", "std::sync::Arc::new(RwLock::<u32, Any>::new(1, Ghost(Any)))");
+    for (name, code, exclusive) in [
+        ("reader_writer", pair.to_owned(), true),
+        ("writers", writers, true),
+        ("readers", readers, false),
+        ("separate", independent, false),
     ] {
-        let trace = verify_one_file(
-            "rwlock_roles",
+        let result = verify_one_file(
+            &format!("rwlock_{name}"),
             format!("{SOURCE}\n{code}"),
             &["--trace", "--no-cheating"],
-        )
-        .unwrap_err();
-        assert_eq!(trace.errors.len(), 1);
-        assert!(trace.errors[0].message.contains("global lifetime and interference proofs"));
+        );
+        let trace = if exclusive {
+            result.unwrap()
+        } else {
+            let failure = result.unwrap_err();
+            assert!(failure.errors.iter().any(|e| e.message.contains("memory budget exceeded")));
+            failure
+        };
         assert_eq!(
             trace.notes.iter().any(|n| n.message
                 == "verified incompatible holder roles on the same issuer across actors"),

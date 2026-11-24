@@ -122,6 +122,7 @@ pub fn check_crate(
     layouts.workspace_primitives.clone_from(&synchronization.workspace_primitives);
     layouts.measured_leaves.clone_from(&synchronization.measure_leaves);
     layouts.writer_issuers.clone_from(&synchronization.writer_issuers);
+    layouts.capacity_parameters.clone_from(&synchronization.capacity_parameters);
     layouts.issuer_types.clone_from(&synchronization.issuer_types);
     layouts.issuer_parameters.clone_from(&synchronization.issuer_parameters);
     layouts.holder_proofs.clone_from(&synchronization.holder_proofs);

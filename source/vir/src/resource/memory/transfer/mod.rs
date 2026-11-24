@@ -182,6 +182,21 @@ pub(super) struct Template {
     pub(super) result: Value,
 }
 
+impl Template {
+    /// No caller-visible ownership or scalar result.
+    pub(super) fn unit_result() -> Self {
+        Self {
+            ordered: false,
+            origins: Default::default(),
+            regions: Default::default(),
+            symbols: vec![],
+            effects: None,
+            borrowed: Default::default(),
+            result: Value::Unit,
+        }
+    }
+}
+
 /// A complete ownership template and structural evidence for local loop proofs.
 /// Nothing is published if any part of template inference fails.
 pub(super) struct Inferred {

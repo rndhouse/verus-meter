@@ -35,7 +35,9 @@ impl BoundedInstance for Lock {
 }
 
 impl Lock {
-    fn new() -> (s: Self) {
+    fn new() -> (s: Self)
+        resources peak(memory) <= 64,
+    {
         let tracked token = FracGhost::<()>::new(());
         let domain = Ghost(token.id());
         let flag = AtomicBool::new(Ghost(domain), false, Tracked(Some(token)));

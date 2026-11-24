@@ -53,12 +53,7 @@ impl MemoryReport {
                 let right = observed_roles(other);
                 for (&a, site) in &left {
                     for b in right.keys() {
-                        if body
-                            .ownership
-                            .holders
-                            .exclusion(a, &other.ownership.holders, *b)
-                            .is_some()
-                        {
+                        if body.ownership.holders.excludes(a, &other.ownership.holders, *b) {
                             notes.push(VirErrAs::Note(crate::messages::note(site,"verified incompatible holder roles on the same issuer across actors")));
                         }
                     }

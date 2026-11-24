@@ -300,3 +300,75 @@ test_verify_one_file! {
         }
     } => Err(e) => assert_one_fails(e)
 }
+
+#[test]
+fn custom_protocol_population_requires_its_checked_theorem() {
+    let family = code_str! {
+        verus! {
+            fn custom_batch(n: u16, b: u16)
+                resources peak(memory) <= 512 + 192 * n + b,
+            {
+                let lock = std::sync::Arc::new(Lock::new());
+                let mut handles = Vec::with_capacity(n as usize);
+                let mut i = 0u16;
+                while i < n invariant i <= n, handles.len() == i, decreases n - i, {
+                    let peer = lock.clone();
+                    let job = std::thread::spawn(move || {
+                        if let Some(guard) = peer.try_enter() {
+                            let scratch = Vec::<u8>::with_capacity(b as usize);
+                            drop(scratch);
+                            guard.leave();
+                        }
+                    });
+                    handles.push(job);
+                    i += 1;
+                }
+                while handles.len() > 0 invariant handles.len() <= n, decreases handles.len(), {
+                    let job = handles.pop().unwrap();
+                    let result = job.join();
+                }
+            }
+        }
+    };
+    let source = format!("{}\n{family}", include_str!("exclusive.verus.rs"));
+    verify_one_file("custom_population", source.clone(), &["--no-cheating"]).unwrap();
+    // The altered theorem cannot rule out precisely two outstanding guards.
+    let broken = source.replace("if population.len() > 1 {", "if population.len() > 2 {");
+    let error = verify_one_file("broken_population", broken, &["--no-cheating"]).unwrap_err();
+    assert_vir_error_msg(error, "postcondition not satisfied");
+}
+
+#[test]
+fn a_moved_guard_and_a_fresh_acquisition_share_only_their_actual_issuer() {
+    let handoff = code_str! {
+        verus! {
+            fn handoff(lock: &'static Lock, other: &'static Lock)
+                resources peak(memory) <= 2400,
+            {
+                if let Some(first) = lock.try_enter() {
+                    let a = vstd::thread::spawn(move || {
+                        let guard = carry(first);
+                        let buffer = Box::new([0u8; 2000]);
+                        drop(buffer);
+                        guard.leave();
+                    });
+                    let b = vstd::thread::spawn(move || {
+                        if let Some(second) = lock.try_enter() {
+                            let buffer = Box::new([0u8; 2001]);
+                            drop(buffer);
+                            second.leave();
+                        }
+                    });
+                    let x = a.join();
+                    let y = b.join();
+                }
+            }
+        }
+    };
+    let source = format!("{}\n{handoff}", include_str!("exclusive.verus.rs"));
+    verify_one_file("guard_handoff", source.clone(), &["--no-cheating"]).unwrap();
+    let separate =
+        source.replace("Some(second) = lock.try_enter()", "Some(second) = other.try_enter()");
+    let err = verify_one_file("other_guard_handoff", separate, &["--no-cheating"]).unwrap_err();
+    assert_any_vir_error_msg(err, "memory budget exceeded");
+}

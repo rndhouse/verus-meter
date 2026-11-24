@@ -4,7 +4,7 @@
 
 mod issuer;
 mod returns;
-pub(in super::super) use issuer::{Captured, Issuer};
+pub(in super::super) use issuer::{Captured, Issued, Issuer};
 
 use super::super::{accounting::Accounting, layout::Layouts};
 use crate::{
@@ -31,7 +31,7 @@ struct Binding {
     name: Option<VarIdent>,
     proof: Role,
     /// Verified projections of the actual issuer, when its origin is known.
-    issuer: Option<Issuer>,
+    issuer: Option<Issued>,
     /// Present for locals, whose births must be instantiated at each visit.
     visit: Option<super::super::workers::SourceVisit<crate::messages::AstId>>,
 }
@@ -64,7 +64,64 @@ impl PartialEq for Role {
     }
 }
 
+/// A population class counts distinct actors owning intact witnesses of one
+/// concrete type on one issuer. Multiple witnesses in one actor count once.
+#[derive(Clone, PartialEq)]
+pub(in super::super) struct PopulationRole {
+    pub(in super::super) issued: Issued,
+    role: Role,
+}
+
+impl PopulationRole {
+    pub(in super::super) fn excludes(&self, other: &Self) -> bool {
+        if self.issued.instance != other.issued.instance {
+            return false;
+        }
+        let (TypX::Datatype(_, left, _), TypX::Datatype(peer, right, _)) =
+            (&*self.role.typ, &*other.role.typ)
+        else {
+            return false;
+        };
+        left.len() == right.len()
+            && left.iter().zip(right.iter()).all(|(a, b)| crate::ast_util::types_equal(a, b))
+            && self.role.theorems.exclusions.contains_key(peer)
+    }
+
+    pub(in super::super) fn limit(
+        &self,
+        span: &crate::messages::Span,
+        issuer_limit: Option<Expr>,
+    ) -> Option<Expr> {
+        self.role.theorems.population.as_ref()?;
+        self.role
+            .theorems
+            .constant_capacity
+            .map(|k| super::super::contracts::literal(span, k))
+            .or_else(|| self.issued.common_limit.then_some(issuer_limit).flatten())
+    }
+}
+
+impl Bindings {
+    pub(in super::super) fn population_role(&self, id: Witness) -> Option<PopulationRole> {
+        let b = self.definitions.get(&id)?;
+        Some(PopulationRole { issued: b.issuer?, role: b.proof.clone() })
+    }
+}
+
 impl Layouts {
+    pub(in super::super) fn inline_protocol_value(&self, ty: &Typ) -> bool {
+        !self.owner(super::super::paths::referent(ty))
+            && (self.protocol_receiver(ty) || self.holder_result_proof(ty).is_some())
+    }
+
+    fn holder_result_proof(&self, ty: &Typ) -> Option<Role> {
+        let payload = match &**ty {
+            TypX::Datatype(_, args, _) if self.option(ty) => args.first()?,
+            _ => ty,
+        };
+        self.holder_proof(payload)
+    }
+
     fn holder_proof(&self, ty: &Typ) -> Option<Role> {
         let TypX::Datatype(dt, _, _) = &**ty else { return None };
         Some(Role { typ: ty.clone(), theorems: self.holder_proofs.get(dt)?.clone() })
@@ -238,7 +295,7 @@ impl super::super::analysis::Analysis<'_> {
         if self.layouts.option(&b.typ) {
             if !b.copy
                 && let Some(source) = source
-                && let Some(proof) = self.holder_result_proof(&b.typ)
+                && let Some(proof) = self.layouts.holder_result_proof(&b.typ)
             {
                 let origin = self.holder_place_origin(source, &proof);
                 self.transitions.holders.options.insert(b.name.clone(), origin);

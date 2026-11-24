@@ -1,11 +1,13 @@
-//! Each worker has a checked byte bound in each native mutex state.
+//! Each worker has a checked byte bound for each combination of intact holders.
 //! A coordinator point selects its outstanding actors by their completion tags.
 //! Advancing one actor stays inside its checked local observations. Mutual
-//! exclusion rules out simultaneous ownership of the same mutex by two actors.
+//! exclusion and verified holder limits constrain simultaneous phases.
 //! This product therefore covers each step, including waits and explicit release,
 //! without ordering independent workers by the compiler's traversal order.
 
 mod population;
+mod roles;
+use roles::{Class, Constraints, Held};
 
 use super::{WorkerId, execution::Execution};
 use crate::ast::*;
@@ -22,14 +24,14 @@ use crate::resource::memory::{
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-/// For the same lock set, discard only costs separated by a known constant.
+/// For the same holder counts, discard only costs separated by a known constant.
 /// Incomparable symbolic costs remain independent proof alternatives.
 #[derive(Default)]
-struct Phases(BTreeMap<BTreeSet<Instance>, Vec<Expr>>);
+struct Phases(BTreeMap<Held, Vec<Expr>>);
 
 impl Phases {
-    fn insert(&mut self, locks: BTreeSet<Instance>, amount: Expr) {
-        let costs = self.0.entry(locks).or_default();
+    fn insert(&mut self, held: Held, amount: Expr) {
+        let costs = self.0.entry(held).or_default();
         for cost in costs.iter_mut() {
             if let Some(delta) = difference(&amount, cost) {
                 if delta > 0 {
@@ -41,19 +43,33 @@ impl Phases {
         costs.push(amount);
     }
 
-    fn together(&self, peer: &Self, remaining: &BTreeSet<Instance>, span: &Span) -> Self {
+    fn together(
+        &self,
+        peer: &Self,
+        remaining: &BTreeSet<Class>,
+        constraints: &Constraints,
+        span: &Span,
+    ) -> Self {
         let mut result = Self::default();
         for (left, costs) in &self.0 {
             for (right, others) in &peer.0 {
-                if left.is_disjoint(right) {
-                    // Once all actors that could contend for an instance have
-                    // been combined, its identity no longer distinguishes states.
-                    let held: BTreeSet<_> =
-                        left.union(right).filter(|i| remaining.contains(i)).copied().collect();
-                    for a in costs {
-                        for b in others {
-                            result.insert(held.clone(), contracts::add(span, a.clone(), b.clone()));
-                        }
+                let Some((held, feasible)) = constraints.combine(span, left, right, remaining)
+                else {
+                    continue;
+                };
+                for a in costs {
+                    for b in others {
+                        let cost = contracts::add(span, a.clone(), b.clone());
+                        // An infeasible state contributes zero to a maximum of byte counts.
+                        let cost = feasible.iter().fold(cost, |v, condition| {
+                            super::super::growth::select(
+                                span,
+                                condition.clone(),
+                                v,
+                                contracts::literal(span, 0),
+                            )
+                        });
+                        result.insert(held.clone(), cost);
                     }
                 }
             }
@@ -103,6 +119,7 @@ impl Execution {
         parameters: &HashSet<VarIdent>,
         reservations: &HashMap<VarIdent, Expr>,
         checks: &mut Vec<Obligation>,
+        constraints: &mut Constraints,
     ) -> Option<Phases> {
         let span = &self.entry.definition.span;
         let initial = self.initial.live_expression(span).total();
@@ -116,8 +133,7 @@ impl Execution {
             || self.result.owner.is_some()
             || contracts::constant(&completed) != Some(self.result.value.bytes)
             || contracts::constant(&initial) != Some(self.entry.storage.value.bytes)
-            || !self.effects.calls.is_empty()
-            || !self.effects.ownership.holders.is_empty()
+            || self.effects.calls.iter().any(|(f, _)| !analysis.protocol_helper(f))
         {
             return None;
         }
@@ -132,8 +148,9 @@ impl Execution {
                         SpannedTyped::new(span, &input.typ, ExprX::Var(name.clone())),
                     );
                 }
-            } else if !matches!(&*input.typ, TypX::Decorate(TypDecoration::Arc, _, item)
-                if contracts::scalar(item) || analysis.layouts.mutex_payload(item).is_some_and(|t| contracts::scalar(t) || unit(t)))
+            } else if !analysis.layouts.inline_protocol_value(&input.typ)
+                && !matches!(&*input.typ, TypX::Decorate(TypDecoration::Arc, _, item)
+                if contracts::scalar(item) || analysis.layouts.inline_protocol_value(item) || analysis.layouts.mutex_payload(item).is_some_and(|t| contracts::scalar(t) || unit(t)))
             {
                 return None;
             }
@@ -143,8 +160,8 @@ impl Execution {
         let mut phases = Phases::default();
         // Completion releases the working frame but retains the inline result
         // with its handle until join. Both entry and completion are unrestricted.
-        phases.insert(BTreeSet::new(), initial);
-        phases.insert(BTreeSet::new(), completed);
+        phases.insert(Held::new(), initial);
+        phases.insert(Held::new(), completed);
         for p in self.effects.points.iter() {
             let value = p.cost.total();
             let (local, exported) = export(&value, reservations, &captures)?;
@@ -156,13 +173,19 @@ impl Execution {
                     kind: CheckKind::WorkerState("at a worker phase"),
                 });
             }
-            let held = p
+            let mut held: Held = p
                 .condition
                 .held
                 .iter()
                 .filter(|i| native.contains(i))
-                .map(|i| i.instance)
+                .map(|i| (Class::Mutex(i.instance), 1))
                 .collect();
+            for witness in &p.holders {
+                if let Some(role) = self.effects.ownership.holders.population_role(*witness) {
+                    let class = constraints.register(analysis, parameters, span, role);
+                    held.insert(class, 1);
+                }
+            }
             phases.insert(held, exported);
         }
         Some(phases)
@@ -174,9 +197,14 @@ impl Analysis<'_> {
     /// deferred diagnostic and all their independently checked local obligations.
     pub(super) fn compose_workers(&mut self, function: &Function) -> bool {
         let params = contracts::inputs(function);
-        if function.x.params.iter().any(|p| p.x.mode == Mode::Exec && !params.contains(&p.x.name))
-            || !unit(&function.x.outer_ret.x.typ)
-            || !self.calls.is_empty()
+        if function.x.params.iter().any(|p| {
+            p.x.mode == Mode::Exec
+                && !params.contains(&p.x.name)
+                && !(matches!(&*p.x.typ, TypX::Decorate(TypDecoration::Ref, None, _))
+                    && !p.x.user_mut
+                    && self.layouts.inline_protocol_value(&p.x.typ))
+        }) || !unit(&function.x.outer_ret.x.typ)
+            || self.calls.iter().any(|(f, _)| !self.protocol_helper(f))
             || !self.growth.versioned_shared.is_empty()
         {
             return false;
@@ -207,6 +235,7 @@ impl Analysis<'_> {
             })
             .collect();
         let mut checks = Vec::new();
+        let mut constraints = Constraints::default();
         let mut workers = BTreeMap::new();
         for (&id, w) in &self.growth.worker_executions {
             if !self
@@ -218,13 +247,15 @@ impl Analysis<'_> {
             {
                 return false;
             }
-            let Some(phases) = w.phases(self, &params, &reservations, &mut checks) else {
+            let Some(phases) =
+                w.phases(self, &params, &reservations, &mut checks, &mut constraints)
+            else {
                 return false;
             };
             workers.insert(id, phases);
         }
         if !self.growth.retained_worker_families.is_empty() {
-            return self.compose_population(function, workers, checks);
+            return self.compose_population(function, workers, checks, &constraints);
         }
         let mut cache = BTreeMap::<Vec<WorkerId>, Expr>::new();
         let mut additions = Vec::new();
@@ -252,9 +283,9 @@ impl Analysis<'_> {
                 for (index, id) in active.iter().enumerate() {
                     let remaining = active[index + 1..]
                         .iter()
-                        .flat_map(|id| workers[id].0.keys().flatten().copied())
+                        .flat_map(|id| workers[id].0.keys().flat_map(|held| held.keys().copied()))
                         .collect();
-                    product = product.together(&workers[id], &remaining, &p.span);
+                    product = product.together(&workers[id], &remaining, &constraints, &p.span);
                 }
                 product.peak(&p.span).expect("unrestricted worker entry")
             });

@@ -1,6 +1,6 @@
 //! Identity of the whole guard on a successful return. All reaching returns
 //! must agree on its origin before a caller may substitute its own argument.
-use super::{Bindings, Issuer, Role, Witness};
+use super::{Bindings, Issued, Issuer, Role, Witness};
 use crate::ast::*;
 use crate::resource::memory::analysis::Analysis;
 
@@ -12,12 +12,12 @@ pub(super) enum Origin {
     #[default]
     Empty,
     Owned(Witness),
-    Issued(Issuer),
+    Issued(Issued),
     Unknown,
 }
 
 impl Origin {
-    pub(super) fn issuer(self, bindings: &Bindings) -> Option<Issuer> {
+    pub(super) fn issuer(self, bindings: &Bindings) -> Option<Issued> {
         match self {
             Self::Issued(i) => Some(i),
             Self::Owned(w) => bindings.definitions.get(&w)?.issuer,
@@ -29,7 +29,12 @@ impl Origin {
         match (self, other) {
             (Self::Empty, x) | (x, Self::Empty) => x,
             (Self::Owned(a), Self::Owned(b)) if a == b => self,
-            (Self::Issued(a), Self::Issued(b)) if a == b => self,
+            (Self::Issued(a), Self::Issued(b)) if a.instance == b.instance => {
+                Self::Issued(Issued {
+                    instance: a.instance,
+                    common_limit: a.common_limit && b.common_limit,
+                })
+            }
             _ => Self::Unknown,
         }
     }
@@ -43,14 +48,6 @@ impl Bindings {
 }
 
 impl Analysis<'_> {
-    pub(super) fn holder_result_proof(&self, ty: &Typ) -> Option<Role> {
-        let payload = match &**ty {
-            TypX::Datatype(_, args, _) if self.layouts.option(ty) => args.first()?,
-            _ => ty,
-        };
-        self.layouts.holder_proof(payload)
-    }
-
     pub(super) fn holder_place_origin(&self, place: &Place, proof: &Role) -> Origin {
         match &place.x {
             PlaceX::Local(name) => {
@@ -105,14 +102,16 @@ impl Analysis<'_> {
                     .map(|body| &body.ownership.holders);
                 let issuer = self.layouts.issuer_parameters.get(fun).copied().or_else(|| {
                     match bindings?.returned.issuer(bindings?)? {
-                        Issuer::Input(i) => Some(i),
+                        Issued { instance: Issuer::Input(i), common_limit } => {
+                            Some((i, common_limit))
+                        }
                         _ => None,
                     }
                 });
-                if let Some(issuer) =
-                    issuer.and_then(|i| args.get(i)).and_then(|e| self.issuer_expr(e))
+                if let Some((i, common_limit)) = issuer
+                    && let Some(instance) = args.get(i).and_then(|e| self.issuer_expr(e))
                 {
-                    return Origin::Issued(issuer);
+                    return Origin::Issued(Issued { instance, common_limit });
                 }
                 let source = self
                     .summaries
@@ -131,7 +130,7 @@ impl Analysis<'_> {
         if self.layouts.holder_proofs.is_empty() {
             return;
         }
-        if let Some(proof) = self.holder_result_proof(&result.typ) {
+        if let Some(proof) = self.layouts.holder_result_proof(&result.typ) {
             let origin = self.holder_origin(result, &proof);
             let returned = &mut self.transitions.holders.returned;
             *returned = returned.join(origin);

@@ -16,11 +16,19 @@ pub(in crate::resource::memory) enum Issuer {
     Shared(RootId),
 }
 
+/// What the acquisition proved about the actual executable receiver.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::resource::memory) struct Issued {
+    pub(in crate::resource::memory) instance: Issuer,
+    /// The issued predicate equates capacities. The role_of predicate only equates identities.
+    pub(in crate::resource::memory) common_limit: bool,
+}
+
 /// Only whole capture fields carry these projections into the new actor.
 #[derive(Clone, Copy)]
 pub(in crate::resource::memory) enum Captured {
     Receiver(Issuer),
-    Holder(Issuer),
+    Holder(Issued),
 }
 
 impl Layouts {
@@ -32,34 +40,21 @@ impl Layouts {
 
 impl Bindings {
     pub(in crate::resource::memory) fn issuer(&self, id: Witness) -> Option<Issuer> {
-        self.definitions.get(&id)?.issuer
+        Some(self.definitions.get(&id)?.issuer?.instance)
     }
 
     /// The proof is instantiated at both actual witness types. A matching
     /// concrete issuer and equal type arguments are necessary even when a
     /// nominal theorem is shared by all instantiations.
-    pub(in crate::resource::memory) fn exclusion(
+    pub(in crate::resource::memory) fn excludes(
         &self,
         left: Witness,
         other: &Bindings,
         right: Witness,
-    ) -> Option<&Fun> {
-        let lhs = self.definitions.get(&left)?;
-        let rhs = other.definitions.get(&right)?;
-        if lhs.issuer? != rhs.issuer? {
-            return None;
-        }
-        let (TypX::Datatype(_, la, _), TypX::Datatype(dt, ra, _)) =
-            (&*lhs.proof.typ, &*rhs.proof.typ)
-        else {
-            return None;
-        };
-        if la.len() != ra.len()
-            || !la.iter().zip(ra.iter()).all(|(a, b)| crate::ast_util::types_equal(a, b))
-        {
-            return None;
-        }
-        lhs.proof.theorems.exclusions.get(dt).map(|(theorem, _)| theorem)
+    ) -> bool {
+        self.population_role(left)
+            .zip(other.population_role(right))
+            .is_some_and(|(a, b)| a.excludes(&b))
     }
 
     pub(in crate::resource::memory) fn import_receiver(&mut self, name: &VarIdent, issuer: Issuer) {
@@ -88,7 +83,8 @@ impl Analysis<'_> {
                 .and_then(|i| args.get(*i))
                 .and_then(|a| self.issuer_expr(a))
         {
-            self.transitions.holders.definitions.get_mut(&w)?.issuer = Some(issuer)
+            self.transitions.holders.definitions.get_mut(&w)?.issuer =
+                Some(Issued { instance: issuer, common_limit: false })
         }
         Some((w, name))
     }
@@ -104,7 +100,9 @@ impl Analysis<'_> {
         let mut mapped = self.transitions.holders.forwarded(body, args);
         let Some(body) = body else { return mapped };
         for (&remote, binding) in &body.ownership.holders.definitions {
-            let Some(Issuer::Input(i)) = binding.issuer else { continue };
+            let Some(Issued { instance: Issuer::Input(i), common_limit }) = binding.issuer else {
+                continue;
+            };
             if !binding.visit.as_ref().is_some_and(|visit| visit.single_visit()) {
                 continue;
             }
@@ -117,7 +115,7 @@ impl Analysis<'_> {
                 actual,
                 Binding {
                     name: None,
-                    issuer: Some(issuer),
+                    issuer: Some(Issued { instance: issuer, common_limit }),
                     proof: binding.proof.clone(),
                     visit: Some(visit),
                 },
@@ -160,6 +158,6 @@ impl Analysis<'_> {
         }
         let proof = self.layouts.holder_proof(&place.typ)?;
         let bindings = &self.transitions.holders;
-        bindings.issuer(bindings.named(name, &proof)?).map(Captured::Holder)
+        bindings.definitions.get(&bindings.named(name, &proof)?)?.issuer.map(Captured::Holder)
     }
 }

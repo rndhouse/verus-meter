@@ -529,6 +529,21 @@ impl Analysis<'_> {
         if !declarations.is_empty() {
             worker.growth.before.entry(body.span.id).or_default().splice(0..0, declarations);
         }
+        // Only the returned forest crosses an indexed join. A unit result has
+        // no allocation or scalar field to describe. Its local protocol calls
+        // may defeat general transfer inference; all entry and cleanup checks
+        // above still apply, and no mutable caller forest can escape here.
+        let transfer = inferred.map(|i| i.template).or_else(|| {
+            (!transfer_required
+                && unit(result_type)
+                && result.owner.is_none()
+                && inputs.iter().all(|i| {
+                    contracts::scalar(&i.typ)
+                        || matches!(&*i.typ, TypX::Decorate(TypDecoration::Arc, _, item)
+                        if self.layouts.protocol_receiver(item) && !self.layouts.owner(item))
+                }))
+            .then(super::super::transfer::Template::unit_result)
+        });
         let execution = Arc::new(Execution {
             actor,
             definition: *id,
@@ -551,7 +566,7 @@ impl Analysis<'_> {
                 worker.calls,
                 Some(actor),
             )?,
-            transfer: inferred.map(|inferred| inferred.template),
+            transfer,
             transfer_required,
             capture_cleanup,
             synchronization: closure.body.clone(),

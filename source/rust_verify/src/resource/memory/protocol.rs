@@ -49,6 +49,7 @@ pub(super) fn bind_holder_proofs(
     use vir::ast::*;
     let population =
         vir::fun!(CrateId::Vstd => "resource", "holder", "BoundedHolder"; "population_bound");
+    let capacity = vir::fun!(CrateId::Vstd => "resource", "holder", "BoundedHolder"; "capacity");
     let incompatible =
         vir::fun!(CrateId::Vstd => "resource", "holder", "Incompatible"; "distinct_instances");
     let declarations: std::collections::HashMap<_, _> = krate
@@ -116,6 +117,32 @@ pub(super) fn bind_holder_proofs(
             register(f);
         }
     }
+    // A literal spec body establishes the same capacity even for acquisitions
+    // whose postcondition supplies only the issuer identity.
+    for f in krate.functions.iter().chain(imports.iter().flat_map(|k| &k.functions)) {
+        if let FunctionKind::TraitMethodImpl {
+            method, trait_typ_args, inherit_body_from: None, ..
+        } = &f.x.kind
+            && *method == capacity
+            && !f.x.attrs.is_external_body
+            && let [ty] = trait_typ_args.as_slice()
+            && let Some(dt) = universal(f, ty)
+            && evidence.holder_proofs.get(&dt).is_some_and(|role| role.population.is_some())
+            && let Some(mut body) = f.x.body.as_ref()
+        {
+            while let ExprX::Block(stmts, Some(tail)) = &body.x {
+                if !stmts.is_empty() {
+                    break;
+                }
+                body = tail;
+            }
+            if let ExprX::Const(Constant::Int(value)) = &body.x
+                && let Ok(limit) = u64::try_from(value.clone())
+            {
+                evidence.holder_proofs.entry(dt).or_default().constant_capacity = Some(limit);
+            }
+        }
+    }
 }
 
 pub(super) fn bind_leaf_workspaces(
@@ -170,21 +197,62 @@ pub(super) fn bind_leaf_workspaces(
     }
 }
 
+fn whole_name(expr: &vir::ast::Expr) -> Option<&vir::ast::VarIdent> {
+    use vir::ast::*;
+    match &expr.x {
+        ExprX::Var(name) => Some(name),
+        ExprX::ReadPlace(place, _) if vir::ast_util::types_equal(&place.typ, &expr.typ) => {
+            let PlaceX::Local(name) = &place.x else { return None };
+            Some(name)
+        }
+        _ => None,
+    }
+}
+
+/// Match `result.holder_limit() == argument` on the whole constructor
+/// result. A comparison inside an implication cannot supply an immutable limit.
+fn capacity_parameter(
+    function: &vir::ast::Function,
+    post: &vir::ast::Expr,
+    limit: &Fun,
+) -> Option<usize> {
+    use vir::ast::*;
+    let ExprX::Binary(BinaryOp::Eq(Mode::Spec), lhs, rhs) = &post.x else { return None };
+    let ExprX::Call {
+        target: CallTarget::Fun(CallTargetKind::DynamicResolved { .. }, method, types, ..),
+        args,
+        post_args: None,
+        body: None,
+    } = &lhs.x
+    else {
+        return None;
+    };
+    let ([ty], [instance]) = (types.as_slice(), args.as_slice()) else { return None };
+    let result = &function.x.inner_ret.x;
+    let ExprX::ReadPlace(place, read) = &instance.x else { return None };
+    if method != limit
+        || !vir::ast_util::types_equal(ty, &result.typ)
+        || !matches!(read.preliminary_kind, ReadKind::ImmutBor)
+        || !matches!(&place.x, PlaceX::Local(n) if *n == result.name)
+        || !vir::ast_util::types_equal(&place.typ, ty)
+    {
+        return None;
+    }
+    function.x.params.iter().position(|p| {
+        p.x.mode == Mode::Exec
+            && !p.x.user_mut
+            && whole_name(rhs) == Some(&p.x.name)
+            && matches!(&*p.x.typ, TypX::Int(IntRange::U(8 | 16 | 32 | 64) | IntRange::USize))
+            && vir::ast_util::types_equal(&p.x.typ, &rhs.typ)
+    })
+}
+
 /// Match an unconditional postcondition of the nominal vstd predicate on the
 /// whole result and one executable shared input. No fact under an implication,
 /// a user predicate or a projection of another return value qualifies.
 pub(super) fn bind_issuers(krate: &KrateX, imports: &[Krate], evidence: &mut CompilerEvidence) {
     use vir::ast::*;
-    fn name(expr: &Expr) -> Option<&VarIdent> {
-        match &expr.x {
-            ExprX::Var(name) => Some(name),
-            ExprX::ReadPlace(place, _) if vir::ast_util::types_equal(&place.typ, &expr.typ) => {
-                let PlaceX::Local(name) = &place.x else { return None };
-                Some(name)
-            }
-            _ => None,
-        }
-    }
+    let limit = vir::fun!(CrateId::Vstd => "resource", "holder", "BoundedInstance"; "holder_limit");
     let role = vir::fun!(CrateId::Vstd => "resource", "holder"; "role_of");
     let direct = vir::fun!(CrateId::Vstd => "resource", "holder"; "issued");
     let optional = vir::fun!(CrateId::Vstd => "resource", "holder"; "issued_on_success");
@@ -201,6 +269,9 @@ pub(super) fn bind_issuers(krate: &KrateX, imports: &[Krate], evidence: &mut Com
             continue;
         }
         for post in f.x.ensure.0.iter() {
+            if let Some(index) = capacity_parameter(f, post, &limit) {
+                evidence.capacity_parameters.insert(f.x.name.clone(), index);
+            }
             let ExprX::Call {
                 target: CallTarget::Fun(CallTargetKind::Static, fun, _, _, _),
                 args,
@@ -214,7 +285,7 @@ pub(super) fn bind_issuers(krate: &KrateX, imports: &[Krate], evidence: &mut Com
                 continue;
             }
             let [result, issuer] = args.as_slice() else { continue };
-            let whole = name(result) == Some(&f.x.inner_ret.x.name)
+            let whole = whole_name(result) == Some(&f.x.inner_ret.x.name)
                 && vir::ast_util::types_equal(&result.typ, &f.x.inner_ret.x.typ);
             let writer = matches!(&result.x, ExprX::ReadPlace(p,_) if matches!(&p.x, PlaceX::Field(op, base)
                 if op.datatype == Dt::Tuple(2) && op.field.as_str()=="1" && !op.get_variant &&
@@ -229,7 +300,7 @@ pub(super) fn bind_issuers(krate: &KrateX, imports: &[Krate], evidence: &mut Com
                 p.x.mode == Mode::Exec
                     && !p.x.user_mut
                     && matches!(&*p.x.typ, TypX::Decorate(TypDecoration::Ref, None, _))
-                    && name(issuer) == Some(&p.x.name)
+                    && whole_name(issuer) == Some(&p.x.name)
                     && vir::ast_util::types_equal(&issuer.typ, &p.x.typ)
             }) {
                 let TypX::Decorate(_, _, receiver) = &*issuer.typ else { continue };
@@ -238,7 +309,7 @@ pub(super) fn bind_issuers(krate: &KrateX, imports: &[Krate], evidence: &mut Com
                 if writer {
                     evidence.writer_issuers.insert(f.x.name.clone(), index);
                 } else {
-                    evidence.issuer_parameters.insert(f.x.name.clone(), index);
+                    evidence.issuer_parameters.insert(f.x.name.clone(), (index, *fun != role));
                 }
             }
         }

@@ -288,10 +288,8 @@ impl Analysis<'_> {
             }
             // A composed worker already proves its local phases against the
             // exported costs. The whole-operation allowance is meaningful at
-            // publication. An empty population owes no scratch.
-            if self.storage.covers_workers()
-                && !self.growth.worker_occurrences[&execution.actor].is_empty()
-            {
+            // publication. A zero-capacity issuer can make a local phase unreachable.
+            if self.storage.covers_workers() {
                 continue;
             }
             // A synchronized execution exports every source phase, including
