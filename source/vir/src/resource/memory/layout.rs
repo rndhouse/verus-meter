@@ -35,6 +35,8 @@ pub(super) struct Layouts {
     option: Option<Dt>,
     field_slots: HashMap<Ident, i128>,
     synchronization_types: super::synchronization::LibraryTypes,
+    /// Local reviewed bodies measured uniformly over erased protocol parameters.
+    pub(super) measured_leaves: HashSet<Fun>,
     pub(super) imported_leaves: HashMap<Fun, super::synchronization::CheckedBody>,
     /// Nominal concrete holder types and their resolved population proofs.
     pub(super) holder_proofs: HashMap<Dt, Fun>,
@@ -69,6 +71,7 @@ impl Layouts {
             option,
             field_slots,
             synchronization_types: HashMap::new(),
+            measured_leaves: HashSet::new(),
             imported_leaves: HashMap::new(),
             holder_proofs: HashMap::new(),
             closures: Default::default(),
@@ -621,7 +624,17 @@ impl Layouts {
         if d.destructor {
             return Err(unsupported(span, "structs with destructors"));
         }
-        if !args.is_empty() || !d.typ_params.is_empty() || !d.typ_bounds.is_empty() {
+        // In the wrapper's own generic body, fields still use exactly their
+        // declared type parameters. Only its primitive atomic field has bytes.
+        let identity_arguments = self.atomic_location(typ).is_some()
+            && args.len() == d.typ_params.len()
+            && d.typ_params
+                .iter()
+                .zip(args.iter())
+                .all(|((name, _), ty)| matches!(&**ty, TypX::TypParam(t) if t == name));
+        if !identity_arguments
+            && (!args.is_empty() || !d.typ_params.is_empty() || !d.typ_bounds.is_empty())
+        {
             return Err(unsupported(span, "generic struct layouts"));
         }
         if d.proxy.is_some()

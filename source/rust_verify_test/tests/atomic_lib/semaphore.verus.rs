@@ -6,6 +6,14 @@ use vstd::resource::semaphore::{Permit, Semaphore};
 
 verus! {
 
+// Creation accounts for both verified constructor bodies at any input capacity.
+fn create(k: usize) -> (s: Semaphore)
+    ensures s.capacity() == k,
+    resources peak(memory) <= 40,
+{
+    Semaphore::new(k)
+}
+
 fn attempt(s: &Semaphore) -> (q: Option<Permit<'_>>)
     ensures q matches Some(p) ==> p.instance_id() == s.id() && p.capacity() == s.capacity(),
     resources peak(memory) <= 81,

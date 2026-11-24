@@ -736,7 +736,7 @@ pub(super) fn check(
     let accounting_function = super::concurrency::accounting_body(function, concurrency)?;
     let function = &accounting_function;
     let f = &function.x;
-    eligible(function)?;
+    eligible(function, layouts)?;
     let body = f
         .body
         .as_ref()

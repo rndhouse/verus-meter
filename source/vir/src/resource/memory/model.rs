@@ -108,13 +108,17 @@ pub(super) fn negative_literal(expr: &Expr) -> Option<Constant> {
     }
 }
 
-pub(super) fn eligible(function: &Function) -> Result<(), VirErr> {
+pub(super) fn eligible(
+    function: &Function,
+    layouts: &super::layout::Layouts,
+) -> Result<(), VirErr> {
     let f = &function.x;
     if f.mode != Mode::Exec
         || !matches!(f.kind, FunctionKind::Static)
         || !matches!(f.item_kind, ItemKind::Function)
-        || !f.typ_params.is_empty()
-        || !f.typ_bounds.is_empty()
+        || ((!f.typ_params.is_empty() || !f.typ_bounds.is_empty())
+            && !(layouts.measured_leaves.contains(&f.name)
+                && layouts.atomic_location(&f.outer_ret.x.typ).is_some()))
         || f.attrs.is_async
         || f.attrs.is_unsafe
         || f.attrs.is_external_body

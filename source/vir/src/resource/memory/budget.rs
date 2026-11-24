@@ -50,7 +50,7 @@ impl Resolver<'_> {
         let contract = function.x.attrs.resource_contract.as_ref().ok_or_else(|| {
             error(span, "peak requires a declared resource contract").secondary_span(&function.span)
         })?;
-        eligible(function)?;
+        eligible(function, self.layouts)?;
         if !self.visiting.insert(name.clone()) {
             return Err(error(span, "circular peak reference").secondary_span(&function.span));
         }

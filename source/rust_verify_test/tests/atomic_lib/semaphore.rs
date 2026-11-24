@@ -22,7 +22,7 @@ fn verified_permit_follows_its_input_across_a_conditional_return() {
 
 #[test]
 fn imported_semaphore_operations_require_their_measured_workspace() {
-    for (name, peak) in [("attempt", 81), ("wait", 98), ("release", 72)] {
+    for (name, peak) in [("create", 40), ("attempt", 81), ("wait", 98), ("release", 72)] {
         let short = peak - 1;
         let source = SOURCE
             .replace(&format!("peak(memory) <= {peak},"), &format!("peak(memory) <= {short},"));

@@ -23,7 +23,7 @@ impl Analysis<'_> {
             return Err(unsupported(&expr.span, "calls without a current-model memory contract")
                 .secondary_span(&callee.span));
         };
-        eligible(callee)?;
+        eligible(callee, self.layouts)?;
         if args.len() != callee.x.params.len()
             || !crate::ast_util::types_equal(&expr.typ, &callee.x.outer_ret.x.typ)
         {

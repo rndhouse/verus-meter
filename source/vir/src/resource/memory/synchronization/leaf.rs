@@ -102,7 +102,11 @@ impl Analysis<'_> {
         let inline_result = contracts::scalar(&value.typ)
             || super::super::model::unit(&value.typ)
             || super::super::construction::aggregate(&value.typ) && !self.layouts.owner(&value.typ);
-        if !types.is_empty() || !impls.is_empty() || !inline_result {
+        // A measured atomic wrapper constructor is uniform in its erased
+        // invariant, tracked state and predicate. Its returned location has
+        // the same concrete primitive layout at every instantiation.
+        let erased_constructor = self.layouts.atomic_location(&value.typ).is_some();
+        if ((!types.is_empty() || !impls.is_empty()) && !erased_constructor) || !inline_result {
             return Err(unsupported(
                 &value.span,
                 "an imported synchronization helper without a concrete inline result",

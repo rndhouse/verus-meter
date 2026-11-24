@@ -119,8 +119,10 @@ pub(super) fn bind_leaf_workspaces(
     }
     for (name, methods) in [
         ("verus::vstd::atomic::PAtomicUsize", &["fetch_add", "fetch_sub"][..]),
+        ("verus::vstd::atomic_ghost::AtomicBool", &["new"][..]),
+        ("verus::vstd::atomic_ghost::AtomicUsize", &["new"][..]),
         (PERMIT, &["release"][..]),
-        (SEMAPHORE, &["try_acquire", "acquire"][..]),
+        (SEMAPHORE, &["new", "try_acquire", "acquire"][..]),
     ] {
         if let Some(id) = tcx.get_diagnostic_item(Symbol::intern(name)) {
             for imp in tcx.inherent_impls(id) {

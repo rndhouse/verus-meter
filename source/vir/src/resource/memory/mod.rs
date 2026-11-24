@@ -118,6 +118,7 @@ pub fn check_crate(
     let mut layouts = layout::Layouts::new(datatypes, global_allocator, vector, option)
         .with_synchronization_types(&synchronization.types)
         .with_closures(&synchronization.concurrency);
+    layouts.measured_leaves.clone_from(&synchronization.measure_leaves);
     layouts.holder_proofs.clone_from(&synchronization.holder_proofs);
     layouts.imported_leaves.clone_from(&synchronization.imported_leaves);
     for function in functions.iter().filter(|f| f.x.attrs.resource_contract.is_some()) {
