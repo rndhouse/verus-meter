@@ -89,6 +89,7 @@ Explore the [memory examples](examples/resource/memory/README.md):
 - **Heap:** [Allocations and ownership transfers](examples/resource/memory/README.md#heap).
 - **Heap loops:** [Construction, transfers, and allocation overlap](examples/resource/memory/README.md#loops).
 - **Vectors:** [Capacity, growth, and owning elements](examples/resource/memory/README.md#vectors).
+- Concurrent workers, retained buffers and verified protocols. [Concurrency examples](examples/resource/memory/README.md#concurrency)
 - **Algorithms:** [Sorting within a memory budget](examples/resource/memory/README.md#algorithms).
 - **Deliberate violations:** [Examples that exceed their allowances](examples/resource/memory/README.md#deliberate-violations).
 

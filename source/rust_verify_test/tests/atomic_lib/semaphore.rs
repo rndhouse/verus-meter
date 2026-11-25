@@ -131,7 +131,7 @@ fn independent_acquisitions_use_the_actual_shared_backing() {
 
 #[test]
 fn a_counted_population_uses_the_smaller_of_workers_and_permits() {
-    let family = include_str!("semaphore_population.verus.rs");
+    let family = include_str!("../../../../examples/resource/memory/concurrent/semaphore.rs");
     verify_one_file("permit_population", family.into(), &["--no-cheating"]).unwrap();
     let short = family.replace("(if n <= k { n } else { k }) * b", "b");
     let on_failure = family.replace(
@@ -160,7 +160,7 @@ fn capacity_comes_from_the_checked_constructor_argument() {
             }
         }
     };
-    let batch = include_str!("semaphore_population.verus.rs")
+    let batch = include_str!("../../../../examples/resource/memory/concurrent/semaphore.rs")
         .replace("Semaphore::new(k as usize)", "make(n as usize, k as usize)");
     let source = format!("{batch}\n{constructor}");
     verify_one_file("constructor_argument", source.clone(), &["--no-cheating"]).unwrap();

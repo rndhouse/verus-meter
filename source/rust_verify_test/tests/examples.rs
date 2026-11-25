@@ -19,6 +19,7 @@ examples_in_dir!("../../examples/guide");
 examples_in_dir!("../../examples/resource");
 examples_in_dir!("../../examples/resource/memory/basics");
 examples_in_dir!("../../examples/resource/memory/contracts");
+examples_in_dir!("../../examples/resource/memory/concurrent");
 examples_in_dir!("../../examples/resource/memory/heap");
 examples_in_dir!("../../examples/resource/memory/heap/loops");
 examples_in_dir!("../../examples/resource/memory/vectors");

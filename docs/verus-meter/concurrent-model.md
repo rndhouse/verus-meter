@@ -1,10 +1,9 @@
 # Concurrent memory semantics and analysis interfaces
 
-This is the implementation specification for the concurrent core, established by
-TODO 01. It describes required behavior, not currently available verifier support.
-The [memory model](../model.md) remains authoritative for existing sequential behavior;
-[the implementation index](todo/concurrent/README.md) tracks delivery. Concurrency
-must remain rejected until its coverage and bound obligations are implemented.
+Verus Meter checks concurrent byte bounds by combining executable worker lifetimes
+with verified synchronization constraints. The guarantee covers source-level storage
+under the [memory model](../model.md). The [executable examples](../../examples/resource/memory/README.md#concurrency)
+show how to state bounds for mutexes, bounded permits and a custom protocol.
 
 ## Contract scope and execution domain
 
@@ -66,7 +65,7 @@ higher-order execution.
 | Standard mutex | `Mutex::new`, `lock`, `try_lock`, guard borrow/dereference/mutation, explicit/implicit guard drop; preserve protected payload ownership through supported operations; no mapped guards, raw access or poisoning recovery | 02, 04, 05 |
 | Result handling | Primitive-specific `Result` matching and proved-success extraction for lock, try-lock and join; `WouldBlock` has no acquisition; poison paths cannot be silently discarded | 02, 03, 05 |
 | Verified RwLock | vstd construction, exclusive acquire/release, shared acquire/borrow/release, and destruction through supported APIs; readers do not exclude each other | 02, 05, 06 |
-| Semaphore | New reusable verified `vstd::resource::semaphore::Semaphore` and unit `Permit`: `new(k)`, blocking `acquire`, `try_acquire`, explicit `release`; immutable capacity, no split/merge/add/forget; acquire may block forever at capacity zero | 02, 06 |
+| Semaphore | Verified `vstd::resource::semaphore::Semaphore` and unit `Permit`: `new(k)`, blocking `acquire`, `try_acquire`, explicit `release`; immutable capacity, no split/merge/add/forget; acquire may block forever at capacity zero | 02, 06 |
 | Protocol primitives | Existing vstd `PAtomicBool`, `PAtomicUsize` and corresponding `atomic_ghost` wrappers: new/load/store/compare-exchange/weak compare-exchange and supported checked counter operations; sequentially consistent ordering only | 02, 06 |
 | Custom protocols | Safe concrete Verus functions, tracked guards/tokens, atomic invariants and tokenized state-machine proofs using those primitives; explicit transition/holder-bound proof interface described below | 02, 05, 06 |
 | Payloads and helpers | Existing supported Box/Vec/boxed slices, concrete structures and ownership operations, plus the listed concurrency wrappers; safe local acyclic helpers with checked effects, including escaped buffers and guard returns | 03–05, 07 |
@@ -284,7 +283,7 @@ depend on immutable scalar inputs. An arm that skips the write preserves the
 incoming contents. The verifier checks each proposed transformation at the
 source release and accounts for an extracted allocation through its subsequent
 owner and join. Opaque conditions or too many alternatives can prevent a tight
-proof. These local checks feed the global interference proof in 07.
+proof. These local checks feed the simultaneous worker bound.
 
 When a worker locks a shared mutex in a loop, the incoming contents can be
 the initial allocation tree or the result of any preceding release. The verifier
@@ -311,11 +310,12 @@ The semaphore discharges its population proof by joining its unit tokens.
 The vstd RwLock uses its existing unique writer token and shared storage
 invariant. It admits multiple readers. Its handles require explicit release.
 
-For custom protocols, expose a verified **synchronization-effect declaration** on
-local executable functions, with instance projection, incoming/outgoing tracked
-witness projections, acquisition/release outcomes, and an instance holder-bound
-predicate. This is a new proof interface to implement in 02/06, not existing
-syntax. Macro spelling may be chosen there; its acceptance obligations are fixed:
+For custom protocols, implement the holder traits and relate the returned guard
+to the executable issuer in the acquisition postcondition. For example,
+`issued_on_success(result, self)` binds a successful optional acquisition to
+that instance and capacity. The [custom lock](../../examples/resource/memory/concurrent/protocol/mod.rs)
+uses a private tracked token and a verified `BoundedHolder::population_bound`
+proof. The compiler uses the following facts.
 
 1. Initialization establishes a protocol invariant and its instance identity.
 2. Every witness-producing/consuming executable path refines a declared protocol
@@ -337,8 +337,7 @@ not allocation counters. Compiler-generated region descriptors and population
 observations are read-only proof inputs. Additional lemmas can prove aggregate
 footprint inequalities over them using ordinary Verus assertions and invariants;
 they cannot mint identities, alter coverage or declare a byte charge released.
-Any new declaration must fail closed until these checks exist. A separate abstract
-state-machine proof without the executable transition connection is insufficient.
+The checked witness must travel through the actual executable acquisition, call and release.
 
 ## Global proof and symbolic composition
 
@@ -433,26 +432,25 @@ These cases are semantic acceptance requirements and test obligations for 02–0
 | Replace lock-protected owning payload | Count distinct payloads while both are live and update the shared root once |
 | Fail try-acquire | No acquisition witness; already-live storage remains |
 
-## Implementation ownership
+## Implementation and precision limits
 
-02 implements contract recognition, identities, cleanup effects, layouts and the
-custom declaration schema. 03.1–03.4 implement selected threads, semantic closure
-invocation, strong Arc, completion records, nested/spawn-loop population and
-rejection boundaries. 03.2 owns the checked worker-summary foundation and join
-Result handling; these cannot wait for 05. 04 implements phase attribution,
-escapes, cleanup and transient lifetime obligations. 05 extends the common summary
-interface for general helpers, owning protected payloads, guard returns and
-lock/try-lock Result operations. 06 implements certificate checks, custom protocol
-integration, the verified semaphore and RwLock surface. 07 implements global
-interference/count proof generation, composition, sections/checkpoints and query
-compatibility. 08 audits coverage, trust, rejection behavior and user documentation.
+The compiler resolves primitive identities, analyzes executable bodies and emits
+Verus obligations at the source operations. A concurrent interface is eligible for
+export only after whole-crate verification and the Rust checks succeed.
+[Compiler integration](../../source/rust_verify/src/resource/memory/pipeline.rs) ·
+[Resolved primitives](../../source/rust_verify/src/resource/memory/intrinsics.rs) ·
+[Holder proofs and workspace certificates](../../source/rust_verify/src/resource/memory/protocol.rs)
 
-The source integration points remain
-[pipeline](../../source/rust_verify/src/resource/memory/pipeline.rs),
-[identity recognition](../../source/rust_verify/src/resource/memory/intrinsics.rs),
-[ownership summaries](../../source/vir/src/resource/memory/summary.rs),
-[accounting](../../source/vir/src/resource/memory/accounting.rs) and
-[proof generation](../../source/vir/src/resource/memory/symbolic.rs).
-New opaque layouts require a model-version change and matching static/runtime size
-semantics; TODOs 02/07 own these changes. No existing concurrency capability is
-claimed by completing this specification.
+Fixed workers can have different phases and nested children. The counted proof
+supports a single family with a provable outstanding count. An indexed result
+owning heap storage or a join delegated to another actor can have locally
+verified ownership while its total bound remains unproved.
+[Worker composition](../../source/vir/src/resource/memory/workers/envelope.rs)
+
+The finite shared-payload search allows 128 history states per mutex. This counts
+possible release histories, including alternative outputs from a helper. Four
+direct guarded pushes fit. Four helpers that each acquire, conditionally append
+and unlock can exceed the limit even when three such helpers verify. Increasing
+a byte allowance cannot supply a missing ownership history. The verifier keeps
+the incoming contents unrestricted if the history proof is incomplete.
+[History construction](../../source/vir/src/resource/memory/synchronization/versions/history.rs)

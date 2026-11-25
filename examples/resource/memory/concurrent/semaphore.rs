@@ -39,7 +39,7 @@ fn batch(n: u16, k: u16, b: u16)
     }
 }
 
-fn clients() {
+fn main() {
     batch(4, 0, 4096);
     batch(4, 2, 4096);
     batch(2, 4, 4096);

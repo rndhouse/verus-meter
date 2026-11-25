@@ -101,3 +101,74 @@ fn consuming_a_capture_does_not_admit_a_non_move_worker() {
         "scoped or non-move worker captures",
     );
 }
+
+#[test]
+fn a_functional_specification_cannot_hide_an_allocation_in_a_worker() {
+    rejects(
+        "opaque_worker_helper",
+        r#"
+        #[verifier::external_body]
+        fn opaque() ensures true {
+            let buffer = Vec::<u8>::with_capacity(1024); drop(buffer);
+        }
+        fn run() resources peak(memory) <= 128 {
+            let job = std::thread::spawn(move || { opaque(); });
+            let result = job.join();
+        }
+        "#,
+        "calls without a current-model memory contract",
+    );
+}
+
+#[test]
+fn excluded_concurrency_operations_in_a_worker_fail_at_their_source() {
+    for (name, operation, message) in [
+        (
+            "channel",
+            "let (tx, rx) = std::sync::mpsc::channel::<u8>(); drop(tx); drop(rx);",
+            "mpsc::channel` is not supported",
+        ),
+        (
+            "condition_variable",
+            "let c = std::sync::Condvar::new(); c.notify_one();",
+            "Condvar` is not supported",
+        ),
+        (
+            "barrier",
+            "let b = std::sync::Barrier::new(1); let r = b.wait();",
+            "Barrier` is not supported",
+        ),
+        (
+            "scoped",
+            "std::thread::scope(|s| { let h = s.spawn(|| {}); let r = h.join(); });",
+            "scope` is not supported",
+        ),
+        (
+            "relaxed_atomic",
+            "let a = std::sync::atomic::AtomicUsize::new(1); let n = a.load(std::sync::atomic::Ordering::Relaxed);",
+            "struct layouts outside this crate",
+        ),
+        ("unwind", "let r = std::panic::catch_unwind(|| {});", "std::panic::UnwindSafe"),
+        (
+            "async_worker",
+            "let f = async { let v = Vec::<u8>::new(); drop(v); }; drop(f);",
+            "coroutine types",
+        ),
+    ] {
+        let source = format!(
+            "use vstd::prelude::*; verus! {{
+            fn run() resources peak(memory) <= 512 {{
+                let job = std::thread::spawn(move || {{ {operation} }});
+                let r = job.join();
+            }}
+        }}"
+        );
+        let error = verify_one_file(name, source, &[]).unwrap_err();
+        assert!(
+            error.errors.iter().any(|e| e.message.contains(message)
+                && e.spans.iter().any(|s| s.text.iter().any(|line| line.text.contains(operation)))),
+            "{name}: {:?}",
+            error.errors
+        );
+    }
+}

@@ -56,6 +56,19 @@ are included only where needed for memory verification.
 - [Indexed owners](vectors/indexed_owners.rs): account for changes to individual owning elements.
 - [Element transfers](vectors/element_transfers.rs): extract owning elements and reuse their storage across loop iterations.
 
+## Concurrency
+
+- Four workers share one scratch allowance while they hold the same mutex. When
+  they push buffers into a shared vector instead, all four reservations and their
+  slots can still be live after the joins. [Mutex lifetimes](concurrent/mutex_lifetimes.rs)
+- A completed worker keeps its returned reservation until join. It can overlap
+  scratch protected by the very same mutex. [Worker result](concurrent/worker_result.rs)
+- With `n` workers, `k` permits and `b` bytes per successful acquisition, scratch
+  contributes at most `min(n, k) * b`. [Bounded semaphore](concurrent/semaphore.rs)
+- A custom lock transfers an exclusive tracked token on a successful atomic
+  compare-exchange. Its verified holder bound lets the workers share one
+  scratch allowance. [Workers](concurrent/custom_mutex.rs) · [Lock and proof](concurrent/protocol/mod.rs)
+
 ## Algorithms
 
 - [Insertion sort](algorithms/insertion_sort.rs): prove sorting correctness within a fixed memory allowance.

@@ -1,5 +1,12 @@
 use super::*;
 
+const PROTOCOL: &str =
+    include_str!("../../../../examples/resource/memory/concurrent/protocol/mod.rs");
+const EXCLUSIVE: &str = concat!(
+    include_str!("../../../../examples/resource/memory/concurrent/protocol/mod.rs"),
+    include_str!("exclusive.verus.rs"),
+);
+
 test_verify_one_file! {
     #[test] a_forwarded_permit_retains_its_instance_in_a_worker code! {
         use vstd::prelude::*;
@@ -75,7 +82,7 @@ test_verify_one_file! {
 
 #[test]
 fn a_custom_exclusive_protocol_needs_the_successful_atomic_transition() {
-    let source = include_str!("exclusive.verus.rs");
+    let source = EXCLUSIVE;
     verify_one_file("exclusive_holder", source.into(), &[]).unwrap();
     for (method, peak) in [("acquire", 30), ("release", 33)] {
         let short = peak - 1;
@@ -94,7 +101,7 @@ fn a_custom_exclusive_protocol_needs_the_successful_atomic_transition() {
 
 #[test]
 fn custom_guard_coverage_follows_the_owned_value_and_allocation() {
-    let source = include_str!("exclusive.verus.rs");
+    let source = EXCLUSIVE;
     let trace =
         verify_one_file("custom_guard_coverage", source.into(), &["--trace", "--no-cheating"])
             .unwrap();
@@ -139,8 +146,8 @@ fn custom_guard_coverage_follows_the_owned_value_and_allocation() {
 
 #[test]
 fn a_conditional_contract_cannot_identify_an_issuer() {
-    let source = include_str!("exclusive.verus.rs")
-        .replace("issued_on_success(g, self),", "false ==> issued_on_success(g, self),");
+    let source =
+        EXCLUSIVE.replace("issued_on_success(g, self),", "false ==> issued_on_success(g, self),");
     let trace =
         verify_one_file("conditional_contract", source, &["--trace", "--no-cheating"]).unwrap();
     assert!(
@@ -159,8 +166,7 @@ fn a_conditional_contract_cannot_identify_an_issuer() {
 
 #[test]
 fn returning_the_other_guard_changes_the_proved_issuer() {
-    let source = include_str!("exclusive.verus.rs")
-        .replace("keep_guard(b, a, keep)", "keep_guard(a, b, keep)");
+    let source = EXCLUSIVE.replace("keep_guard(b, a, keep)", "keep_guard(a, b, keep)");
     let trace = verify_one_file("wrong_returned_issuer", source, &["--trace", "--no-cheating"])
         .unwrap_err();
     assert!(
@@ -174,7 +180,7 @@ fn returning_the_other_guard_changes_the_proved_issuer() {
 
 #[test]
 fn symbolic_scratch_and_release_each_need_their_own_peak() {
-    let source = include_str!("exclusive.verus.rs");
+    let source = EXCLUSIVE;
     for (case, allowance) in [
         ("empty", "if n == 0 { 40 } else { n + 40 }"),
         ("reserved", "if n == 0 { 41 } else { n + 39 }"),
@@ -188,7 +194,7 @@ fn symbolic_scratch_and_release_each_need_their_own_peak() {
 
 #[test]
 fn a_bodyless_population_proof_supplies_no_memory_evidence() {
-    let source = include_str!("exclusive.verus.rs").replace(
+    let source = EXCLUSIVE.replace(
         "    proof fn population_bound(",
         "    #[verifier::external_body]\n    proof fn population_bound(",
     );
@@ -198,7 +204,7 @@ fn a_bodyless_population_proof_supplies_no_memory_evidence() {
 
 #[test]
 fn a_worker_passes_its_actual_moved_guard_to_the_helper() {
-    let source = include_str!("exclusive.verus.rs").replace(
+    let source = EXCLUSIVE.replace(
         "fn work() {",
         r#"
         fn publish(first: Guard<'static>, carried: Guard<'static>) resources peak(memory) <= 1024 {
@@ -303,38 +309,19 @@ test_verify_one_file! {
 
 #[test]
 fn custom_protocol_population_requires_its_checked_theorem() {
-    let family = code_str! {
-        verus! {
-            fn custom_batch(n: u16, b: u16)
-                resources peak(memory) <= 512 + 192 * n + b,
-            {
-                let lock = std::sync::Arc::new(Lock::new());
-                let mut handles = Vec::with_capacity(n as usize);
-                let mut i = 0u16;
-                while i < n invariant i <= n, handles.len() == i, decreases n - i, {
-                    let peer = lock.clone();
-                    let job = std::thread::spawn(move || {
-                        if let Some(guard) = peer.try_enter() {
-                            let scratch = Vec::<u8>::with_capacity(b as usize);
-                            drop(scratch);
-                            guard.leave();
-                        }
-                    });
-                    handles.push(job);
-                    i += 1;
-                }
-                while handles.len() > 0 invariant handles.len() <= n, decreases handles.len(), {
-                    let job = handles.pop().unwrap();
-                    let result = job.join();
-                }
-            }
-        }
-    };
-    let source = format!("{}\n{family}", include_str!("exclusive.verus.rs"));
-    verify_one_file("custom_population", source.clone(), &["--no-cheating"]).unwrap();
-    // The altered theorem cannot rule out precisely two outstanding guards.
-    let broken = source.replace("if population.len() > 1 {", "if population.len() > 2 {");
-    let error = verify_one_file("broken_population", broken, &["--no-cheating"]).unwrap_err();
+    let client = include_str!("../../../../examples/resource/memory/concurrent/custom_mutex.rs");
+    // The unmodified program is exercised as an example. This theorem fails
+    // to rule out precisely two outstanding guards of the same issuer.
+    let broken = PROTOCOL.replace("if population.len() > 1 {", "if population.len() > 2 {");
+    assert_ne!(PROTOCOL, broken);
+    let error = verify_files_vstd(
+        "broken_population",
+        [("test.rs".into(), client.into()), ("protocol.rs".into(), broken)],
+        "test.rs".into(),
+        true,
+        &["--no-cheating"],
+    )
+    .unwrap_err();
     assert_vir_error_msg(error, "postcondition not satisfied");
 }
 
@@ -365,7 +352,7 @@ fn a_moved_guard_and_a_fresh_acquisition_share_only_their_actual_issuer() {
             }
         }
     };
-    let source = format!("{}\n{handoff}", include_str!("exclusive.verus.rs"));
+    let source = format!("{}\n{handoff}", EXCLUSIVE);
     verify_one_file("guard_handoff", source.clone(), &["--no-cheating"]).unwrap();
     let separate =
         source.replace("Some(second) = lock.try_enter()", "Some(second) = other.try_enter()");

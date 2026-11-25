@@ -86,6 +86,12 @@ fn concurrent_exports_wait_for_the_byte_proof_and_erased_rust_checks() {
         crate::common::assert_vir_error_msg(err, "require verification of worker bodies");
         assert!(!artifact.exists());
     }
+    // A successful check of an unrelated module cannot publish the skipped worker proof.
+    let partial =
+        format!("{}\nverus! {{ mod checked {{ pub proof fn ok() {{}} }} }}", source("b + 107"));
+    crate::verify_one_file("filtered_pair", partial, &["--verify-only-module checked", &export])
+        .unwrap();
+    assert!(!artifact.exists());
     crate::verify_one_file("invalid_pair", source("b + 107"), &[&export]).unwrap_err();
     assert!(!artifact.exists());
     crate::verify_one_file("verified_pair", source("b + 108"), &[&export]).unwrap();

@@ -32,32 +32,12 @@ fn skipped_and_repeated_acquisitions_do_not_retain_a_previous_guard() {
 
 #[test]
 fn an_owned_result_can_outlive_its_guard_and_wait_for_a_delayed_join() {
-    let source = r#"
-        fn make(b: u16) -> Vec<u8> resources peak(memory) <= b + 26 {
-            Vec::<u8>::with_capacity(b as usize)
-        }
-        fn work(b: u16) resources peak(memory) <= LIMIT {
-            let cell = std::sync::Arc::new(std::sync::Mutex::new(0u8));
-            let peer = cell.clone();
-            let producer = std::thread::spawn(move || {
-                let guard = cell.lock();
-                let buffer = make(b);
-                drop(guard);
-                buffer
-            });
-            let worker = vstd::thread::spawn(move || {
-                let guard = peer.lock();
-                let scratch = Vec::<u8>::with_capacity(b as usize);
-                drop(scratch);
-                drop(guard);
-            });
-            let done = worker.join();
-            let output = producer.join().unwrap();
-            drop(output);
-        }
-    "#;
-    verifies("retained_output", &source.replace("LIMIT", "2 * b + 256"));
-    exceeds("omitted_output", &source.replace("LIMIT", "b + 256"));
+    let source =
+        include_str!("../../../../../../examples/resource/memory/concurrent/worker_result.rs");
+    let short = source.replace("2 * bytes + 256", "bytes + 256");
+    assert_ne!(source, short);
+    let err = crate::verify_one_file("omitted_output", short, &["--no-cheating"]).unwrap_err();
+    crate::common::assert_any_vir_error_msg(err, "memory budget exceeded");
 }
 
 #[test]
@@ -107,4 +87,39 @@ fn the_publisher_keeps_its_mutex_identity_during_a_helper_call() {
     "#;
     verifies("publisher_held", &source.replace("ACTION", "scratch(b); drop(guard);"));
     exceeds("publisher_released", &source.replace("ACTION", "drop(guard); scratch(b);"));
+}
+
+#[test]
+fn four_workers_require_the_guard_for_scratch_and_all_slots_after_join() {
+    let example =
+        include_str!("../../../../../../examples/resource/memory/concurrent/mutex_lifetimes.rs");
+    let checkpoint = "57 + 4 * (24 + 256));";
+    for (name, source, site) in [
+        (
+            "scratch_after_release",
+            example.replace(
+                "temporary(bytes);\n        drop(guard);",
+                "drop(guard);\n        temporary(bytes);",
+            ),
+            "resources peak(memory) <= bytes + 256",
+        ),
+        (
+            "one_retained",
+            example.replace(checkpoint, "57 + (24 + 256));"),
+            "assert(current(memory)",
+        ),
+        ("one_byte_missing", example.replace(checkpoint, "1176);"), "assert(current(memory)"),
+    ] {
+        assert_ne!(example, source);
+        let err = crate::verify_one_file(name, source, &["--no-cheating", "--multiple-errors=0"])
+            .unwrap_err();
+        assert!(
+            err.errors.iter().any(|e| e.message.contains("memory budget exceeded")
+                && e.spans
+                    .iter()
+                    .any(|span| span.text.iter().any(|line| line.text.contains(site)))),
+            "{:?}",
+            err.errors
+        );
+    }
 }

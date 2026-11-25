@@ -20,7 +20,7 @@ For a fixed shared lock, a worker that acquires a writer receives the allocation
 
 For a concrete custom guard with a local `BoundedHolder` proof body, the memory trace can show which allocations are live while the guard is intact. This covers owned inputs, initialized immutable locals and a guard bound on the successful arm of an acquisition. Moving the guard into a checked helper associates the helper’s observations with the actual argument. A worker can supply that argument from a guard moved into its closure. A buffer that survives release stays charged, even when the tracked token occupies zero bytes. A direct move to another immutable name preserves the same witness through the move. A checked helper can return the guard directly or inside `Some`, optionally releasing it on a `None` path. The successful result keeps the identity of the caller’s argument when every returning path that supplies a guard agrees on that argument. If a helper can return either of two inputs, its result still covers local storage while held. A custom issuer can implement `ProtocolInstance` and `BoundedInstance` and prove `issued(result, issuer)` or `issued_on_success(result, issuer)` in a standalone postcondition. These ordinary Verus predicates relate the returned witness’s instance and capacity to immutable projections of the same executable receiver. The analyzer substitutes actual issuer arguments at helper calls and follows captured receivers and clones of a fixed Arc backing into independent workers. Equal capacities alone supply no instance relation.
 
-In the custom guard regression, a helper reserves `n` bytes in a vector, drops it and then releases its guard. For `n <= 500`, the verified peak is at most 41 bytes when `n == 0` and `n + 40` otherwise. Reducing either allowance by one byte fails verification. [Executable guard regression](../source/rust_verify_test/tests/atomic_lib/exclusive.verus.rs)
+In the custom guard regression, a helper reserves `n` bytes in a vector, drops it and then releases its guard. For `n <= 500`, the verified peak is at most 41 bytes when `n == 0` and `n + 40` otherwise. Reducing either allowance by one byte fails verification. [Guard regressions](../source/rust_verify_test/tests/atomic_lib/holders.rs) · [Custom lock and proof](../examples/resource/memory/concurrent/protocol/mod.rs)
 
 ## How do I express a bound?
 
@@ -49,6 +49,13 @@ overlap another worker's buffer. The checks also include handle slots, captures 
 live caller storage. To use a symbolic vector reservation in the combined peak,
 the verifier checks that the reservation still covers the vector's charge at that
 point. [Executable cases](../source/rust_verify_test/tests/resource/memory/fixed_workers.rs)
+
+Four workers can share one `bytes`-sized temporary reservation when the same
+mutex guard stays live across the helper that allocates and frees it. If each
+worker instead pushes a 256-byte buffer into an initially empty shared vector,
+the caller can still hold 1,177 bytes after all joins. The shared cell and handle
+occupy 57 bytes, and each inner vector contributes a 24-byte slot and its
+256-byte reservation. [Executable comparison](../examples/resource/memory/concurrent/mutex_lifetimes.rs)
 
 A fixed-budget section can publish workers if every descendant joins before each
 reachable section exit. The caller pays the section allowance alongside its own live
@@ -80,7 +87,7 @@ actual scalar argument when that result initializes a shared Arc outside the
 publishing loop. A custom guard with a verified population theorem and constant
 capacity can use the same composition. For a verified RwLock, two readers can
 overlap, while a writer excludes another reader or writer on the same instance.
-[Symbolic semaphore example](../source/rust_verify_test/tests/atomic_lib/semaphore_population.verus.rs)
+[Symbolic semaphore example](../examples/resource/memory/concurrent/semaphore.rs)
 
 The collected population uses an immutable upper bound from the publishing loop's
 condition. Verus checks it at every spawn. At a compound expression that can

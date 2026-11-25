@@ -42,7 +42,10 @@ Argument-free `peak(helper)` remains unsupported by runtime queries; its existin
 verification semantics are unchanged.
 
 `value_size` supports native integer and Boolean types, unit, fixed integer
-arrays, and the standard `Vec`, `Box`, and supported `Option` handles. `ref_size`
+arrays, and the standard `Vec`, `Box`, and supported `Option` handles. Concurrency layouts
+include standard `Arc`, `JoinHandle`, `Mutex`, `MutexGuard`, `Result` and the
+supported lock error wrappers over admitted payloads. Verifier-only vstd types
+can use explicit byte formulas in runtime-queryable contracts. `ref_size`
 supports references to sized values and slices. `return_size(helper)` uses
 those same layouts for the result of a named, unconditional safe Rust exec
 function in the same `verus!` item scope. It reads the signature without
