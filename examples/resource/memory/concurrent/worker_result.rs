@@ -1,8 +1,8 @@
-// Both workers allocate under the same mutex. Can their buffers still overlap?
-// If the producer finishes first, its join handle keeps the returned buffer alive.
-// The caller joins the consumer first, so the consumer can acquire the mutex and
-// allocate its scratch while the producer's buffer is still waiting to be collected.
-// Verus Meter must therefore count `2 * bytes` of buffer storage at peak.
+// This example shows why two buffers can be live at once even when both workers
+// allocate under the same mutex. If the producer finishes first, its join handle
+// keeps the returned buffer alive while the consumer acquires the mutex and
+// allocates its scratch buffer. The peak bound must therefore include `2 * bytes`
+// for the two reservations.
 use std::sync::{Arc, Mutex};
 use vstd::prelude::*;
 
