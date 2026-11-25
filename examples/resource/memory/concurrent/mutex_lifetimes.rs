@@ -21,23 +21,48 @@ macro_rules! four_workers {
     }};
 }
 
+// One requested reservation, shared by the executable allocation and its size formula.
+macro_rules! payload_bytes {
+    () => { 256 };
+}
+
 verus! {
 
 type Cell = Mutex<Vec<Vec<u8>>>;
+type SharedCell = Arc<Cell>;
+type Job = std::thread::JoinHandle<()>;
+type Guard = std::sync::MutexGuard<'static, Vec<Vec<u8>>>;
+type LockResult = Result<Guard, std::sync::PoisonError<Guard>>;
+type Payload = [u8; payload_bytes!()];
 
-// The two-byte input and the Vec header occupy 26 bytes alongside its reservation.
+// The coordinator retains one handle and the shared backing throughout the joins.
+spec fn shared_cell() -> nat {
+    value_size(SharedCell) + 2 * value_size(usize) + value_size(Cell)
+}
+
+// Each published worker has a handle, a completion tag and a captured Arc.
+spec fn published_worker() -> nat {
+    value_size(Job) + value_size(u8) + value_size(SharedCell)
+}
+
+// The reservation, its Vec header and the input are live together.
 fn temporary(bytes: u16)
-    resources peak(memory) <= bytes + 26,
+    resources peak(memory) <= bytes + value_size(Vec<u8>) + value_size(bytes),
 {
     let scratch = Vec::<u8>::with_capacity(bytes as usize);
     drop(scratch);
 }
 
-// Each worker holds its lock result across the helper, including its cleanup.
-// Both variants of a blocking lock result own the guard. The 256 fixed bytes
-// allow for the shared cell, captures, handles, completion tags and working frames.
+// The coordinator retains its input. Each worker captures its own copy and
+// can hold a lock result while another worker runs the helper.
+spec fn scratch_frames(bytes: u16) -> nat {
+    shared_cell() + value_size(bytes)
+        + 4 * (published_worker() + value_size(bytes) + value_size(LockResult))
+}
+
+// Only one helper can own its scratch reservation at a time.
 fn scratch(bytes: u16)
-    resources peak(memory) <= bytes + 256,
+    resources peak(memory) <= scratch_frames(bytes) + peak(temporary(bytes)),
 {
     let cell = Arc::new(Cell::new(Vec::new()));
     four_workers!(cell, |peer| {
@@ -45,29 +70,36 @@ fn scratch(bytes: u16)
         temporary(bytes);
         drop(guard);
     });
-    // The input adds two bytes to the 57-byte empty shared cell and handle.
-    assert(current(memory) <= 59);
+    assert(current(memory) <= value_size(bytes) + value_size(SharedCell)
+        + 2 * value_size(usize) + value_size(Cell));
     drop(cell);
 }
 
-// The outer Vec starts with zero reservation. Each successful push retains a
-// 24-byte occupied slot (the inner Vec header) and its 256-byte reservation.
-// The 57 bytes cover the remaining Arc handle, count fields, mutex and outer
-// Vec header. The peak allowance combines that final contents bound with one
-// 256-byte reservation in construction under the lock and 48 bytes per worker
-// for captures, working frames, join handles and completion tags.
+// Each occupied outer slot stores the inner Vec header alongside its separate reservation.
+spec fn retained_entry() -> nat {
+    value_size(Vec<u8>) + value_size(Payload)
+}
+
+// Allow the shared contents and one in-progress push under the guard.
+spec fn retained_budget() -> nat {
+    let shared = shared_cell() + 4 * retained_entry();
+    let workers = 4 * (published_worker() + value_size(LockResult));
+    shared + workers + value_size(Guard) + retained_entry()
+}
+
 fn retained()
-    resources peak(memory) <= 57 + 4 * (24 + 256) + 256 + 4 * 48,
+    resources peak(memory) <= retained_budget(),
 {
     let cell = Arc::new(Cell::new(Vec::new()));
     four_workers!(cell, |peer| {
         let result = peer.lock();
         if result.is_err() { return; }
         let mut guard = result.unwrap();
-        let buffer = Vec::<u8>::with_capacity(256);
+        let buffer = Vec::<u8>::with_capacity(payload_bytes!());
         guard.push(buffer);
     });
-    assert(current(memory) <= 57 + 4 * (24 + 256));
+    assert(current(memory) <= value_size(SharedCell) + 2 * value_size(usize) + value_size(Cell)
+        + 4 * (value_size(Vec<u8>) + value_size(Payload)));
     drop(cell);
 }
 

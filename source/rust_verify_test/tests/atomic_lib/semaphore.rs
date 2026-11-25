@@ -133,7 +133,8 @@ fn independent_acquisitions_use_the_actual_shared_backing() {
 fn a_counted_population_uses_the_smaller_of_workers_and_permits() {
     let family = include_str!("../../../../examples/resource/memory/concurrent/semaphore.rs");
     verify_one_file("permit_population", family.into(), &["--no-cheating"]).unwrap();
-    let short = family.replace("(if n <= k { n } else { k }) * b", "b");
+    let short =
+        family.replace("(if n <= k { n as nat } else { k as nat }) * (b as nat)", "b as nat");
     let on_failure = family.replace(
         "permit.release();\n            }",
         "permit.release(); } else {
@@ -161,7 +162,9 @@ fn capacity_comes_from_the_checked_constructor_argument() {
         }
     };
     let batch = include_str!("../../../../examples/resource/memory/concurrent/semaphore.rs")
-        .replace("Semaphore::new(k as usize)", "make(n as usize, k as usize)");
+        .replace("Semaphore::new(k as usize)", "make(n as usize, k as usize)")
+        // This variant calls the checked two-argument constructor helper.
+        .replace("<= batch_budget(n, k, b),", "<= batch_budget(n, k, b) + peak(make),");
     let source = format!("{batch}\n{constructor}");
     verify_one_file("constructor_argument", source.clone(), &["--no-cheating"]).unwrap();
     // At n=4 and k=1 all four allocations can now coexist.

@@ -5,13 +5,32 @@ use vstd::prelude::*;
 verus! {
 
 fn make(bytes: u16) -> Vec<u8>
-    resources peak(memory) <= bytes + 26,
+    resources peak(memory) <= bytes + value_size(bytes) + value_size(Vec<u8>),
 {
     Vec::<u8>::with_capacity(bytes as usize)
 }
 
+type SharedCell = Arc<Mutex<u8>>;
+type Guard = std::sync::MutexGuard<'static, u8>;
+type LockResult = Result<Guard, std::sync::PoisonError<Guard>>;
+
+// Both workers capture the Arc and byte count. Each has a completion tag.
+spec fn worker_frame() -> nat {
+    value_size(SharedCell) + value_size(u16) + value_size(u8) + value_size(LockResult)
+}
+
+// The producer's returned Vec can still own its reservation while the consumer
+// owns its scratch. Both workers share one Arc backing and have separate join handles.
+spec fn work_budget(bytes: u16) -> nat {
+    let buffers = 2 * (bytes as nat) + 2 * value_size(Vec<u8>);
+    let shared = value_size(Mutex<u8>) + 2 * value_size(usize);
+    let jobs = value_size(std::thread::JoinHandle<Vec<u8>>)
+        + value_size(vstd::thread::JoinHandle<()>);
+    value_size(bytes) + shared + jobs + 2 * worker_frame() + buffers
+}
+
 fn work(bytes: u16)
-    resources peak(memory) <= 2 * bytes + 256,
+    resources peak(memory) <= work_budget(bytes),
 {
     let cell = Arc::new(Mutex::new(0u8));
     let peer = cell.clone();

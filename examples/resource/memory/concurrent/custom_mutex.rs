@@ -6,8 +6,26 @@ use vstd::prelude::*;
 
 verus! {
 
+type Job = std::thread::JoinHandle<()>;
+type Shared = std::sync::Arc<Lock>;
+
+spec fn batch_budget(n: u16, b: u16) -> nat {
+    let shared = value_size(Shared) + 2 * value_size(usize) + value_size(Lock);
+    let inputs_and_counter = value_size(n) + value_size(b) + value_size(u16);
+    let coordinator = inputs_and_counter + value_size(Vec<Job>)
+        + value_size(Job) + value_size(std::thread::Result<()>);
+    let count = n as nat;
+    // One reserved handle slot and at most one live completion tag per worker.
+    let outstanding = count * value_size(Job) + count * value_size(u8);
+    let captures = count * value_size(Shared) + count * value_size(b);
+    let protocol_workspace = protocol::transition_workspace(count);
+    let attempts = count * value_size(Option<protocol::Guard>);
+    let scratch = if n == 0 { 0nat } else { b as nat };
+    shared + coordinator + outstanding + captures + attempts + protocol_workspace + scratch
+}
+
 fn custom_batch(n: u16, b: u16)
-    resources peak(memory) <= 512 + 192 * n + b,
+    resources peak(memory) <= batch_budget(n, b),
 {
     let lock = std::sync::Arc::new(Lock::new());
     let mut handles = Vec::with_capacity(n as usize);

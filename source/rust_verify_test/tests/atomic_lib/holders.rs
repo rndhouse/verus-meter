@@ -84,10 +84,12 @@ test_verify_one_file! {
 fn a_custom_exclusive_protocol_needs_the_successful_atomic_transition() {
     let source = EXCLUSIVE;
     verify_one_file("exclusive_holder", source.into(), &[]).unwrap();
-    for (method, peak) in [("acquire", 30), ("release", 33)] {
+    for (method, peak) in [("try_enter", 30), ("leave", 33)] {
         let short = peak - 1;
-        let body =
-            source.replace(&format!("peak(memory) <= {peak}"), &format!("peak(memory) <= {short}"));
+        let (_, method_body) = source.split_once(&format!("fn {method}(")).unwrap();
+        let (_, contract) = method_body.split_once("resources peak(memory) <= ").unwrap();
+        let (bound, _) = contract.split_once(",\n    {").unwrap();
+        let body = source.replacen(bound, &short.to_string(), 1);
         let error = verify_one_file(&format!("custom_{method}_bytes"), body, &[]).unwrap_err();
         crate::common::assert_vir_error_msg(
             error,

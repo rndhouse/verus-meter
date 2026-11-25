@@ -34,7 +34,7 @@ fn skipped_and_repeated_acquisitions_do_not_retain_a_previous_guard() {
 fn an_owned_result_can_outlive_its_guard_and_wait_for_a_delayed_join() {
     let source =
         include_str!("../../../../../../examples/resource/memory/concurrent/worker_result.rs");
-    let short = source.replace("2 * bytes + 256", "bytes + 256");
+    let short = source.replace("2 * (bytes as nat)", "(bytes as nat)");
     assert_ne!(source, short);
     let err = crate::verify_one_file("omitted_output", short, &["--no-cheating"]).unwrap_err();
     crate::common::assert_any_vir_error_msg(err, "memory budget exceeded");
@@ -93,7 +93,7 @@ fn the_publisher_keeps_its_mutex_identity_during_a_helper_call() {
 fn four_workers_require_the_guard_for_scratch_and_all_slots_after_join() {
     let example =
         include_str!("../../../../../../examples/resource/memory/concurrent/mutex_lifetimes.rs");
-    let checkpoint = "57 + 4 * (24 + 256));";
+    let checkpoint = "4 * (value_size(Vec<u8>) + value_size(Payload)));";
     for (name, source, site) in [
         (
             "scratch_after_release",
@@ -101,14 +101,21 @@ fn four_workers_require_the_guard_for_scratch_and_all_slots_after_join() {
                 "temporary(bytes);\n        drop(guard);",
                 "drop(guard);\n        temporary(bytes);",
             ),
-            "resources peak(memory) <= bytes + 256",
+            "resources peak(memory) <= scratch_frames(bytes)",
         ),
         (
             "one_retained",
-            example.replace(checkpoint, "57 + (24 + 256));"),
+            example.replace(checkpoint, "value_size(Vec<u8>) + value_size(Payload));"),
             "assert(current(memory)",
         ),
-        ("one_byte_missing", example.replace(checkpoint, "1176);"), "assert(current(memory)"),
+        (
+            "one_byte_missing",
+            example.replace(
+                checkpoint,
+                "4 * value_size(Vec<u8>) + 3 * value_size(Payload) + value_size([u8; 255]));",
+            ),
+            "assert(current(memory)",
+        ),
     ] {
         assert_ne!(example, source);
         let err = crate::verify_one_file(name, source, &["--no-cheating", "--multiple-errors=0"])

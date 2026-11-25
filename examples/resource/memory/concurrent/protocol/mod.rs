@@ -37,9 +37,15 @@ impl BoundedInstance for Lock {
     open spec fn holder_limit(&self) -> nat { 1 }
 }
 
+// Release is the largest transition. It keeps the guard, references used by
+// the atomic store, and its Boolean operand live. Scale each slot across workers.
+pub open spec fn transition_workspace(workers: nat) -> nat {
+    workers * value_size(Guard) + 3 * (workers * ref_size(&bool)) + workers * value_size(bool)
+}
+
 impl Lock {
     pub(crate) fn new() -> (s: Self)
-        resources peak(memory) <= 64,
+        resources peak(memory) <= 3 * value_size(bool),
     {
         let tracked token = FracGhost::<()>::new(());
         let domain = Ghost(token.id());
@@ -51,7 +57,10 @@ impl Lock {
         ensures
             issued_on_success(g, self),
             g matches Some(g) ==> g.instance_id() == self.protocol_id(),
-        resources peak(memory) <= 30,
+        // The expected and replacement flags are live as locals and as call
+        // arguments alongside the receiver references and tagged result.
+        resources peak(memory) <= 3 * ref_size(&bool)
+            + 4 * value_size(bool) + value_size(Result<bool, bool>),
     {
         proof {
             use_type_invariant(self);
@@ -85,7 +94,7 @@ impl<'a> Guard<'a> {
     }
 
     pub(crate) fn leave(self)
-        resources peak(memory) <= 33,
+        resources peak(memory) <= value_size(Guard) + 3 * ref_size(&bool) + value_size(bool),
     {
         proof {
             use_type_invariant(&self);

@@ -6,11 +6,31 @@ use vstd::resource::semaphore::Semaphore;
 
 verus! {
 
+type Job = std::thread::JoinHandle<()>;
+type Shared = std::sync::Arc<Semaphore>;
+
+spec fn batch_budget(n: u16, k: u16, b: u16) -> nat {
+    let shared = value_size(Shared) + 2 * value_size(usize) + value_size(Semaphore);
+    let inputs_and_counter = value_size(n) + value_size(k) + value_size(b) + value_size(u16);
+    let coordinator = inputs_and_counter + value_size(Vec<Job>)
+        + value_size(Job) + value_size(std::thread::Result<()>);
+    let count = n as nat;
+    // One reserved handle slot and at most one live completion tag per worker.
+    let outstanding = count * value_size(Job) + count * value_size(u8);
+    let captures = count * value_size(Shared) + count * value_size(b);
+    // The verified attempt wrapper peaks at 81 bytes including its reference
+    // parameter. Remove that caller slot to use the method workspace here.
+    let protocol_workspace = (count * 81 - count * ref_size(&Semaphore)) as nat;
+    let attempts = count * value_size(Option<vstd::resource::semaphore::Permit>);
+    let scratch = (if n <= k { n as nat } else { k as nat }) * (b as nat);
+    shared + coordinator + outstanding + captures + attempts + protocol_workspace + scratch
+}
+
 fn batch(n: u16, k: u16, b: u16)
     requires
-        0 <= n as int * b as int <= 4294967296int,
-        0 <= k as int * b as int <= 4294967296int,
-    resources peak(memory) <= 512 + 192 * n + (if n <= k { n } else { k }) * b,
+        0 <= n as int * b as int <= u32::MAX as int,
+        0 <= k as int * b as int <= u32::MAX as int,
+    resources peak(memory) <= batch_budget(n, k, b),
 {
     let semaphore = std::sync::Arc::new(Semaphore::new(k as usize));
     let mut handles = Vec::with_capacity(n as usize);
