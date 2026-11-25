@@ -247,7 +247,7 @@ impl Execution {
             }
             let mut local = Phases::default();
             local.insert(held, exported);
-            for (_, child) in outstanding(p, children, analysis) {
+            for (_, child) in outstanding(p, children, &analysis.growth) {
                 let keep =
                     local.0.keys().chain(child.0.keys()).flat_map(|h| h.keys().copied()).collect();
                 local = local.together(child, &keep, constraints, &p.span);

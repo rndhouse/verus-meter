@@ -6,7 +6,7 @@ use super::model::{MODEL_NAME, unsupported};
 use super::synchronization::local::{Boundary, Condition};
 use crate::ast::{Expr, VirErr, VirErrAs};
 use crate::messages::{Span, note};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 mod calls;
@@ -291,6 +291,32 @@ impl Point {
             inputs: path.inputs.clone(),
         }
     }
+
+    /// Combine the caller's live storage with a concurrent bound at this point.
+    /// The bound already covers the identified shared allocations. Fixed bytes
+    /// can only be removed from an observation that includes the full fixed ledger.
+    pub(super) fn with_worker_cost(&self, extra: Expr, covered: &BTreeSet<u64>) -> Footprint {
+        let mut cost = self.cost.clone();
+        if !covered.is_empty() {
+            cost = cost.without_allocations(&self.span, covered);
+            if self.complete_fixed {
+                let fixed = self
+                    .fixed_origins
+                    .iter()
+                    .filter(|origin| origin.host_heap && covered.contains(&origin.identity))
+                    .map(|origin| origin.bytes)
+                    .sum();
+                if fixed != 0 {
+                    cost = cost.remove(
+                        &self.span,
+                        MemoryKind::host_heap(),
+                        contracts::literal(&self.span, fixed),
+                    );
+                }
+            }
+        }
+        cost.add(&self.span, Footprint::allowance(extra))
+    }
 }
 
 #[derive(Clone)]
@@ -333,38 +359,16 @@ impl Accounting {
         }
     }
 
-    pub(super) fn replace_published_cells(&mut self, cells: Vec<std::collections::BTreeSet<u64>>) {
-        assert_eq!(cells.len(), self.report.points.len());
-        for (point, ids) in Arc::make_mut(&mut self.report.points).iter_mut().zip(cells) {
-            if !ids.is_empty() {
-                point.cost = point.cost.without_allocations(&point.span, &ids);
-                if point.complete_fixed {
-                    let fixed = point
-                        .fixed_origins
-                        .iter()
-                        .filter(|o| o.host_heap && ids.contains(&o.identity))
-                        .map(|o| o.bytes)
-                        .sum();
-                    if fixed != 0 {
-                        point.cost = point.cost.remove(
-                            &point.span,
-                            MemoryKind::host_heap(),
-                            contracts::literal(&point.span, fixed),
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    /// Include all compatible worker phases in the originating caller observation.
-    /// The coordinator still owns the completion tags and the canonical shared backing.
-    pub(super) fn include_worker_costs(&mut self, additions: Vec<Option<Expr>>) {
+    /// Apply each concurrent total directly to the observation that produced it.
+    /// A point with no worker or shared-cell contribution keeps its local cost.
+    pub(super) fn include_worker_costs(
+        &mut self,
+        mut total_at: impl FnMut(&Point) -> Option<Footprint>,
+    ) {
         self.report.covers_workers = true;
-        assert_eq!(self.report.points.len(), additions.len());
-        for (point, extra) in Arc::make_mut(&mut self.report.points).iter_mut().zip(additions) {
-            if let Some(extra) = extra {
-                point.cost = point.cost.add(&point.span, Footprint::allowance(extra));
+        for point in Arc::make_mut(&mut self.report.points) {
+            if let Some(total) = total_at(point) {
+                point.cost = total;
                 if let Some(bytes) = contracts::constant(&point.cost.total()) {
                     self.report.peak = self.report.peak.max(u128::from(bytes));
                 }

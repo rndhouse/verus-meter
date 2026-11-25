@@ -6,6 +6,7 @@
 //! without ordering independent workers by the compiler's traversal order.
 
 mod actor;
+mod fixed;
 mod population;
 mod roles;
 use roles::{Class, Constraints, Held};
@@ -18,6 +19,7 @@ use crate::resource::memory::{
     analysis::Analysis,
     contracts,
     footprint::{Footprint, MemoryBudget},
+    growth::Growth,
     loops::progress::difference,
     model::unit,
     synchronization::Instance,
@@ -98,10 +100,10 @@ fn maximum_cost(span: &Span, costs: &[Expr]) -> Expr {
 fn outstanding<'a>(
     point: &Point,
     children: &'a [(WorkerId, Phases)],
-    analysis: &Analysis<'_>,
+    growth: &Growth,
 ) -> impl Iterator<Item = (WorkerId, &'a Phases)> {
     children.iter().filter_map(move |(id, phases)| {
-        let worker = &analysis.growth.worker_executions[id];
+        let worker = &growth.worker_executions[id];
         (point.values.contains(&worker.completion)
             && point.collected_tag != Some(worker.completion)
             && point.values.is_disjoint(&worker.entry.storage.value.ids))
@@ -229,85 +231,9 @@ impl Analysis<'_> {
                 &constraints,
             );
         }
-        let idle: BTreeMap<_, _> = self
-            .transitions
-            .protected_histories
-            .iter()
-            .map(|(&root, history)| {
-                let mut phases = Phases::default();
-                phases.insert(Held::new(), contracts::literal(&function.span, 0));
-                phases.insert(
-                    [(Class::Payload(root), 1)].into(),
-                    history.idle_bytes(&function.span)?,
-                );
-                Some((root, phases))
-            })
-            .collect::<Option<_>>()
-            .expect("a linked history has a publication");
-        let views: Vec<_> = workers
-            .iter()
-            .flat_map(|(id, _)| {
-                let worker = &self.growth.worker_executions[id];
-                worker.versioned_roots().collect::<BTreeSet<_>>().into_iter().map(|root| {
-                    (
-                        worker.completion,
-                        root,
-                        self.published_cell_slots(*id, root).collect::<BTreeSet<_>>(),
-                    )
-                })
-            })
-            .collect();
-        let native: BTreeSet<_> = self.transitions.mutex_intervals(&self.transitions).collect();
-        let mut cache = BTreeMap::new();
-        let mut additions = Vec::new();
-        let mut cells = Vec::new();
-        for p in self.storage.points() {
-            let actors: Vec<_> = outstanding(p, &workers, self).collect();
-            let mut roots = BTreeSet::new();
-            let mut slots = BTreeSet::new();
-            for (tag, root, ids) in &views {
-                if p.values.contains(tag) {
-                    roots.insert(*root);
-                    slots.extend(ids);
-                }
-            }
-            cells.push(slots);
-            let active: Vec<_> = actors
-                .iter()
-                .map(|(_, phases)| *phases)
-                .chain(roots.iter().map(|root| &idle[root]))
-                .collect();
-            if active.is_empty() {
-                additions.push(None);
-                continue;
-            }
-            // The publisher is also an actor. Preserve a held native guard
-            // across its own helper calls while pricing the outstanding peers.
-            let held: Held = p
-                .condition
-                .held
-                .iter()
-                .filter(|i| native.contains(i))
-                .map(|i| (Class::Mutex(i.instance), 1))
-                .collect();
-            let key = (actors.iter().map(|(id, _)| *id).collect::<Vec<_>>(), roots, held.clone());
-            let extra = cache.entry(key).or_insert_with(|| {
-                let mut product = Phases::default();
-                product.insert(held, contracts::literal(&p.span, 0));
-                for (index, worker) in active.iter().enumerate() {
-                    let remaining = active[index + 1..]
-                        .iter()
-                        .flat_map(|peer| peer.0.keys().flat_map(|held| held.keys().copied()))
-                        .collect();
-                    product = product.together(worker, &remaining, &constraints, &p.span);
-                }
-                product.peak(&p.span).expect("unrestricted worker entry")
-            });
-            additions.push(Some(extra.clone()));
-        }
+        let mut fixed = fixed::FixedWorkers::new(self, &function.span, workers, constraints);
+        self.storage.include_worker_costs(|point| fixed.cost_at(point, &self.growth));
         self.obligations.extend(checks);
-        self.storage.replace_published_cells(cells);
-        self.storage.include_worker_costs(additions);
         true
     }
 }

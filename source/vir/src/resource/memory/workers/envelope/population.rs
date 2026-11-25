@@ -129,15 +129,10 @@ impl Analysis<'_> {
         // ceiling also lets ordinary arithmetic use a declared n*b directly.
         let bounded = contracts::minimum(span, actual, envelope.clone());
         let stable = observations::stable_sites(body, spawn.id, &self.growth.worker_joins);
-        let additions = self
-            .storage
-            .points()
-            .iter()
-            .map(|p| {
-                Some(if stable.contains(&p.span.id) { bounded.clone() } else { envelope.clone() })
-            })
-            .collect();
-        self.storage.include_worker_costs(additions);
+        self.storage.include_worker_costs(|point| {
+            let extra = if stable.contains(&point.span.id) { &bounded } else { &envelope };
+            Some(point.with_worker_cost(extra.clone(), &BTreeSet::new()))
+        });
         self.obligations.extend(checks);
         true
     }
