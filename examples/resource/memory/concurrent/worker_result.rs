@@ -1,8 +1,13 @@
-// This example shows why two buffers can be live at once even when both workers
-// allocate under the same mutex. If the producer finishes first, its join handle
-// keeps the returned buffer alive while the consumer acquires the mutex and
-// allocates its scratch buffer. The peak bound must therefore include `2 * bytes`
-// for the two reservations.
+// This example shows why a memory bound must count a buffer that a worker
+// returns. The buffer still takes up memory after the worker finishes.
+//
+// Suppose the producer runs first. It locks the mutex, reserves `bytes` for
+// its buffer, releases the lock, and returns the buffer. The caller waits for
+// the consumer to finish before it collects the producer's buffer.
+//
+// The consumer can now lock the same mutex and reserve `bytes` for its own
+// buffer. At that moment both buffers occupy memory, so their contribution
+// to the peak is `2 * bytes`.
 use std::sync::{Arc, Mutex};
 use vstd::prelude::*;
 
