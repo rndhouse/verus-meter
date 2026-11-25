@@ -62,19 +62,12 @@ are included only where needed for memory verification.
 
 ## Concurrency
 
-- Any number of workers can share one scratch allowance. Each reserves its buffer
-  in a helper and frees it before unlocking. Swapping the two drops lets all the
-  buffers overlap and breaks the same bound. [Counted mutex](concurrent/counted_mutex.rs) ·
-  [Unlock before drop (expected failure)](concurrent/expected-failures/unlock_before_drop.rs)
-- Four workers append buffers to a shared vector. After the joins, the caller
-  can still own all four reservations and their headers. [Retained buffers](concurrent/retained_buffers.rs)
-- A completed worker keeps its returned reservation until join. It can overlap
-  scratch protected by the very same mutex. [Worker result](concurrent/worker_result.rs)
-- With a semaphore, each scratch buffer requires one worker and one permit. Scratch
-  contributes at most `min(worker_count, permit_count) * scratch_capacity * value_size(u8)` bytes. [Bounded semaphore](concurrent/semaphore.rs)
-- A custom lock transfers an exclusive tracked token on a successful atomic
-  compare-exchange. Its verified holder bound lets the workers share one
-  scratch allowance. [Workers](concurrent/custom_mutex/mod.rs) · [Lock and proof](concurrent/custom_mutex/protocol.rs)
+- [Counted mutex](concurrent/counted_mutex.rs): prove that any number of workers need at most one scratch buffer between them when each frees its buffer before unlocking.
+- [Unlock before drop (expected failure)](concurrent/expected-failures/unlock_before_drop.rs): reverse the two drops and see the one-buffer bound fail.
+- [Retained buffers](concurrent/retained_buffers.rs): count all four buffer reservations and their headers when the shared vector still owns them after the joins.
+- [Worker result](concurrent/worker_result.rs): account for a completed worker's returned buffer while another worker allocates scratch under the same mutex.
+- [Bounded semaphore](concurrent/semaphore.rs): bound total scratch by `min(worker_count, permit_count) * scratch_capacity * value_size(u8)` bytes.
+- [Custom mutex](concurrent/custom_mutex/mod.rs): use a [verified lock protocol](concurrent/custom_mutex/protocol.rs) to prove that workers share one scratch allowance.
 
 ## Algorithms
 
