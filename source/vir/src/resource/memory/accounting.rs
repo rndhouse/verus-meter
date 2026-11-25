@@ -27,6 +27,14 @@ pub(super) enum CheckKind {
     WorkerState(&'static str),
 }
 
+/// A composed cost and a representative publication from the phases used to price it.
+/// A shared cell can contribute bytes even when there is no contributing worker.
+#[derive(Clone)]
+pub(super) struct WorkerCost<T> {
+    pub(super) cost: T,
+    pub(super) contributor: Option<super::workers::WorkerId>,
+}
+
 #[derive(Clone)]
 pub(super) struct Obligation {
     /// One publisher whose checked child or retained result contributes to this bound.
@@ -249,6 +257,8 @@ impl Live {
 
 #[derive(Clone)]
 pub(super) struct Point {
+    /// Set when worker composition adds a contributing publication to this observation.
+    pub(super) contributor: Option<super::workers::WorkerId>,
     /// Call site and callee profile behind this composed observation. The callee
     /// keeps its own constructors, branches and loop binders in the checked graph.
     pub(super) call_point: Option<usize>,
@@ -281,6 +291,7 @@ impl Point {
             span: span.clone(),
             call_point: None,
             collected_tag: None,
+            contributor: None,
             complete_fixed: false,
             cost,
             condition: Condition { held: path.held.iter().copied().collect(), boundary },
@@ -297,7 +308,11 @@ impl Point {
     /// Combine the caller's live storage with a concurrent bound at this point.
     /// The bound already covers the identified shared allocations. Fixed bytes
     /// can only be removed from an observation that includes the full fixed ledger.
-    pub(super) fn with_worker_cost(&self, extra: Expr, covered: &BTreeSet<u64>) -> Footprint {
+    pub(super) fn with_worker_cost(
+        &self,
+        extra: WorkerCost<Expr>,
+        covered: &BTreeSet<u64>,
+    ) -> WorkerCost<Footprint> {
         let mut cost = self.cost.clone();
         if !covered.is_empty() {
             cost = cost.without_allocations(&self.span, covered);
@@ -317,7 +332,10 @@ impl Point {
                 }
             }
         }
-        cost.add(&self.span, Footprint::allowance(extra))
+        WorkerCost {
+            cost: cost.add(&self.span, Footprint::allowance(extra.cost)),
+            contributor: extra.contributor,
+        }
     }
 }
 
@@ -365,12 +383,13 @@ impl Accounting {
     /// A point with no worker or shared-cell contribution keeps its local cost.
     pub(super) fn include_worker_costs(
         &mut self,
-        mut total_at: impl FnMut(&Point) -> Option<Footprint>,
+        mut total_at: impl FnMut(&Point) -> Option<WorkerCost<Footprint>>,
     ) {
         self.report.covers_workers = true;
         for point in Arc::make_mut(&mut self.report.points) {
             if let Some(total) = total_at(point) {
-                point.cost = total;
+                point.cost = total.cost;
+                point.contributor = total.contributor;
                 if let Some(bytes) = contracts::constant(&point.cost.total()) {
                     self.report.peak = self.report.peak.max(u128::from(bytes));
                 }

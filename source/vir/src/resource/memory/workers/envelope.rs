@@ -15,7 +15,7 @@ use super::{WorkerId, execution::Execution};
 use crate::ast::*;
 use crate::messages::Span;
 use crate::resource::memory::{
-    accounting::{CheckKind, Obligation, Point},
+    accounting::{CheckKind, Obligation, Point, WorkerCost},
     analysis::Analysis,
     contracts,
     footprint::{Footprint, MemoryBudget},
@@ -46,20 +46,25 @@ impl Phases {
         costs.push(amount);
     }
 
-    fn together(
-        &self,
+    /// Add a peer to the product. Report whether any compatible phase of that
+    /// peer has a possibly nonzero cost, for source diagnostics.
+    fn include_peer(
+        &mut self,
         peer: &Self,
         remaining: &BTreeSet<Class>,
         constraints: &Constraints,
         span: &Span,
-    ) -> Self {
+    ) -> bool {
         let mut result = Self::default();
+        let mut contributes = false;
         for (left, costs) in &self.0 {
             for (right, others) in &peer.0 {
                 let Some((held, feasible)) = constraints.combine(span, left, right, remaining)
                 else {
                     continue;
                 };
+                contributes =
+                    contributes || others.iter().any(|cost| contracts::constant(cost) != Some(0));
                 for a in costs {
                     for b in others {
                         let cost = contracts::add(span, a.clone(), b.clone());
@@ -77,7 +82,8 @@ impl Phases {
                 }
             }
         }
-        result
+        *self = result;
+        contributes
     }
 
     fn peak(&self, span: &Span) -> Option<Expr> {
@@ -109,17 +115,6 @@ fn outstanding<'a>(
             && point.values.is_disjoint(&worker.entry.storage.value.ids))
         .then_some((*id, phases))
     })
-}
-
-impl Growth {
-    /// A diagnostic witness only. The byte proof considers every compatible worker.
-    pub(in crate::resource::memory) fn point_contributor(&self, point: &Point) -> Option<WorkerId> {
-        self.worker_executions
-            .values()
-            .find(|w| point.values.contains(&w.completion))
-            .map(|w| w.actor)
-            .or_else(|| self.retained_worker_families.iter().next().copied())
-    }
 }
 
 impl crate::resource::memory::layout::Layouts {
@@ -241,7 +236,8 @@ impl Analysis<'_> {
                     {
                         // The imported backing is priced by its publisher. Its eventual
                         // obligation must include this worker's entire covered subtree.
-                        let bytes = cost.as_ref().unwrap_or(&query.point.cost).total();
+                        let bytes =
+                            cost.as_ref().map_or(&query.point.cost, |total| &total.cost).total();
                         checkpoint_frames
                             .entry((id, query.point.span.id))
                             .and_modify(|previous: &mut Expr| {
@@ -253,7 +249,7 @@ impl Analysis<'_> {
                             })
                             .or_insert(bytes);
                     }
-                    checks.push(query.obligation(cost, &self.growth));
+                    checks.push(query.obligation(cost));
                 }
             }
             subtrees.entry(w.publication.caller).or_default().push((id, phases));
@@ -288,7 +284,7 @@ impl Analysis<'_> {
         if let Some(observations) = self.growth.scoped_checks.get(&None) {
             for query in observations {
                 let cost = fixed.cost_at(&query.point, &self.growth);
-                checks.push(query.obligation(cost, &self.growth));
+                checks.push(query.obligation(cost));
             }
         }
         self.storage.include_worker_costs(|point| fixed.cost_at(point, &self.growth));

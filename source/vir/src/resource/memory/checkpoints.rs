@@ -1,12 +1,11 @@
 //! Keep each scoped obligation with the reaching ownership state until worker composition.
 //! Peak history follows normal control-flow merges, including previous loop iterations.
 use super::{
-    accounting::{CheckKind, Obligation, Peak, Point},
+    accounting::{CheckKind, Obligation, Peak, Point, WorkerCost},
     analysis::Analysis,
     budget::BudgetExpr,
     contracts,
     footprint::{Footprint, MemoryBudget},
-    growth::Growth,
     model::unsupported,
 };
 use crate::{
@@ -35,11 +34,11 @@ pub(super) struct ScopedCheck {
 }
 
 impl ScopedCheck {
-    pub(super) fn obligation(&self, concurrent: Option<Footprint>, growth: &Growth) -> Obligation {
+    pub(super) fn obligation(&self, concurrent: Option<WorkerCost<Footprint>>) -> Obligation {
         Obligation {
-            contributor: concurrent.as_ref().and_then(|_| growth.point_contributor(&self.point)),
+            contributor: concurrent.as_ref().and_then(|total| total.contributor),
             span: self.point.span.clone(),
-            cost: concurrent.unwrap_or_else(|| self.point.cost.clone()),
+            cost: concurrent.map_or_else(|| self.point.cost.clone(), |total| total.cost),
             bound: MemoryBudget::total(self.bound.clone()),
             kind: self.kind,
         }
@@ -83,7 +82,7 @@ impl Analysis<'_> {
     /// Preserve the original local checks when there is no composed worker domain.
     pub(super) fn local_scoped_checks(&mut self) {
         for query in self.growth.scoped_checks.values().flatten() {
-            self.obligations.push(query.obligation(None, &self.growth));
+            self.obligations.push(query.obligation(None));
         }
     }
 

@@ -1043,8 +1043,7 @@ pub(super) fn check(
     let bound =
         symbolic_bound.clone().unwrap_or_else(|| super::contracts::literal(&function.span, budget));
     analysis.obligations.extend(report.points.iter().map(|point| Obligation {
-        contributor:
-            report.covers_workers.then(|| analysis.growth.point_contributor(point)).flatten(),
+        contributor: point.contributor,
         span: point.span.clone(),
         cost: point.cost.clone(),
         bound: super::footprint::MemoryBudget::total(bound.clone()),

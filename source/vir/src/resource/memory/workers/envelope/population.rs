@@ -131,7 +131,11 @@ impl Analysis<'_> {
         let stable = observations::stable_sites(body, spawn.id, &self.growth.worker_joins);
         let total_at = |point: &Point| {
             let extra = if stable.contains(&point.span.id) { &bounded } else { &envelope };
-            point.with_worker_cost(extra.clone(), &BTreeSet::new())
+            let cost = WorkerCost {
+                cost: extra.clone(),
+                contributor: (contracts::constant(extra) != Some(0)).then_some(id),
+            };
+            point.with_worker_cost(cost, &BTreeSet::new())
         };
         if let Some(observations) = self.growth.scoped_checks.get(&None) {
             for query in observations {
@@ -141,9 +145,9 @@ impl Analysis<'_> {
                         .get(&scope)
                         .is_some_and(|section| section.workers.contains(&id))
                 }) {
-                    checks.push(query.obligation(Some(total_at(&query.point)), &self.growth));
+                    checks.push(query.obligation(Some(total_at(&query.point))));
                 } else {
-                    checks.push(query.obligation(None, &self.growth));
+                    checks.push(query.obligation(None));
                 }
             }
         }

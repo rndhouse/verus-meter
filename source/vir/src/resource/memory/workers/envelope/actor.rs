@@ -251,7 +251,7 @@ impl Execution {
             for (_, child) in outstanding(p, children, &analysis.growth) {
                 let keep =
                     local.0.keys().chain(child.0.keys()).flat_map(|h| h.keys().copied()).collect();
-                local = local.together(child, &keep, constraints, &p.span);
+                local.include_peer(child, &keep, constraints, &p.span);
             }
             for (held, costs) in local.0 {
                 for cost in costs {

@@ -31,6 +31,50 @@ fn current_and_peak_diverge_after_join() {
 }
 
 #[test]
+fn current_failure_labels_the_worker_with_outstanding_storage() {
+    let code = r#"use vstd::prelude::*;
+        verus! {
+        fn run() resources peak(memory) <= 1024 {
+            let first = std::thread::spawn(move || {});
+            let second = std::thread::spawn(move || {
+                let scratch = Vec::<u8>::with_capacity(256); drop(scratch);
+            });
+            BEFORE_JOIN
+            let done = first.join().unwrap();
+            AFTER_JOIN
+            let done = second.join().unwrap();
+        }
+        }"#;
+    let checkpoint = "assert(current(memory) <= 200);";
+    // The first worker has no scratch at either checkpoint. The publisher accounts separately
+    // for its handle and completion tag until the first join.
+    for (name, before, after) in
+        [("both_outstanding", checkpoint, ""), ("first_joined", "", checkpoint)]
+    {
+        let source = code.replace("BEFORE_JOIN", before).replace("AFTER_JOIN", after);
+        let error = crate::verify_one_file(name, source, &[]).unwrap_err();
+        let [diagnostic] = error.errors.as_slice() else { panic!("{:?}", error.errors) };
+        assert!(
+            diagnostic.message.contains("current(memory) assertion failed"),
+            "{}",
+            diagnostic.rendered
+        );
+        let labels: Vec<_> = diagnostic
+            .spans
+            .iter()
+            .filter(|span| {
+                span.label.as_deref().is_some_and(|label| label.starts_with("publication "))
+            })
+            .collect();
+        assert!(
+            matches!(labels.as_slice(), [span] if span.text[0].text.contains("let second =")),
+            "{}",
+            diagnostic.rendered
+        );
+    }
+}
+
+#[test]
 fn sections_bill_their_descendants_and_compose_with_the_parent() {
     let code = run(&format!(
         "resources peak(memory) <= LIMIT {{ {SPAWN}

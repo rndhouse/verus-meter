@@ -410,8 +410,9 @@ current observation includes its child phases when pricing shared backing in
 its publisher. Inside a worker’s budgeted section, backing that the worker
 received before section entry belongs to the enclosing frame. A worker that
 needs a peak history opens its own budgeted
-section. A source diagnostic can identify the contributing publication and a
-guard release in its body.
+section. When a fixed worker has a compatible phase with a potentially nonzero
+byte cost, a diagnostic can point to its publication and a guard release in its
+body. When several workers qualify, the diagnostic identifies one of them.
 
 ## Transition review cases
 

@@ -20,7 +20,7 @@ pub(super) struct FixedWorkers<'a> {
     mutexes: BTreeSet<Interval>,
     /// Cache only the worker and shared-cell contribution. The publisher's own
     /// ledger and the allocations it still charges can differ at each point.
-    peaks: BTreeMap<(Vec<WorkerId>, BTreeSet<RootId>, Held), Expr>,
+    peaks: BTreeMap<(Vec<WorkerId>, BTreeSet<RootId>, Held), WorkerCost<Expr>>,
 }
 
 impl<'a> FixedWorkers<'a> {
@@ -63,7 +63,11 @@ impl<'a> FixedWorkers<'a> {
 
     /// Return the simultaneous total, or leave the local footprint intact when
     /// neither a worker nor a published cell can contribute at this observation.
-    pub(super) fn cost_at(&mut self, point: &Point, growth: &Growth) -> Option<Footprint> {
+    pub(super) fn cost_at(
+        &mut self,
+        point: &Point,
+        growth: &Growth,
+    ) -> Option<WorkerCost<Footprint>> {
         let (extra, covered) = self.contribution(point, growth)?;
         Some(point.with_worker_cost(extra, &covered))
     }
@@ -76,8 +80,8 @@ impl<'a> FixedWorkers<'a> {
         analysis: &Analysis<'_>,
         worker: &Execution,
         params: &HashSet<VarIdent>,
-    ) -> Result<Option<Footprint>, VirErr> {
-        let Some((extra, covered)) = self.contribution(point, &analysis.growth) else {
+    ) -> Result<Option<WorkerCost<Footprint>>, VirErr> {
+        let Some((mut extra, covered)) = self.contribution(point, &analysis.growth) else {
             return Ok(None);
         };
         let missing = || {
@@ -96,15 +100,20 @@ impl<'a> FixedWorkers<'a> {
                 );
             }
         }
-        let names = crate::resource::memory::synchronization::versions::operands(&extra)
+        let names = crate::resource::memory::synchronization::versions::operands(&extra.cost)
             .ok_or_else(missing)?;
         if !names.iter().all(|n| local.contains_key(n)) {
             return Err(missing());
         }
-        Ok(Some(point.with_worker_cost(simplify::specialize(&extra, &local), &covered)))
+        extra.cost = simplify::specialize(&extra.cost, &local);
+        Ok(Some(point.with_worker_cost(extra, &covered)))
     }
 
-    fn contribution(&mut self, point: &Point, growth: &Growth) -> Option<(Expr, BTreeSet<u64>)> {
+    fn contribution(
+        &mut self,
+        point: &Point,
+        growth: &Growth,
+    ) -> Option<(WorkerCost<Expr>, BTreeSet<u64>)> {
         let actors: Vec<_> = outstanding(point, self.workers, growth).collect();
         let mut roots = BTreeSet::new();
         let mut covered = BTreeSet::new();
@@ -130,19 +139,27 @@ impl<'a> FixedWorkers<'a> {
         let extra = self.peaks.entry((ids, roots, held)).or_insert_with_key(|(_, roots, held)| {
             let active: Vec<_> = actors
                 .iter()
-                .map(|(_, phases)| *phases)
-                .chain(roots.iter().map(|root| &self.idle[root]))
+                .map(|(id, phases)| (Some(*id), *phases))
+                .chain(roots.iter().map(|root| (None, &self.idle[root])))
                 .collect();
             let mut product = Phases::default();
             product.insert(held.clone(), contracts::literal(&point.span, 0));
-            for (index, worker) in active.iter().enumerate() {
+            let mut contributor = None;
+            for (index, (id, phases)) in active.iter().enumerate() {
                 let remaining = active[index + 1..]
                     .iter()
-                    .flat_map(|peer| peer.0.keys().flat_map(|held| held.keys().copied()))
+                    .flat_map(|(_, peer)| peer.0.keys().flat_map(|held| held.keys().copied()))
                     .collect();
-                product = product.together(worker, &remaining, self.constraints, &point.span);
+                if product.include_peer(phases, &remaining, self.constraints, &point.span)
+                    && contributor.is_none()
+                {
+                    contributor = *id;
+                }
             }
-            product.peak(&point.span).expect("unrestricted worker entry")
+            WorkerCost {
+                cost: product.peak(&point.span).expect("unrestricted worker entry"),
+                contributor,
+            }
         });
         Some((extra.clone(), covered))
     }
