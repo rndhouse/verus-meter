@@ -12,6 +12,7 @@ use vstd::prelude::*;
 
 verus! {
 
+/// `make` reserves an empty byte buffer and returns it to the producer.
 fn make(buffer_capacity: u16) -> Vec<u8>
     resources peak(memory) <= buffer_capacity + value_size(buffer_capacity) + value_size(Vec<u8>),
 {
@@ -22,13 +23,13 @@ type SharedCell = Arc<Mutex<u8>>;
 type Guard = std::sync::MutexGuard<'static, u8>;
 type LockResult = Result<Guard, std::sync::PoisonError<Guard>>;
 
-// Both workers capture the Arc and the requested buffer capacity. Each has a completion tag.
+/// `worker_frame` counts one worker's captured inputs, lock result, and completion tag.
 spec fn worker_frame() -> nat {
     value_size(SharedCell) + value_size(u16) + value_size(u8) + value_size(LockResult)
 }
 
-// The producer's returned Vec can still own its reservation while the consumer
-// owns its scratch. Both workers share one Arc backing and have separate join handles.
+/// `work_budget` counts both buffer reservations and one shared mutex when
+/// bounding the peak across the two workers.
 spec fn work_budget(buffer_capacity: u16) -> nat {
     let buffers = 2 * (buffer_capacity as nat) + 2 * value_size(Vec<u8>);
     let shared = value_size(Mutex<u8>) + 2 * value_size(usize);
@@ -37,6 +38,9 @@ spec fn work_budget(buffer_capacity: u16) -> nat {
     value_size(buffer_capacity) + shared + jobs + 2 * worker_frame() + buffers
 }
 
+/// `work` starts two workers that allocate under the same mutex. It joins the
+/// consumer first, so the producer's result can still occupy memory while
+/// the consumer uses its scratch buffer.
 fn work(buffer_capacity: u16)
     resources peak(memory) <= work_budget(buffer_capacity),
 {
@@ -62,6 +66,7 @@ fn work(buffer_capacity: u16)
     drop(output);
 }
 
+/// `main` runs the two-worker example with 4 KiB per buffer.
 fn main() {
     work(4096);
 }

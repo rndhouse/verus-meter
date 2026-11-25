@@ -9,6 +9,8 @@ verus! {
 type Job = std::thread::JoinHandle<()>;
 type Shared = std::sync::Arc<Semaphore>;
 
+/// `batch_budget` bounds peak memory for `n` workers sharing `k` permits. At
+/// most `min(n, k)` scratch buffers of `b` bytes each can coexist.
 spec fn batch_budget(n: u16, k: u16, b: u16) -> nat {
     let shared = value_size(Shared) + 2 * value_size(usize) + value_size(Semaphore);
     let inputs_and_counter = value_size(n) + value_size(k) + value_size(b) + value_size(u16);
@@ -26,6 +28,9 @@ spec fn batch_budget(n: u16, k: u16, b: u16) -> nat {
     shared + coordinator + outstanding + captures + attempts + protocol_workspace + scratch
 }
 
+/// `batch` starts and joins workers that each try once for a permit. Only a
+/// worker holding a permit allocates scratch, and it frees the buffer before
+/// returning the permit.
 fn batch(n: u16, k: u16, b: u16)
     requires
         0 <= n as int * b as int <= u32::MAX as int,
@@ -59,6 +64,8 @@ fn batch(n: u16, k: u16, b: u16)
     }
 }
 
+/// `main` runs batches with zero permits, fewer permits than workers, and
+/// more permits than workers.
 fn main() {
     batch(4, 0, 4096);
     batch(4, 2, 4096);

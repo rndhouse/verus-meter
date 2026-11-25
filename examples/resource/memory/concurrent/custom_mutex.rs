@@ -9,6 +9,8 @@ verus! {
 type Job = std::thread::JoinHandle<()>;
 type Shared = std::sync::Arc<Lock>;
 
+/// `batch_budget` bounds peak memory for all workers. The lock admits one guard
+/// at a time, so at most one worker contributes a scratch buffer.
 spec fn batch_budget(n: u16, b: u16) -> nat {
     let shared = value_size(Shared) + 2 * value_size(usize) + value_size(Lock);
     let inputs_and_counter = value_size(n) + value_size(b) + value_size(u16);
@@ -24,6 +26,8 @@ spec fn batch_budget(n: u16, b: u16) -> nat {
     shared + coordinator + outstanding + captures + attempts + protocol_workspace + scratch
 }
 
+/// `custom_batch` starts and joins workers that each try to acquire the custom
+/// lock once. A successful worker frees its scratch before releasing the lock.
 fn custom_batch(n: u16, b: u16)
     resources peak(memory) <= batch_budget(n, b),
 {
@@ -54,6 +58,7 @@ fn custom_batch(n: u16, b: u16)
     }
 }
 
+/// `main` runs four workers sharing one custom lock.
 fn main() {
     custom_batch(4, 4096);
 }

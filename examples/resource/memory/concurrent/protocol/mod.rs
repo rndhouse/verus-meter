@@ -15,6 +15,8 @@ struct_with_invariants! {
         domain: Ghost<Loc>,
     }
 
+    /// `wf` relates the lock flag to its proof token. The unlocked lock holds
+    /// the unique token that a successful acquisition transfers to a guard.
     #[verifier::type_invariant]
     spec fn wf(&self) -> bool {
         invariant on flag with (domain) is (held: bool, token: Option<FracGhost<()>>) {
@@ -30,20 +32,23 @@ pub(crate) struct Guard<'a> {
 }
 
 impl ProtocolInstance for Lock {
+    /// `protocol_id` identifies this lock so the verifier can match guards to their issuer.
     closed spec fn protocol_id(&self) -> Loc { self.domain@ }
 }
 
 impl BoundedInstance for Lock {
+    /// `holder_limit` gives the maximum number of guards this lock can issue at once.
     open spec fn holder_limit(&self) -> nat { 1 }
 }
 
-// Release is the largest transition. It keeps the guard, references used by
-// the atomic store, and its Boolean operand live. Scale each slot across workers.
+/// `transition_workspace` bounds the space workers use to acquire or release
+/// the lock. Releasing a guard is the larger of the two operations.
 pub open spec fn transition_workspace(workers: nat) -> nat {
     workers * value_size(Guard) + 3 * (workers * ref_size(&bool)) + workers * value_size(bool)
 }
 
 impl Lock {
+    /// `new` creates an unlocked mutex with a fresh identity and its own proof token.
     pub(crate) fn new() -> (s: Self)
         resources peak(memory) <= 3 * value_size(bool),
     {
@@ -53,6 +58,8 @@ impl Lock {
         Lock { flag, domain }
     }
 
+    /// `try_enter` tries once to acquire the lock. A successful attempt returns
+    /// a guard carrying the lock's unique token.
     pub(crate) fn try_enter(&self) -> (g: Option<Guard<'_>>)
         ensures
             issued_on_success(g, self),
@@ -87,12 +94,14 @@ impl Lock {
 }
 
 impl<'a> Guard<'a> {
+    /// `wf` requires the guard to own the full token belonging to its lock.
     #[verifier::type_invariant]
     spec fn wf(&self) -> bool {
         &&& self.token@.id() == self.lock.domain@
         &&& self.token@.frac() == 1real
     }
 
+    /// `leave` consumes the guard and returns its token to the lock as it unlocks.
     pub(crate) fn leave(self)
         resources peak(memory) <= value_size(Guard) + 3 * ref_size(&bool) + value_size(bool),
     {
@@ -106,16 +115,20 @@ impl<'a> Guard<'a> {
 }
 
 impl<'a> Holder for Guard<'a> {
+    /// `instance_id` identifies the lock that issued this guard.
     closed spec fn instance_id(&self) -> Loc {
         self.lock.domain@
     }
 }
 
 impl<'a> BoundedHolder for Guard<'a> {
+    /// `capacity` reports that this guard's lock admits one holder at a time.
     open spec fn capacity(&self) -> nat {
         1
     }
 
+    /// `population_bound` proves that two guards for the same lock cannot coexist.
+    /// Each would have to own the same token in full.
     proof fn population_bound(tracked mut population: Seq<Self>, id: Loc, capacity: nat) {
         broadcast use vstd::seq::group_seq_axioms;
 

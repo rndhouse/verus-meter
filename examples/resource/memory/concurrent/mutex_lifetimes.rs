@@ -35,17 +35,18 @@ type Guard = std::sync::MutexGuard<'static, Vec<Vec<u8>>>;
 type LockResult = Result<Guard, std::sync::PoisonError<Guard>>;
 type Payload = [u8; payload_bytes!()];
 
-// The coordinator retains one handle and the shared backing throughout the joins.
+/// `shared_cell` counts the caller's handle and the backing storage shared by all four workers.
 spec fn shared_cell() -> nat {
     value_size(SharedCell) + 2 * value_size(usize) + value_size(Cell)
 }
 
-// Each published worker has a handle, a completion tag and a captured Arc.
+/// `published_worker` counts the join handle, completion tag, and shared handle
+/// associated with one spawned worker.
 spec fn published_worker() -> nat {
     value_size(Job) + value_size(u8) + value_size(SharedCell)
 }
 
-// The reservation, its Vec header and the input are live together.
+/// `temporary` reserves a scratch buffer and frees it before returning to the worker.
 fn temporary(bytes: u16)
     resources peak(memory) <= bytes + value_size(Vec<u8>) + value_size(bytes),
 {
@@ -53,14 +54,15 @@ fn temporary(bytes: u16)
     drop(scratch);
 }
 
-// The coordinator retains its input. Each worker captures its own copy and
-// can hold a lock result while another worker runs the helper.
+/// `scratch_frames` bounds the caller and worker storage that can coexist with
+/// a call to `temporary`.
 spec fn scratch_frames(bytes: u16) -> nat {
     shared_cell() + value_size(bytes)
         + 4 * (published_worker() + value_size(bytes) + value_size(LockResult))
 }
 
-// Only one helper can own its scratch reservation at a time.
+/// `scratch` runs four workers that free their scratch before unlocking the mutex.
+/// Their combined peak therefore includes only one scratch reservation.
 fn scratch(bytes: u16)
     resources peak(memory) <= scratch_frames(bytes) + peak(temporary(bytes)),
 {
@@ -75,18 +77,21 @@ fn scratch(bytes: u16)
     drop(cell);
 }
 
-// Each occupied outer slot stores the inner Vec header alongside its separate reservation.
+/// `retained_entry` counts one inner vector's header and reserved payload in the shared collection.
 spec fn retained_entry() -> nat {
     value_size(Vec<u8>) + value_size(Payload)
 }
 
-// Allow the shared contents and one in-progress push under the guard.
+/// `retained_budget` bounds the workers, the shared collection, and a buffer
+/// being added while a worker holds the mutex.
 spec fn retained_budget() -> nat {
     let shared = shared_cell() + 4 * retained_entry();
     let workers = 4 * (published_worker() + value_size(LockResult));
     shared + workers + value_size(Guard) + retained_entry()
 }
 
+/// `retained` lets each worker add a buffer to the shared vector under the mutex.
+/// The vector can still own all four buffers after the workers finish.
 fn retained()
     resources peak(memory) <= retained_budget(),
 {
@@ -103,6 +108,7 @@ fn retained()
     drop(cell);
 }
 
+/// `main` runs both mutex examples to show how freeing or retaining a buffer changes the bound.
 fn main() {
     scratch(4096);
     retained();
