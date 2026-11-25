@@ -57,7 +57,6 @@ fn batch(worker_count: u16, buffer_capacity: u16)
     let mut handles = Vec::with_capacity(worker_count as usize);
     let mut spawned = 0u16;
     while spawned < worker_count
-        invariant spawned <= worker_count, handles.len() == spawned,
         decreases worker_count - spawned,
     {
         let peer = cell.clone();
@@ -71,7 +70,6 @@ fn batch(worker_count: u16, buffer_capacity: u16)
         spawned += 1;
     }
     while handles.len() > 0
-        invariant handles.len() <= worker_count,
         decreases handles.len(),
     {
         let job = handles.pop().unwrap();
