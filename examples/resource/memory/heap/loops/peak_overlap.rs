@@ -1,9 +1,9 @@
-// Release temporary work buffers before storing larger results in a loop.
+// This example shows how the order of releases can keep a loop within a symbolic result
+// budget.
 //
-// This example shows how release order keeps temporary work and retained
-// results within an input-dependent memory budget. Dropping a temporary
-// collection releases its backing storage; a buffer extracted from it remains
-// allocated until that buffer is also dropped.
+// Each iteration drops its extracted work buffer before allocating the next, larger
+// result. Earlier results stay live in the collection.
+
 #![verifier::exec_allows_no_decreases_clause]
 
 use vstd::prelude::*;
@@ -16,22 +16,21 @@ type WorkBuffer = [u8; 64];
 // Larger result storage retained across iterations.
 type ResultBuffer = [u8; 128];
 
-// Cover the collection handle, reserved slots, and retained results, plus
-// the input count, loop counter, and next result handle. The count type
-// keeps this byte budget representable without extra preconditions.
-// During each iteration, room for the next result also covers temporary work.
+/// `result_budget` counts every retained result and the workspace for the next
+/// iteration.
 spec fn result_budget(result_count: u32) -> nat {
+    // The collection owns a vector of box handles. Each handle points to one result array.
     let handle = value_size(Vec<Box<ResultBuffer>>);
     let backing = (result_count as nat) * value_size(Box<ResultBuffer>);
     let results = (result_count as nat) * value_size(ResultBuffer);
+    // The requested count and completed count stay live while the next box is prepared.
     let scalars = 2 * value_size(u32);
     let next = value_size(Box<ResultBuffer>);
     handle + backing + results + scalars + next
 }
 
-// Build results by releasing each extracted work buffer before allocating
-// its result. Previously completed results remain allocated across iterations.
-// Compare the loop allocation overlap example under expected-failures.
+/// `build_results` releases each temporary buffer before allocating the result that
+/// takes its place.
 fn build_results(result_count: u32) -> Vec<Box<ResultBuffer>>
     resources peak(memory) <= result_budget(result_count),
 {
@@ -51,7 +50,7 @@ fn build_results(result_count: u32) -> Vec<Box<ResultBuffer>>
     results
 }
 
-// Receive results within the builder's allowance for this input.
+/// `main` requests two results within the builder's bound for that input.
 fn main()
     resources peak(memory) <= peak(build_results(2)),
 {

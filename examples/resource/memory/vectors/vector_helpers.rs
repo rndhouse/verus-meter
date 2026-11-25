@@ -1,12 +1,13 @@
-// Share a reserved buffer between helpers while keeping its memory use bounded.
+// This example shows how several helpers can share a single two-element reservation.
 //
-// The caller supplies room for the additions; the helpers use the same allocation.
+// The caller reserves the slots once. Each append borrows the vector, and the final
+// helper reads its length.
 
 use vstd::prelude::*;
 
 verus! {
 
-// Add a value when the caller has reserved enough room for it.
+/// `append` appends a value while the logical length is below the supplied capacity.
 fn append(values: &mut Vec<u32>, capacity: usize, value: u32)
     requires
         old(values).len() < capacity,
@@ -17,7 +18,7 @@ fn append(values: &mut Vec<u32>, capacity: usize, value: u32)
     values.push(value);
 }
 
-// Report the result without copying or taking ownership of the collection.
+/// `count` reads the vector's length through a shared borrow.
 fn count(values: &Vec<u32>) -> (n: usize)
     ensures
         n == values.len(),
@@ -26,9 +27,9 @@ fn count(values: &Vec<u32>) -> (n: usize)
     values.len()
 }
 
-// Combine helper guarantees to fill and inspect a bounded collection.
-//
-// The caller reserves space for two elements; helpers add their declared needs.
+/// `build` reserves two slots and fills them through successive helper calls.
+///
+/// The two append calls run in sequence, so the caller needs the helper's workspace once.
 fn build()
     resources peak(memory) <= value_size(Vec<u32>) + 2 * value_size(u32) + peak(append),
 {
@@ -39,7 +40,7 @@ fn build()
     assert(n == 2 && values[0] == 10 && values[1] == 20);
 }
 
-// Run the complete operation.
+/// `main` runs the two-slot collection example.
 fn main() { build(); }
 
 }

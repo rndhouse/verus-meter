@@ -1,4 +1,7 @@
-// Decode and checksum each input byte as a run of BLOCK_BYTES identical bytes.
+// This example shows how to bound checksumming when a vector stages two decoded blocks.
+//
+// As the loop computes the second checksum, both backing slots remain charged alongside
+// the current block, the saved first checksum, and the helper's workspace.
 
 use vstd::prelude::*;
 
@@ -26,9 +29,7 @@ fn checksum(block: &Block) -> u16
     sum
 }
 
-// The last checksum call sets the section peak. The consuming loop retains
-// both backing slots, and its current block occupies a separate local. The
-// first checksum is already in the output; the second is still being computed.
+/// `checksums` stages both decoded blocks before computing their checksums.
 fn checksums(input: [u8; 2]) -> Vec<u16>
     resources peak(memory) <= value_size(input) + ref_size(&[u8]) + value_size(Vec<u16>)
         + 2 * value_size(Block) + value_size(Block) + return_size(checksum)
@@ -37,7 +38,8 @@ fn checksums(input: [u8; 2]) -> Vec<u16>
     let packed: &[u8] = &input;
     let mut sums = Vec::new();
 
-    // Both decoded blocks occupy reserved slots while the checksums are produced.
+    // The consuming iterator retains two block-sized slots. At the second call,
+    // the current block is also a local and the first sum is already in the output.
     resources peak(memory) <= 2 * value_size(Block) + value_size(Block)
         + return_size(checksum) + peak(checksum)
     {
@@ -55,6 +57,7 @@ fn checksums(input: [u8; 2]) -> Vec<u16>
 
 } // verus!
 
+/// `main` checks the staged results for two input bytes.
 fn main() {
     assert_eq!(checksums([1, 2]), vec![128, 256]);
 }

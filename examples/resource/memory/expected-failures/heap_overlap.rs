@@ -1,5 +1,8 @@
 // rust_verify/tests/example.rs expect-errors --- Intentionally exceeds its memory budget.
-// An additional live box overlaps the buffers retained by the collection.
+// This example shows how an extra box can break a bound for a growing collection.
+//
+// On the last iteration the collection already owns every budgeted payload when the
+// loop allocates another copy.
 
 use vstd::prelude::*;
 
@@ -8,10 +11,12 @@ verus! {
 // The payload used by both the local array and each heap allocation.
 type Buffer = [u8; 16];
 
-// Cover the local array, collection, input and counter, all retained buffers,
-// and the pending box handle before it moves into the collection.
+/// `collection_budget` allows one box per requested buffer and the locals needed to
+/// build the collection.
 spec fn collection_budget(count: u16) -> nat {
+    // Each reserved slot in the outer vector holds one owning handle.
     let backing = (count as nat) * value_size(Box<Buffer>);
+    // Each handle points to a separately allocated buffer.
     let allocations = (count as nat) * value_size(Buffer);
     // The local source array, count input, loop counter, and pending box handle
     // before it moves into the collection. Heap payloads are counted above.
@@ -20,7 +25,8 @@ spec fn collection_budget(count: u16) -> nat {
     value_size(Vec<Box<Buffer>>) + backing + allocations + temporary
 }
 
-// Return one independently allocated copy of the local array per iteration.
+/// `collect_buffers` exceeds the collection bound by allocating another box after each
+/// push.
 #[verifier::exec_allows_no_decreases_clause]
 fn collect_buffers(count: u16) -> Vec<Box<Buffer>>
     resources peak(memory) <= collection_budget(count),
@@ -38,7 +44,7 @@ fn collect_buffers(count: u16) -> Vec<Box<Buffer>>
     buffers
 }
 
-// Use the collector's declared allowance for this particular input.
+/// `main` calls the collector with room for three retained buffers.
 fn main()
     resources peak(memory) <= peak(collect_buffers(3)),
 {

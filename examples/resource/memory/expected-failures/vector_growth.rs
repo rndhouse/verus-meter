@@ -1,16 +1,18 @@
 // rust_verify/tests/example.rs expect-errors --- Intentionally requires unbudgeted growth.
-// Shows why growing a collection needs an allowance beyond its original reservation.
+// This example shows how Verus Meter catches a push that exceeds a one-element memory
+// bound.
 //
-// This budget only covers the original buffer, so verification rejects growth.
+// The first value fits the explicit reservation. The second needs another occupied
+// slot.
 
 use vstd::prelude::*;
 
 verus! {
 
-// Try to keep two numbers in storage reserved for only one.
-//
-// The first push fits. The second needs additional backing storage that the
-// contract has not allowed for.
+/// `main` pushes two values under a budget for the vector and one slot.
+///
+/// The first push fits. The second needs additional backing storage that the
+/// contract has not allowed for.
 fn main()
     resources peak(memory) <= value_size(Vec<u32>) + value_size(u32),
 {

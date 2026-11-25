@@ -1,3 +1,8 @@
+// This example shows how a popped box stays live while a loop processes its contents.
+//
+// The first iteration needs room for both heap payloads, the extracted handle, and
+// scratch. Once the collection is dropped, the final task can reuse that allowance.
+
 use vstd::prelude::*;
 
 verus! {

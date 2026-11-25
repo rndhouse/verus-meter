@@ -1,3 +1,9 @@
+// This example shows how a caller can reuse a reservation inside a vector returned by a
+// helper.
+//
+// The helper returns two empty rows with room for four integers each. Discarding one
+// row frees its buffer, and the other still has room for a push.
+
 use vstd::prelude::*;
 
 verus! {
@@ -10,8 +16,11 @@ type Scratch = [u8; 200];
 /// and four reserved elements per row. The row count parameter, loop index, and the
 /// row header being moved into a slot also occupy storage.
 spec fn construction_budget(row_count: usize) -> nat {
+    // The outer reservation holds row headers even when the rows are empty.
     let collection = value_size(Rows) + (row_count as nat) * value_size(Row);
+    // Each row separately reserves four integer slots.
     let row_buffers = (row_count as nat) * 4 * value_size(u32);
+    // Construction also uses the input count, loop index, and row awaiting its push.
     let locals = value_size(row_count) + value_size(usize) + value_size(Row);
     collection + row_buffers + locals
 }

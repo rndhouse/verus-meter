@@ -1,18 +1,17 @@
-// Nested workspace budgets let a larger operation be checked in smaller pieces.
+// This example shows how nested memory contracts account for an original array, a copy,
+// and scratch.
 //
-// Each section accounts for its own storage and the budgets of its children.
-// The enclosing section or function remains responsible for storage already live
-// when a child begins. Memory queries use the nearest budgeted section, or the
-// function when outside a section.
+// Each section checks the workspace it introduces. The enclosing function counts all
+// three arrays when their lifetimes overlap.
 
 use vstd::prelude::*;
 
 verus! {
 
-// Keep an original array intact while using two layers of temporary workspace.
-//
-// The function owns the original; the outer section owns a working copy; the
-// inner section owns scratch space. Each parent includes its child's allowance.
+/// `main` checks each section's peak as the copy and scratch enter and leave scope.
+///
+/// The function owns the original; the outer section owns a working copy; the
+/// inner section owns scratch space. Each parent includes its child's allowance.
 fn main()
     resources peak(memory) <= 3 * value_size([u32; 4]),
 {

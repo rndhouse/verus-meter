@@ -1,19 +1,17 @@
-// Shows how reusing workspace can reduce a program's memory needs.
+// This example shows how the lifetimes of local arrays determine peak memory.
 //
-// Memory needs depend on which pieces of work overlap, rather than how much work
-// is done in total. These small examples isolate that distinction and show why
-// proof-only data can be excluded from the runtime budget.
-// Budgets use abstract model bytes; they do not predict physical stack sizes.
-// value_size names a type or parameter's storage; peak names a function's bound.
+// Separate scopes, exclusive branches, and successive iterations can reuse workspace.
+// Two arrays in the same scope can require twice as much. Proof-only arrays add no
+// executable storage.
 
 use vstd::prelude::*;
 
 verus! {
 
-// Demonstrates that separate stages of work can share the same memory budget.
-//
-// A stage's workspace stops contributing once its scope ends, so the budget
-// only needs to cover one array at a time.
+/// `separate_scopes` uses one array's allowance across two successive scopes.
+///
+/// A stage's workspace stops contributing once its scope ends, so the budget
+/// only needs to cover one array at a time.
 fn separate_scopes()
     resources peak(memory) <= value_size([u32; 64]),
 {
@@ -22,10 +20,10 @@ fn separate_scopes()
     { let second = [0u32; 64]; }
 }
 
-// Demonstrates why keeping two workspaces alive increases peak memory use.
-//
-// Both declared arrays remain live while the second is initialized. The budget
-// covers exactly those two arrays.
+/// `overlapping_scopes` keeps both arrays live when allocating the second.
+///
+/// Both declared arrays remain live while the second is initialized. The budget
+/// covers exactly those two arrays.
 fn overlapping_scopes()
     resources peak(memory) <= 2 * value_size([u32; 64]),
 {
@@ -34,10 +32,10 @@ fn overlapping_scopes()
     let second = [0u32; 64];
 }
 
-// Bounds memory for a choice between two ways of doing the same work.
-//
-// Only one alternative runs, so their workspace costs are not added together.
-// The budget covers the larger branch while retaining the condition's storage.
+/// `branches` bounds both alternatives with the flag and the larger array.
+///
+/// Only one alternative runs, so their workspace costs are not added together.
+/// The budget covers the larger branch while retaining the condition's storage.
 fn branches(condition: bool)
     resources peak(memory) <= value_size(condition) + value_size([u32; 64]),
 {
@@ -48,11 +46,11 @@ fn branches(condition: bool)
     }
 }
 
-// Shows why repeating work need not increase peak memory use.
-//
-// Workspace whose lifetime ends with an iteration can be reused by the next.
-// Termination is a separate obligation, established by the decreasing expression.
-// The condition remains live while each iteration uses its workspace.
+/// `reusable_loop` reuses an iteration's workspace after its scope ends.
+///
+/// Workspace whose lifetime ends with an iteration can be reused by the next.
+/// Termination is a separate obligation, established by the decreasing expression.
+/// The condition remains live while each iteration uses its workspace.
 fn reusable_loop(mut condition: bool)
     resources peak(memory) <= value_size(condition) + value_size([u32; 64]),
 {
@@ -64,10 +62,11 @@ fn reusable_loop(mut condition: bool)
     }
 }
 
-// Shows that a detailed correctness proof need not increase runtime memory use.
-//
-// Ghost and proof data are erased, so even these deliberately large proof-only
-// arrays leave the executable workspace's budget unchanged.
+/// `erased_proof_data` shows that only the executable scratch array contributes to the
+/// bound.
+///
+/// Ghost and proof data are erased, so even these deliberately large proof-only
+/// arrays leave the executable workspace's budget unchanged.
 fn erased_proof_data()
     resources peak(memory) <= value_size([u32; 64]),
 {
@@ -76,9 +75,7 @@ fn erased_proof_data()
     let scratch = [0u32; 64];
 }
 
-// Keeps the demonstrations independently verifiable.
-//
-// Verus checks their contracts without requiring a runtime driver to call them.
+/// `main` leaves each workspace pattern to be verified under its own contract.
 fn main() {}
 
 }

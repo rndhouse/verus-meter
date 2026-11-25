@@ -1,8 +1,8 @@
-// Transfer part of a collection while preserving each child's allocation.
+// This example shows how to account for children moved between two owning vectors.
 //
-// This example shows how a loop moves whole buffers between collections.
-// Dropping the source releases its remaining buffers and backing storage.
-// A current(memory) check accounts for the struct and destination storage.
+// The loop moves pairs of buffers. After dropping the source, the caller checks exactly
+// which reservations can remain in the destination.
+
 #![verifier::exec_allows_no_decreases_clause]
 
 use vstd::prelude::*;
@@ -20,18 +20,20 @@ struct Queues {
     destination: Vec<Buffer>,
 }
 
-// Cover the input struct, counters, extracted handles and four destination slots.
-// The caller keeps paying for the input allocations during the transfer.
+/// `transfer_budget` allows for the two queues, loop state, extracted handles, and
+/// destination slots.
 spec fn transfer_budget() -> nat {
+    // The struct contains both vector headers. Its incoming buffers are charged to the caller.
     let state = value_size(Queues);
+    // The batch count and iteration index accompany the two moves in each batch.
     let counters = 2 * value_size(usize);
     let extracted = 2 * value_size(Buffer);
+    // At two pairs, all four destination slots can hold buffer handles.
     let destination_slots = 4 * value_size(Buffer);
     state + counters + extracted + destination_slots
 }
 
-// Move two whole children per iteration, for zero, one, or two batches.
-// Entry sizes and loop bounds limit the storage touched by the operation.
+/// `move_pairs` moves two buffers from source to destination on each iteration.
 fn move_pairs(mut queues: Queues, batches: usize) -> Queues
     requires
         queues.source.len() == 4,
@@ -56,10 +58,7 @@ fn move_pairs(mut queues: Queues, batches: usize) -> Queues
     queues
 }
 
-// Move the last two buffers, then release the source and check memory still live.
-// The peak allowance covers both collection buffers, all initial allocations,
-// and the transfer helper. The final check covers the struct, destination
-// backing storage, and the two transferred buffer allocations.
+/// `main` moves one pair and checks which allocations survive dropping the source.
 fn main()
     resources peak(memory) <= 2 * 4 * value_size(Buffer)
         + value_size([u32; 4]) + value_size([u32; 8])
@@ -79,6 +78,8 @@ fn main()
     let queues = Queues { source, destination };
     let queues = move_pairs(queues, 1);
     drop(queues.source);
+    // Popping takes the last two source buffers, of 16 and 12 elements respectively.
+    // The destination still has all four reserved header slots after the source is dropped.
     assert(current(memory) <= value_size(Queues) + 4 * value_size(Buffer)
         + value_size([u32; 12]) + value_size([u32; 16]));
 }

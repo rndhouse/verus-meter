@@ -1,8 +1,7 @@
-// Shows how to bound memory use across several function calls.
+// This example shows how to bound a sort while the caller's array stays live.
 //
-// A helper's verified guarantees let its caller reason about the complete
-// operation without repeating the helper's proof. The memory bound includes
-// data kept by the caller while the helper works, as well as the helper's needs.
+// The caller counts the array once and adds the sorter's declared workspace. The same
+// call proves that the result is sorted and preserves every input element.
 
 use vstd::prelude::*;
 
@@ -12,11 +11,12 @@ mod sorting;
 
 verus! {
 
-// Shows how a caller can rely on a helper for both correctness and memory bounds.
-//
-// The array remains owned here while sorting borrows it, so its storage
-// overlaps the helper's workspace. Referencing the helper's declared budget
-// lets this caller follow changes to that contract automatically.
+/// `sort_local_array` sorts a local array within the combined allowance for the array
+/// and the sorter.
+///
+/// The array remains owned here while sorting borrows it, so its storage
+/// overlaps the helper's workspace. Referencing the helper's declared budget
+/// lets this caller follow changes to that contract automatically.
 pub fn sort_local_array()
     resources peak(memory) <= value_size([u32; 8]) + peak(sorting::insertion_sort),
 {
@@ -24,8 +24,7 @@ pub fn sort_local_array()
     // Remember the input for the preservation proof without retaining a runtime
     // copy. The @ notation exposes its mathematical sequence.
     let ghost original = values@;
-    // The slice parameter borrows the existing array. Its storage is already
-    // included in the helper's budget; the array remains charged to this caller.
+    // The sorter counts its slice reference. This caller still owns the array.
     sorting::insertion_sort(&mut values);
     // These proof assertions follow from the callee's postconditions. A multiset
     // comparison checks element counts, so losing or inventing duplicates fails.
@@ -33,9 +32,9 @@ pub fn sort_local_array()
     assert(values@.to_multiset() == original.to_multiset());
 }
 
-// Carries the memory guarantee through to the program's entry point.
-//
-// There is no additional local data here, so the caller's bound is sufficient.
+/// `main` uses the same bound to run the complete sort.
+///
+/// There is no additional local data here, so the caller's bound is sufficient.
 fn main()
     resources peak(memory) <= peak(sort_local_array),
 {

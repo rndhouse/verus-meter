@@ -1,7 +1,8 @@
-// Grow one buffer while keeping the memory reserved for another available.
+// This example shows how to grow one vector field while preserving another field's
+// reservation.
 //
-// Each buffer keeps its own reservation, even when a helper grows its neighbor.
-// Releasing both buffers makes room for a later task.
+// A helper pushes into the empty first vector. The caller can still use the spare
+// vector's four slots and release both buffers before allocating scratch.
 
 use vstd::prelude::*;
 
@@ -15,10 +16,10 @@ struct Buffers {
     spare: Vec<u32>,
 }
 
-// Add a value while preserving the other buffer's contents and reservation.
-//
-// The caller accounts for the existing buffers. The helper allows for its
-// reference and one additional u32 slot.
+/// `append` pushes into the first field while preserving the spare vector.
+///
+/// The caller accounts for the existing buffers. The helper allows for its
+/// reference and one additional u32 slot.
 fn append(buffers: &mut Buffers)
     requires old(buffers).values.len() == 0,
     ensures
@@ -29,9 +30,9 @@ fn append(buffers: &mut Buffers)
     buffers.values.push(7);
 }
 
-// Use both buffers, then release them to make room for another task.
-//
-// The later byte workspace sets the allowance for the complete operation.
+/// `main` uses both fields, then drops their owner before allocating scratch.
+///
+/// The later byte workspace sets the allowance for the complete operation.
 fn main()
     resources peak(memory) <= value_size(FinalScratch),
 {

@@ -1,7 +1,7 @@
-// A counter can track both increases and corrections within a fixed memory allowance.
+// This example shows how to check a counter's arithmetic and memory bound together.
 //
-// Different integer widths can share a struct and pass through helpers. The
-// memory queries follow those types, while Verus also checks arithmetic safety.
+// The caller owns the counter across two adjustments. Each call uses the same allowance
+// for a borrowed reference and a signed adjustment.
 
 use vstd::prelude::*;
 
@@ -12,10 +12,11 @@ struct Counter {
     changes: u8,
 }
 
-// Apply a bounded adjustment and record that the counter changed.
-//
-// Preconditions leave room for both arithmetic operations. The caller retains
-// the counter's storage; this helper needs only its reference and adjustment.
+/// `adjust` updates the value and change count within the allowance for its two
+/// parameters.
+///
+/// Preconditions leave room for both arithmetic operations. The caller retains
+/// the counter's storage; this helper needs only its reference and adjustment.
 fn adjust(counter: &mut Counter, change: i64)
     requires
         -1000 <= old(counter).value <= 1000,
@@ -30,9 +31,9 @@ fn adjust(counter: &mut Counter, change: i64)
     counter.changes += 1;
 }
 
-// Keep the counter live while successive adjustments reuse the helper's workspace.
-//
-// The budget follows the struct's field types and the helper's declared bound.
+/// `main` keeps one counter live across two successive adjustments.
+///
+/// The budget follows the struct's field types and the helper's declared bound.
 fn main()
     resources peak(memory) <= value_size(Counter) + peak(adjust),
 {

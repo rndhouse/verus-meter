@@ -1,22 +1,24 @@
-// Give a reusable name to a memory bound that grows with the input.
+// This example shows how to name the part of a vector's memory bound that grows with
+// capacity.
 //
-// The same formula supplies a checked allowance for every permitted capacity.
+// The collector adds its fixed storage to the same element-size formula for every
+// permitted input.
 
 use vstd::prelude::*;
 
 verus! {
 
-// Describe the reservation for a collection of u32 values.
-//
-// Keeping this formula separate lets other operations reuse the same allowance.
+/// `element_bytes` converts a count of reserved `u32` elements to bytes.
+///
+/// Keeping this formula separate lets other operations reuse the same allowance.
 spec fn element_bytes(capacity: nat) -> nat {
     value_size(u32) * capacity
 }
 
-// Collect values within a reservation chosen by the caller.
-//
-// The named formula covers the elements; the contract also covers the capacity
-// parameter and vector handle. The precondition bounds every permitted input.
+/// `collect` reserves the requested number of slots and fills two.
+///
+/// The named formula covers the elements; the contract also covers the capacity
+/// parameter and vector handle. The precondition bounds every permitted input.
 fn collect(capacity: usize)
     requires 2 <= capacity <= 1024,
     resources peak(memory) <= value_size(capacity) + value_size(Vec<u32>)
@@ -28,7 +30,7 @@ fn collect(capacity: usize)
     assert(values[0] == 10 && values[1] == 20);
 }
 
-// Carry the helper's input-specific guarantee through to the complete operation.
+/// `main` checks the collector with the bound for two slots.
 fn main()
     resources peak(memory) <= peak(collect(2)),
 {

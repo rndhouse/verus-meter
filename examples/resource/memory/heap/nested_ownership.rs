@@ -1,6 +1,7 @@
-// Keep related heap data within one budget as ownership passes between helpers.
+// This example shows how a bound follows the allocations owned by a boxed struct.
 //
-// Releasing the outer owner also releases the data it owns.
+// The struct owns a vector reservation and a boxed marker. Moving the outer box
+// preserves both allocations, and dropping it releases them together.
 
 use vstd::prelude::*;
 
@@ -14,10 +15,10 @@ struct Buffer {
     marker: Box<u32>,
 }
 
-// Create the related data within an allowance that follows the requested capacity.
-//
-// Count the capacity input, outer box handle, owned struct, marker value, and
-// vector elements. The struct's size already includes its vector and marker handles.
+/// `make` constructs the boxed struct, marker, and requested vector reservation.
+///
+/// Count the capacity input, outer box handle, owned struct, marker value, and
+/// vector elements. The struct's size already includes its vector and marker handles.
 fn make(n: usize) -> (b: Box<Buffer>)
     requires n <= 4,
     ensures b.values.len() == 0, *b.marker == 42,
@@ -27,7 +28,7 @@ fn make(n: usize) -> (b: Box<Buffer>)
     Box::new(Buffer { values: Vec::with_capacity(n), marker: Box::new(42) })
 }
 
-// Transfer ownership while preserving the data and its memory cost.
+/// `forward` passes on the outer box and everything it owns.
 fn forward(b: Box<Buffer>) -> (r: Box<Buffer>)
     ensures r == b,
     resources peak(memory) <= value_size(b),
@@ -35,9 +36,10 @@ fn forward(b: Box<Buffer>) -> (r: Box<Buffer>)
     b
 }
 
-// Use the data after a handoff, then free it before the next task.
-//
-// The allowance covers the saved length alongside the later byte workspace.
+/// `main` uses both fields after the handoff and drops the box before allocating
+/// scratch.
+///
+/// The allowance covers the saved length alongside the later byte workspace.
 fn main()
     resources peak(memory) <= value_size(usize) + value_size(FinalScratch),
 {

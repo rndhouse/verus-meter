@@ -1,8 +1,7 @@
-// Collect heap buffers with a finite iterator instead of an explicit counter.
+// This example shows how to bound a collection built by a Rust range loop.
 //
-// This example shows how a `for` loop uses the same ownership and peak-memory
-// model as a counted while loop. Its range and yielded values have their own
-// inline storage; the collection retains each buffer's separate heap storage.
+// The count determines the number of box handles and heap arrays. The bound also
+// includes the range and the values used to advance it.
 
 use vstd::prelude::*;
 
@@ -14,19 +13,22 @@ type Buffer = Box<BufferStorage>;
 // The payload allocated for each collected buffer.
 type BufferStorage = [u8; 16];
 
-// Cover the collection and retained buffers, plus range setup, advancement,
-// and the pending buffer handle before it moves into the collection.
+/// `construction_budget` combines the storage retained per buffer with the loop's
+/// temporary workspace.
 spec fn construction_budget(count: u16) -> nat {
+    // Each reserved slot in the outer vector holds one owning handle.
     let backing = (count as nat) * value_size(Buffer);
+    // Each handle points to a separately allocated buffer.
     let allocations = (count as nat) * value_size(BufferStorage);
+    // Allow for constructing and advancing the range, receiving its next index,
+    // and holding a new box before it moves into a slot.
     let temporary = 2 * value_size(core::ops::Range<u16>)
         + value_size(Option<u16>) + value_size(u16)
         + ref_size(&core::ops::Range<u16>) + value_size(Buffer);
     value_size(count) + value_size(Vec<Buffer>) + backing + allocations + temporary
 }
 
-// Return one buffer per range element, keeping every retained allocation within
-// the input-dependent allowance. No explicit counter or length invariant is needed.
+/// `build_buffers` returns one boxed array for each element of the range.
 fn build_buffers(count: u16) -> Vec<Buffer>
     resources peak(memory) <= construction_budget(count),
 {
@@ -38,7 +40,7 @@ fn build_buffers(count: u16) -> Vec<Buffer>
     buffers
 }
 
-// Receive the collection within the builder's allowance for this input.
+/// `main` requests two buffers within the builder's bound for that range.
 fn main()
     resources peak(memory) <= peak(build_buffers(2)),
 {

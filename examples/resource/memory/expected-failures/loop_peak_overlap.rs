@@ -1,11 +1,9 @@
 // rust_verify/tests/example.rs expect-failures --- Retaining work overlaps work and result allocations.
-// Keep an extracted work buffer alive while allocating its result.
+// This example shows how delaying a drop can invalidate a loop's peak bound.
 //
-// The allowance has room for results or temporary work. Retaining the work
-// buffer while allocating the final result makes their storage overlap and
-// exceeds the bound.
-// Compare heap/loops/peak_overlap.rs for the passing release order.
-// Termination checking is disabled; only the memory bound is specified.
+// The last result is allocated while the extracted work buffer is still live. The
+// passing version in `heap/loops/peak_overlap.rs` drops that buffer first.
+
 #![verifier::exec_allows_no_decreases_clause]
 
 use vstd::prelude::*;
@@ -18,21 +16,20 @@ type WorkBuffer = [u8; 64];
 // Larger result storage retained across iterations.
 type ResultBuffer = [u8; 128];
 
-// Cover the collection handle, reserved slots, and retained results, plus
-// the input count, loop counter, and next result handle. The count type
-// keeps this byte budget representable without extra preconditions.
-// During each iteration, room for the next result also covers temporary work.
+/// `result_budget` allows the next result to reuse the temporary work buffer's
+/// allowance.
 spec fn result_budget(result_count: u32) -> nat {
+    // The collection owns a vector of box handles. Each handle points to one result array.
     let handle = value_size(Vec<Box<ResultBuffer>>);
     let backing = (result_count as nat) * value_size(Box<ResultBuffer>);
     let results = (result_count as nat) * value_size(ResultBuffer);
+    // The requested count and completed count stay live while the next box is prepared.
     let scalars = 2 * value_size(u32);
     let next = value_size(Box<ResultBuffer>);
     handle + backing + results + scalars + next
 }
 
-// Deliberately retain the extracted buffer until its result is stored.
-// The reusable loop check must cover the results retained by earlier iterations.
+/// `build_results` retains the extracted work buffer while allocating its replacement.
 fn build_results(result_count: u32) -> Vec<Box<ResultBuffer>>
     resources peak(memory) <= result_budget(result_count),
 {
@@ -52,7 +49,7 @@ fn build_results(result_count: u32) -> Vec<Box<ResultBuffer>>
     results
 }
 
-// Receive results within the builder's allowance for this input.
+/// `main` requests two results using the builder's claimed bound.
 fn main()
     resources peak(memory) <= peak(build_results(2)),
 {

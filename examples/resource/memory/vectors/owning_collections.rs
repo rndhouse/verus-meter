@@ -1,7 +1,7 @@
-// Bound a collection's memory use, including the buffers owned by its elements.
+// This example shows how to bound a vector whose elements own buffers of their own.
 //
-// Moving buffers into a collection keeps their allocations in its budget.
-// Releasing the collection frees that allowance for a later task.
+// Each additional child contributes a header in the outer vector and a three-element
+// reservation. Dropping the final owner releases them together.
 
 use vstd::prelude::*;
 
@@ -9,11 +9,12 @@ verus! {
 
 type FinalScratch = [u8; 512];
 
-// Build a collection of buffers within a budget that grows with their number.
-//
-// The fixed allowance covers the input, collection handle, loop index, and a
-// child being prepared. Each entry adds a child handle and its three-element
-// buffer; moved children remain charged through the collection.
+/// `build` constructs the requested number of child vectors with three reserved slots
+/// each.
+///
+/// The fixed allowance covers the input, collection handle, loop index, and a
+/// child being prepared. Each entry adds a child handle and its three-element
+/// buffer; moved children remain charged through the collection.
 fn build(n: usize) -> (buffers: Vec<Vec<u32>>)
     requires n <= 4,
     ensures buffers.len() == n,
@@ -33,9 +34,10 @@ fn build(n: usize) -> (buffers: Vec<Vec<u32>>)
     buffers
 }
 
-// Release the whole collection before reusing its memory allowance.
-//
-// The later byte workspace sets the allowance for the complete operation.
+/// `main` moves the children into a boxed slice and releases it before allocating
+/// scratch.
+///
+/// The later byte workspace sets the allowance for the complete operation.
 fn main()
     resources peak(memory) <= value_size(FinalScratch),
 {

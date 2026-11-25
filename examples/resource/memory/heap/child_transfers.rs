@@ -1,7 +1,8 @@
-// Move and replace buffers without losing track of their memory use.
+// This example shows how to account for a buffer that outlives the struct that owned
+// it.
 //
-// A buffer can outlive the struct that held it. Its allocation remains charged
-// until its new owner releases it, after which the allowance can be reused.
+// Replacing one field preserves the other. Moving the replacement out keeps its
+// allocation live until its new owner drops it.
 
 use vstd::prelude::*;
 
@@ -14,10 +15,10 @@ struct Buffers {
     spare: Box<[u8; 16]>,
 }
 
-// Replace a child buffer while preserving the rest of its owner.
-//
-// The caller retains the old allocation during the call; this allowance covers
-// the reference and the four-element replacement buffer.
+/// `replace` installs a new four-slot reservation in the active field.
+///
+/// The caller retains the old allocation during the call; this allowance covers
+/// the reference and the four-element replacement buffer.
 fn replace(buffers: &mut Buffers)
     ensures final(buffers).active.len() == 0,
     resources peak(memory) <= ref_size(buffers) + value_size([u32; 4]),
@@ -25,9 +26,10 @@ fn replace(buffers: &mut Buffers)
     buffers.active = Vec::with_capacity(4);
 }
 
-// Move a child out, then release its storage before the next task.
-//
-// The later byte workspace sets the allowance for the complete operation.
+/// `main` moves the active buffer out, drops its former owner, and uses the surviving
+/// reservation.
+///
+/// The later byte workspace sets the allowance for the complete operation.
 fn main()
     resources peak(memory) <= value_size(FinalScratch),
 {

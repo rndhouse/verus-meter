@@ -1,8 +1,7 @@
-// Update individual buffers while keeping the whole collection within budget.
+// This example shows how to track the storage of individual rows in a vector.
 //
-// Each buffer's memory use contributes to the collection's bound. Individual
-// child metadata lets removal and replacement release the displaced allocations;
-// dropping the collection releases every remaining child.
+// Replacing a row releases the displaced buffer. Removing a row transfers its buffer to
+// the caller, while the other rows keep theirs.
 
 use vstd::prelude::*;
 
@@ -14,10 +13,10 @@ struct Row {
     cells: Vec<u32>,
 }
 
-// Grow one row while preserving the other rows' memory allowances.
-//
-// The caller keeps paying for the row's original allocation. This helper's
-// allowance covers its reference and one additional slot.
+/// `add` adds one value to a borrowed row.
+///
+/// The caller keeps paying for the row's original allocation. This helper's
+/// allowance covers its reference and one additional slot.
 fn add(row: &mut Row)
     requires old(row).cells.len() <= 1,
     ensures final(row).cells.len() == old(row).cells.len() + 1,
@@ -26,8 +25,7 @@ fn add(row: &mut Row)
     row.cells.push(7);
 }
 
-// Borrow a child of a collection supplied by the caller. The same ownership
-// rules apply inside this helper as at a direct indexing operation in main.
+/// `add_at` grows the selected row and preserves the other rows.
 fn add_at(rows: &mut Vec<Row>, index: usize)
     requires index < old(rows).len(), old(rows)[index as int].cells.len() <= 1,
     ensures
@@ -39,8 +37,7 @@ fn add_at(rows: &mut Vec<Row>, index: usize)
     add(&mut rows[index]);
 }
 
-// Transfer one row out of a borrowed collection. Its buffers follow the result;
-// the remaining rows keep their own allocations and shift down one index.
+/// `remove_at` removes one row and returns ownership of its buffer.
 fn remove_at(rows: &mut Vec<Row>, index: usize) -> (row: Row)
     requires index < old(rows).len(),
     ensures row == old(rows)[index as int], final(rows)@ == old(rows)@.remove(index as int),
@@ -49,9 +46,10 @@ fn remove_at(rows: &mut Vec<Row>, index: usize) -> (row: Row)
     rows.remove(index)
 }
 
-// Update individual buffers, then reuse their storage for another task.
-//
-// Only the saved length remains live alongside the later byte workspace.
+/// `main` updates, replaces, and removes rows before reusing the released storage for
+/// scratch.
+///
+/// Only the saved length remains live alongside the later byte workspace.
 fn main()
     resources peak(memory) <= value_size(usize) + value_size(FinalScratch),
 {

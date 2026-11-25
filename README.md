@@ -68,12 +68,12 @@ from the repository root, after [building Verus](BUILD.md):
 ```console
 $ VERUS_Z3_PATH="$PWD/source/z3" ./source/target-verus/release/verus examples/resource/memory/expected-failures/heap_overlap.rs
 error: conditional memory budget exceeded: cannot prove the required model bytes fit the declared bound
-  --> examples/resource/memory/expected-failures/heap_overlap.rs:35:21
+  --> examples/resource/memory/expected-failures/heap_overlap.rs:41:21
    |
-26 |     resources peak(memory) <= collection_budget(count),
+32 |     resources peak(memory) <= collection_budget(count),
    |                               ------------------------
 ...
-35 |         let extra = Box::new(local);
+41 |         let extra = Box::new(local);
    |                     ^^^^^^^^^^^^^^^
 
 verification results:: 2 verified, 1 errors

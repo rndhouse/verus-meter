@@ -1,16 +1,18 @@
-// Shows how to check memory limits at individual stages of an operation.
+// This example shows how to distinguish memory still live from the peak reached
+// earlier.
 //
-// Compare memory still in use with the highest usage reached so far. Finishing
-// a stage releases its workspace, but does not erase its earlier peak.
+// While the copy exists, the peak includes two arrays. After its scope ends, only the
+// original remains live, and the peak still includes both.
 
 use vstd::prelude::*;
 
 verus! {
 
-// Edits a separate copy while checking the memory needed along the way.
-//
-// The whole-function contract allows both arrays. The checkpoints show when
-// that allowance becomes necessary and why the peak remains after scope exit.
+/// `main` checks the current and peak charges before and after a working copy goes out
+/// of scope.
+///
+/// The whole-function contract allows both arrays. The checkpoints show when
+/// that allowance becomes necessary and why the peak remains after scope exit.
 fn main()
     resources peak(memory) <= 2 * value_size([u32; 4]),
 {

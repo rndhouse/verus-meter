@@ -1,12 +1,14 @@
-// Grow a vector while proving that its memory use stays within budget.
+// This example shows how to bound a growing vector by the number of elements the
+// program pushes.
 //
+// Each occupied slot contributes the size of a `u32`. A helper that appends through a
+// borrow can account for the additional slot in its own contract.
+
 use vstd::prelude::*;
 
 verus! {
 
-// Build the requested number of values within a growing memory allowance.
-//
-// Each value occupies one u32 slot.
+/// `build` pushes the requested number of values under one slot's allowance per value.
 fn build(n: usize)
     requires n <= 8,
     resources peak(memory) <= value_size(n) + value_size(Vec<u32>)
@@ -22,10 +24,10 @@ fn build(n: usize)
     assert(values.len() == n);
 }
 
-// Let a helper grow a borrowed vector within a checked allowance.
-//
-// The caller accounts for existing storage; the helper allows for its reference
-// and one additional u32 slot.
+/// `append_to_empty` grows an empty borrowed vector by one slot.
+///
+/// The caller accounts for existing storage; the helper allows for its reference
+/// and one additional u32 slot.
 fn append_to_empty(values: &mut Vec<u32>)
     requires old(values).len() == 0,
     ensures final(values).len() == 1 && final(values)[0] == 7,
@@ -34,9 +36,9 @@ fn append_to_empty(values: &mut Vec<u32>)
     values.push(7);
 }
 
-// Continue adding values after a helper has grown the vector.
-//
-// The helper call is the peak while the vector handle is live.
+/// `use_helper` keeps the vector live across a helper push and a subsequent local push.
+///
+/// The helper call is the peak while the vector handle is live.
 fn use_helper()
     resources peak(memory) <= value_size(Vec<u32>) + peak(append_to_empty),
 {
@@ -46,7 +48,7 @@ fn use_helper()
     assert(values.len() == 2 && values[0] == 7 && values[1] == 8);
 }
 
-// Run both growth examples.
+/// `main` runs the counted loop and the borrowed-vector example.
 fn main() {
     build(8);
     use_helper();

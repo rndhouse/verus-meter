@@ -1,7 +1,7 @@
-// Produce a buffer in a helper while keeping one allowance for the returned data.
+// This example shows how to return an array within a single array's memory allowance.
 //
-// The caller can receive the buffer within the helper's allowance, without
-// needing room for an additional copy.
+// The caller receives the array built by the helper and can use its peak bound for the
+// whole operation.
 
 use vstd::prelude::*;
 
@@ -9,9 +9,9 @@ verus! {
 
 type Buffer = [u32; 4];
 
-// Provide a ready-to-use buffer with a predictable memory requirement.
-//
-// Callers can rely on both the buffer's initial contents and its memory bound.
+/// `make_buffer` returns an initialized array within the allowance for one buffer.
+///
+/// Callers can rely on both the buffer's initial contents and its memory bound.
 fn make_buffer() -> (buffer: Buffer)
     ensures buffer[0] == 7,
     resources peak(memory) <= value_size(Buffer),
@@ -19,9 +19,7 @@ fn make_buffer() -> (buffer: Buffer)
     [7u32; 4]
 }
 
-// Receive and use the buffer within the producer's declared allowance.
-//
-// Receiving the buffer preserves the producer's memory guarantee.
+/// `main` checks the returned value and the peak after receiving it.
 fn main()
     resources peak(memory) <= peak(make_buffer),
 {

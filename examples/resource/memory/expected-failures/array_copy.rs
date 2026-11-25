@@ -1,17 +1,17 @@
 // rust_verify/tests/example.rs expect-errors --- Intentionally exceeds its memory budget.
-// Shows that keeping an independent copy requires room for both arrays.
+// This example shows how Verus Meter catches a copy that exceeds a one-array bound.
 //
-// The budget allows one array, but the original and its copy coexist.
-// Verification rejects the extra copy because both arrays need room at once.
+// Editing the copy leaves the original intact. Both need storage when the copy is
+// created.
 
 use vstd::prelude::*;
 
 verus! {
 
-// Tries to edit a copy while preserving the original, with room for only one.
-//
-// Copying the array gives it separate storage. The assertions illustrate why
-// both arrays matter: changing the copy leaves the original untouched.
+/// `main` keeps an original array and edits a copy under a one-array contract.
+///
+/// Copying the array gives it separate storage. The assertions illustrate why
+/// both arrays matter: changing the copy leaves the original untouched.
 fn main()
     // Deliberately too small: this contract covers only one array.
     resources peak(memory) <= value_size([u32; 4]),

@@ -1,8 +1,7 @@
-// Shows how to sort data inside a struct with a proven memory bound.
+// This example shows how to bound the cost of sorting an array held inside a struct.
 //
-// The proof checks that the result is sorted, no values are lost or added, and
-// the operation stays within its memory budget. That budget includes both the
-// stored data and the temporary workspace used to process it.
+// The caller counts the whole struct once. The sorting helper borrows its array field
+// and supplies a separate bound for its workspace.
 
 use vstd::prelude::*;
 
@@ -20,15 +19,15 @@ pub struct SortBuffer {
     pub ready: bool,
 }
 
-// Makes an existing buffer sorted and ready to use within a fixed memory budget.
-//
-// The contract lets callers rely on the completed result without repeating the
-// sorting proof. Borrowing the array field keeps ownership with the caller,
-// which remains responsible for counting the buffer's storage.
-//
-// The budget follows the parameter type and the sorter's declared bound, so
-// changes to either are picked up automatically. The parameter contributes
-// only its reference; the owning caller accounts for the backing data.
+/// `sort_buffer` sorts the array field and marks the buffer ready.
+///
+/// The contract lets callers rely on the completed result without repeating the
+/// sorting proof. Borrowing the array field keeps ownership with the caller,
+/// which remains responsible for counting the buffer's storage.
+///
+/// The budget follows the parameter type and the sorter's declared bound, so
+/// changes to either are picked up automatically. The parameter contributes
+/// only its reference; the owning caller accounts for the backing data.
 pub fn sort_buffer(buffer: &mut SortBuffer)
     ensures
         final(buffer).ready,
@@ -42,11 +41,12 @@ pub fn sort_buffer(buffer: &mut SortBuffer)
     buffer.ready = true;
 }
 
-// Demonstrates a complete memory bound for owned data and the helpers using it.
-//
-// The owned buffer remains live while the helper works, so the budget covers
-// both together. The type-based query follows changes to the buffer's fields
-// and can be used before its local variable is in scope.
+/// `sort_local_struct` counts the owned struct alongside the workspace needed to sort
+/// it.
+///
+/// The owned buffer remains live while the helper works, so the budget covers
+/// both together. The type-based query follows changes to the buffer's fields
+/// and can be used before its local variable is in scope.
 pub fn sort_local_struct()
     resources peak(memory) <= value_size(SortBuffer) + peak(sort_buffer),
 {
@@ -63,9 +63,9 @@ pub fn sort_local_struct()
     assert(buffer.values@.to_multiset() == original.to_multiset());
 }
 
-// Extends the buffer's guarantees to the complete example program.
-//
-// With no additional local data at this level, the same memory bound suffices.
+/// `main` runs the struct example within the caller's declared bound.
+///
+/// With no additional local data at this level, the same memory bound suffices.
 fn main()
     resources peak(memory) <= peak(sort_local_struct),
 {

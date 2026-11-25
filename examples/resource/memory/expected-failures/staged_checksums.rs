@@ -1,5 +1,9 @@
 // rust_verify/tests/example.rs expect-failures --- Staging exceeds the streaming section allowance.
-// Decode and checksum each input byte as a run of BLOCK_BYTES identical bytes.
+// This example shows how Verus Meter rejects a streaming bound when the program starts
+// buffering decoded blocks.
+//
+// The section allows one local block, one saved checksum, and the checksum call. The
+// staged version also keeps two block-sized slots in the vector.
 
 use vstd::prelude::*;
 
@@ -27,8 +31,8 @@ fn checksum(block: &Block) -> u16
     sum
 }
 
-// Deliberately use the streaming bound: one decoded block, one saved result,
-// and the active checksum call. This omits the staging vector's backing.
+/// `checksums` uses the streaming allowance for a loop that keeps both decoded blocks
+/// in a vector.
 fn checksums(input: [u8; 2]) -> Vec<u16>
     resources peak(memory) <= value_size(input) + ref_size(&[u8]) + value_size(Vec<u16>)
         + value_size(Block) + return_size(checksum)
@@ -37,7 +41,7 @@ fn checksums(input: [u8; 2]) -> Vec<u16>
     let packed: &[u8] = &input;
     let mut sums = Vec::new();
 
-    // Both decoded blocks stay live while the checksums are produced.
+    // This streaming allowance omits the two slots holding staged blocks.
     resources peak(memory) <= value_size(Block) + return_size(checksum)
         + peak(checksum)
     {
@@ -55,6 +59,7 @@ fn checksums(input: [u8; 2]) -> Vec<u16>
 
 } // verus!
 
+/// `main` checks the expected sums for two input bytes.
 fn main() {
     assert_eq!(checksums([1, 2]), vec![128, 256]);
 }

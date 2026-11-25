@@ -1,4 +1,8 @@
-// Decode and checksum each input byte as a run of BLOCK_BYTES identical bytes.
+// This example shows how to checksum two decoded blocks with room for only one decoded
+// block at a time.
+//
+// Each iteration decodes one byte into a local array. At the second helper call, the
+// first checksum remains live in the output.
 
 use vstd::prelude::*;
 
@@ -26,8 +30,7 @@ fn checksum(block: &Block) -> u16
     sum
 }
 
-// While computing the second checksum, one decoded block and the first saved
-// checksum coexist with the helper. Appending the second result happens later.
+/// `checksums` decodes and checksums one block per iteration.
 fn checksums(input: [u8; 2]) -> Vec<u16>
     resources peak(memory) <= value_size(input) + ref_size(&[u8]) + value_size(Vec<u16>)
         + value_size(Block) + return_size(checksum)
@@ -36,6 +39,8 @@ fn checksums(input: [u8; 2]) -> Vec<u16>
     let packed: &[u8] = &input;
     let mut sums = Vec::new();
 
+    // The first sum stays in the output during the second call. Only the current
+    // decoded block needs storage inside the loop.
     resources peak(memory) <= value_size(Block) + return_size(checksum)
         + peak(checksum)
     {
@@ -49,6 +54,7 @@ fn checksums(input: [u8; 2]) -> Vec<u16>
 
 } // verus!
 
+/// `main` checks the streamed results for two input bytes.
 fn main() {
     assert_eq!(checksums([1, 2]), vec![128, 256]);
 }

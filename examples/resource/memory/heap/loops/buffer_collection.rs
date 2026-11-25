@@ -1,5 +1,8 @@
-// Collect one heap buffer per iteration while retaining a local source array.
-// The memory budget grows with the requested number of buffers.
+// This example shows how to bound one heap copy per loop iteration while the source
+// array stays live.
+//
+// The requested count determines both the vector's reserved handle slots and the number
+// of separate boxed payloads.
 
 use vstd::prelude::*;
 
@@ -8,10 +11,12 @@ verus! {
 // The payload used by both the local array and each heap allocation.
 type Buffer = [u8; 16];
 
-// Cover the local array, collection, input and counter, all retained buffers,
-// and the pending box handle before it moves into the collection.
+/// `collection_budget` counts the retained boxes and the workspace needed to build
+/// them.
 spec fn collection_budget(count: u16) -> nat {
+    // Each reserved slot in the outer vector holds one owning handle.
     let backing = (count as nat) * value_size(Box<Buffer>);
+    // Each handle points to a separately allocated buffer.
     let allocations = (count as nat) * value_size(Buffer);
     // The local source array, count input, loop counter, and pending box handle
     // before it moves into the collection. Heap payloads are counted above.
@@ -20,7 +25,8 @@ spec fn collection_budget(count: u16) -> nat {
     value_size(Vec<Box<Buffer>>) + backing + allocations + temporary
 }
 
-// Return one independently allocated copy of the local array per iteration.
+/// `collect_buffers` returns one independently allocated copy of the source array per
+/// iteration.
 #[verifier::exec_allows_no_decreases_clause]
 fn collect_buffers(count: u16) -> Vec<Box<Buffer>>
     resources peak(memory) <= collection_budget(count),
@@ -36,7 +42,7 @@ fn collect_buffers(count: u16) -> Vec<Box<Buffer>>
     buffers
 }
 
-// Use the collector's declared allowance for this particular input.
+/// `main` uses the collector's bound for three buffers.
 fn main()
     resources peak(memory) <= peak(collect_buffers(3)),
 {

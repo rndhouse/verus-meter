@@ -1,8 +1,9 @@
 // rust_verify/tests/example.rs expect-errors --- Intentionally retains too many heap allocations.
-// Returned heap buffers keep using memory until their owners release them.
+// This example shows how Verus Meter catches a second allocation that overlaps a
+// returned buffer.
 //
-// The budget allows two handles but only one allocation. Calling the factory
-// again while retaining the first buffer makes the allocations overlap.
+// The caller budgets for two handles and one payload. The first payload is still live
+// when it requests the second.
 
 use vstd::prelude::*;
 
@@ -10,14 +11,15 @@ verus! {
 
 type Buffer = Box<[u32; 4]>;
 
-// Supply one independently owned buffer.
+/// `make_buffer` returns a fresh box containing a four-element array.
 fn make_buffer() -> Buffer
     resources peak(memory) <= value_size(Buffer) + value_size([u32; 4]),
 {
     Box::new([0u32; 4])
 }
 
-// Try to keep two heap buffers under a one-allocation allowance.
+/// `main` retains the first returned box while requesting another under a one-payload
+/// bound.
 fn main()
     resources peak(memory) <= 2 * value_size(Buffer) + value_size([u32; 4]),
 {

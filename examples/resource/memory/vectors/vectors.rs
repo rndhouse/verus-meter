@@ -1,25 +1,28 @@
-// Collect selected numbers while keeping the result within a reserved memory allowance.
+// This example shows how to prove that filtering an array fits a vector's initial
+// reservation.
 //
-// The capacity comes from the caller. The memory contract scales with it, and
-// each push must be proved to fit without growing the vector.
+// Each input contributes at most one output. The loop tracks how many inputs it has
+// examined, so every push fits the caller's chosen capacity.
 
 use vstd::prelude::*;
 
 verus! {
 
-// Describe the memory needed to filter numbers at the chosen capacity.
-//
-// The budget covers the input, reserved result, and values tracking progress.
+/// `collection_budget` counts the reserved result, the input array, and the scalar
+/// state used during filtering.
 spec fn collection_budget(capacity: nat) -> nat {
+    // The two usize slots hold the capacity input and the loop index. The input array
+    // stays live alongside the result vector and its explicitly reserved slots.
     value_size(usize) + value_size(Vec<u32>) + capacity * value_size(u32)
         + value_size([u32; 4]) + value_size(usize)
 }
 
-// Keep the positive numbers from a small input without growing the result buffer.
-//
-// Reserving enough room for the whole input also covers any selection from it.
-// The loop relates the number collected to the number examined, giving Verus
-// the evidence it needs to check every push.
+/// `collect_positive` collects positive values under a bound that scales with the
+/// reserved capacity.
+///
+/// Reserving enough room for the whole input also covers any selection from it.
+/// The loop relates the number collected to the number examined, giving Verus
+/// the evidence it needs to check every push.
 fn collect_positive(capacity: usize)
     requires 4 <= capacity <= 16,
     resources peak(memory) <= collection_budget(capacity as nat),
@@ -43,9 +46,9 @@ fn collect_positive(capacity: usize)
     assert(selected.len() <= capacity);
 }
 
-// Give the collection task exactly the allowance promised for this capacity.
-//
-// The call query substitutes the argument into the helper's memory formula.
+/// `main` runs the filter with one reserved slot per input.
+///
+/// The call query substitutes the argument into the helper's memory formula.
 fn main()
     resources peak(memory) <= peak(collect_positive(4)),
 {

@@ -1,38 +1,38 @@
-// Sorts a list of numbers while proving correctness and a fixed memory bound.
+// This example shows how to prove that insertion sort uses fixed workspace for any
+// slice length.
 //
-// The proof connects small, local changes to a global guarantee: the final list
-// is ordered and contains exactly the original values, including duplicates.
-// It also shows that longer inputs do not require more temporary workspace.
-// Budgets describe abstract storage costs, not physical stack layout. Companion
-// examples show how callers can use both the correctness and memory guarantees.
+// Verus also checks that the result is ordered and contains every original value,
+// including duplicates.
 
 use vstd::prelude::*;
 use vstd::seq_lib::to_multiset_update;
 
 verus! {
 
-// Defines the progress that each sorting pass must preserve.
-//
-// Describing just the completed prefix lets the proof grow from no sorted
-// elements to the whole list. Seq is a mathematical view, with no runtime copy.
+/// `sorted_prefix` states that the first `end` elements are in ascending order.
+///
+/// Describing just the completed prefix lets the proof grow from no sorted
+/// elements to the whole list. Seq is a mathematical view, with no runtime copy.
 pub open spec fn sorted_prefix(s: Seq<u32>, end: int) -> bool {
     forall|a: int, b: int| 0 <= a < b < end ==> #[trigger] s[a] <= #[trigger] s[b]
 }
 
-// Lets the proof describe a nearly sorted region during an insertion.
-//
-// One position is reserved for the saved value, so order need only hold elsewhere.
-// This logical "hole" is bookkeeping; the actual array still has a value there.
+/// `ordered_except` describes the order of a prefix while one position is open for
+/// insertion.
+///
+/// One position is reserved for the saved value, so order need only hold elsewhere.
+/// This logical "hole" is bookkeeping; the actual array still has a value there.
 pub open spec fn ordered_except(s: Seq<u32>, end: int, hole: int) -> bool {
     forall|a: int, b: int| 0 <= a < b < end && a != hole && b != hole
         ==> #[trigger] s[a] <= #[trigger] s[b]
 }
 
-// Proves that making room for an insertion preserves the original collection.
-//
-// A shift temporarily duplicates a neighbor in the actual array. To account for
-// the saved value correctly, compare states with the logical hole filled in.
-// Equal multisets then establish that every value keeps its original count.
+/// `shift_preserves_elements` proves that shifting a neighbor preserves the elements
+/// once the saved key fills the hole.
+///
+/// A shift temporarily duplicates a neighbor in the actual array. To account for
+/// the saved value correctly, compare states with the logical hole filled in.
+/// Equal multisets then establish that every value keeps its original count.
 proof fn shift_preserves_elements(s: Seq<u32>, j: int, key: u32)
     requires 0 < j < s.len(),
     ensures
@@ -54,17 +54,17 @@ proof fn shift_preserves_elements(s: Seq<u32>, j: int, key: u32)
     assert(left.to_multiset() =~= right.to_multiset());
 }
 
-// Establishes correct sorting without workspace that grows with the input.
-//
-// Each pass inserts one value into the already sorted prefix. The proof must
-// preserve both order and element counts while that value is temporarily saved
-// outside the array. Proof snapshots are erased and add no runtime storage.
-//
-// The budget covers the workspace that remains live during an insertion:
-// - The slice parameter, which borrows the caller's data.
-// - The length and two indices that track progress.
-// - The saved element while its insertion position is found.
-// These needs stay fixed regardless of how many elements the slice contains.
+/// `insertion_sort` sorts a borrowed slice in place with fixed workspace.
+///
+/// Each pass inserts one value into the already sorted prefix. The proof must
+/// preserve both order and element counts while that value is temporarily saved
+/// outside the array. Proof snapshots are erased and add no runtime storage.
+///
+/// The budget covers the workspace that remains live during an insertion:
+/// - The slice parameter, which borrows the caller's data.
+/// - The length and two indices that track progress.
+/// - The saved element while its insertion position is found.
+/// These needs stay fixed regardless of how many elements the slice contains.
 pub fn insertion_sort(values: &mut [u32])
     // old(values) is the input state; final(values) is the state after return.
     // The @ notation exposes the slice's mathematical sequence for the proof.
@@ -135,9 +135,8 @@ pub fn insertion_sort(values: &mut [u32])
     }
 }
 
-// Makes the sorting proof usable as a standalone verification example.
-//
-// No particular input is needed for verification; companion examples execute it.
+/// `main` leaves the choice of input to callers. Verus checks the sorter for every
+/// permitted slice.
 fn main() {}
 
 }

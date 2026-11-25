@@ -1,17 +1,18 @@
 // rust_verify/tests/example.rs expect-errors --- Intentionally fails a memory checkpoint.
-// Shows a checkpoint catching a copy that exceeds a stage's memory allowance.
+// This example shows how a peak checkpoint can fail even when the function's budget is
+// sufficient.
 //
-// The whole-function contract has room for both arrays. The checkpoint asks
-// for a tighter bound at this particular point, and Verus must reject it.
+// The function allows two arrays. After copying the original, the checkpoint claims
+// that only one array's worth of storage has been used.
 
 use vstd::prelude::*;
 
 verus! {
 
-// Preserves an original array while making a copy that breaks the checkpoint.
-//
-// The error belongs to the assertion: copying is permitted by the function's
-// contract, but the claimed peak at this point only allows one array.
+/// `main` copies an array and makes a peak claim that omits the copy.
+///
+/// The error belongs to the assertion: copying is permitted by the function's
+/// contract, but the claimed peak at this point only allows one array.
 fn main()
     resources peak(memory) <= 2 * value_size([u32; 4]),
 {
