@@ -1,4 +1,8 @@
-// A completed worker can own a buffer while another worker holds the mutex.
+// Both workers allocate under the same mutex. Can their buffers still overlap?
+// If the producer finishes first, its join handle keeps the returned buffer alive.
+// The caller joins the consumer first, so the consumer can acquire the mutex and
+// allocate its scratch while the producer's buffer is still waiting to be collected.
+// Verus Meter must therefore count `2 * bytes` of buffer storage at peak.
 use std::sync::{Arc, Mutex};
 use vstd::prelude::*;
 
