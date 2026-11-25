@@ -1,13 +1,12 @@
-// This example shows why a memory bound must count a buffer that a worker
-// returns. The buffer still takes up memory after the worker finishes.
+// This example shows how returning a worker's buffer changes the peak memory
+// bound for two workers that use the same mutex. In the scratch example in
+// mutex_lifetimes.rs, each worker drops its buffer before unlocking, so the
+// peak includes just one scratch reservation.
 //
-// Suppose the producer runs first. It locks the mutex, reserves `bytes` for
-// its buffer, releases the lock, and returns the buffer. The caller waits for
-// the consumer to finish before it collects the producer's buffer.
-//
-// The consumer can now lock the same mutex and reserve `bytes` for its own
-// buffer. At that moment both buffers occupy memory, so their contribution
-// to the peak is `2 * bytes`.
+// Here the producer can finish first and leave its buffer in the join handle.
+// The caller joins the consumer first. While the producer's result is waiting,
+// the consumer can take the lock and allocate its own scratch. Verus Meter
+// therefore needs `2 * bytes` for the two reservations.
 use std::sync::{Arc, Mutex};
 use vstd::prelude::*;
 
