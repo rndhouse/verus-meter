@@ -152,7 +152,7 @@ fn unlocking_before_freeing_the_returned_buffer_exceeds_the_batch_contract() {
     assert!(
         failure.errors.iter().all(|error| error.message.contains("memory budget exceeded")
             && error.spans.iter().any(|span| span.text.iter().any(|line| {
-                line.text.contains("resources peak(memory) <= shared_mutex_storage()")
+                line.text.contains("resources peak(memory) <= run_workers_budget(")
             }))),
         "{:?}",
         failure.errors

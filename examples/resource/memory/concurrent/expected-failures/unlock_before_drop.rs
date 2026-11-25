@@ -47,12 +47,20 @@ fn reserve_scratch(buffer_capacity: u16) -> Vec<u8>
     Vec::<u8>::with_capacity(buffer_capacity as usize)
 }
 
+/// `run_workers_budget` counts every worker and allows one scratch reservation for a nonempty batch.
+spec fn run_workers_budget(worker_count: u16, buffer_capacity: u16) -> nat {
+    // One call to reserve_scratch holds its parameter, a Vec header, and the reserved bytes.
+    let reservation = (buffer_capacity as nat) * value_size(u8);
+    let one_call = value_size(buffer_capacity) + value_size(Vec<u8>) + reservation;
+    shared_mutex_storage() + coordinator_storage()
+        + (worker_count as nat) * value_size(WorkerStorage)
+        + if worker_count == 0 { 0 } else { one_call }
+}
+
 /// `run_workers` starts all the workers and then joins them. With no workers there
 /// is no scratch. For a nonempty batch it claims one call's scratch allowance.
 fn run_workers(worker_count: u16, buffer_capacity: u16)
-    resources peak(memory) <= shared_mutex_storage() + coordinator_storage()
-        + worker_count * value_size(WorkerStorage)
-        + if worker_count == 0 { 0 } else { peak(reserve_scratch(buffer_capacity)) },
+    resources peak(memory) <= run_workers_budget(worker_count, buffer_capacity),
 {
     let cell = Arc::new(Cell::new(()));
     let mut handles = Vec::with_capacity(worker_count as usize);
