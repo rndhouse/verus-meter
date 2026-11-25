@@ -25,15 +25,17 @@ struct WorkerStorage {
     lock_result: LockResult,
 }
 
-/// `caller_storage` counts the caller's workspace and the mutex shared by all workers.
-spec fn caller_storage() -> nat {
-    // The caller owns one Arc. Its backing holds two reference counts and the mutex.
-    let shared = value_size(SharedCell) + 2 * value_size(usize) + value_size(Cell);
-    // The two inputs and spawn index are u16s. The caller also holds the handle
-    // vector and, during a join, one popped handle and its result.
-    let caller = 3 * value_size(u16) + value_size(Vec<Job>)
-        + value_size(Job) + value_size(std::thread::Result<()>);
-    shared + caller
+/// `shared_mutex_storage` counts the mutex and the two reference counts shared by all Arc handles.
+spec fn shared_mutex_storage() -> nat {
+    value_size(Cell) + 2 * value_size(usize)
+}
+
+/// `coordinator_storage` counts the locals of the thread that starts and joins the workers.
+spec fn coordinator_storage() -> nat {
+    // The coordinator holds one Arc, two u16 inputs, the u16 spawn index, and the handle vector.
+    let setup = value_size(SharedCell) + 3 * value_size(u16) + value_size(Vec<Job>);
+    // At each join, it holds one popped handle and receives one result.
+    setup + value_size(Job) + value_size(std::thread::Result<()>)
 }
 
 /// `reserve_scratch` returns an empty byte vector. Its bound covers the
@@ -45,10 +47,11 @@ fn reserve_scratch(buffer_capacity: u16) -> Vec<u8>
     Vec::<u8>::with_capacity(buffer_capacity as usize)
 }
 
-/// `batch` starts all the workers and then joins them. With no workers there
+/// `run_workers` starts all the workers and then joins them. With no workers there
 /// is no scratch. For a nonempty batch it claims one call's scratch allowance.
-fn batch(worker_count: u16, buffer_capacity: u16)
-    resources peak(memory) <= caller_storage() + worker_count * value_size(WorkerStorage)
+fn run_workers(worker_count: u16, buffer_capacity: u16)
+    resources peak(memory) <= shared_mutex_storage() + coordinator_storage()
+        + worker_count * value_size(WorkerStorage)
         + if worker_count == 0 { 0 } else { peak(reserve_scratch(buffer_capacity)) },
 {
     let cell = Arc::new(Cell::new(()));
@@ -77,7 +80,7 @@ fn batch(worker_count: u16, buffer_capacity: u16)
 
 /// `main` runs four workers requesting 4 KiB of scratch apiece.
 fn main() {
-    batch(4, 4096);
+    run_workers(4, 4096);
 }
 
 } // verus!
