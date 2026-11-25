@@ -10,8 +10,8 @@ use vstd::prelude::*;
 
 verus! {
 
-type Mut = Mutex<()>;
-type SharedCell = Arc<Mut>;
+type Cell = Mutex<()>;
+type SharedCell = Arc<Cell>;
 type Job = std::thread::JoinHandle<()>;
 type Guard = std::sync::MutexGuard<'static, ()>;
 type LockResult = Result<Guard, std::sync::PoisonError<Guard>>;
@@ -20,7 +20,7 @@ type LockResult = Result<Guard, std::sync::PoisonError<Guard>>;
 /// the outstanding workers. The contract adds scratch separately.
 spec fn batch_storage(worker_count: u16, buffer_capacity: u16) -> nat {
     // The caller owns one Arc. All clones share its two counts and one mutex.
-    let shared = value_size(SharedCell) + 2 * value_size(usize) + value_size(Mut);
+    let shared = value_size(SharedCell) + 2 * value_size(usize) + value_size(Cell);
 
     // Count the two inputs, spawn index, and handle vector. Joining also
     // needs a local for the popped handle and one for the join result.
@@ -53,7 +53,7 @@ fn batch(worker_count: u16, buffer_capacity: u16)
     resources peak(memory) <= batch_storage(worker_count, buffer_capacity)
         + if worker_count == 0 { 0 } else { peak(reserve_scratch(buffer_capacity)) },
 {
-    let cell = Arc::new(Mut::new(()));
+    let cell = Arc::new(Cell::new(()));
     let mut handles = Vec::with_capacity(worker_count as usize);
     let mut spawned = 0u16;
     while spawned < worker_count
