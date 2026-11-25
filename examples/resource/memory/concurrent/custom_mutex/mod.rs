@@ -44,7 +44,7 @@ spec fn batch_budget(worker_count: u16, scratch_capacity: u16) -> nat {
     let attempts = count * value_size(Option<protocol::Guard>);
 
     // Only the guard holder can reserve scratch. An empty batch reserves none.
-    let scratch = if worker_count == 0 { 0nat } else { scratch_capacity as nat };
+    let scratch = if worker_count == 0 { 0nat } else { (scratch_capacity as nat) * value_size(u8) };
 
     // Count shared and caller storage once, then add the worker storage and
     // the scratch reservations that can coexist.

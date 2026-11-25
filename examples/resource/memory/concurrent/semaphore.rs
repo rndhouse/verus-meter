@@ -65,7 +65,7 @@ spec fn batch_budget(worker_count: u16, permit_count: u16, scratch_capacity: u16
     // Each scratch buffer requires both a worker and a permit. Whichever runs
     // out first limits how many reservations can overlap.
     let max_scratch_buffers = if worker_count <= permit_count { count } else { permit_count as nat };
-    let scratch = max_scratch_buffers * (scratch_capacity as nat);
+    let scratch = max_scratch_buffers * (scratch_capacity as nat) * value_size(u8);
 
     // Count shared and caller storage once, then add the worker storage and
     // the scratch reservations that can coexist.

@@ -7,6 +7,8 @@ use vstd::prelude::*;
 
 verus! {
 
+type FinalScratch = [u8; 512];
+
 // Build a collection of buffers within a budget that grows with their number.
 //
 // The fixed allowance covers the input, collection handle, loop index, and a
@@ -35,13 +37,13 @@ fn build(n: usize) -> (buffers: Vec<Vec<u32>>)
 //
 // The later byte workspace sets the allowance for the complete operation.
 fn main()
-    resources peak(memory) <= value_size([u8; 512]),
+    resources peak(memory) <= value_size(FinalScratch),
 {
     let buffers = build(3);
     // Making the collection fixed-length preserves the buffers it owns.
     let fixed = buffers.into_boxed_slice();
     drop(fixed);
-    let scratch = [0u8;512];
+    let scratch: FinalScratch = [0; 512];
 }
 
 } // verus!

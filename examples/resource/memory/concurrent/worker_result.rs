@@ -14,7 +14,8 @@ verus! {
 
 /// `make` reserves an empty byte buffer and returns it to the producer.
 fn make(buffer_capacity: u16) -> Vec<u8>
-    resources peak(memory) <= buffer_capacity + value_size(buffer_capacity) + value_size(Vec<u8>),
+    resources peak(memory) <= buffer_capacity * value_size(u8)
+        + value_size(buffer_capacity) + value_size(Vec<u8>),
 {
     Vec::<u8>::with_capacity(buffer_capacity as usize)
 }
@@ -33,7 +34,7 @@ spec fn worker_frame() -> nat {
 spec fn work_budget(buffer_capacity: u16) -> nat {
     // The producer's output and the consumer's scratch can coexist. Each has
     // a Vec header and a reservation of `buffer_capacity` bytes.
-    let buffers = 2 * (buffer_capacity as nat) + 2 * value_size(Vec<u8>);
+    let buffers = 2 * (buffer_capacity as nat) * value_size(u8) + 2 * value_size(Vec<u8>);
 
     // Both Arc handles point to one allocation. Count its mutex once, along
     // with the strong and weak reference counts (one usize each).

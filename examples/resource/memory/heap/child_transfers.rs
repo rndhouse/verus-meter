@@ -7,6 +7,8 @@ use vstd::prelude::*;
 
 verus! {
 
+type FinalScratch = [u8; 256];
+
 struct Buffers {
     active: Vec<u32>,
     spare: Box<[u8; 16]>,
@@ -27,7 +29,7 @@ fn replace(buffers: &mut Buffers)
 //
 // The later byte workspace sets the allowance for the complete operation.
 fn main()
-    resources peak(memory) <= value_size([u8; 256]),
+    resources peak(memory) <= value_size(FinalScratch),
 {
     let mut buffers = Buffers {
         active: Vec::with_capacity(2),
@@ -40,7 +42,7 @@ fn main()
     drop(buffers);
     active.push(1);
     drop(active);
-    let scratch = [0u8; 256];
+    let scratch: FinalScratch = [0; 256];
 }
 
 } // verus!

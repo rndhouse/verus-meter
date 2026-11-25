@@ -4,6 +4,8 @@ use vstd::prelude::*;
 
 verus! {
 
+type FinalScratch = [u8; 96];
+
 // Produce a fixed-length buffer containing the selected values.
 //
 // The input reservation determines the backing peak. The returned slice
@@ -31,13 +33,13 @@ fn forward(b: Box<[u32]>) -> (r: Box<[u32]>)
 //
 // The later byte workspace sets the allowance for the complete operation.
 fn main()
-    resources peak(memory) <= value_size([u8; 96]),
+    resources peak(memory) <= value_size(FinalScratch),
 {
     let b = pack();
     let c = forward(b);
     assert(c[0] == 7);
     drop(c);
-    let scratch = [0u8; 96];
+    let scratch: FinalScratch = [0; 96];
 }
 
 }

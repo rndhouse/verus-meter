@@ -43,8 +43,8 @@ are included only where needed for memory verification.
 - [Batched construction](heap/loops/batched_construction.rs): derive an input-dependent budget while collecting two buffers per batch.
 - [Buffer collection](heap/loops/buffer_collection.rs): compute a memory budget from the requested number of heap buffers while retaining a local array.
 - [For-loop construction](heap/loops/for_construction.rs): collect buffers with an integer range and account for iterator state separately.
-- [Streaming checksums](heap/loops/streaming_checksums.rs): borrow each input block and reuse the same scratch allowance on every iteration.
-- [Staged checksums](heap/loops/staged_checksums.rs): buffer decoded blocks and consume them in order under a larger section allowance.
+- The streaming loop peaks while computing the second checksum. The first result and the current decoded block are live alongside the checksum helper. [Streaming checksums](heap/loops/streaming_checksums.rs)
+- Staging adds two decoded blocks' worth of backing storage at that same call. The example derives both the section bound and the enclosing function's bound. [Staged checksums](heap/loops/staged_checksums.rs)
 - [Partial transfers](heap/loops/partial_transfers.rs): move batches of children and release the source independently.
 - [Peak overlap](heap/loops/peak_overlap.rs): release extracted work buffers while collecting results within an input-dependent budget.
 

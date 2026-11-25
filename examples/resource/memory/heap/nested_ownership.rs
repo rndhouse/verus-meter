@@ -6,6 +6,8 @@ use vstd::prelude::*;
 
 verus! {
 
+type FinalScratch = [u8; 88];
+
 // Group a collection and its marker under one owner.
 struct Buffer {
     values: Vec<u32>,
@@ -37,7 +39,7 @@ fn forward(b: Box<Buffer>) -> (r: Box<Buffer>)
 //
 // The allowance covers the saved length alongside the later byte workspace.
 fn main()
-    resources peak(memory) <= value_size(usize) + value_size([u8; 88]),
+    resources peak(memory) <= value_size(usize) + value_size(FinalScratch),
 {
     let first = make(4);
     let second = forward(first);
@@ -45,7 +47,7 @@ fn main()
     assert(length == 0);
     assert(*second.marker == 42);
     drop(second);
-    let scratch = [0u8; 88];
+    let scratch: FinalScratch = [0; 88];
 }
 
 }

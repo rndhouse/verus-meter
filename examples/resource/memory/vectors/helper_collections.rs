@@ -2,30 +2,46 @@ use vstd::prelude::*;
 
 verus! {
 
-// A counted helper returns each row's reservation, independently of row data.
-// Its peak budget also covers the outer buffer, handles and loop temporaries.
-fn rows(n: usize) -> (rows: Vec<Vec<u32>>)
-    requires n <= 2,
-    ensures rows.len() == n,
-        forall|i: int| 0 <= i < n ==> rows[i].len() == 0,
-    resources peak(memory) <= 200,
+type Row = Vec<u32>;
+type Rows = Vec<Row>;
+type Scratch = [u8; 200];
+
+/// `construction_budget` counts the outer vector, its reserved row headers,
+/// and four reserved elements per row. The row count parameter, loop index, and the
+/// row header being moved into a slot also occupy storage.
+spec fn construction_budget(row_count: usize) -> nat {
+    let collection = value_size(Rows) + (row_count as nat) * value_size(Row);
+    let row_buffers = (row_count as nat) * 4 * value_size(u32);
+    let locals = value_size(row_count) + value_size(usize) + value_size(Row);
+    collection + row_buffers + locals
+}
+
+/// `rows` returns empty rows whose four-element reservations survive the call.
+fn rows(row_count: usize) -> (rows: Rows)
+    requires row_count <= 2,
+    ensures rows.len() == row_count,
+        forall|row_index: int| 0 <= row_index < row_count ==> rows[row_index].len() == 0,
+    resources peak(memory) <= construction_budget(row_count),
 {
-    let mut rows = Vec::<Vec<u32>>::with_capacity(n);
-    let mut i = 0usize;
-    while i < n
-        invariant i <= n, n <= 2, rows.len() == i,
-            forall|j: int| 0 <= j < rows.len() ==> rows[j].len() == 0,
-        decreases n - i,
+    let mut rows = Rows::with_capacity(row_count);
+    let mut rows_created = 0usize;
+    while rows_created < row_count
+        invariant rows_created <= row_count, row_count <= 2, rows.len() == rows_created,
+            forall|entry_index: int| 0 <= entry_index < rows.len() ==> rows[entry_index].len() == 0,
+        decreases row_count - rows_created,
     {
-        let row = Vec::<u32>::with_capacity(4);
+        let row = Row::with_capacity(4);
         rows.push(row);
-        i += 1;
+        rows_created += 1;
     }
     rows
 }
 
+/// `main` keeps the outer vector and both row slots after the pop. Only the
+/// surviving row's four elements remain reserved alongside the scratch array.
 fn main()
-    resources peak(memory) <= 288,
+    resources peak(memory) <= value_size(Rows) + 2 * value_size(Row)
+        + 4 * value_size(u32) + value_size(Scratch),
 {
     let mut rows = rows(2);
     // The helper's summary preserves each row's allocation and reservation.
@@ -33,8 +49,7 @@ fn main()
     // reservation lets the following push reuse its existing buffer.
     rows.pop();
     rows[0].push(7);
-    // 24-byte handle + 48-byte outer buffer + 16-byte surviving row + scratch.
-    let scratch = [0u8; 200];
+    let scratch: Scratch = [0; 200];
 }
 
 }

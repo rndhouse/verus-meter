@@ -7,6 +7,8 @@ use vstd::prelude::*;
 
 verus! {
 
+type FinalScratch = [u8; 160];
+
 // Keep two buffers together while allowing them to grow independently.
 struct Buffers {
     values: Vec<u32>,
@@ -31,7 +33,7 @@ fn append(buffers: &mut Buffers)
 //
 // The later byte workspace sets the allowance for the complete operation.
 fn main()
-    resources peak(memory) <= value_size([u8; 160]),
+    resources peak(memory) <= value_size(FinalScratch),
 {
     let mut buffers = Box::new(Buffers {
         values: Vec::new(),
@@ -43,7 +45,7 @@ fn main()
     assert(buffers.values[0] == 7);
     assert(buffers.spare[0] == 9);
     drop(buffers);
-    let scratch = [0u8;160];
+    let scratch: FinalScratch = [0; 160];
 }
 
 } // verus!

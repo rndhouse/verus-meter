@@ -312,6 +312,37 @@ fn splitting_a_streaming_loop_retains_the_staged_blocks() {
 }
 
 #[test]
+fn checksum_examples_need_the_whole_saved_result_at_the_next_call() {
+    for (name, example) in [
+        (
+            "streaming",
+            include_str!(
+                "../../../../../examples/resource/memory/heap/loops/streaming_checksums.rs"
+            ),
+        ),
+        (
+            "staged",
+            include_str!("../../../../../examples/resource/memory/heap/loops/staged_checksums.rs"),
+        ),
+    ] {
+        // Shorten only the section. Keep the enclosing function and the
+        // executable u16 checksum so the same call still has to fit.
+        let (before, after) = example.rsplit_once("return_size(checksum)").unwrap();
+        let short = format!("{before}value_size(u8){after}");
+        let err = verify_one_file(name, short, &["--no-cheating"]).unwrap_err();
+        assert!(
+            err.errors.iter().any(|error| error.message.contains("memory budget exceeded")
+                && error.spans.iter().any(|span| span
+                    .text
+                    .iter()
+                    .any(|line| line.text.contains("sums.push(checksum(&decoded))")))),
+            "{:?}",
+            err.errors
+        );
+    }
+}
+
+#[test]
 fn growth_example_compiles() {
     crate::verify_one_file(
         "vector_growth_example",

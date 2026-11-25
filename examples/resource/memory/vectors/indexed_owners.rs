@@ -8,6 +8,8 @@ use vstd::prelude::*;
 
 verus! {
 
+type FinalScratch = [u8; 248];
+
 struct Row {
     cells: Vec<u32>,
 }
@@ -51,7 +53,7 @@ fn remove_at(rows: &mut Vec<Row>, index: usize) -> (row: Row)
 //
 // Only the saved length remains live alongside the later byte workspace.
 fn main()
-    resources peak(memory) <= value_size(usize) + value_size([u8; 248]),
+    resources peak(memory) <= value_size(usize) + value_size(FinalScratch),
 {
     let mut rows = Vec::<Row>::with_capacity(2);
     let first = Row { cells: Vec::new() };
@@ -77,7 +79,7 @@ fn main()
 
     // Dropping the whole collection releases all retained child charges.
     // Only the saved count remains alongside this scratch space.
-    let scratch = [0u8; 248];
+    let scratch: FinalScratch = [0; 248];
 }
 
 }
