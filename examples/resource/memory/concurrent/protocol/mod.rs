@@ -1,6 +1,6 @@
-// A successful CAS transfers the unique tracked token into the returned guard.
-// Releasing the guard puts that token back. Two live guards for this instance
-// would own two full fractions, contradicting the resource algebra.
+// This module proves the one-guard limit used by the custom mutex example.
+// Each lock starts with one proof token. Acquiring the lock moves its token
+// into the guard, and releasing the guard puts the token back.
 use vstd::atomic_ghost::*;
 use vstd::prelude::*;
 use vstd::resource::Loc;
@@ -44,6 +44,8 @@ impl BoundedInstance for Lock {
 /// `transition_workspace` bounds the space workers use to acquire or release
 /// the lock. Releasing a guard is the larger of the two operations.
 pub open spec fn transition_workspace(workers: nat) -> nat {
+    // Release uses the guard, three reference slots along the atomic store
+    // call, and the Boolean being stored. Allow that space for each worker.
     workers * value_size(Guard) + 3 * (workers * ref_size(&bool)) + workers * value_size(bool)
 }
 
@@ -52,6 +54,8 @@ impl Lock {
     pub(crate) fn new() -> (s: Self)
         resources peak(memory) <= 3 * value_size(bool),
     {
+        // Tie the initial token to this lock so a guard for a different lock
+        // cannot justify a bound on this one's holders.
         let tracked token = FracGhost::<()>::new(());
         let domain = Ghost(token.id());
         let flag = AtomicBool::new(Ghost(domain), false, Tracked(Some(token)));
@@ -72,6 +76,8 @@ impl Lock {
         proof {
             use_type_invariant(self);
         }
+        // Move the token out in the same atomic step that changes the flag
+        // from free to held. A failed attempt leaves it where it was.
         let tracked mut taken = None;
         let success =
             atomic_with_ghost!(
@@ -109,6 +115,7 @@ impl<'a> Guard<'a> {
             use_type_invariant(&self);
             use_type_invariant(self.lock);
         }
+        // Return the token in the same atomic step that makes the lock available.
         let Guard { lock, token: Tracked(unit) } = self;
         atomic_with_ghost!(&lock.flag => store(false); ghost state => { state = Some(unit); });
     }
@@ -132,6 +139,8 @@ impl<'a> BoundedHolder for Guard<'a> {
     proof fn population_bound(tracked mut population: Seq<Self>, id: Loc, capacity: nat) {
         broadcast use vstd::seq::group_seq_axioms;
 
+        // Remember the original sequence so the proof can identify both
+        // guards after removing them from the end.
         let ghost before = population;
         if population.len() > 0 {
             assert(before[0].instance_id() == id && before[0].capacity() == capacity);
@@ -144,6 +153,8 @@ impl<'a> BoundedHolder for Guard<'a> {
             let tracked b = population.tracked_pop();
             use_type_invariant(&a);
             use_type_invariant(&b);
+            // Both guards claim the full token for this lock. Combining them
+            // would exceed the single whole that the token algebra permits.
             let tracked mut both = a.token.get();
             both.combine(b.token.get());
             both.bounded();

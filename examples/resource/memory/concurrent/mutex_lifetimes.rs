@@ -1,8 +1,12 @@
-// Four workers share a mutex protecting an initially empty vector. Both cases
-// publish all four workers before beginning to join them.
+// This example shows why the same mutex gives two different memory bounds.
+// Four workers that free their buffers before unlocking need space for one
+// scratch reservation. If each worker moves its buffer into a shared vector,
+// all four reservations can still occupy memory after the workers finish.
 use std::sync::{Arc, Mutex};
 use vstd::prelude::*;
 
+// Start every worker before joining any of them, so the join order alone
+// cannot explain the one-buffer bound.
 macro_rules! four_workers {
     ($cell:ident, |$peer:ident| $body:block) => {{
         let $peer = $cell.clone();
@@ -37,6 +41,8 @@ type Payload = [u8; payload_bytes!()];
 
 /// `shared_cell` counts the caller's handle and the backing storage shared by all four workers.
 spec fn shared_cell() -> nat {
+    // The caller keeps one Arc handle. All its clones share the two reference
+    // counts and the mutex containing the outer Vec header.
     value_size(SharedCell) + 2 * value_size(usize) + value_size(Cell)
 }
 
@@ -57,6 +63,8 @@ fn temporary(bytes: u16)
 /// `scratch_frames` bounds the caller and worker storage that can coexist with
 /// a call to `temporary`.
 spec fn scratch_frames(bytes: u16) -> nat {
+    // Count the shared cell and the caller's size parameter once. Each of the
+    // four workers has its own captured size and space for its lock result.
     shared_cell() + value_size(bytes)
         + 4 * (published_worker() + value_size(bytes) + value_size(LockResult))
 }
@@ -72,6 +80,8 @@ fn scratch(bytes: u16)
         temporary(bytes);
         drop(guard);
     });
+    // All four joins have returned. The caller still owns its input and the
+    // shared cell, and each worker's scratch has already been freed.
     assert(current(memory) <= value_size(bytes) + value_size(SharedCell)
         + 2 * value_size(usize) + value_size(Cell));
     drop(cell);
@@ -85,8 +95,15 @@ spec fn retained_entry() -> nat {
 /// `retained_budget` bounds the workers, the shared collection, and a buffer
 /// being added while a worker holds the mutex.
 spec fn retained_budget() -> nat {
+    // Each successful worker can leave one buffer in the shared vector.
     let shared = shared_cell() + 4 * retained_entry();
+
+    // All four workers can be outstanding. Allow for each one's lock result
+    // as well as its join handle, completion tag, and captured Arc.
     let workers = 4 * (published_worker() + value_size(LockResult));
+
+    // The worker doing a push also holds a guard and supplies the new entry.
+    // Adding that entry to the full collection bound is conservative.
     shared + workers + value_size(Guard) + retained_entry()
 }
 
@@ -103,6 +120,8 @@ fn retained()
         let buffer = Vec::<u8>::with_capacity(payload_bytes!());
         guard.push(buffer);
     });
+    // After the joins, the outer vector can still own four inner Vec headers
+    // and their payloads. Dropping the caller's last Arc frees the collection.
     assert(current(memory) <= value_size(SharedCell) + 2 * value_size(usize) + value_size(Cell)
         + 4 * (value_size(Vec<u8>) + value_size(Payload)));
     drop(cell);
