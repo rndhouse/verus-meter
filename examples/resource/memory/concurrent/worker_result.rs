@@ -31,10 +31,21 @@ spec fn worker_frame() -> nat {
 /// `work_budget` counts both buffer reservations and one shared mutex when
 /// bounding the peak across the two workers.
 spec fn work_budget(buffer_capacity: u16) -> nat {
+    // The producer's output and the consumer's scratch can coexist. Each has
+    // a Vec header and a reservation of `buffer_capacity` bytes.
     let buffers = 2 * (buffer_capacity as nat) + 2 * value_size(Vec<u8>);
+
+    // Both Arc handles point to one allocation. Count its mutex once, along
+    // with the strong and weak reference counts (one usize each).
     let shared = value_size(Mutex<u8>) + 2 * value_size(usize);
+
+    // The caller holds two join handles. The std handle returns the producer's
+    // Vec, and the vstd handle returns () when the consumer finishes.
     let jobs = value_size(std::thread::JoinHandle<Vec<u8>>)
         + value_size(vstd::thread::JoinHandle<()>);
+
+    // Add the caller's u16 parameter and one frame for each worker to the
+    // totals above. Each frame includes that worker's own copy of the parameter.
     value_size(buffer_capacity) + shared + jobs + 2 * worker_frame() + buffers
 }
 
