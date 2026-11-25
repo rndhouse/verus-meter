@@ -18,10 +18,15 @@ type LockResult = Result<Guard, std::sync::PoisonError<Guard>>;
 
 // These fields name the model bytes counted once per outstanding worker.
 struct WorkerStorage {
+    /// One slot in the coordinator's vector, reserved for this worker's join handle.
     reserved_handle_slot: Job,
+    /// One model byte for the worker's completion state, counted from spawn until join.
     completion_tag: u8,
+    /// The worker's cloned `Arc` handle. All workers share the same mutex allocation.
     captured_mutex: SharedCell,
+    /// The worker's copy of the element count passed to `reserve_scratch`.
     captured_capacity: u16,
+    /// The result of `peer.lock()`, which holds the guard until the worker drops it.
     lock_result: LockResult,
 }
 
