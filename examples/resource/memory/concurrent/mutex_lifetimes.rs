@@ -50,7 +50,8 @@ spec fn published_worker() -> nat {
 
 /// `temporary` reserves a scratch buffer and frees it before returning to the worker.
 fn temporary(buffer_capacity: u16)
-    resources peak(memory) <= buffer_capacity + value_size(Vec<u8>) + value_size(buffer_capacity),
+    resources peak(memory) <= buffer_capacity * value_size(u8)
+        + value_size(Vec<u8>) + value_size(buffer_capacity),
 {
     let scratch = Vec::<u8>::with_capacity(buffer_capacity as usize);
     drop(scratch);
