@@ -16,26 +16,24 @@ type Job = std::thread::JoinHandle<()>;
 type Guard = std::sync::MutexGuard<'static, ()>;
 type LockResult = Result<Guard, std::sync::PoisonError<Guard>>;
 
-/// `batch_storage` counts the caller, the shared mutex, and the storage for
-/// the outstanding workers. The contract adds scratch separately.
-spec fn batch_storage(worker_count: u16, buffer_capacity: u16) -> nat {
-    // The caller owns one Arc. All clones share its two counts and one mutex.
+// These fields name the model bytes counted once per outstanding worker.
+struct WorkerStorage {
+    reserved_handle_slot: Job,
+    completion_tag: u8,
+    captured_mutex: SharedCell,
+    captured_capacity: u16,
+    lock_result: LockResult,
+}
+
+/// `caller_storage` counts the caller's workspace and the mutex shared by all workers.
+spec fn caller_storage() -> nat {
+    // The caller owns one Arc. Its backing holds two reference counts and the mutex.
     let shared = value_size(SharedCell) + 2 * value_size(usize) + value_size(Cell);
-
-    // Count the two inputs, spawn index, and handle vector. Joining also
-    // needs a local for the popped handle and one for the join result.
-    let caller = value_size(worker_count) + value_size(buffer_capacity) + value_size(u16)
-        + value_size(Vec<Job>) + value_size(Job) + value_size(std::thread::Result<()>);
-
-    // The vector reserves one handle slot per worker. Each outstanding worker
-    // also has a completion tag, even if it finishes before the caller joins it.
-    let count = worker_count as nat;
-    let outstanding = count * value_size(Job) + count * value_size(u8);
-
-    // Each worker captures its own Arc and capacity and has a slot for its lock result.
-    let captures = count * value_size(SharedCell) + count * value_size(buffer_capacity);
-    let locks = count * value_size(LockResult);
-    shared + caller + outstanding + captures + locks
+    // The two inputs and spawn index are u16s. The caller also holds the handle
+    // vector and, during a join, one popped handle and its result.
+    let caller = 3 * value_size(u16) + value_size(Vec<Job>)
+        + value_size(Job) + value_size(std::thread::Result<()>);
+    shared + caller
 }
 
 /// `reserve_scratch` returns an empty byte vector. Its bound covers the
@@ -50,7 +48,7 @@ fn reserve_scratch(buffer_capacity: u16) -> Vec<u8>
 /// `batch` starts all the workers and then joins them. With no workers there
 /// is no scratch. Otherwise, one call's allowance covers all scratch lifetimes.
 fn batch(worker_count: u16, buffer_capacity: u16)
-    resources peak(memory) <= batch_storage(worker_count, buffer_capacity)
+    resources peak(memory) <= caller_storage() + worker_count * value_size(WorkerStorage)
         + if worker_count == 0 { 0 } else { peak(reserve_scratch(buffer_capacity)) },
 {
     let cell = Arc::new(Cell::new(()));

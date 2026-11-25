@@ -155,7 +155,7 @@ fn unlocking_before_freeing_the_returned_buffer_exceeds_the_batch_contract() {
                 .spans
                 .iter()
                 .any(|span| span.text.iter().any(|line| {
-                    line.text.contains("resources peak(memory) <= batch_storage")
+                    line.text.contains("resources peak(memory) <= caller_storage()")
                 }))),
         "{:?}",
         failure.errors
