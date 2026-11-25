@@ -1,7 +1,13 @@
-// This example shows why the same mutex gives two different memory bounds.
-// Four workers that free their buffers before unlocking need space for one
-// scratch reservation. If each worker moves its buffer into a shared vector,
-// all four reservations can still occupy memory after the workers finish.
+// This example shows how Verus Meter proves that four concurrent workers can
+// each request 4 KiB of scratch and use at most 4 KiB of scratch between them.
+// In `scratch`, each worker calls a helper that allocates and frees its buffer
+// while the worker holds the mutex. The proof works for any requested buffer
+// size and any order in which the workers acquire the lock.
+//
+// In `retained`, each worker saves its buffer in a shared vector before
+// unlocking. Verus Meter tracks the buffers as the vector takes ownership.
+// After all four workers finish, a bound that counts only one buffer fails
+// verification because the vector can still hold all four.
 use std::sync::{Arc, Mutex};
 use vstd::prelude::*;
 
