@@ -9,6 +9,26 @@ verus! {
 type Job = std::thread::JoinHandle<()>;
 type Shared = std::sync::Arc<Semaphore>;
 
+/// `try_acquire_workspace` bounds the space workers use inside the semaphore's
+/// compare-exchange. A wrapper taking `&Semaphore` also holds its own parameter,
+/// so its peak for one call is `ref_size(&Semaphore) + try_acquire_workspace(1)`.
+spec fn try_acquire_workspace(worker_count: nat) -> nat {
+    // Each method call keeps its receiver and the available count it read.
+    let method_locals = worker_count * ref_size(&Semaphore) + worker_count * value_size(usize);
+
+    // The atomic macro borrows the counter and saves two usize operands:
+    // the expected count and its replacement (one fewer available slot).
+    let counter_references = worker_count * ref_size(&vstd::atomic::PAtomicUsize);
+    let expected_and_replacement = 2 * (worker_count * value_size(usize));
+    let macro_locals = counter_references + expected_and_replacement;
+
+    // The compare-exchange call takes a receiver reference and copies both
+    // operands. Its result holds the previous count and a success/failure tag.
+    let call_arguments = counter_references + expected_and_replacement;
+    let results = worker_count * value_size(Result<usize, usize>);
+    method_locals + macro_locals + call_arguments + results
+}
+
 /// `batch_budget` bounds peak memory for workers sharing a semaphore. At most
 /// `min(worker_count, permit_count)` buffers of `scratch_capacity` bytes can coexist.
 spec fn batch_budget(worker_count: u16, permit_count: u16, scratch_capacity: u16) -> nat {
@@ -36,9 +56,8 @@ spec fn batch_budget(worker_count: u16, permit_count: u16, scratch_capacity: u16
     // the requested scratch capacity.
     let captures = count * value_size(Shared) + count * value_size(scratch_capacity);
 
-    // The verified attempt wrapper peaks at 81 bytes including its reference
-    // parameter. Remove that caller slot to use the method workspace here.
-    let protocol_workspace = (count * 81 - count * ref_size(&Semaphore)) as nat;
+    // Every worker can be inside try_acquire, even if no permits are available.
+    let protocol_workspace = try_acquire_workspace(count);
 
     // Each worker receives its own optional permit from the acquisition call.
     let attempts = count * value_size(Option<vstd::resource::semaphore::Permit>);

@@ -130,6 +130,34 @@ fn independent_acquisitions_use_the_actual_shared_backing() {
 }
 
 #[test]
+fn example_workspace_is_exact_for_one_acquisition() {
+    let example = include_str!("../../../../examples/resource/memory/concurrent/semaphore.rs");
+    let wrapper = code_str! {
+        verus! {
+            spec fn attempt_peak() -> nat {
+                ref_size(&Semaphore) + try_acquire_workspace(1)
+            }
+
+            fn attempt(semaphore: &Semaphore) -> Option<vstd::resource::semaphore::Permit<'_>>
+                resources peak(memory) <= attempt_peak(),
+            {
+                semaphore.try_acquire()
+            }
+        }
+    };
+    verify_one_file("derived_attempt", format!("{example}\n{wrapper}"), &["--no-cheating"])
+        .unwrap();
+
+    let short =
+        wrapper.replace("try_acquire_workspace(1)", "(try_acquire_workspace(1) - 1) as nat");
+    assert_ne!(wrapper, short);
+    let error =
+        verify_one_file("short_derived_attempt", format!("{example}\n{short}"), &["--no-cheating"])
+            .unwrap_err();
+    assert_any_vir_error_msg(error, "memory budget exceeded");
+}
+
+#[test]
 fn a_counted_population_uses_the_smaller_of_workers_and_permits() {
     let family = include_str!("../../../../examples/resource/memory/concurrent/semaphore.rs");
     verify_one_file("permit_population", family.into(), &["--no-cheating"]).unwrap();
