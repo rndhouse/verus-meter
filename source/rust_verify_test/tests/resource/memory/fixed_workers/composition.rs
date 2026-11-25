@@ -102,8 +102,8 @@ fn assert_budget_failure_at(name: &str, source: String, site: &str) {
 
 #[test]
 fn four_workers_require_the_guard_for_a_single_scratch_reservation() {
-    let example =
-        include_str!("../../../../../../examples/resource/memory/concurrent/mutex_lifetimes.rs");
+    let example = include_str!("four_workers.verus.rs");
+    crate::verify_one_file("scratch_before_release", example.into(), &["--no-cheating"]).unwrap();
     let unlocked = example.replace(
         "temporary(buffer_capacity);\n        drop(guard);",
         "drop(guard);\n        temporary(buffer_capacity);",

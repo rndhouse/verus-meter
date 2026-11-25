@@ -140,3 +140,24 @@ fn inclusive_loop_publishes_even_at_zero() {
         &source.replace("64 * (n + 1) + b", "64 * (n + 1) + (if n == 0 { 0 } else { b })"),
     );
 }
+
+#[test]
+fn unlocking_before_freeing_the_returned_buffer_exceeds_the_batch_contract() {
+    let example = include_str!(
+        "../../../../../examples/resource/memory/concurrent/expected-failures/unlock_before_drop.rs"
+    );
+    let failure = crate::verify_one_file("unlock_before_drop", example.into(), &["--no-cheating"])
+        .unwrap_err();
+    assert!(!failure.errors.is_empty());
+    assert!(
+        failure.errors.iter().all(|error| error.message.contains("memory budget exceeded")
+            && error
+                .spans
+                .iter()
+                .any(|span| span.text.iter().any(|line| {
+                    line.text.contains("resources peak(memory) <= batch_storage")
+                }))),
+        "{:?}",
+        failure.errors
+    );
+}

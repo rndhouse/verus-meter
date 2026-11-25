@@ -62,8 +62,10 @@ are included only where needed for memory verification.
 
 ## Concurrency
 
-- Four workers each request 4 KiB of scratch. Freeing each buffer before
-  unlocking keeps total scratch within 4 KiB. [Mutex lifetimes](concurrent/mutex_lifetimes.rs)
+- Any number of workers can share one scratch allowance. Each reserves its buffer
+  in a helper and frees it before unlocking. Swapping the two drops lets all the
+  buffers overlap and breaks the same bound. [Counted mutex](concurrent/counted_mutex.rs) ·
+  [Unlock before drop (expected failure)](concurrent/expected-failures/unlock_before_drop.rs)
 - Four workers append buffers to a shared vector. After the joins, the caller
   can still own all four reservations and their headers. [Retained buffers](concurrent/retained_buffers.rs)
 - A completed worker keeps its returned reservation until join. It can overlap

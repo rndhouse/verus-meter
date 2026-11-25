@@ -50,10 +50,6 @@ live caller storage. To use a symbolic vector reservation in the combined peak,
 the verifier checks that the reservation still covers the vector's charge at that
 point. [Executable cases](../source/rust_verify_test/tests/resource/memory/fixed_workers.rs)
 
-Four workers can share one buffer's worth of scratch when the same mutex guard
-stays live across the helper that allocates and frees it.
-[Mutex lifetimes](../examples/resource/memory/concurrent/mutex_lifetimes.rs)
-
 When each worker pushes a 256-byte buffer into an initially empty shared vector,
 the caller can still hold 1,177 bytes after all joins. The shared cell and handle
 occupy 57 bytes, and each inner vector contributes a 24-byte slot and its
@@ -74,6 +70,10 @@ then proves how many workers the vectors represent at each loop boundary.
 For up to `n` workers reserving `b` bytes each, unrestricted scratch can reach
 `n * b`. If each buffer is allocated and freed under the same mutex constructed
 outside the loop, scratch is zero for no workers and at most `b` otherwise.
+A worker can reserve the buffer in a helper and free it before unlocking. Reversing the two drops breaks the one-buffer bound.
+[Counted mutex](../examples/resource/memory/concurrent/counted_mutex.rs) ·
+[Unlock before drop](../examples/resource/memory/concurrent/expected-failures/unlock_before_drop.rs)
+
 Joining each worker before the next spawn also permits reuse. The total includes
 caller storage, handles, captures, shared backing and any inline scalar results
 awaiting collection. Ordinary loop invariants and arithmetic proofs can establish
