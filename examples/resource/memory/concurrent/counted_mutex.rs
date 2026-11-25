@@ -47,14 +47,22 @@ fn reserve_scratch(buffer_capacity: u16) -> Vec<u8>
     Vec::<u8>::with_capacity(buffer_capacity as usize)
 }
 
-/// `run_workers_budget` counts every worker and allows one scratch reservation for a nonempty batch.
+/// `run_workers_budget` allows storage for every worker and at most one live scratch buffer.
+///
+/// One buffer suffices when each worker frees its scratch before releasing the shared mutex.
 spec fn run_workers_budget(worker_count: u16, buffer_capacity: u16) -> nat {
-    // One call to reserve_scratch holds its parameter, a Vec header, and the reserved bytes.
-    let reservation = (buffer_capacity as nat) * value_size(u8);
-    let one_call = value_size(buffer_capacity) + value_size(Vec<u8>) + reservation;
-    shared_mutex_storage() + coordinator_storage()
-        + (worker_count as nat) * value_size(WorkerStorage)
-        + if worker_count == 0 { 0 } else { one_call }
+    // Each worker has its own handles, captured values, and lock result.
+    let workers = (worker_count as nat) * value_size(WorkerStorage);
+
+    let scratch = if worker_count == 0 {
+        0
+    } else {
+        // reserve_scratch holds its capacity parameter and a Vec header alongside the buffer.
+        let reserved_bytes = (buffer_capacity as nat) * value_size(u8);
+        value_size(buffer_capacity) + value_size(Vec<u8>) + reserved_bytes
+    };
+
+    shared_mutex_storage() + coordinator_storage() + workers + scratch
 }
 
 /// `run_workers` starts all the workers and then joins them. With no workers there
