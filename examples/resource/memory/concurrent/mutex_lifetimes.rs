@@ -1,5 +1,6 @@
 // This example shows how Verus Meter proves that four concurrent workers can
 // each request 4 KiB of scratch and use at most 4 KiB of scratch between them.
+//
 // In `scratch`, each worker calls a helper that allocates and frees its buffer
 // while the worker holds the mutex. The proof works for any requested buffer
 // size and any order in which the workers acquire the lock.
