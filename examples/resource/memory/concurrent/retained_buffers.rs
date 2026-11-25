@@ -19,10 +19,10 @@ macro_rules! four_workers {
         let $peer = $cell.clone();
         let fourth = std::thread::spawn(move || $body);
 
-        let a = first.join().unwrap();
-        let b = second.join().unwrap();
-        let c = third.join().unwrap();
-        let d = fourth.join().unwrap();
+        first.join().unwrap();
+        second.join().unwrap();
+        third.join().unwrap();
+        fourth.join().unwrap();
     }};
 }
 

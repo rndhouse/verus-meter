@@ -148,8 +148,10 @@ fn custom_guard_coverage_follows_the_owned_value_and_allocation() {
 
 #[test]
 fn a_conditional_contract_cannot_identify_an_issuer() {
-    let source =
-        EXCLUSIVE.replace("issued_on_success(g, self),", "false ==> issued_on_success(g, self),");
+    let source = EXCLUSIVE.replace(
+        "issued_on_success(acquisition, self),",
+        "false ==> issued_on_success(acquisition, self),",
+    );
     let trace =
         verify_one_file("conditional_contract", source, &["--trace", "--no-cheating"]).unwrap();
     assert!(

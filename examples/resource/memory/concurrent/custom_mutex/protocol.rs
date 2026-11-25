@@ -21,13 +21,13 @@ struct_with_invariants! {
     spec fn wf(&self) -> bool {
         invariant on flag with (domain) is (held: bool, token: Option<FracGhost<()>>) {
             &&& !held == token.is_some()
-            &&& token matches Some(t) ==> t.id() == domain@ && t.frac() == 1real
+            &&& token matches Some(lock_token) ==> lock_token.id() == domain@ && lock_token.frac() == 1real
         }
     }
 }
 
-pub(crate) struct Guard<'a> {
-    lock: &'a Lock,
+pub(crate) struct Guard<'lock> {
+    lock: &'lock Lock,
     token: Tracked<FracGhost<()>>,
 }
 
@@ -51,7 +51,7 @@ pub open spec fn transition_workspace(workers: nat) -> nat {
 
 impl Lock {
     /// `new` creates an unlocked mutex with a fresh identity and its own proof token.
-    pub(crate) fn new() -> (s: Self)
+    pub(crate) fn new() -> Self
         resources peak(memory) <= 3 * value_size(bool),
     {
         // Tie the initial token to this lock so a guard for a different lock
@@ -64,10 +64,10 @@ impl Lock {
 
     /// `try_enter` tries once to acquire the lock. A successful attempt returns
     /// a guard carrying the lock's unique token.
-    pub(crate) fn try_enter(&self) -> (g: Option<Guard<'_>>)
+    pub(crate) fn try_enter(&self) -> (acquisition: Option<Guard<'_>>)
         ensures
-            issued_on_success(g, self),
-            g matches Some(g) ==> g.instance_id() == self.protocol_id(),
+            issued_on_success(acquisition, self),
+            acquisition matches Some(guard) ==> guard.instance_id() == self.protocol_id(),
         // The expected and replacement flags are live as locals and as call
         // arguments alongside the receiver references and tagged result.
         resources peak(memory) <= 3 * ref_size(&bool)
@@ -99,7 +99,7 @@ impl Lock {
     }
 }
 
-impl<'a> Guard<'a> {
+impl<'lock> Guard<'lock> {
     /// `wf` requires the guard to own the full token belonging to its lock.
     #[verifier::type_invariant]
     spec fn wf(&self) -> bool {
@@ -121,14 +121,14 @@ impl<'a> Guard<'a> {
     }
 }
 
-impl<'a> Holder for Guard<'a> {
+impl<'lock> Holder for Guard<'lock> {
     /// `instance_id` identifies the lock that issued this guard.
     closed spec fn instance_id(&self) -> Loc {
         self.lock.domain@
     }
 }
 
-impl<'a> BoundedHolder for Guard<'a> {
+impl<'lock> BoundedHolder for Guard<'lock> {
     /// `capacity` reports that this guard's lock admits one holder at a time.
     open spec fn capacity(&self) -> nat {
         1
@@ -147,16 +147,16 @@ impl<'a> BoundedHolder for Guard<'a> {
         }
         if population.len() > 1 {
             assert(before.last().instance_id() == id);
-            let tracked a = population.tracked_pop();
+            let tracked last_guard = population.tracked_pop();
             assert(population.last() == before[before.len() - 2]);
             assert(population.last().instance_id() == id);
-            let tracked b = population.tracked_pop();
-            use_type_invariant(&a);
-            use_type_invariant(&b);
+            let tracked preceding_guard = population.tracked_pop();
+            use_type_invariant(&last_guard);
+            use_type_invariant(&preceding_guard);
             // Both guards claim the full token for this lock. Combining them
             // would exceed the single whole that the token algebra permits.
-            let tracked mut both = a.token.get();
-            both.combine(b.token.get());
+            let tracked mut both = last_guard.token.get();
+            both.combine(preceding_guard.token.get());
             both.bounded();
         }
     }

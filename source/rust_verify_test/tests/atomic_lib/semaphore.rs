@@ -133,12 +133,12 @@ fn independent_acquisitions_use_the_actual_shared_backing() {
 fn a_counted_population_uses_the_smaller_of_workers_and_permits() {
     let family = include_str!("../../../../examples/resource/memory/concurrent/semaphore.rs");
     verify_one_file("permit_population", family.into(), &["--no-cheating"]).unwrap();
-    let short =
-        family.replace("(if n <= k { n as nat } else { k as nat }) * (b as nat)", "b as nat");
+    let short = family
+        .replace("max_scratch_buffers * (scratch_capacity as nat)", "scratch_capacity as nat");
     let on_failure = family.replace(
         "permit.release();\n            }",
         "permit.release(); } else {
-            let outside = Vec::<u8>::with_capacity(b as usize); drop(outside);
+            let outside = Vec::<u8>::with_capacity(scratch_capacity as usize); drop(outside);
         }",
     );
     for (name, program) in [("only_one_permit", short), ("scratch_on_failure", on_failure)] {
@@ -162,12 +162,18 @@ fn capacity_comes_from_the_checked_constructor_argument() {
         }
     };
     let batch = include_str!("../../../../examples/resource/memory/concurrent/semaphore.rs")
-        .replace("Semaphore::new(k as usize)", "make(n as usize, k as usize)")
+        .replace(
+            "Semaphore::new(permit_count as usize)",
+            "make(worker_count as usize, permit_count as usize)",
+        )
         // This variant calls the checked two-argument constructor helper.
-        .replace("<= batch_budget(n, k, b),", "<= batch_budget(n, k, b) + peak(make),");
+        .replace(
+            "<= batch_budget(worker_count, permit_count, scratch_capacity),",
+            "<= batch_budget(worker_count, permit_count, scratch_capacity) + peak(make),",
+        );
     let source = format!("{batch}\n{constructor}");
     verify_one_file("constructor_argument", source.clone(), &["--no-cheating"]).unwrap();
-    // At n=4 and k=1 all four allocations can now coexist.
+    // With four workers and one requested permit, all four allocations can now coexist.
     let wrong = source
         .replace("ensures s.holder_limit()", "ensures slots == 0 ==> s.holder_limit()")
         .replace(

@@ -68,8 +68,8 @@ are included only where needed for memory verification.
   can still own all four reservations and their headers. [Retained buffers](concurrent/retained_buffers.rs)
 - A completed worker keeps its returned reservation until join. It can overlap
   scratch protected by the very same mutex. [Worker result](concurrent/worker_result.rs)
-- With `n` workers, `k` permits and `b` bytes per successful acquisition, scratch
-  contributes at most `min(n, k) * b`. [Bounded semaphore](concurrent/semaphore.rs)
+- With a semaphore, each scratch buffer requires one worker and one permit. Scratch
+  contributes at most `min(worker_count, permit_count) * scratch_capacity` bytes. [Bounded semaphore](concurrent/semaphore.rs)
 - A custom lock transfers an exclusive tracked token on a successful atomic
   compare-exchange. Its verified holder bound lets the workers share one
   scratch allowance. [Workers](concurrent/custom_mutex/mod.rs) · [Lock and proof](concurrent/custom_mutex/protocol.rs)
