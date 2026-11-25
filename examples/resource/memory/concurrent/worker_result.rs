@@ -6,7 +6,7 @@
 // Here the producer can finish first and leave its buffer in the join handle.
 // The caller joins the consumer first. While the producer's result is waiting,
 // the consumer can take the lock and allocate its own scratch. Verus Meter
-// therefore needs `2 * buffer_capacity` bytes for the two reservations.
+// therefore counts `2 * buffer_capacity * value_size(u8)` reserved bytes.
 use std::sync::{Arc, Mutex};
 use vstd::prelude::*;
 
@@ -32,9 +32,10 @@ spec fn worker_frame() -> nat {
 /// `work_budget` counts both buffer reservations and one shared mutex when
 /// bounding the peak across the two workers.
 spec fn work_budget(buffer_capacity: u16) -> nat {
-    // The producer's output and the consumer's scratch can coexist. Each has
-    // a Vec header and a reservation of `buffer_capacity` bytes.
-    let buffers = 2 * (buffer_capacity as nat) * value_size(u8) + 2 * value_size(Vec<u8>);
+    // Each buffer reserves room for buffer_capacity elements of type u8.
+    let reservation_bytes = (buffer_capacity as nat) * value_size(u8);
+    // The producer's output and the consumer's scratch each have a reservation and a Vec header.
+    let buffers = 2 * reservation_bytes + 2 * value_size(Vec<u8>);
 
     // Both Arc handles point to one allocation. Count its mutex once, along
     // with the strong and weak reference counts (one usize each).

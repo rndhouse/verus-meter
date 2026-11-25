@@ -69,7 +69,7 @@ are included only where needed for memory verification.
 - A completed worker keeps its returned reservation until join. It can overlap
   scratch protected by the very same mutex. [Worker result](concurrent/worker_result.rs)
 - With a semaphore, each scratch buffer requires one worker and one permit. Scratch
-  contributes at most `min(worker_count, permit_count) * scratch_capacity` bytes. [Bounded semaphore](concurrent/semaphore.rs)
+  contributes at most `min(worker_count, permit_count) * scratch_capacity * value_size(u8)` bytes. [Bounded semaphore](concurrent/semaphore.rs)
 - A custom lock transfers an exclusive tracked token on a successful atomic
   compare-exchange. Its verified holder bound lets the workers share one
   scratch allowance. [Workers](concurrent/custom_mutex/mod.rs) · [Lock and proof](concurrent/custom_mutex/protocol.rs)

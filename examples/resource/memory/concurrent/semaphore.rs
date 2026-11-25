@@ -30,7 +30,8 @@ spec fn try_acquire_workspace(worker_count: nat) -> nat {
 }
 
 /// `batch_budget` bounds peak memory for workers sharing a semaphore. At most
-/// `min(worker_count, permit_count)` buffers of `scratch_capacity` bytes can coexist.
+/// `min(worker_count, permit_count)` scratch buffers can coexist. Each reserves
+/// `scratch_capacity * value_size(u8)` bytes.
 spec fn batch_budget(worker_count: u16, permit_count: u16, scratch_capacity: u16) -> nat {
     // The caller owns one Arc. Its backing holds the semaphore and the strong
     // and weak reference counts shared by all the workers.
@@ -65,7 +66,8 @@ spec fn batch_budget(worker_count: u16, permit_count: u16, scratch_capacity: u16
     // Each scratch buffer requires both a worker and a permit. Whichever runs
     // out first limits how many reservations can overlap.
     let max_scratch_buffers = if worker_count <= permit_count { count } else { permit_count as nat };
-    let scratch = max_scratch_buffers * (scratch_capacity as nat) * value_size(u8);
+    let reservation_bytes = (scratch_capacity as nat) * value_size(u8);
+    let scratch = max_scratch_buffers * reservation_bytes;
 
     // Count shared and caller storage once, then add the worker storage and
     // the scratch reservations that can coexist.
@@ -77,8 +79,7 @@ spec fn batch_budget(worker_count: u16, permit_count: u16, scratch_capacity: u16
 /// returning the permit.
 fn batch(worker_count: u16, permit_count: u16, scratch_capacity: u16)
     requires
-        // Give the verifier the range of each product that can appear in the
-        // scratch bound, depending on whether workers or permits run out first.
+        // Bound both possible element counts used in the scratch formula.
         0 <= worker_count as int * scratch_capacity as int <= u32::MAX as int,
         0 <= permit_count as int * scratch_capacity as int <= u32::MAX as int,
     resources peak(memory) <= batch_budget(worker_count, permit_count, scratch_capacity),

@@ -161,8 +161,7 @@ fn example_workspace_is_exact_for_one_acquisition() {
 fn a_counted_population_uses_the_smaller_of_workers_and_permits() {
     let family = include_str!("../../../../examples/resource/memory/concurrent/semaphore.rs");
     verify_one_file("permit_population", family.into(), &["--no-cheating"]).unwrap();
-    let short = family
-        .replace("max_scratch_buffers * (scratch_capacity as nat)", "scratch_capacity as nat");
+    let short = family.replace("max_scratch_buffers * reservation_bytes", "reservation_bytes");
     let on_failure = family.replace(
         "permit.release();\n            }",
         "permit.release(); } else {
