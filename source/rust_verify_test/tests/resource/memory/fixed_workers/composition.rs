@@ -34,7 +34,7 @@ fn skipped_and_repeated_acquisitions_do_not_retain_a_previous_guard() {
 fn an_owned_result_can_outlive_its_guard_and_wait_for_a_delayed_join() {
     let source =
         include_str!("../../../../../../examples/resource/memory/concurrent/worker_result.rs");
-    let short = source.replace("2 * (bytes as nat)", "(bytes as nat)");
+    let short = source.replace("2 * (buffer_capacity as nat)", "(buffer_capacity as nat)");
     assert_ne!(source, short);
     let err = crate::verify_one_file("omitted_output", short, &["--no-cheating"]).unwrap_err();
     crate::common::assert_any_vir_error_msg(err, "memory budget exceeded");
