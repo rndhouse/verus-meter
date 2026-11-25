@@ -127,5 +127,5 @@ Together they cover the original criteria on the supported worker domains.
   history, insufficient bytes and unproved symbolic bounds have separate tests.
   [Scoped proofs and integrated validation](07.5-sections-queries-and-diagnostics.md)
 
-The remaining [core integration audit](../08-core-integration-and-completion.md)
-covers requirements across all numbered tasks.
+The [completed core integration audit](08-core-integration-and-completion.md)
+records end-to-end validation across the numbered tasks.

@@ -6,7 +6,7 @@ The same scratch bound now holds for a symbolic number of workers published in a
 Verified permits and reader/writer roles now constrain which workers’ allocations can coexist. [07.3 — Permits and verified protocols](complete/07.3-permits-and-verified-protocols.md)
 Whole-function totals now follow storage through checked helpers, nested workers and delivery at join. [07.4 — Helpers, retained storage and nested workers](complete/07.4-helpers-and-retained-storage.md)
 Sections and checkpoints now include the descendants they cover. A join can reduce current storage while the earlier peak remains part of the history. [07.5 — Sections, checkpoints and diagnostics](complete/07.5-sections-queries-and-diagnostics.md)
-Next is the [08 core integration audit](08-core-integration-and-completion.md).
+The [completed core audit](complete/08-core-integration-and-completion.md) records the four-worker comparison, supported scope and remaining precision limits.
 The [05 integration review](complete/05-function-and-worker-summaries.md#integration-review) covers helper and worker summaries. The [final worker audit](complete/03.4.3-validate-and-close-03.md) records the verified worker scope and integration checks.
 
 ## Authoritative location
@@ -61,7 +61,7 @@ Preserve the semantics and synchronization precision established in 01 throughou
 | [x] | [07.3 — Permits and verified protocols](complete/07.3-permits-and-verified-protocols.md) | Use verified capacity and reader/writer guarantees in total bounds. |
 | [x] | [07.4 — Helpers, retained storage and nested workers](complete/07.4-helpers-and-retained-storage.md) | Preserve tight totals through calls, transfers, repeated acquisition and nested spawns. |
 | [x] | [07.5 — Sections, checkpoints and diagnostics](complete/07.5-sections-queries-and-diagnostics.md) | Apply the global proof to scoped observations and explain unproved bounds. |
-| [ ] | [08 — Core integration and completion](08-core-integration-and-completion.md) | Full capability audit, regression coverage and user documentation. |
+| [x] | [08 — Core integration and completion](complete/08-core-integration-and-completion.md) | Full capability audit, regression coverage and user documentation. |
 
 03.2 brings forward the worker-summary machinery needed to connect actual bodies
 and lifecycle effects; it must not defer that connection to 05. TODO 04 adds local
