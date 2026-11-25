@@ -89,44 +89,47 @@ fn the_publisher_keeps_its_mutex_identity_during_a_helper_call() {
     exceeds("publisher_released", &source.replace("ACTION", "drop(guard); scratch(b);"));
 }
 
+fn assert_budget_failure_at(name: &str, source: String, site: &str) {
+    let err = crate::verify_one_file(name, source, &["--no-cheating", "--multiple-errors=0"])
+        .unwrap_err();
+    assert!(
+        err.errors.iter().any(|e| e.message.contains("memory budget exceeded")
+            && e.spans.iter().any(|span| span.text.iter().any(|line| line.text.contains(site)))),
+        "{:?}",
+        err.errors
+    );
+}
+
 #[test]
-fn four_workers_require_the_guard_for_scratch_and_all_slots_after_join() {
+fn four_workers_require_the_guard_for_a_single_scratch_reservation() {
     let example =
         include_str!("../../../../../../examples/resource/memory/concurrent/mutex_lifetimes.rs");
+    let unlocked = example.replace(
+        "temporary(buffer_capacity);\n        drop(guard);",
+        "drop(guard);\n        temporary(buffer_capacity);",
+    );
+    assert_ne!(example, unlocked);
+    assert_budget_failure_at(
+        "scratch_after_release",
+        unlocked,
+        "resources peak(memory) <= scratch_frames",
+    );
+}
+
+#[test]
+fn the_shared_vector_retains_all_four_buffers_after_join() {
+    let example =
+        include_str!("../../../../../../examples/resource/memory/concurrent/retained_buffers.rs");
     let checkpoint = "4 * (value_size(Vec<u8>) + value_size(Payload)));";
-    for (name, source, site) in [
-        (
-            "scratch_after_release",
-            example.replace(
-                "temporary(bytes);\n        drop(guard);",
-                "drop(guard);\n        temporary(bytes);",
-            ),
-            "resources peak(memory) <= scratch_frames(bytes)",
-        ),
-        (
-            "one_retained",
-            example.replace(checkpoint, "value_size(Vec<u8>) + value_size(Payload));"),
-            "assert(current(memory)",
-        ),
+    for (name, bound) in [
+        ("one_retained", "value_size(Vec<u8>) + value_size(Payload));"),
         (
             "one_byte_missing",
-            example.replace(
-                checkpoint,
-                "4 * value_size(Vec<u8>) + 3 * value_size(Payload) + value_size([u8; 255]));",
-            ),
-            "assert(current(memory)",
+            "4 * value_size(Vec<u8>) + 3 * value_size(Payload) + value_size([u8; 255]));",
         ),
     ] {
-        assert_ne!(example, source);
-        let err = crate::verify_one_file(name, source, &["--no-cheating", "--multiple-errors=0"])
-            .unwrap_err();
-        assert!(
-            err.errors.iter().any(|e| e.message.contains("memory budget exceeded")
-                && e.spans
-                    .iter()
-                    .any(|span| span.text.iter().any(|line| line.text.contains(site)))),
-            "{:?}",
-            err.errors
-        );
+        let short = example.replace(checkpoint, bound);
+        assert_ne!(example, short);
+        assert_budget_failure_at(name, short, "assert(current(memory)");
     }
 }

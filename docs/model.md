@@ -50,12 +50,14 @@ live caller storage. To use a symbolic vector reservation in the combined peak,
 the verifier checks that the reservation still covers the vector's charge at that
 point. [Executable cases](../source/rust_verify_test/tests/resource/memory/fixed_workers.rs)
 
-Four workers can share one `bytes`-sized temporary reservation when the same
-mutex guard stays live across the helper that allocates and frees it. If each
-worker instead pushes a 256-byte buffer into an initially empty shared vector,
+Four workers can share one buffer's worth of scratch when the same mutex guard
+stays live across the helper that allocates and frees it.
+[Mutex lifetimes](../examples/resource/memory/concurrent/mutex_lifetimes.rs)
+
+When each worker pushes a 256-byte buffer into an initially empty shared vector,
 the caller can still hold 1,177 bytes after all joins. The shared cell and handle
 occupy 57 bytes, and each inner vector contributes a 24-byte slot and its
-256-byte reservation. [Executable comparison](../examples/resource/memory/concurrent/mutex_lifetimes.rs)
+256-byte reservation. [Retained buffers](../examples/resource/memory/concurrent/retained_buffers.rs)
 
 A fixed-budget section can publish workers if every descendant joins before each
 reachable section exit. The caller pays the section allowance alongside its own live
