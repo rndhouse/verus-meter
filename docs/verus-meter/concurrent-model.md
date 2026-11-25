@@ -313,7 +313,7 @@ invariant. It admits multiple readers. Its handles require explicit release.
 For custom protocols, implement the holder traits and relate the returned guard
 to the executable issuer in the acquisition postcondition. For example,
 `issued_on_success(result, self)` binds a successful optional acquisition to
-that instance and capacity. The [custom lock](../../examples/resource/memory/concurrent/protocol/mod.rs)
+that instance and capacity. The [custom lock](../../examples/resource/memory/concurrent/custom_mutex/protocol.rs)
 uses a private tracked token and a verified `BoundedHolder::population_bound`
 proof. The compiler uses the following facts.
 

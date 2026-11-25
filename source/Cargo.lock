@@ -2361,6 +2361,7 @@ dependencies = [
  "tempfile",
  "toml",
  "vir",
+ "walkdir",
  "yansi",
 ]
 

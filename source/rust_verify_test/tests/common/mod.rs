@@ -100,8 +100,10 @@ pub fn prepare_test_log_dir(
     let src_dir = test_dir.join("src");
     std::fs::create_dir(&src_dir).expect("failed to create test log src directory");
     for (file_name, file_contents) in files {
-        std::fs::write(src_dir.join(file_name), file_contents)
-            .expect("failed to write test log source file");
+        let path = src_dir.join(file_name);
+        std::fs::create_dir_all(path.parent().unwrap())
+            .expect("failed to create test log source directory");
+        std::fs::write(path, file_contents).expect("failed to write test log source file");
     }
     let meta = serde_json::json!({
         "test_binary": test_binary,

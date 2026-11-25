@@ -3,6 +3,10 @@
 These examples prove memory bounds under the source-level model, alongside
 ordinary Verus correctness checks. Start with the basics, then explore a topic.
 
+A single-file example uses `name.rs`. For an example with several files, put
+`main` in `name/mod.rs` and declare its sibling modules there. The example
+runner tests the directory as one program.
+
 ## Basics
 
 - [Scope reuse](basics/storage.rs): share an allowance across scopes, branches, and loops.
@@ -67,7 +71,7 @@ are included only where needed for memory verification.
   contributes at most `min(n, k) * b`. [Bounded semaphore](concurrent/semaphore.rs)
 - A custom lock transfers an exclusive tracked token on a successful atomic
   compare-exchange. Its verified holder bound lets the workers share one
-  scratch allowance. [Workers](concurrent/custom_mutex.rs) · [Lock and proof](concurrent/protocol/mod.rs)
+  scratch allowance. [Workers](concurrent/custom_mutex/mod.rs) · [Lock and proof](concurrent/custom_mutex/protocol.rs)
 
 ## Algorithms
 

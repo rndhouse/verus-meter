@@ -1,9 +1,9 @@
 use super::*;
 
 const PROTOCOL: &str =
-    include_str!("../../../../examples/resource/memory/concurrent/protocol/mod.rs");
+    include_str!("../../../../examples/resource/memory/concurrent/custom_mutex/protocol.rs");
 const EXCLUSIVE: &str = concat!(
-    include_str!("../../../../examples/resource/memory/concurrent/protocol/mod.rs"),
+    include_str!("../../../../examples/resource/memory/concurrent/custom_mutex/protocol.rs"),
     include_str!("exclusive.verus.rs"),
 );
 
@@ -311,7 +311,8 @@ test_verify_one_file! {
 
 #[test]
 fn custom_protocol_population_requires_its_checked_theorem() {
-    let client = include_str!("../../../../examples/resource/memory/concurrent/custom_mutex.rs");
+    let client =
+        include_str!("../../../../examples/resource/memory/concurrent/custom_mutex/mod.rs");
     // The unmodified program is exercised as an example. This theorem fails
     // to rule out precisely two outstanding guards of the same issuer.
     let broken = PROTOCOL.replace("if population.len() > 1 {", "if population.len() > 2 {");

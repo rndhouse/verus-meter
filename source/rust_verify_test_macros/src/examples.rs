@@ -12,9 +12,10 @@ pub fn examples_in_dir(input: TokenStream) -> TokenStream {
         relative_path_string.replace("../../", "").replace("/", "_").replace("-", "_");
 
     // relative to current working directory
-    let dir_path = Path::new("rust_verify").join(Path::new(&relative_path));
+    let dir_path = Path::new("rust_verify").join(relative_path).canonicalize().unwrap();
+    proc_macro::tracked::path(&dir_path);
 
-    let entries = std::fs::read_dir(dir_path).expect("cannot find examples directory");
+    let entries = std::fs::read_dir(&dir_path).expect("cannot find examples directory");
 
     let mut res = proc_macro2::TokenStream::new();
 
@@ -22,9 +23,20 @@ pub fn examples_in_dir(input: TokenStream) -> TokenStream {
         let entry = entry.expect("invalid path");
         let path = entry.path();
 
-        if path.extension() != Some(std::ffi::OsStr::new("rs")) {
+        // A directory example has one entry point. Its sibling modules are
+        // compiled through that entry point, just as they are by Rust.
+        let entry_point = if path.is_dir() {
+            proc_macro::tracked::path(&path);
+            let root = path.join("mod.rs");
+            if !root.is_file() {
+                continue;
+            }
+            root
+        } else if path.extension() == Some(std::ffi::OsStr::new("rs")) {
+            path.clone()
+        } else {
             continue;
-        }
+        };
 
         let test_name = dir_underscores.clone()
             + "_"
@@ -32,14 +44,13 @@ pub fn examples_in_dir(input: TokenStream) -> TokenStream {
         let test_name_ident = syn::Ident::new(&test_name, arg.span());
 
         // path to the file, relative to rust_verify/
-        let file_name = path.file_name().unwrap();
-        let path_to_file = relative_path.join(Path::new(file_name));
+        let path_to_file = relative_path.join(entry_point.strip_prefix(&dir_path).unwrap());
         let path_to_file_string = path_to_file.to_str().unwrap();
 
         res.extend(quote! {
             #[test]
             fn #test_name_ident() {
-                run_example_for_file(#path_to_file_string);
+                run_example_for_file(stringify!(#test_name_ident), #path_to_file_string);
             }
         });
     }

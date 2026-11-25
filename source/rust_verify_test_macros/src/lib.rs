@@ -1,4 +1,5 @@
 #![feature(proc_macro_span)]
+#![feature(proc_macro_tracked_path)]
 
 mod examples;
 mod rust_code;
@@ -32,6 +33,7 @@ pub fn verus_code_str(input: TokenStream) -> TokenStream {
     quote!(#src).into()
 }
 
+/// Generates one test per `name.rs` or `name/mod.rs` in an example group.
 #[proc_macro]
 pub fn examples_in_dir(input: TokenStream) -> TokenStream {
     examples::examples_in_dir(input)

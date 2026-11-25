@@ -1,4 +1,4 @@
-// Client variations for the custom lock in examples/resource/memory/concurrent/protocol.
+// Client variations for the custom lock in examples/resource/memory/concurrent/custom_mutex/protocol.rs.
 verus! {
 
 // Keep two equal-sized allocations so only their source lifetimes distinguish them.
