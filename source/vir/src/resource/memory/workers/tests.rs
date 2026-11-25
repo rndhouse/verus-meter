@@ -623,6 +623,7 @@ fn with_analysis(evidence: &Evidence, run: impl FnOnce(&mut Analysis<'_>, &Dt)) 
         evaluations: Default::default(),
         concurrency: evidence,
         current_worker: None,
+        section_scopes: Vec::new(),
         flow: Default::default(),
         transitions: Default::default(),
         slots: HashMap::new(),

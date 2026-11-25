@@ -11,6 +11,7 @@ mod call_graph;
 mod checkpoints;
 mod children;
 mod concurrency;
+mod concurrent_scopes;
 mod conditional;
 mod conditional_loops;
 mod control_flow;

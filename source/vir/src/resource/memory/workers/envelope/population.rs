@@ -92,7 +92,7 @@ impl Analysis<'_> {
         &mut self,
         function: &Function,
         workers: BTreeMap<WorkerId, Phases>,
-        checks: Vec<Obligation>,
+        mut checks: Vec<Obligation>,
         constraints: &Constraints,
     ) -> bool {
         // One homogeneous family. A selected join must consume precisely one
@@ -129,10 +129,42 @@ impl Analysis<'_> {
         // ceiling also lets ordinary arithmetic use a declared n*b directly.
         let bounded = contracts::minimum(span, actual, envelope.clone());
         let stable = observations::stable_sites(body, spawn.id, &self.growth.worker_joins);
-        self.storage.include_worker_costs(|point| {
+        let total_at = |point: &Point| {
             let extra = if stable.contains(&point.span.id) { &bounded } else { &envelope };
-            Some(point.with_worker_cost(extra.clone(), &BTreeSet::new()))
-        });
+            point.with_worker_cost(extra.clone(), &BTreeSet::new())
+        };
+        if let Some(observations) = self.growth.scoped_checks.get(&None) {
+            for query in observations {
+                if query.section.is_none_or(|scope| {
+                    self.growth
+                        .worker_sections
+                        .get(&scope)
+                        .is_some_and(|section| section.workers.contains(&id))
+                }) {
+                    checks.push(query.obligation(Some(total_at(&query.point)), &self.growth));
+                } else {
+                    checks.push(query.obligation(None, &self.growth));
+                }
+            }
+        }
+        // The scalar counts this sole family's actual publications minus joins.
+        // Discharge closure on fallthrough and separately before a nonlocal exit.
+        for section in self.growth.worker_sections.values().filter(|s| s.workers.contains(&id)) {
+            let closed = |site: &Span| {
+                expr::check(
+                    site,
+                    mk_eq(site, &pending, &contracts::literal(site, 0)),
+                    "an outstanding descendant at memory section exit",
+                )
+            };
+            for site in &section.after {
+                self.growth.after.entry(site.id).or_default().push(closed(site));
+            }
+            for site in &section.before {
+                self.growth.before.entry(site.id).or_default().push(closed(site));
+            }
+        }
+        self.storage.include_worker_costs(|point| Some(total_at(point)));
         self.obligations.extend(checks);
         true
     }

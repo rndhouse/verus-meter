@@ -201,11 +201,7 @@ fn a_publisher_cannot_use_its_old_vector_snapshot_while_a_worker_can_observe_it(
         }
     "#;
     let join = "let done = job.join();";
-    rejects(
-        "observer_joined",
-        &source.replace("JOIN_FIRST", join).replace("JOIN_LAST", ""),
-        "checked worker effects still require global",
-    );
+    verifies("observer_joined", &source.replace("JOIN_FIRST", join).replace("JOIN_LAST", ""));
     rejects(
         "observer_outstanding",
         &source.replace("JOIN_FIRST", "").replace("JOIN_LAST", join),

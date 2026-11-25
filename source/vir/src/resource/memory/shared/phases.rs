@@ -39,6 +39,8 @@ impl Handles {
 
 #[derive(Clone)]
 pub(in super::super) struct Checkpoint {
+    /// Original executing actor, preserved while the backing is priced through publishers.
+    actor: WorkerId,
     site: Span,
     handles: BTreeMap<RootId, Handles>,
     /// Canonical payloads reserved by this actor’s incoming handle collections.
@@ -121,6 +123,7 @@ impl Analysis<'_> {
             let upper = total(self.owner_upper(span, owner));
             if contracts::constant(&upper).is_some() {
                 let check = Obligation {
+                    contributor: None,
                     span: span.clone(),
                     cost: Footprint::allowance(bytes),
                     bound: MemoryBudget::total(upper.clone()),
@@ -138,6 +141,11 @@ impl Analysis<'_> {
         frame: &Footprint,
         limit: u64,
     ) -> Result<(), VirErr> {
+        // A publisher checkpoint is priced from its canonical cell histories
+        // after all executable releases have been linked.
+        if self.current_worker.is_none() {
+            return Ok(());
+        }
         if self.growth.versioned_shared.iter().any(|(id, fixed)| {
             fixed.is_none()
                 && self.heap.shared.payload(*id).is_some()
@@ -148,7 +156,10 @@ impl Analysis<'_> {
                 "a checkpoint on owned shared backing before composing its worker updates",
             ));
         }
-        if self.current_worker.is_none() {
+        // Imported backing was live before this worker entered its section.
+        // The parent retains that charge. The section checks its own ledger and
+        // the workers it publishes, including storage those children create.
+        if !self.section_scopes.is_empty() {
             return Ok(());
         }
         let handles = self.heap.shared.imports_at_checkpoint();
@@ -164,6 +175,7 @@ impl Analysis<'_> {
         let collections: BTreeSet<_> = self.transitions.collection_claims.keys().copied().collect();
         if !handles.is_empty() || !selections.is_empty() || !collections.is_empty() {
             self.transitions.shared_checkpoints.push(Checkpoint {
+                actor: self.current_worker.expect("worker checkpoint"),
                 site: span.clone(),
                 handles,
                 selections,
@@ -369,11 +381,7 @@ impl Analysis<'_> {
                 });
             }
             if projected.handles.is_empty() && projected.selections.is_empty() {
-                if projected.publication_payloads.is_empty() {
-                    projected.emit(self)?;
-                } else {
-                    self.growth.protected_checkpoints.push(projected);
-                }
+                self.growth.protected_checkpoints.push(projected);
             } else {
                 self.transitions.shared_checkpoints.push(projected);
             }
@@ -383,6 +391,15 @@ impl Analysis<'_> {
 }
 
 impl Checkpoint {
+    pub(in crate::resource::memory) fn include_descendants(
+        &mut self,
+        frames: &BTreeMap<(WorkerId, crate::messages::AstId), Expr>,
+    ) {
+        if let Some(total) = frames.get(&(self.actor, self.site.id)) {
+            self.frame = total.clone();
+        }
+    }
+
     /// The actor already pays for the payload held under its guard. For a
     /// closed view, remember which part of a publication estimate depends on
     /// the contents. Its validity may depend on a peer published later.
@@ -466,6 +483,7 @@ impl Checkpoint {
             ));
         }
         let check = Obligation {
+            contributor: None,
             span: self.site.clone(),
             cost: Footprint::allowance(cost),
             bound: MemoryBudget::total(contracts::literal(&self.site, self.limit)),

@@ -411,3 +411,34 @@ fn main() {
     succeeds(&output);
     succeeds(&Command::new(executable).output().unwrap());
 }
+
+#[test]
+#[ignore = "requires prepared verifier and runtime bundle; see runtime README"]
+fn concurrent_query_evaluates_the_declared_allowance() {
+    let source = r#"
+use vstd::prelude::*;
+verus! {
+    #[queryable_peak_memory]
+    fn work(n: u16) requires n > 0, resources peak(memory) <= n + 512 {
+        let h = std::thread::spawn(move || {
+            let scratch = Vec::<u8>::with_capacity(n as usize);
+            drop(scratch);
+        });
+        let done = h.join().unwrap();
+        assert(current(memory) <= 2);
+    }
+}
+fn main() {
+    // Evaluation alone does not establish the executable function's precondition.
+    assert_eq!(work::peak_memory_bound(0).unwrap().to_u64(), Ok(512));
+    for n in [1u16, 32, 256] {
+        assert_eq!(work::peak_memory_bound(n).unwrap().to_u64(), Ok(u64::from(n) + 512));
+        work(n);
+    }
+}
+"#;
+    let directory = tempfile::tempdir().unwrap();
+    let (output, executable) = compile(source, directory.path());
+    succeeds(&output);
+    succeeds(&Command::new(executable).output().unwrap());
+}

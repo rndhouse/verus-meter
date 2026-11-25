@@ -1,6 +1,6 @@
 //! Simultaneous byte observations across guard, allocation and cleanup boundaries.
 
-use super::rejects;
+use super::{rejects, verifies};
 
 /// Inspect the same source observations used for byte obligations. Whole
 /// concurrent verification still requires global interference coverage.
@@ -210,11 +210,7 @@ fn a_workers_scratch_is_checked_at_its_own_lock_site() {
             let done = child.join();
         }
     "#;
-    rejects(
-        "small_worker_scratch",
-        &program.replace("SIZE", "32"),
-        "checked worker effects still require global",
-    );
+    verifies("small_worker_scratch", &program.replace("SIZE", "32"));
     let errors = crate::verify_one_file(
         "large_worker_scratch",
         format!("use vstd::prelude::*; verus! {{ {} }}", program.replace("SIZE", "256")),
@@ -317,19 +313,10 @@ fn publishing_under_a_guard_transfers_storage_to_an_independent_worker() {
         ("join_before_unlock", "let done = child.join(); drop(held);", true),
     ] {
         let source = program.replace("CLEANUP", cleanup);
-        let run = |limit: &str| {
-            crate::verify_one_file(
-                &format!("{name}_{limit}"),
-                format!("use vstd::prelude::*; verus! {{ {} }}", source.replace("LIMIT", limit)),
-                &["--trace"],
-            )
-            .unwrap_err()
+        let code = |limit: &str| {
+            format!("use vstd::prelude::*; verus! {{ {} }}", source.replace("LIMIT", limit))
         };
-        let good = run("72");
-        crate::common::assert_vir_error_msg(
-            good.clone(),
-            "checked worker effects still require global",
-        );
+        let good = crate::verify_one_file(&format!("{name}_72"), code("72"), &["--trace"]).unwrap();
         assert!(
             good.notes
                 .iter()
@@ -341,7 +328,7 @@ fn publishing_under_a_guard_transfers_storage_to_an_independent_worker() {
             good.notes.iter().any(|n| n.message.starts_with("memory while waiting for a worker:")),
             locked_join
         );
-        let short = run("71");
+        let short = crate::verify_one_file(&format!("{name}_71"), code("71"), &[]).unwrap_err();
         assert!(
             short.errors.iter().any(|e| e.message.contains("live 72 bytes exceeds bound 71 bytes")),
             "{:?}",

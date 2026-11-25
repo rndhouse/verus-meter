@@ -111,6 +111,17 @@ fn outstanding<'a>(
     })
 }
 
+impl Growth {
+    /// A diagnostic witness only. The byte proof considers every compatible worker.
+    pub(in crate::resource::memory) fn point_contributor(&self, point: &Point) -> Option<WorkerId> {
+        self.worker_executions
+            .values()
+            .find(|w| point.values.contains(&w.completion))
+            .map(|w| w.actor)
+            .or_else(|| self.retained_worker_families.iter().next().copied())
+    }
+}
+
 impl crate::resource::memory::layout::Layouts {
     pub(in crate::resource::memory::workers) fn private_worker_buffer(&self, typ: &Typ) -> bool {
         (self.vector(typ) || matches!(&**typ, TypX::Decorate(TypDecoration::Box, _, _)))
@@ -129,7 +140,10 @@ impl crate::resource::memory::layout::Layouts {
 impl Analysis<'_> {
     /// Combine closed worker domains. Ineligible domains keep the existing
     /// deferred diagnostic and all their independently checked local obligations.
-    pub(super) fn compose_workers(&mut self, function: &Function) -> bool {
+    pub(super) fn compose_workers(
+        &mut self,
+        function: &Function,
+    ) -> Result<Option<(Span, &'static str)>, VirErr> {
         let params = contracts::inputs(function);
         if function.x.params.iter().any(|p| {
             p.x.mode == Mode::Exec
@@ -146,22 +160,10 @@ impl Analysis<'_> {
                 .keys()
                 .any(|root| !self.transitions.protected_histories.contains_key(root))
         {
-            return false;
-        }
-        let body = function.x.body.as_ref().expect("checked executable body");
-        // Scoped observations require a separate subtree proof.
-        let mut scoped = false;
-        crate::ast_visitor::expr_visitor_walk(body, &mut |e| {
-            scoped |= matches!(
-                e.x,
-                ExprX::ResourceSection(_)
-                    | ExprX::ResourceAssert(_)
-                    | ExprX::ResourceAssertCurrent(_)
-            );
-            crate::visitor::VisitorControlFlow::Recurse
-        });
-        if scoped {
-            return false;
+            return Ok(Some((
+                function.span.clone(),
+                "the caller needs a supported ownership interface and checked history for each shared payload",
+            )));
         }
         let reservations = self
             .growth
@@ -189,7 +191,10 @@ impl Analysis<'_> {
             if joins.peek().is_none()
                 || !joins.all(|j| j.families.len() == 1 && j.collects_in(worker.publication.caller))
             {
-                return false;
+                return Ok(Some((
+                    worker.publication.span.clone(),
+                    "the proof must link each outstanding result to a join in its publishing actor",
+                )));
             }
             children.entry(worker.publication.caller).or_default().push(id);
         }
@@ -202,17 +207,55 @@ impl Analysis<'_> {
             i += 1;
         }
         if order.len() != self.growth.worker_executions.len() {
-            return false;
+            return Ok(Some((
+                function.span.clone(),
+                "the publications need a closed, acyclic worker subtree",
+            )));
         }
         let mut subtrees = BTreeMap::<Option<WorkerId>, Vec<(WorkerId, Phases)>>::new();
+        let mut checkpoint_frames = BTreeMap::new();
         for id in order.into_iter().rev() {
             let w = &self.growth.worker_executions[&id];
             let descendants = subtrees.remove(&Some(id)).unwrap_or_default();
             let Some(phases) =
                 w.phases(self, &params, &reservations, &mut checks, &mut constraints, &descendants)
             else {
-                return false;
+                return Ok(Some((
+                    w.publication.span.clone(),
+                    "no transferable byte bound covers every running and retained phase of this worker",
+                )));
             };
+            if let Some(observations) = self.growth.scoped_checks.get(&Some(id)) {
+                let mut fixed = fixed::FixedWorkers::new(
+                    self,
+                    &w.effects.body.span,
+                    Some(w),
+                    &descendants,
+                    &constraints,
+                );
+                for query in observations {
+                    let cost = fixed.worker_cost_at(&query.point, self, w, &params)?;
+                    if matches!(query.kind, CheckKind::CurrentCheckpoint)
+                        && !descendants.is_empty()
+                        && !w.shared_checkpoints().is_empty()
+                    {
+                        // The imported backing is priced by its publisher. Its eventual
+                        // obligation must include this worker's entire covered subtree.
+                        let bytes = cost.as_ref().unwrap_or(&query.point.cost).total();
+                        checkpoint_frames
+                            .entry((id, query.point.span.id))
+                            .and_modify(|previous: &mut Expr| {
+                                *previous = contracts::maximum(
+                                    &query.point.span,
+                                    previous.clone(),
+                                    bytes.clone(),
+                                )
+                            })
+                            .or_insert(bytes);
+                    }
+                    checks.push(query.obligation(cost, &self.growth));
+                }
+            }
             subtrees.entry(w.publication.caller).or_default().push((id, phases));
         }
         let workers = subtrees.remove(&None).unwrap_or_default();
@@ -222,18 +265,37 @@ impl Analysis<'_> {
             if self.growth.worker_executions.len() != 1
                 || self.growth.worker_executions.values().any(|w| w.result.owner.is_some())
             {
-                return false;
+                return Ok(Some((
+                    function.span.clone(),
+                    "the indexed join lacks an occurrence-relative ownership bound for its result",
+                )));
             }
-            return self.compose_population(
+            let composed = self.compose_population(
                 function,
                 workers.into_iter().collect(),
                 checks,
                 &constraints,
             );
+            return Ok((!composed).then(|| {
+                (
+                    function.span.clone(),
+                    "the publications and joins need a proved outstanding population bound",
+                )
+            }));
         }
-        let mut fixed = fixed::FixedWorkers::new(self, &function.span, workers, constraints);
+        let mut fixed =
+            fixed::FixedWorkers::new(self, &function.span, None, &workers, &constraints);
+        if let Some(observations) = self.growth.scoped_checks.get(&None) {
+            for query in observations {
+                let cost = fixed.cost_at(&query.point, &self.growth);
+                checks.push(query.obligation(cost, &self.growth));
+            }
+        }
         self.storage.include_worker_costs(|point| fixed.cost_at(point, &self.growth));
+        for checkpoint in &mut self.growth.protected_checkpoints {
+            checkpoint.include_descendants(&checkpoint_frames);
+        }
         self.obligations.extend(checks);
-        true
+        Ok(None)
     }
 }

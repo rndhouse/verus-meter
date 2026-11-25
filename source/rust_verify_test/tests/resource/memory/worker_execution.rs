@@ -354,8 +354,7 @@ fn incomplete_global_proof_blocks_no_verify_and_compilation() {
             use vstd::prelude::*;
             verus! {
                 fn f() resources peak(memory) <= 1024 {
-                    let handle = std::thread::spawn(move || 1u64);
-                    assert(current(memory) <= 1024);
+                    let handle = std::thread::spawn(move || { assert(peak(memory) <= 1024); 1u64 });
                     let result = handle.join().unwrap();
                 }
             }
@@ -364,7 +363,14 @@ fn incomplete_global_proof_blocks_no_verify_and_compilation() {
             &[option, &export],
         )
         .unwrap_err();
-        crate::common::assert_vir_error_msg(error, GLOBAL);
+        crate::common::assert_vir_error_msg(
+            error,
+            if option == "--no-verify" {
+                "verification of worker bodies"
+            } else {
+                "cross-thread reference to an ancestor"
+            },
+        );
         assert!(!artifact.exists(), "incomplete worker contracts must not be exported");
     }
 }

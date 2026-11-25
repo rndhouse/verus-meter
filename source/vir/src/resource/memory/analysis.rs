@@ -1,6 +1,6 @@
 //! Function entry and structural traversal of executable expressions/scopes.
 
-use super::accounting::{Accounting, CheckKind, MemoryReport, Obligation, Peak};
+use super::accounting::{Accounting, CheckKind, MemoryReport, Obligation};
 use super::footprint::MemoryKind;
 use super::layout::Layouts;
 use super::model::{arithmetic, eligible, unit, unsupported};
@@ -33,16 +33,6 @@ pub(super) struct FunctionAnalysis {
     pub(super) growth: super::growth::Growth,
 }
 
-/// A cumulative bound and the history visible where it is asserted.
-pub(super) struct Checkpoint {
-    // The assertion location used for diagnostics.
-    span: Span,
-    // Maximum permitted cumulative model bytes at this assertion.
-    budget: u64,
-    /// Historical cost points that can precede this assertion.
-    pub(super) peak: Peak,
-}
-
 /// One function's evolving ownership state and already checked callee facts.
 pub(super) struct Analysis<'a> {
     /// Fresh VIR positions for proof checks at implicit source boundaries.
@@ -58,6 +48,8 @@ pub(super) struct Analysis<'a> {
     pub(super) concurrency: &'a super::concurrency::Evidence,
     /// Current checked worker body; None denotes the enclosing accounting function.
     pub(super) current_worker: Option<super::workers::WorkerId>,
+    /// Independently budgeted sections enclosing this point on this actor.
+    pub(super) section_scopes: Vec<crate::messages::AstId>,
     /// Reachable fallthrough and pending lexical exits share one lifetime model.
     pub(super) flow: super::control::Flow,
     /// Executable ownership transitions accepted by this body's accounting.
@@ -83,7 +75,7 @@ pub(super) struct Analysis<'a> {
     /// Executed direct call sites cross-checked against the canonical graph.
     pub(super) calls: Vec<(Fun, Span)>,
     /// Pending cumulative-peak assertions and the history visible at each site.
-    pub(super) checkpoints: Vec<Checkpoint>,
+    pub(super) checkpoints: Vec<super::checkpoints::Checkpoint>,
     /// Immutable scalar names safe to reuse in generated budget formulas.
     pub(super) stable_scalars: HashSet<VarIdent>,
     /// Allocation ownership and restrictions on transfers across regions.
@@ -501,39 +493,8 @@ impl Analysis<'_> {
                     "section metadata outside the start of a block",
                 ));
             }
-            ExprX::ResourceAssertCurrent(budget) => {
-                let budget = super::budget::checkpoint_budget(
-                    budget,
-                    self.budgets,
-                    self.functions,
-                    self.layouts,
-                )?;
-                // Snapshot live charges here. Earlier peaks and later loop iterations
-                // must not inflate a query about this execution point.
-                let cost = self.storage.live_expression(&expr.span);
-                self.observe_shared_checkpoint(&expr.span, &cost, budget)?;
-                self.obligations.push(Obligation {
-                    span: expr.span.clone(),
-                    cost,
-                    bound: super::footprint::MemoryBudget::total(super::contracts::literal(
-                        &expr.span, budget,
-                    )),
-                    kind: CheckKind::CurrentCheckpoint,
-                });
-                return Ok(0);
-            }
-            ExprX::ResourceAssert(budget) => {
-                let budget = super::budget::checkpoint_budget(
-                    budget,
-                    self.budgets,
-                    self.functions,
-                    self.layouts,
-                )?;
-                self.checkpoints.push(Checkpoint {
-                    span: expr.span.clone(),
-                    budget,
-                    peak: self.storage.peak(),
-                });
+            ExprX::ResourceAssertCurrent(budget) | ExprX::ResourceAssert(budget) => {
+                self.checkpoint(expr, budget)?;
                 return Ok(0);
             }
             _ if super::execution::ignored_expression(expr) => return Ok(0),
@@ -703,23 +664,6 @@ impl Analysis<'_> {
         self.result(expr, operands)
     }
 
-    pub(super) fn check_checkpoints(&mut self) -> Result<(), VirErr> {
-        for checkpoint in &self.checkpoints {
-            for (span, cost) in &checkpoint.peak.costs {
-                self.obligations.push(Obligation {
-                    span: span.clone(),
-                    cost: cost.clone(),
-                    bound: super::footprint::MemoryBudget::total(super::contracts::literal(
-                        &checkpoint.span,
-                        checkpoint.budget,
-                    )),
-                    kind: CheckKind::Checkpoint,
-                });
-            }
-        }
-        Ok(())
-    }
-
     pub(super) fn result(&mut self, expr: &Expr, operands: u64) -> Result<u64, VirErr> {
         self.layouts.size(&expr.typ, &expr.span)?;
         self.storage.release(
@@ -784,6 +728,7 @@ pub(super) fn check(
         evaluations: Default::default(),
         concurrency,
         current_worker: None,
+        section_scopes: Vec::new(),
         flow: Default::default(),
         transitions: Default::default(),
         slots: HashMap::new(),
@@ -932,6 +877,7 @@ pub(super) fn check(
     }
     analysis.heap.workers.check_closed(&function.span)?;
     analysis.check_worker_parameter_result(&function.span)?;
+    analysis.check_checkpoints()?;
     let incomplete = analysis.check_worker_domain(function, &function.span)?;
     let mut worker_transfer = None;
     if let Some(error) = &incomplete {
@@ -951,7 +897,6 @@ pub(super) fn check(
             }
             worker_transfer = inferred;
         }
-        analysis.check_checkpoints()?;
         let publications = std::mem::take(&mut analysis.growth.publications);
         for prefix in std::mem::take(&mut analysis.growth.captured_prefixes) {
             prefix.emit(&mut analysis.growth, &publications)?;
@@ -988,6 +933,7 @@ pub(super) fn check(
         if !consumed_payload {
             let report = analysis.storage.finish_conditional();
             analysis.obligations.extend(report.points.iter().map(|point| Obligation {
+                contributor: None,
                 span: point.span.clone(),
                 cost: point.cost.clone(),
                 bound: super::footprint::MemoryBudget::total(analysis.bound.clone()),
@@ -1076,7 +1022,6 @@ pub(super) fn check(
         });
         worker_transfer
     } else {
-        analysis.check_checkpoints()?;
         let inferred = super::transfer::summarize(
             function,
             layouts,
@@ -1098,6 +1043,8 @@ pub(super) fn check(
     let bound =
         symbolic_bound.clone().unwrap_or_else(|| super::contracts::literal(&function.span, budget));
     analysis.obligations.extend(report.points.iter().map(|point| Obligation {
+        contributor:
+            report.covers_workers.then(|| analysis.growth.point_contributor(point)).flatten(),
         span: point.span.clone(),
         cost: point.cost.clone(),
         bound: super::footprint::MemoryBudget::total(bound.clone()),

@@ -1,6 +1,6 @@
 //! Reacquiring a shared mutex and acquiring an independently returned mutex
 //! exercise different identities even when only one lock statement is present.
-use super::{CHECKPOINT, LINKED, diagnostics};
+use super::{CHECKPOINT, LINKED, diagnostics, verifies};
 
 const GLOBAL: &str = "checked worker effects still require global lifetime and interference proofs";
 
@@ -45,17 +45,9 @@ fn repeated_alias_writes_include_zero_iterations_and_skipped_writes() {
     // 70 local bytes plus either the original three reserved bytes or a
     // replacement reservation. Collect the reader first in all cases.
     let program = shared_loop("*g = Vec::with_capacity(b as usize);", READER_BOUNDS);
-    diagnostics("repeated_replace", &program, &[LINKED]);
-    diagnostics(
-        "repeated_initial_short",
-        &program.replace("<= 73", "<= 72"),
-        &[LINKED, CHECKPOINT],
-    );
-    diagnostics(
-        "repeated_write_short",
-        &program.replace("<= 107", "<= 106"),
-        &[LINKED, CHECKPOINT],
-    );
+    verifies("repeated_replace", &program);
+    diagnostics("repeated_initial_short", &program.replace("<= 73", "<= 72"), &[CHECKPOINT]);
+    diagnostics("repeated_write_short", &program.replace("<= 107", "<= 106"), &[CHECKPOINT]);
 }
 
 #[test]
@@ -72,13 +64,8 @@ fn helpers_acquire_replace_and_release_across_loop_visits() {
         .replace("peer.lock()", "acquire(&*peer)")
         .replace("cell.lock()", "acquire(&*cell)");
     let program = format!("{helpers} {workers}");
-    let helper = "mutex intervals awaiting global";
-    diagnostics("factored_repeated_replace", &program, &[LINKED, helper]);
-    diagnostics(
-        "factored_repeated_short",
-        &program.replace("<= 107", "<= 106"),
-        &[LINKED, helper, CHECKPOINT],
-    );
+    verifies("factored_repeated_replace", &program);
+    diagnostics("factored_repeated_short", &program.replace("<= 107", "<= 106"), &[CHECKPOINT]);
 }
 
 #[test]
@@ -86,7 +73,7 @@ fn an_early_exit_before_the_loop_keeps_the_initial_reservation() {
     let program = shared_loop("*g = Vec::with_capacity(b as usize);", READER_BOUNDS)
         .replace("let mut i = 0u8;", "if !write { return; } let mut i = 0u8;")
         .replace("if !write { i += 1; continue; }", "");
-    diagnostics("skipped_writer_loop", &program, &[LINKED]);
+    verifies("skipped_writer_loop", &program);
 }
 
 #[test]

@@ -1272,6 +1272,7 @@ mod tests {
                 evaluations: Default::default(),
                 concurrency: &concurrency,
                 current_worker: None,
+                section_scopes: Vec::new(),
                 flow: Default::default(),
                 transitions: Default::default(),
                 slots: HashMap::new(),

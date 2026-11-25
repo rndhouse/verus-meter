@@ -89,6 +89,21 @@ impl Execution {
         self.effects.ownership.protected_versions.roots()
     }
 
+    pub(in super::super) fn publication_span(&self) -> &Span {
+        &self.publication.span
+    }
+
+    /// Point at an executable release when explaining a worker's contribution.
+    pub(in super::super) fn release_span(&self) -> Option<&Span> {
+        self.effects.points.iter().find_map(|point| {
+            matches!(
+                point.condition.boundary,
+                super::super::synchronization::local::Boundary::Release(_)
+            )
+            .then_some(&point.span)
+        })
+    }
+
     pub(in super::super) fn shared_checkpoints(
         &self,
     ) -> &[super::super::shared::phases::Checkpoint] {
@@ -105,6 +120,7 @@ impl Analysis<'_> {
         span: &Span,
     ) -> Result<Option<VirErr>, VirErr> {
         if self.growth.worker_executions.is_empty() {
+            self.local_scoped_checks();
             return Ok(None);
         }
         // Every worker in this domain has been collected before this check.
@@ -169,9 +185,6 @@ impl Analysis<'_> {
                 return Err(unsupported(span, "inconsistent worker entry proof bindings"));
             }
         }
-        for checkpoint in std::mem::take(&mut self.growth.protected_checkpoints) {
-            checkpoint.resolve_publication(self)?;
-        }
         let composed = self.compose_payload_versions(function)?;
         let versions: Vec<_> = self
             .growth
@@ -179,10 +192,21 @@ impl Analysis<'_> {
             .values()
             .flat_map(|worker| worker.versioned_roots())
             .collect();
-        if self.compose_workers(function) {
+        let missing = self.compose_workers(function)?;
+        for checkpoint in std::mem::take(&mut self.growth.protected_checkpoints) {
+            checkpoint.resolve_publication(self)?;
+        }
+        let Some((site, reason)) = missing else {
+            if let Some(site) = &self.growth.ancestor_query {
+                return Ok(Some(unsupported(
+                    site,
+                    "a cross-thread reference to an ancestor's memory checkpoint; use a budgeted section in the worker",
+                )));
+            }
             self.worker_obligations()?;
             return Ok(None);
-        }
+        };
+        self.local_scoped_checks();
         if !versions.is_empty() {
             let count = versions.len();
             let roots: std::collections::BTreeSet<_> = versions.into_iter().collect();
@@ -192,12 +216,12 @@ impl Analysis<'_> {
                     "a total concurrent peak before global interference proofs (checked acquisitions = {count}, distinct mutexes = {}, linked acquisitions = {composed})",
                     roots.len()
                 ),
-            )));
+            ).secondary_label(&site, reason)));
         }
         Ok(Some(unsupported(
             span,
             "concurrent contracts before concurrent lifetime accounting is available: checked worker effects still require global lifetime and interference proofs",
-        )))
+        ).secondary_label(&site, reason)))
     }
 
     /// Check local inequalities in the original worker scope. They also apply
@@ -295,6 +319,7 @@ impl Analysis<'_> {
             evaluations: Default::default(),
             concurrency: self.concurrency,
             current_worker: Some(actor),
+            section_scopes: Vec::new(),
             flow: Default::default(),
             transitions: Default::default(),
             slots: Default::default(),

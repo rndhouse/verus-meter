@@ -4,8 +4,20 @@ use super::accounting::{Accounting, CheckKind, Obligation};
 use super::analysis::Analysis;
 use super::budget::{BudgetExpr, evaluate_envelope};
 use super::contracts;
+use super::workers::WorkerId;
 use crate::ast::*;
 use crate::messages::Span;
+use std::collections::BTreeSet;
+
+/// The checked publications owned by one section and all its reachable exits.
+#[derive(Default)]
+pub(super) struct WorkerSection {
+    pub(super) workers: BTreeSet<WorkerId>,
+    /// Check after fallthrough or an exit operand has completed (it may join).
+    pub(super) after: Vec<Span>,
+    /// A valueless return, break or continue must check before transferring control.
+    pub(super) before: Vec<Span>,
+}
 
 impl Analysis<'_> {
     pub(super) fn section(
@@ -105,7 +117,33 @@ impl Analysis<'_> {
         self.growth.protected_elements.extend(self.heap.element_states());
         let outer_bound = std::mem::replace(&mut self.bound, bound.clone());
         let first_exit = self.flow.exits.len();
+        self.section_scopes.push(contract_span.id);
         self.block_contents(expr, stmts, tail)?;
+        if let Some(section) = self.growth.worker_sections.get_mut(&contract_span.id) {
+            let workers = &section.workers;
+            if contracts::constant(&bound).is_none() {
+                return Err(super::model::unsupported(
+                    contract_span,
+                    "an entry-dependent section bound covering worker publications",
+                ));
+            }
+            if self.flow.reachable {
+                self.heap.workers.check_section_exit(workers, contract_span)?;
+            }
+            for edge in &self.flow.exits[first_exit..] {
+                edge.state.heap.workers.check_section_exit(workers, &edge.span)?;
+            }
+            if self.flow.reachable {
+                section.after.push(expr.span.clone());
+            }
+            for edge in &self.flow.exits[first_exit..] {
+                if let Some(operand) = &edge.value_site {
+                    section.after.push(operand.clone());
+                } else {
+                    section.before.push(edge.span.clone());
+                }
+            }
+        }
         self.heap.unprotect(protection.clone());
         self.bound = outer_bound;
         // The parent already tracks this owner through the same proof state.
@@ -130,12 +168,20 @@ impl Analysis<'_> {
         self.checkpoints = parent_checkpoints;
         let retained = section.live_storage();
         let report = section.finish_section(contract_span);
-        self.obligations.extend(report.points.iter().map(|point| Obligation {
-            span: point.span.clone(),
-            cost: point.cost.clone(),
-            bound: super::footprint::MemoryBudget::total(bound.clone()),
-            kind: CheckKind::Section,
-        }));
+        for point in report.points.iter() {
+            if !self.concurrency.closures.is_empty() {
+                self.defer_scoped(point.clone(), &bound, CheckKind::Section);
+            } else {
+                self.obligations.push(Obligation {
+                    contributor: None,
+                    span: point.span.clone(),
+                    cost: point.cost.clone(),
+                    bound: super::footprint::MemoryBudget::total(bound.clone()),
+                    kind: CheckKind::Section,
+                });
+            }
+        }
+        self.section_scopes.pop();
         let allowance = contracts::constant(&bound)
             .map_or_else(|| "entry-dependent".into(), |n| format!("{n} bytes"));
         self.storage.event(

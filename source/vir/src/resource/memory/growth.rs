@@ -51,6 +51,16 @@ pub(super) struct VectorState {
 
 #[derive(Default)]
 pub(super) struct Growth {
+    /// Scope-relative checks retained until the actual worker phases are available.
+    pub(super) scoped_checks: std::collections::BTreeMap<
+        Option<super::workers::WorkerId>,
+        Vec<super::checkpoints::ScopedCheck>,
+    >,
+    /// Spawn sites and every normal or early exit of a section containing workers.
+    pub(super) worker_sections:
+        std::collections::BTreeMap<crate::messages::AstId, super::sections::WorkerSection>,
+    /// A worker without its own budgeted section cannot query its publisher's history.
+    pub(super) ancestor_query: Option<Span>,
     /// A populated permissioned cell was destroyed without extracting its payload.
     pub(super) unreclaimed_cell: Option<Span>,
     /// Proof positions immediately after a block’s final statement, before

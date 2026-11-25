@@ -401,6 +401,18 @@ checkpoint history are unsupported. Runtime peak queries still evaluate declared
 formulas only, with existing expression support and precondition obligations;
 they neither query a live scheduler nor infer runtime synchronization state.
 
+On the fixed-worker path, each scoped bound uses the same outstanding tags,
+guard identities and shared-payload histories as a whole-function observation.
+For a counted family, its erased publication-minus-join count must be zero on
+every exit from the section that spawned it. A peak checkpoint selects the
+points in its reaching history, including previous loop iterations. A worker's
+current observation includes its child phases when pricing shared backing in
+its publisher. Inside a worker’s budgeted section, backing that the worker
+received before section entry belongs to the enclosing frame. A worker that
+needs a peak history opens its own budgeted
+section. A source diagnostic can identify the contributing publication and a
+guard release in its body.
+
 ## Transition review cases
 
 These cases are semantic acceptance requirements and test obligations for 02–08.

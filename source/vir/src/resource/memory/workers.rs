@@ -275,6 +275,20 @@ impl Workers {
         worker.detached = Some(span.clone());
     }
 
+    pub(super) fn check_section_exit(
+        &self,
+        children: &std::collections::BTreeSet<WorkerId>,
+        span: &Span,
+    ) -> Result<(), VirErr> {
+        if let Some(worker) =
+            self.records.iter().find_map(|(id, worker)| children.contains(id).then_some(worker))
+        {
+            return Err(unsupported(span, "an outstanding descendant at memory section exit")
+                .secondary_span(&worker.publication));
+        }
+        Ok(())
+    }
+
     pub(super) fn check_closed(&self, span: &Span) -> Result<(), VirErr> {
         if let Some(span) = &self.detached_occurrence {
             return Err(unsupported(span, "detached workers in a memory accounting scope"));
@@ -399,6 +413,11 @@ impl Analysis<'_> {
     pub(super) fn spawn_owner(&mut self, expr: &Expr) -> Result<Option<Owner>, VirErr> {
         let Some(mut owner) = self.publish_owner(expr)? else { return Ok(None) };
         let handle = owner.worker.as_mut().expect("published actor");
+        // Bind the executable publication to every enclosing section on its
+        // publisher. A child starts a fresh section stack in its own body.
+        for scope in &self.section_scopes {
+            self.growth.worker_sections.entry(*scope).or_default().workers.insert(handle.actor);
+        }
         self.analyze_worker(handle.actor, &expr.span)?;
         self.observe_payload_seeds(handle.actor, &expr.span);
         handle.publication = self.observe_worker_publication(handle.actor, expr)?;

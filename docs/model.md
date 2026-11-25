@@ -37,7 +37,7 @@ In the custom guard regression, a helper reserves `n` bytes in a vector, drops i
 - For a native `try_lock`, the success and poison arms own an acquisition. The `WouldBlock` arm retains the caller’s storage without acquiring the mutex. The verifier checks the actual match arm or the normal precondition on `unwrap`.
 - Checked helpers preserve the mutex instance and the acquisition owned by a guard. A helper can borrow, consume or return a guard. Its waits and releases include storage still held by the caller. A worker can call a helper that returns the lock result for its captured shared mutex. The first access through the resulting guard binds the actual protected contents. A helper taking that guard can replace the contents and release the guard. A worker can also pass the shared mutex to a helper that locks it, appends to its vector and unlocks before returning. Each append uses the vector that worker actually acquires, including elements an earlier worker inserted.
 - Strong aliases refer to one protected payload. For a bounded set of single-visit worker acquisitions, the verifier checks the published contents and what each guard leaves at unlock. For a lock in a worker loop, a proposed set of contents must include the initial state and cover every possible release on every visit. The next holder can receive any contents a preceding holder could leave on that mutex. With one push and one pop on an initially empty vector, the pop can receive the pushed box or find the vector empty. Both possibilities count regardless of join order.
-- Guarded vector operations use the ordinary source-level rules for occupied slots, explicit reservations and owned elements. A popped box stays charged to its new owner. If the verifier cannot describe every possible update or the number of histories exceeds its search limit, it keeps the incoming payload unrestricted. A fixed worker can return a removed element through a direct join. The completion record retains its owned allocations until the caller receives them. After all writers join, the remaining vector and the returned value use the same possible lock order. Dropping or uniquely extracting the mutex therefore preserves the ownership of each surviving allocation. Total peaks for workers that transfer owned results or modify a shared owning payload require further composition.
+- Guarded vector operations use the ordinary source-level rules for occupied slots, explicit reservations and owned elements. A popped box stays charged to its new owner. If the verifier cannot describe every possible update or the number of histories exceeds its search limit, it keeps the incoming payload unrestricted. A fixed worker can return a removed element through a direct join. The completion record retains its owned allocations until the caller receives them. After all writers join, the remaining vector and the returned value use the same possible lock order. Dropping or uniquely extracting the mutex therefore preserves the ownership of each surviving allocation. Fixed-worker totals include retained results and shared payloads for which the analysis can link every acquisition and release.
 - Spawning while holding a mutex transfers the captured storage to the worker. The spawning thread retains its own guard until release. [Concurrent specification](verus-meter/concurrent-model.md)
 
 For fixed, directly joined workers returning unit, a function can verify a total peak
@@ -49,6 +49,15 @@ overlap another worker's buffer. The checks also include handle slots, captures 
 live caller storage. To use a symbolic vector reservation in the combined peak,
 the verifier checks that the reservation still covers the vector's charge at that
 point. [Executable cases](../source/rust_verify_test/tests/resource/memory/fixed_workers.rs)
+
+A fixed-budget section can publish workers if every descendant joins before each
+reachable section exit. The caller pays the section allowance alongside its own live
+storage. A current checkpoint includes the workers still covered at that point.
+A peak checkpoint also includes earlier reachable worker phases, including prior
+loop iterations. In a worker, a current checkpoint covers its own subtree and the
+incoming shared backing it can still observe. A peak checkpoint needs a budgeted
+section in that worker to establish where the history begins.
+[Executable section and checkpoint cases](../source/rust_verify_test/tests/resource/memory/concurrent_scopes.rs)
 
 A counted loop can publish workers from one spawn site into handle vectors and
 join them in a drain loop. The verifier counts actual publications and joins,

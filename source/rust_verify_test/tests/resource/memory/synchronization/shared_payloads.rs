@@ -78,7 +78,6 @@ fn writers(write: Write, aliases: &str, joins: &str) -> String {
 
 const ALIAS: &str = "let peer = cell.clone();";
 const REVERSED: &str = "let second = consumer.join(); let first = producer.join();";
-const SAME: &str = "checked acquisitions = 2, distinct mutexes = 1";
 const LINKED: &str = "distinct mutexes = 1, linked acquisitions = 2";
 const CHECKPOINT: &str = "at a worker checkpoint with shared backing";
 
@@ -102,9 +101,8 @@ fn different_mutex_allocations_of_the_same_type_keep_independent_contents() {
     );
     // The other mutex received the box. Only the frame, Arc and empty Option
     // remain at this consumer's checkpoint.
-    let distinct = "distinct mutexes = 2, linked acquisitions = 2";
-    diagnostics("distinct_writers", &program.replace("LIMIT", "74"), &[distinct]);
-    diagnostics("distinct_writers_short", &program.replace("LIMIT", "73"), &[distinct, CHECKPOINT]);
+    verifies("distinct_writers", &program.replace("LIMIT", "74"));
+    diagnostics("distinct_writers_short", &program.replace("LIMIT", "73"), &[CHECKPOINT]);
 }
 
 #[test]
@@ -120,8 +118,8 @@ fn a_pop_can_receive_the_preceding_holders_box_in_either_join_order() {
     for (name, joins) in
         [("forward", "let a = producer.join(); let b = consumer.join();"), ("reverse", REVERSED)]
     {
-        diagnostics(&format!("pop_{name}"), &at(joins, 106), &[LINKED]);
-        diagnostics(&format!("pop_{name}_short"), &at(joins, 105), &[LINKED, CHECKPOINT]);
+        verifies(&format!("pop_{name}"), &at(joins, 106));
+        diagnostics(&format!("pop_{name}_short"), &at(joins, 105), &[CHECKPOINT]);
     }
 }
 
@@ -133,8 +131,8 @@ fn a_shared_vector_keeps_its_explicit_reservation_across_acquisitions() {
             "guard.push(Box::new([1u8; 32])); assert(current(memory) <= LIMIT);",
         );
     // 16 frame + 49 Arc + 24 reserved slots + 32 box payload.
-    diagnostics("reserved_exact", &program.replace("LIMIT", "121"), &[LINKED]);
-    diagnostics("reserved_short", &program.replace("LIMIT", "120"), &[LINKED, CHECKPOINT]);
+    verifies("reserved_exact", &program.replace("LIMIT", "121"));
+    diagnostics("reserved_short", &program.replace("LIMIT", "120"), &[CHECKPOINT]);
 }
 
 #[test]
@@ -163,8 +161,8 @@ fn a_replacement_and_the_preceding_workers_box_can_be_live_together() {
     );
     // The removed Option can still own 32 bytes when the new 40-byte box
     // (pointer plus allocation) becomes live.
-    diagnostics("both_boxes_exact", &program.replace("LIMIT", "146"), &[LINKED]);
-    diagnostics("both_boxes_short", &program.replace("LIMIT", "145"), &[LINKED, CHECKPOINT]);
+    verifies("both_boxes_exact", &program.replace("LIMIT", "146"));
+    diagnostics("both_boxes_short", &program.replace("LIMIT", "145"), &[CHECKPOINT]);
 }
 
 #[test]
@@ -187,9 +185,8 @@ fn two_preceding_pushes_can_leave_a_box_in_the_mutex_after_a_pop() {
             "let removed = guard.pop(); assert(current(memory) <= LIMIT);",
         );
     // One remaining slot and its box add 40 bytes to the 106-byte pop.
-    let linked = "distinct mutexes = 1, linked acquisitions = 3";
-    diagnostics("two_prior_pushes", &program.replace("LIMIT", "146"), &[linked]);
-    diagnostics("two_prior_pushes_short", &program.replace("LIMIT", "145"), &[linked, CHECKPOINT]);
+    verifies("two_prior_pushes", &program.replace("LIMIT", "146"));
+    diagnostics("two_prior_pushes_short", &program.replace("LIMIT", "145"), &[CHECKPOINT]);
 }
 
 #[test]
@@ -235,11 +232,7 @@ fn a_dynamic_payload_cannot_be_priced_or_extracted_from_its_initial_state() {
             let done = reader.join();
         }
     "#;
-    rejects(
-        "reader_of_unchanged_cell",
-        &reader.replace("OTHER", "drop(cell);"),
-        "checked worker effects still require global",
-    );
+    verifies("reader_of_unchanged_cell", &reader.replace("OTHER", "drop(cell);"));
     let writer = r#"
         let writer = std::thread::spawn(move || {
             let r = cell.lock();
@@ -256,11 +249,7 @@ fn a_dynamic_payload_cannot_be_priced_or_extracted_from_its_initial_state() {
     );
     let aliases = format!("{ALIAS} let keep = cell.clone();");
     let observe = format!("{REVERSED} assert(current(memory) <= 512); drop(keep);");
-    diagnostics(
-        "coordinator_observes_after_joins",
-        &writers(Write::Push, &aliases, &observe),
-        &[LINKED],
-    );
+    verifies("coordinator_observes_after_joins", &writers(Write::Push, &aliases, &observe));
     let joins = format!("{REVERSED} let recovered = std::sync::Arc::into_inner(keep);");
     verifies("coordinator_after_both_joins", &writers(Write::Push, &aliases, &joins));
 }
@@ -299,17 +288,9 @@ fn a_fixed_payload_is_counted_once_both_inside_and_outside_the_guard() {
     // 8 capture bytes + 33 bytes for the Arc backing and inline mutex/box
     // + 32 separately allocated bytes. The guard costs another 8 bytes.
     let at = |outside, inside| program.replace("OUTSIDE", outside).replace("INSIDE", inside);
-    rejects("fixed_payload_exact", &at("73", "81"), SAME);
-    diagnostics(
-        "fixed_payload_before_lock_short",
-        &at("72", "81"),
-        &[SAME, "73 bytes exceeds budget 72 bytes"],
-    );
-    diagnostics(
-        "fixed_payload_inside_lock_short",
-        &at("73", "80"),
-        &[SAME, "81 bytes exceeds budget 80 bytes"],
-    );
+    verifies("fixed_payload_exact", &at("73", "81"));
+    diagnostics("fixed_payload_before_lock_short", &at("72", "81"), &[CHECKPOINT]);
+    diagnostics("fixed_payload_inside_lock_short", &at("73", "80"), &[CHECKPOINT]);
 }
 
 #[test]
@@ -317,8 +298,8 @@ fn replacing_a_variable_sized_payload_gives_a_tight_bound_while_locked() {
     let program = writers(Write::ReplaceAndPush, ALIAS, REVERSED);
     // 16 bytes of frame, 49 of Arc backing and 40 for one occupied Vec slot
     // plus its box payload. A replacement leaves one box under either lock order.
-    diagnostics("replaced_vector_exact", &program.replace("LIMIT", "105"), &[LINKED]);
-    diagnostics("replaced_vector_short", &program.replace("LIMIT", "104"), &[LINKED, CHECKPOINT]);
+    verifies("replaced_vector_exact", &program.replace("LIMIT", "105"));
+    diagnostics("replaced_vector_short", &program.replace("LIMIT", "104"), &[CHECKPOINT]);
 }
 
 #[test]
@@ -363,17 +344,8 @@ fn passing_a_guard_through_two_helpers_publishes_at_the_consuming_call() {
             drop(cell);
         }
     "#;
-    let pending = "checked acquisitions = 1, distinct mutexes = 1";
-    diagnostics(
-        "nested_guard_release",
-        &program.replace("LIMIT", "73"),
-        &[pending, "mutex intervals awaiting global"],
-    );
-    diagnostics(
-        "nested_guard_release_short",
-        &program.replace("LIMIT", "72"),
-        &[pending, "mutex intervals awaiting global", "73 bytes exceeds budget 72 bytes"],
-    );
+    verifies("nested_guard_release", &program.replace("LIMIT", "73"));
+    diagnostics("nested_guard_release_short", &program.replace("LIMIT", "72"), &[CHECKPOINT]);
 }
 
 #[test]

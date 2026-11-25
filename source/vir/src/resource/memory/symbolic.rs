@@ -93,7 +93,14 @@ pub(super) fn function_bound(
 }
 
 pub(super) fn obligation(check: &Obligation) -> Option<Stmt> {
-    let Obligation { span, cost, bound, kind } = check;
+    obligation_with_worker(check, None)
+}
+
+fn obligation_with_worker(
+    check: &Obligation,
+    worker: Option<&super::workers::execution::Execution>,
+) -> Option<Stmt> {
+    let Obligation { span, cost, bound, kind, .. } = check;
     let cost = cost.select(span, &bound.selection);
     let bound = &bound.amount;
     let message = match (super::contracts::constant(&cost), super::contracts::constant(bound)) {
@@ -105,20 +112,43 @@ pub(super) fn obligation(check: &Obligation) -> Option<Stmt> {
             CheckKind::CurrentCheckpoint => format!("current(memory) assertion failed: live {cost} bytes exceeds bound {bound} bytes"),
             CheckKind::Checkpoint => format!("peak(memory) assertion failed: peak {cost} bytes exceeds bound {bound} bytes"),
         },
+        _ if matches!(kind, CheckKind::WorkerState("at a worker phase")) => "conditional memory budget exceeded at a worker phase: cannot prove the original live bytes fit the proposed worker summary".into(),
         _ if let CheckKind::WorkerState(phase) = kind => format!("conditional memory budget exceeded {phase}: cannot prove the live storage fits the declared bound"),
+        _ if worker.is_some() => {
+            let context = match kind {
+                CheckKind::CurrentCheckpoint => "at this current(memory) checkpoint",
+                CheckKind::Checkpoint => "before this peak(memory) checkpoint",
+                CheckKind::Section => "in this memory section",
+                _ => "in the covered worker subtree",
+            };
+            format!("conditional memory budget exceeded: cannot prove the simultaneous live bytes {context} fit the declared bound")
+        }
         _ => "conditional memory budget exceeded: cannot prove the required model bytes fit the declared bound".into(),
     };
+    let mut diagnostic = if matches!(kind, CheckKind::Checkpoint | CheckKind::CurrentCheckpoint) {
+        error(&bound.span, message).secondary_span(span)
+    } else {
+        error(span, message).secondary_span(&bound.span)
+    };
+    if let Some(worker) = worker {
+        diagnostic = diagnostic.secondary_label(
+            worker.publication_span(),
+            "publication whose worker storage or retained result is included",
+        );
+        if let Some(release) = worker.release_span() {
+            diagnostic = diagnostic.secondary_label(
+                release,
+                "guard released here; storage surviving release can overlap a peer",
+            );
+        }
+    }
     let assertion = SpannedTyped::new(
         span,
         &unit_typ(),
         ExprX::AssertAssume {
             is_assume: false,
             expr: mk_ineq(span, &cost, bound, InequalityOp::Le),
-            msg: Some(if matches!(kind, CheckKind::Checkpoint | CheckKind::CurrentCheckpoint) {
-                error(&bound.span, message).secondary_span(span)
-            } else {
-                error(span, message).secondary_span(&bound.span)
-            }),
+            msg: Some(diagnostic),
         },
     );
     Some(Spanned::new(span.clone(), StmtX::Expr(assertion)))
@@ -202,7 +232,8 @@ pub(super) fn instrument(
         }
     }
     for check in obligations {
-        let Some(statement) = obligation(check) else {
+        let worker = check.contributor.and_then(|id| growth.worker_executions.get(&id));
+        let Some(statement) = obligation_with_worker(check, worker.map(AsRef::as_ref)) else {
             continue;
         };
         if parameter_spans.contains(&check.span.id) {
@@ -613,6 +644,7 @@ mod tests {
 
     fn failing_obligation(span: Span) -> Obligation {
         Obligation {
+            contributor: None,
             cost: Footprint::allowance(contracts::literal(&span, 1)),
             bound: MemoryBudget::total(contracts::literal(&span, 0)),
             kind: CheckKind::Function,
@@ -847,6 +879,7 @@ mod tests {
                     Footprint::charge(gpu.clone(), super::super::contracts::literal(&span, 64)),
                 );
         let check = |selection, bytes| Obligation {
+            contributor: None,
             span: span.clone(),
             cost: cost.clone(),
             bound: MemoryBudget {

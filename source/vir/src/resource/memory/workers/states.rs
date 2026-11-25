@@ -100,6 +100,7 @@ impl JoinPhases {
         ]
         .into_iter()
         .map(|(frame, phase)| Obligation {
+            contributor: None,
             span: self.span.clone(),
             cost: actor_cost(&self.span, frame.clone(), self.caller),
             bound: MemoryBudget::total(bound.clone()),
@@ -167,6 +168,7 @@ impl Analysis<'_> {
         let span = &publication.span;
         let mut check = |cost: Footprint, phase| {
             let obligation = Obligation {
+                contributor: None,
                 span: span.clone(),
                 cost: actor_cost(span, cost, publication.caller),
                 bound: MemoryBudget::total(self.bound.clone()),
@@ -277,6 +279,7 @@ impl Analysis<'_> {
                 // The joined forest first belongs to the intact completion
                 // record. Prove this phase before the handle and tag retire.
                 self.obligations.push(Obligation {
+                    contributor: None,
                     span: join.phases.span.clone(),
                     cost: join.phases.ready.clone(),
                     bound: bound.clone(),
@@ -303,6 +306,7 @@ impl Analysis<'_> {
             // local checks independently of the whole-operation proof.
             for point in execution.effects.points.iter() {
                 self.obligations.push(Obligation {
+                    contributor: None,
                     span: point.span.clone(),
                     cost: actor_cost(&point.span, point.cost.clone(), Some(execution.actor)),
                     bound: bound.clone(),

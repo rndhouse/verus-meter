@@ -29,6 +29,8 @@ pub(super) enum CheckKind {
 
 #[derive(Clone)]
 pub(super) struct Obligation {
+    /// One publisher whose checked child or retained result contributes to this bound.
+    pub(super) contributor: Option<super::workers::WorkerId>,
     pub(super) span: Span,
     pub(super) cost: Footprint,
     pub(super) bound: MemoryBudget,
@@ -374,6 +376,19 @@ impl Accounting {
                 }
             }
         }
+    }
+
+    /// A current checkpoint observes each live path with its own tags and guards.
+    pub(super) fn current_points(&self, span: &Span) -> Vec<Point> {
+        self.paths
+            .iter()
+            .map(|path| {
+                let mut point =
+                    Point::from_live(span, Self::path_expression(path, span), path, Boundary::Live);
+                point.complete_fixed = true;
+                point
+            })
+            .collect()
     }
 
     pub(super) fn covers_workers(&self) -> bool {

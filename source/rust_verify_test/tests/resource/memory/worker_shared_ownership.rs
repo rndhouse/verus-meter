@@ -271,7 +271,7 @@ fn a_symbolic_worker_population_reserves_each_shared_backing_once() {
     let code = r#"
         use vstd::prelude::*;
         verus! {
-        fn f(n: u16) resources peak(memory) <= n * 9 + 160 {
+        fn f(n: u16) resources peak(memory) <= n * 64 + 160 {
             let root = std::sync::Arc::new(17u64);
             let mut handles = Vec::with_capacity(n as usize);
             let mut i = 0u16;
@@ -284,7 +284,7 @@ fn a_symbolic_worker_population_reserves_each_shared_backing_once() {
             }
             drop(root);
             if n == 0 { assert(current(memory) <= 28); }
-            if n == 2 { assert(current(memory) <= 70); }
+            if n == 2 { assert(current(memory) <= 118); }
             while handles.len() > 0 invariant handles.len() <= n, decreases handles.len(), {
                 let h = handles.pop().unwrap();
                 let _v = h.join().unwrap();
@@ -294,22 +294,24 @@ fn a_symbolic_worker_population_reserves_each_shared_backing_once() {
         }
         }
     "#;
-    // 28 coordinator bytes, two 8-byte handle slots, two completion tags,
-    // and a single 24-byte backing even with four captured strong handles.
-    let valid =
-        crate::verify_one_file("indexed_shared_backing", code.to_string(), &[]).unwrap_err();
-    crate::common::assert_vir_error_msg(valid, GLOBAL);
-    let short =
-        crate::verify_one_file("indexed_shared_backing_short", code.replace("<= 70", "<= 69"), &[])
-            .unwrap_err();
-    crate::common::assert_vir_error_msgs(short, &["conditional memory budget exceeded", GLOBAL]);
+    // 70 bytes in the publisher and up to 24 bytes per running worker.
+    crate::verify_one_file("indexed_shared_backing", code.to_string(), &[]).unwrap();
+    let short = crate::verify_one_file(
+        "indexed_shared_backing_short",
+        code.replace("<= 118", "<= 117"),
+        &[],
+    )
+    .unwrap_err();
+    crate::common::assert_vir_error_msg(short, "current(memory) checkpoint");
     // A different allocation with the same payload type needs its own backing.
     let distinct = code
         .replace("let mut handles", "let other = std::sync::Arc::new(17u64); let mut handles")
         .replace("let b = root.clone()", "let b = other.clone()")
         .replace("drop(root);", "drop(root); drop(other);");
+    crate::verify_one_file("both_distinct_backings", distinct.replace("<= 118", "<= 142"), &[])
+        .unwrap();
     let error = crate::verify_one_file("indexed_distinct_backings", distinct, &[]).unwrap_err();
-    crate::common::assert_vir_error_msgs(error, &["conditional memory budget exceeded", GLOBAL]);
+    crate::common::assert_vir_error_msg(error, "current(memory) checkpoint");
 }
 
 #[test]

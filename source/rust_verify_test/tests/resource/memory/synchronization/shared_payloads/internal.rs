@@ -1,7 +1,5 @@
 //! Ownership published by a helper that acquires and releases a shared mutex.
-use super::{CHECKPOINT, LINKED, diagnostics};
-
-const HELPER: &str = "mutex intervals awaiting global";
+use super::{CHECKPOINT, diagnostics, verifies};
 
 #[test]
 fn a_nested_helper_appends_to_whichever_contents_it_acquires() {
@@ -39,13 +37,8 @@ fn a_nested_helper_appends_to_whichever_contents_it_acquires() {
     "#;
     // Either writer may go first. Both boxes can survive until the pop,
     // one in the reader's Option and one in the remaining vector slot.
-    let linked = "distinct mutexes = 1, linked acquisitions = 3";
-    diagnostics("nested_internal_write", &source.replace("LIMIT", "146"), &[HELPER, linked]);
-    diagnostics(
-        "nested_internal_short",
-        &source.replace("LIMIT", "145"),
-        &[HELPER, linked, CHECKPOINT],
-    );
+    verifies("nested_internal_write", &source.replace("LIMIT", "146"));
+    diagnostics("nested_internal_short", &source.replace("LIMIT", "145"), &[CHECKPOINT]);
 }
 
 #[test]
@@ -75,12 +68,8 @@ fn skipped_updates_preserve_the_initial_contents() {
             let first = writer.join();
         }
     "#;
-    diagnostics("internal_skipped", &source.replace("LIMIT", "107"), &[HELPER, LINKED]);
-    diagnostics(
-        "internal_skipped_short",
-        &source.replace("LIMIT", "106"),
-        &[HELPER, LINKED, CHECKPOINT],
-    );
+    verifies("internal_skipped", &source.replace("LIMIT", "107"));
+    diagnostics("internal_skipped_short", &source.replace("LIMIT", "106"), &[CHECKPOINT]);
 }
 
 #[test]

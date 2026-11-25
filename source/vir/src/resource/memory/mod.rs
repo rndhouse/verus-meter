@@ -38,6 +38,7 @@ mod boxed_slices;
 mod budget;
 mod call_graph;
 mod calls;
+mod checkpoints;
 mod children;
 mod closures;
 pub mod concurrency;

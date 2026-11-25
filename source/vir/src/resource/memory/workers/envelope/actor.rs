@@ -52,6 +52,7 @@ fn checked_cost(
     })?;
     if !simplify::inspect::same_expression(&value, &local) {
         checks.push(Obligation {
+            contributor: None,
             span: span.clone(),
             cost: cost.clone(),
             bound: MemoryBudget::total(local),
@@ -62,7 +63,7 @@ fn checked_cost(
 }
 
 impl Execution {
-    fn phase_inputs(
+    pub(super) fn phase_inputs(
         &self,
         analysis: &Analysis<'_>,
         parameters: &HashSet<VarIdent>,
