@@ -1,6 +1,13 @@
-// This example shows how a semaphore limits scratch memory across workers.
-// With four workers and two permits, at most two scratch buffers can exist
-// at once. All four workers still need space for their handles and inputs.
+// This example shows how Verus Meter proves that four workers with two permits
+// can hold at most 8 KiB of scratch at once when each requests 4 KiB.
+//
+// Each worker tries once for a permit. On success it reserves its own buffer
+// and frees it before returning the permit. On failure it skips the allocation.
+//
+// The proof covers any worker count, permit count, and scratch capacity allowed
+// by `batch`. Each live buffer needs both a worker and a permit, so the smaller
+// count limits the scratch reservations. All workers can be trying to acquire
+// a permit at the same time, so the bound also counts space for every attempt.
 use vstd::prelude::*;
 use vstd::resource::semaphore::Semaphore;
 
@@ -9,23 +16,22 @@ verus! {
 type Job = std::thread::JoinHandle<()>;
 type Shared = std::sync::Arc<Semaphore>;
 
-/// `try_acquire_workspace` bounds the space workers use inside the semaphore's
-/// compare-exchange. A wrapper taking `&Semaphore` also holds its own parameter,
-/// so its peak for one call is `ref_size(&Semaphore) + try_acquire_workspace(1)`.
+/// `try_acquire_workspace` counts the space used when workers simultaneously
+/// try to take a permit by changing the available count from its old value to old minus one.
 spec fn try_acquire_workspace(worker_count: nat) -> nat {
-    // Each method call keeps its receiver and the available count it read.
-    let method_locals = worker_count * ref_size(&Semaphore) + worker_count * value_size(usize);
+    let method_locals = worker_count * ref_size(&Semaphore)  // Each call's reference to the semaphore.
+        + worker_count * value_size(usize);                  // The available permit count it read.
 
-    // The atomic macro borrows the counter and saves two usize operands:
-    // the expected count and its replacement (one fewer available slot).
-    let counter_references = worker_count * ref_size(&vstd::atomic::PAtomicUsize);
-    let expected_and_replacement = 2 * (worker_count * value_size(usize));
+    let counter_references =
+        worker_count * ref_size(&vstd::atomic::PAtomicUsize);  // One counter reference per attempt.
+    let expected_and_replacement =
+        2 * (worker_count * value_size(usize));  // The old and proposed counts for each attempt.
     let macro_locals = counter_references + expected_and_replacement;
 
-    // The compare-exchange call takes a receiver reference and copies both
-    // operands. Its result holds the previous count and a success/failure tag.
+    // The macro keeps its locals while compare_exchange receives its own arguments.
     let call_arguments = counter_references + expected_and_replacement;
-    let results = worker_count * value_size(Result<usize, usize>);
+    let results =
+        worker_count * value_size(Result<usize, usize>);  // Previous count and success/failure tag.
     method_locals + macro_locals + call_arguments + results
 }
 
@@ -33,44 +39,42 @@ spec fn try_acquire_workspace(worker_count: nat) -> nat {
 /// `min(worker_count, permit_count)` scratch buffers can coexist. Each reserves
 /// `scratch_capacity * value_size(u8)` bytes.
 spec fn batch_budget(worker_count: u16, permit_count: u16, scratch_capacity: u16) -> nat {
-    // The caller owns one Arc. Its backing holds the semaphore and the strong
-    // and weak reference counts shared by all the workers.
-    let shared = value_size(Shared) + 2 * value_size(usize) + value_size(Semaphore);
+    let shared = value_size(Shared)    // The coordinator's Arc handle.
+        + 2 * value_size(usize)        // The Arc's strong and weak counters, counted once.
+        + value_size(Semaphore);       // The single semaphore all workers use.
 
-    // The caller keeps its input parameters and the loop counter used to spawn workers.
-    let inputs_and_counter = value_size(worker_count) + value_size(permit_count)
-        + value_size(scratch_capacity) + value_size(u16);
+    let inputs_and_counter = value_size(worker_count)  // Number of workers to start.
+        + value_size(permit_count)                     // Number of permits to issue.
+        + value_size(scratch_capacity)                 // Number of byte slots each buffer requests.
+        + value_size(u16);                             // The workers_spawned loop counter.
 
-    // The caller also owns the handle vector. During a join, it takes out one
-    // handle and receives the thread's result.
-    let coordinator = inputs_and_counter + value_size(Vec<Job>)
-        + value_size(Job) + value_size(std::thread::Result<()>);
+    let coordinator = inputs_and_counter
+        + value_size(Vec<Job>)                  // The handle vector's header.
+        + value_size(Job)                       // The handle popped for this join.
+        + value_size(std::thread::Result<()>);  // The result returned by join.
 
-    // Use the worker count as a natural number for the per-worker terms below.
     let count = worker_count as nat;
 
-    // The vector reserves one handle slot per worker. Each outstanding
-    // worker can also have a one-byte completion tag.
-    let outstanding = count * value_size(Job) + count * value_size(u8);
+    let outstanding = count * value_size(Job)  // One reserved slot per worker in the handle vector.
+        + count * value_size(u8);              // Each worker's completion tag, counted until join.
 
-    // Each worker takes its own Arc handle to the same semaphore and a copy of
-    // the requested scratch capacity.
-    let captures = count * value_size(Shared) + count * value_size(scratch_capacity);
+    let captures = count * value_size(Shared)    // Each worker's cloned Arc handle.
+        + count * value_size(scratch_capacity);  // Its copy of the requested capacity.
 
     // Every worker can be inside try_acquire, even if no permits are available.
     let protocol_workspace = try_acquire_workspace(count);
 
-    // Each worker receives its own optional permit from the acquisition call.
+    // Each attempt has a result slot, including attempts that return None.
     let attempts = count * value_size(Option<vstd::resource::semaphore::Permit>);
 
-    // Each scratch buffer requires both a worker and a permit. Whichever runs
-    // out first limits how many reservations can overlap.
-    let max_scratch_buffers = if worker_count <= permit_count { count } else { permit_count as nat };
-    let reservation_bytes = (scratch_capacity as nat) * value_size(u8);
+    let max_scratch_buffers = if worker_count <= permit_count {
+        count                // At most one live buffer per worker.
+    } else {
+        permit_count as nat  // At most one live buffer per permit.
+    };
+    let reservation_bytes = (scratch_capacity as nat) * value_size(u8);  // Reserved bytes per buffer.
     let scratch = max_scratch_buffers * reservation_bytes;
 
-    // Count shared and caller storage once, then add the worker storage and
-    // the scratch reservations that can coexist.
     shared + coordinator + outstanding + captures + attempts + protocol_workspace + scratch
 }
 
@@ -79,7 +83,7 @@ spec fn batch_budget(worker_count: u16, permit_count: u16, scratch_capacity: u16
 /// returning the permit.
 fn batch(worker_count: u16, permit_count: u16, scratch_capacity: u16)
     requires
-        // Bound both possible element counts used in the scratch formula.
+        // Both products fit in u32 for u16 inputs. State this for either branch of the bound.
         0 <= worker_count as int * scratch_capacity as int <= u32::MAX as int,
         0 <= permit_count as int * scratch_capacity as int <= u32::MAX as int,
     resources peak(memory) <= batch_budget(worker_count, permit_count, scratch_capacity),
@@ -95,7 +99,7 @@ fn batch(worker_count: u16, permit_count: u16, scratch_capacity: u16)
         let job = std::thread::spawn(move || {
             if let Some(permit) = peer.try_acquire() {
                 let scratch = Vec::<u8>::with_capacity(scratch_capacity as usize);
-                drop(scratch);
+                drop(scratch);  // Free this buffer before another worker can reuse the permit.
                 permit.release();
             }
         });
@@ -114,9 +118,9 @@ fn batch(worker_count: u16, permit_count: u16, scratch_capacity: u16)
 /// `main` runs batches with zero permits, fewer permits than workers, and
 /// more permits than workers.
 fn main() {
-    batch(4, 0, 4096);
-    batch(4, 2, 4096);
-    batch(2, 4, 4096);
+    batch(4, 0, 4096); // No permits: no scratch reservations.
+    batch(4, 2, 4096); // Two permits limit four workers to 8 KiB of scratch.
+    batch(2, 4, 4096); // Two workers can use at most 8 KiB even with permits to spare.
 }
 
 } // verus!
