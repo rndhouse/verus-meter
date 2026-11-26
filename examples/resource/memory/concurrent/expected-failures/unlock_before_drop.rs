@@ -75,6 +75,7 @@ spec fn run_workers_budget(worker_count: u16, buffer_capacity: u16) -> nat {
 /// `run_workers` starts all the workers and then joins them. With no workers there
 /// is no scratch. For a nonempty batch it claims one call's scratch allowance.
 fn run_workers(worker_count: u16, buffer_capacity: u16)
+    // Expected failure: this bound allows only one live scratch buffer.
     resources peak(memory) <= run_workers_budget(worker_count, buffer_capacity),
 {
     let cell = Arc::new(Cell::new(()));
@@ -88,6 +89,8 @@ fn run_workers(worker_count: u16, buffer_capacity: u16)
             let guard = peer.lock();
             let scratch = reserve_scratch(buffer_capacity);
             drop(guard);
+            // If this worker pauses here, another can acquire the mutex and
+            // reserve its own buffer while this worker still owns scratch.
             drop(scratch);
         });
         handles.push(job);
