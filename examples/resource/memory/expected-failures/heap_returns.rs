@@ -4,6 +4,8 @@
 //
 // The caller budgets for two handles and one payload. The first payload is still live
 // when it requests the second.
+//
+// Look for the two `FAIL:` comments at the one-payload bound and the second call.
 
 use vstd::prelude::*;
 
@@ -21,12 +23,12 @@ fn make_buffer() -> Buffer
 /// `main` retains the first returned box while requesting another under a one-payload
 /// bound.
 fn main()
+    // FAIL: The bound counts two box handles but only one four-element array.
     resources peak(memory) <= 2 * value_size(Buffer) + value_size([u32; 4]),
 {
     let first = make_buffer();
 
-    // Verus rejects this call: the first allocation is still live when the
-    // factory needs space for the second. Transferring ownership did not free it.
+    // FAIL: This call allocates a second array while first still owns its array.
     let second = make_buffer();
 }
 

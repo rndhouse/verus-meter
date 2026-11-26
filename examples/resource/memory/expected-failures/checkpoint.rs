@@ -4,6 +4,8 @@
 //
 // The function allows two arrays. After copying the original, the checkpoint claims
 // that only one array's worth of storage has been used.
+//
+// Look for the two `FAIL:` comments at the copy and the checkpoint that undercounts it.
 
 use vstd::prelude::*;
 
@@ -17,9 +19,10 @@ fn main()
     resources peak(memory) <= 2 * value_size([u32; 4]),
 {
     let original = [1u32, 2, 3, 4];
+    // FAIL: Creating the copy brings the peak to two arrays.
     let copy = original;
 
-    // Verus reports the violation here: the peak includes both arrays.
+    // FAIL: This checkpoint claims a peak of one array after both have been live.
     assert(peak(memory) <= value_size(original));
     assert(copy[0] == original[0]);
 }

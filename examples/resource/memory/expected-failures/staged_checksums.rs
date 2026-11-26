@@ -4,6 +4,8 @@
 //
 // The section allows one local block, one saved checksum, and the checksum call. The
 // staged version also keeps two block-sized slots in the vector.
+//
+// Look for the two `FAIL:` comments at the section bound and the push that retains each block.
 
 use vstd::prelude::*;
 
@@ -41,13 +43,14 @@ fn checksums(input: [u8; 2]) -> Vec<u16>
     let packed: &[u8] = &input;
     let mut sums = Vec::new();
 
-    // This streaming allowance omits the two slots holding staged blocks.
+    // FAIL: This section allows one local decoded block and omits the staged blocks.
     resources peak(memory) <= value_size(Block) + return_size(checksum)
         + peak(checksum)
     {
         let mut staged = Vec::new();
         for byte in packed {
             let decoded = [*byte; BLOCK_BYTES];
+            // FAIL: Each push keeps a full block in the vector until the checksum loop.
             staged.push(decoded);
         }
         for decoded in staged {

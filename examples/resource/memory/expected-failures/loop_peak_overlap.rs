@@ -3,6 +3,8 @@
 //
 // The last result is allocated while the extracted work buffer is still live. The
 // passing version in `heap/loops/peak_overlap.rs` drops that buffer first.
+//
+// Look for the two `FAIL:` comments at the result budget and the allocation before the drop.
 
 #![verifier::exec_allows_no_decreases_clause]
 
@@ -31,6 +33,7 @@ spec fn result_budget(result_count: u32) -> nat {
 
 /// `build_results` retains the extracted work buffer while allocating its replacement.
 fn build_results(result_count: u32) -> Vec<Box<ResultBuffer>>
+    // FAIL: The budget assumes the final result can reuse the work buffer's allowance.
     resources peak(memory) <= result_budget(result_count),
 {
     let mut results = Vec::<Box<ResultBuffer>>::with_capacity(result_count as usize);
@@ -41,6 +44,7 @@ fn build_results(result_count: u32) -> Vec<Box<ResultBuffer>>
         staging.push(work);
         let extracted = staging.pop().unwrap();
         drop(staging);
+        // FAIL: The extracted box still owns the work buffer when this result is allocated.
         let next = Box::new([0u8; 128]);
         results.push(next);
         drop(extracted);

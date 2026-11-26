@@ -3,6 +3,8 @@
 //
 // On the last iteration the collection already owns every budgeted payload when the
 // loop allocates another copy.
+//
+// Look for the two `FAIL:` comments at the collection budget and the extra allocation.
 
 use vstd::prelude::*;
 
@@ -29,6 +31,7 @@ spec fn collection_budget(count: u16) -> nat {
 /// push.
 #[verifier::exec_allows_no_decreases_clause]
 fn collect_buffers(count: u16) -> Vec<Box<Buffer>>
+    // FAIL: This budget allows one boxed buffer per requested entry.
     resources peak(memory) <= collection_budget(count),
 {
     let local = [7u8; 16];
@@ -37,7 +40,8 @@ fn collect_buffers(count: u16) -> Vec<Box<Buffer>>
     while iteration < count {
         let buffer = Box::new(local);
         buffers.push(buffer);
-        // The declared budget has no room for this additional allocation.
+        // FAIL: On the last iteration, all budgeted buffers are in the vector.
+        // This extra box needs another buffer while those are still live.
         let extra = Box::new(local);
         iteration += 1;
     }
