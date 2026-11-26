@@ -44,9 +44,9 @@ spec fn retained_entry() -> nat {
         + value_size(Payload)  // The byte reservation owned by that inner vector.
 }
 
-/// `retained_budget` bounds the workers, the shared collection, and a buffer
-/// being added while a worker holds the mutex.
-spec fn retained_budget() -> nat {
+/// `main_budget` bounds peak memory across the four workers and the shared
+/// collection, including the buffer a worker is preparing to push.
+spec fn main_budget() -> nat {
     let shared = value_size(SharedCell)  // The caller's Arc handle to the collection.
         + 2 * value_size(usize)          // Strong and weak counters shared by all Arc handles.
         + value_size(Cell)               // The mutex, including the outer vector's header.
@@ -68,7 +68,7 @@ spec fn retained_budget() -> nat {
 /// `main` starts four workers and checks how much memory the shared vector
 /// can still own after they join.
 fn main()
-    resources peak(memory) <= retained_budget(),
+    resources peak(memory) <= main_budget(),
 {
     let cell = Arc::new(Cell::new(Vec::new()));
     four_workers!(cell, |peer| {
