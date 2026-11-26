@@ -5,6 +5,9 @@
 // Compare mutex_bounds_peak.rs. Only the order of the two drops changes. After
 // unlocking, each worker can pause with its buffer still live. With four
 // workers requesting 4 KiB each, all 16 KiB can coexist.
+//
+// Look for the two `FAIL:` comments. The first marks the bound Verus Meter rejects.
+// The second shows where one worker's buffer can overlap another's.
 use std::sync::{Arc, Mutex};
 use vstd::prelude::*;
 
