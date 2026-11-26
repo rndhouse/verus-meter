@@ -135,7 +135,7 @@ fn example_workspace_is_exact_for_one_acquisition() {
     let wrapper = code_str! {
         verus! {
             spec fn attempt_peak() -> nat {
-                ref_size(&Semaphore) + permit_attempt_workspace()
+                ref_size(&Semaphore) + value_size(PermitAttemptStorage)
             }
 
             fn attempt(semaphore: &Semaphore) -> Option<vstd::resource::semaphore::Permit<'_>>
@@ -148,8 +148,10 @@ fn example_workspace_is_exact_for_one_acquisition() {
     verify_one_file("derived_attempt", format!("{example}\n{wrapper}"), &["--no-cheating"])
         .unwrap();
 
-    let short =
-        wrapper.replace("permit_attempt_workspace()", "(permit_attempt_workspace() - 1) as nat");
+    let short = wrapper.replace(
+        "value_size(PermitAttemptStorage)",
+        "(value_size(PermitAttemptStorage) - 1) as nat",
+    );
     assert_ne!(wrapper, short);
     let error =
         verify_one_file("short_derived_attempt", format!("{example}\n{short}"), &["--no-cheating"])

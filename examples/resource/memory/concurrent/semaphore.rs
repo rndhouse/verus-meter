@@ -41,12 +41,6 @@ struct PermitAttemptStorage<'a> {
     result: Result<usize, usize>,
 }
 
-/// `permit_attempt_workspace` counts the peak workspace inside one worker's
-/// call to `try_acquire`.
-spec fn permit_attempt_workspace() -> nat {
-    value_size(PermitAttemptStorage)
-}
-
 /// `batch_budget` bounds peak memory for workers sharing a semaphore. At most
 /// `min(worker_count, permit_count)` scratch buffers can coexist. Each reserves
 /// `scratch_capacity * value_size(u8)` bytes.
@@ -74,7 +68,7 @@ spec fn batch_budget(worker_count: u16, permit_count: u16, scratch_capacity: u16
         + count * value_size(scratch_capacity);  // Its copy of the requested capacity.
 
     // Every worker can be inside try_acquire, even if no permits are available.
-    let protocol_workspace = count * permit_attempt_workspace();
+    let protocol_workspace = count * value_size(PermitAttemptStorage);
 
     // Each attempt has a result slot, including attempts that return None.
     let attempts = count * value_size(Option<vstd::resource::semaphore::Permit>);
