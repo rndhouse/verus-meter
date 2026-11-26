@@ -19,18 +19,26 @@ type Shared = std::sync::Arc<Semaphore>;
 
 /// The three operands of the atomic operation that attempts to take one permit.
 struct CounterUpdate<'a> {
-    counter: &'a vstd::atomic::PAtomicUsize,  // The counter the operation will update.
-    expected: usize,                         // The available count the worker read.
-    replacement: usize,                      // One fewer permit if the count still matches.
+    /// The counter the operation will update.
+    counter: &'a vstd::atomic::PAtomicUsize,
+    /// The available count the worker read.
+    expected: usize,
+    /// One fewer permit if the count still matches.
+    replacement: usize,
 }
 
 /// Source-level storage live during one compare_exchange call inside try_acquire.
 struct PermitAttemptStorage<'a> {
-    semaphore: &'a Semaphore,           // The method's receiver.
-    available: usize,                   // The available permit count read by the method.
-    saved_operands: CounterUpdate<'a>,  // The atomic macro keeps these locals during the call.
-    call_arguments: CounterUpdate<'a>,  // The call receives its own copies of those operands.
-    result: Result<usize, usize>,       // The previous count and a success/failure tag.
+    /// The method's receiver.
+    semaphore: &'a Semaphore,
+    /// The available permit count read by the method.
+    available: usize,
+    /// The atomic macro keeps these locals during the call.
+    saved_operands: CounterUpdate<'a>,
+    /// The call receives its own copies of those operands.
+    call_arguments: CounterUpdate<'a>,
+    /// The previous count and a success/failure tag.
+    result: Result<usize, usize>,
 }
 
 /// `permit_attempt_workspace` counts the peak workspace inside one worker's
