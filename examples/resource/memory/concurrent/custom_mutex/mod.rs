@@ -1,6 +1,13 @@
-// This example shows how a user-defined lock can justify a one-buffer scratch
-// bound for any number of workers. Its proof allows only one guard at a time,
-// and each worker frees its buffer before giving up that guard.
+// This example shows how Verus Meter uses a user-defined lock to prove that
+// four workers requesting 4 KiB each can hold at most 4 KiB of scratch between them.
+//
+// The proof in `protocol.rs` establishes that only one guard for this lock
+// can exist at a time. Here, each worker tries once to acquire that guard.
+// A successful worker reserves its own buffer and frees it before unlocking.
+// A worker that misses the lock skips the allocation.
+//
+// For any worker count, the scratch bound is one worker's requested capacity
+// in a nonempty batch and zero in an empty batch.
 mod protocol;
 use protocol::Lock;
 use vstd::prelude::*;
@@ -10,45 +17,46 @@ verus! {
 type Job = std::thread::JoinHandle<()>;
 type Shared = std::sync::Arc<Lock>;
 
-/// `batch_budget` bounds peak memory for all workers. The lock admits one guard
-/// at a time, so at most one worker contributes a scratch buffer.
+/// Storage counted for each worker, including workers that miss the lock.
+struct WorkerStorage<'a> {
+    /// The worker's cloned handle to the shared lock.
+    lock: Shared,
+    /// The scratch capacity captured by the worker.
+    scratch_capacity: u16,
+    /// The completion tag kept until join.
+    completion: u8,
+    /// The result of try_enter, which holds the guard on success.
+    acquisition: Option<protocol::Guard<'a>>,
+}
+
+/// `coordinator_storage` counts the shared lock once and the storage used
+/// to start and join the workers.
+spec fn coordinator_storage(worker_count: u16) -> nat {
+    let shared = value_size(Shared)  // The coordinator's Arc handle.
+        + 2 * value_size(usize)      // The Arc's strong and weak counters.
+        + value_size(Lock);          // The one lock all workers try to acquire.
+
+    shared + 2 * value_size(u16)                   // The worker count and scratch capacity.
+        + value_size(u16)                          // The workers_spawned loop counter.
+        + value_size(Vec<Job>)                     // The handle vector's header.
+        + (worker_count as nat) * value_size(Job)  // One reserved vector slot per worker.
+        + value_size(Job)                          // The handle popped for this join.
+        + value_size(std::thread::Result<()>)      // The result returned by join.
+}
+
+/// `batch_budget` allows every worker to try the lock concurrently. Only
+/// the guard holder can have a live scratch reservation.
 spec fn batch_budget(worker_count: u16, scratch_capacity: u16) -> nat {
-    // The caller owns one Arc. Its backing holds the lock and the strong
-    // and weak reference counts shared by all the workers.
-    let shared = value_size(Shared) + 2 * value_size(usize) + value_size(Lock);
-
-    // The caller keeps its input parameters and the loop counter used to spawn workers.
-    let inputs_and_counter = value_size(worker_count)
-        + value_size(scratch_capacity) + value_size(u16);
-
-    // The caller also owns the handle vector. During a join, it takes out one
-    // handle and receives the thread's result.
-    let coordinator = inputs_and_counter + value_size(Vec<Job>)
-        + value_size(Job) + value_size(std::thread::Result<()>);
-
-    // Use the worker count as a natural number for the per-worker terms below.
     let count = worker_count as nat;
+    let workers = count * value_size(WorkerStorage)  // Each worker's captures, tag, and lock result.
+        + protocol::transition_workspace(count);     // Space used inside the lock methods.
 
-    // The vector reserves one handle slot per worker. Each outstanding
-    // worker can also have a one-byte completion tag.
-    let outstanding = count * value_size(Job) + count * value_size(u8);
-
-    // Each worker takes its own Arc handle to the same lock and a copy of
-    // the requested scratch capacity.
-    let captures = count * value_size(Shared) + count * value_size(scratch_capacity);
-
-    // The lock supplies a bound for the space workers use inside its methods.
-    let protocol_workspace = protocol::transition_workspace(count);
-
-    // Each worker receives its own optional guard from the acquisition call.
-    let attempts = count * value_size(Option<protocol::Guard>);
-
-    // Only the guard holder can reserve scratch. An empty batch reserves none.
-    let scratch = if worker_count == 0 { 0nat } else { (scratch_capacity as nat) * value_size(u8) };
-
-    // Count shared and caller storage once, then add the worker storage and
-    // the scratch reservations that can coexist.
-    shared + coordinator + outstanding + captures + attempts + protocol_workspace + scratch
+    let scratch = if worker_count == 0 {
+        0
+    } else {
+        (scratch_capacity as nat) * value_size(u8)  // One byte per slot in the guard holder's buffer.
+    };
+    coordinator_storage(worker_count) + workers + scratch
 }
 
 /// `custom_batch` starts and joins workers that each try to acquire the custom
@@ -67,7 +75,7 @@ fn custom_batch(worker_count: u16, scratch_capacity: u16)
         let job = std::thread::spawn(move || {
             if let Some(guard) = peer.try_enter() {
                 let scratch = Vec::<u8>::with_capacity(scratch_capacity as usize);
-                drop(scratch);
+                drop(scratch);  // Free this buffer before another worker can acquire the lock.
                 guard.leave();
             }
         });
