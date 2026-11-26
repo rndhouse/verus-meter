@@ -66,7 +66,7 @@ are included only where needed for memory verification.
 - [Detecting buffer overlap after unlocking (expected failure)](concurrent/expected-failures/unlock_before_drop.rs): one worker can still own its buffer when the next worker allocates. Verus Meter rejects a peak bound that allows room for only one buffer.
 - [Tracking worker allocations in a shared collection](concurrent/retained_buffers.rs): each of four workers moves its buffer into a shared vector. Verus Meter accounts for all four buffers even after every worker has finished and been joined.
 - [Counting uncollected worker results in peak memory](concurrent/worker_result.rs): a finished worker's returned buffer stays live until the coordinator collects it. Another worker can allocate its own buffer under the same mutex in the meantime, so the peak bound must cover both.
-- [Bounded semaphore](concurrent/semaphore.rs): bound total scratch by `min(worker_count, permit_count) * scratch_capacity * value_size(u8)` bytes.
+- [Bounding peak memory with a semaphore](concurrent/semaphore.rs): four workers can each request 4 KiB of scratch, yet two permits keep their combined scratch at or below 8 KiB. Verus Meter proves the bound for any supported worker count, permit count, and buffer capacity.
 - [Custom mutex](concurrent/custom_mutex/mod.rs): use a [verified lock protocol](concurrent/custom_mutex/protocol.rs) to prove that workers share one scratch allowance.
 
 ## Algorithms
