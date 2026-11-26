@@ -35,9 +35,9 @@ spec fn worker_frame() -> nat {
         + value_size(LockResult)  // The result of this worker's lock call.
 }
 
-/// `work_budget` counts both buffer reservations and one shared mutex when
+/// `run_workers_budget` counts both buffer reservations and one shared mutex when
 /// bounding the peak across the two workers.
-spec fn work_budget(buffer_capacity: u16) -> nat {
+spec fn run_workers_budget(buffer_capacity: u16) -> nat {
     // Each buffer reserves room for buffer_capacity elements of type u8.
     let reservation_bytes = (buffer_capacity as nat) * value_size(u8);
     // The producer's output and the consumer's scratch each have a reservation and a Vec header.
@@ -57,11 +57,11 @@ spec fn work_budget(buffer_capacity: u16) -> nat {
     value_size(buffer_capacity) + shared + jobs + 2 * worker_frame() + buffers
 }
 
-/// `work` starts two workers that allocate under the same mutex. It joins the
+/// `run_workers` starts two workers that allocate under the same mutex. It joins the
 /// consumer first, so the producer's result can still occupy memory while
 /// the consumer uses its scratch buffer.
-fn work(buffer_capacity: u16)
-    resources peak(memory) <= work_budget(buffer_capacity),
+fn run_workers(buffer_capacity: u16)
+    resources peak(memory) <= run_workers_budget(buffer_capacity),
 {
     let cell = Arc::new(Mutex::new(0u8));
     let peer = cell.clone();
@@ -87,7 +87,7 @@ fn work(buffer_capacity: u16)
 
 /// `main` runs the two-worker example with 4 KiB per buffer.
 fn main() {
-    work(4096);
+    run_workers(4096);
 }
 
 } // verus!
