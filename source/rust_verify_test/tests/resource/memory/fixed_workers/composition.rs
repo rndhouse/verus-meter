@@ -133,3 +133,46 @@ fn the_shared_vector_retains_all_four_buffers_after_join() {
         assert_budget_failure_at(name, short, "assert(current(memory)");
     }
 }
+
+#[test]
+fn formatting_before_the_file_lock_needs_room_for_all_four_batches() {
+    let example = include_str!(
+        "../../../../../../examples/resource/memory/concurrent/expected-failures/format_before_lock.rs"
+    );
+    let records = include_str!(
+        "../../../../../../examples/resource/memory/concurrent/format_under_lock/records.rs"
+    );
+    // The test runner puts both files in the same temporary directory.
+    let example = example.replace("../format_under_lock/records.rs", "records.rs");
+    for batches in [1, 3, 4] {
+        let budget = format!("export_budget({batches})");
+        let source = example.replace("export_budget(1)", &budget);
+        let result = crate::common::verify_files_vstd(
+            &format!("format_before_lock_{batches}"),
+            [("test.rs".into(), source), ("records.rs".into(), records.into())],
+            "test.rs".into(),
+            true,
+            &["--no-cheating"],
+        );
+        if batches == 4 {
+            result.unwrap();
+        } else {
+            let failure = result.unwrap_err();
+            assert_eq!(failure.errors.len(), 1, "{failure:?}");
+            let error = &failure.errors[0];
+            assert!(
+                error.message.contains("cannot prove the simultaneous live bytes"),
+                "{:?}",
+                error
+            );
+            assert!(
+                error
+                    .spans
+                    .iter()
+                    .any(|span| span.text.iter().any(|line| line.text.contains(&budget))),
+                "{:?}",
+                error
+            );
+        }
+    }
+}
