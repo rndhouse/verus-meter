@@ -30,7 +30,8 @@ struct WorkerStorage {
     lock_result: LockResult,
 }
 
-/// `shared_mutex_storage` counts the mutex and the two reference counts shared by all Arc handles.
+/// `shared_mutex_storage` counts the mutex and its Arc's strong and weak counters once,
+/// regardless of how many workers clone the handle.
 spec fn shared_mutex_storage() -> nat {
     value_size(Cell) + 2 * value_size(usize)
 }
