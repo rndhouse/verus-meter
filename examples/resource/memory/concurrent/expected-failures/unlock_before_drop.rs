@@ -37,17 +37,19 @@ spec fn shared_mutex_storage() -> nat {
 
 /// `coordinator_storage` counts the locals of the thread that starts and joins the workers.
 spec fn coordinator_storage() -> nat {
-    // The coordinator holds one Arc, two u16 inputs, the u16 spawn index, and the handle vector.
-    let setup = value_size(SharedCell) + 3 * value_size(u16) + value_size(Vec<Job>);
-    // At each join, it holds one popped handle and receives one result.
-    setup + value_size(Job) + value_size(std::thread::Result<()>)
+    let setup = value_size(SharedCell)  // The coordinator's handle to the shared mutex.
+        + 3 * value_size(u16)           // The two inputs and the spawn index.
+        + value_size(Vec<Job>);         // The handle vector's header.
+    setup + value_size(Job)             // The handle popped for this join.
+        + value_size(std::thread::Result<()>)  // The result returned by join.
 }
 
-/// `reserve_scratch` returns an empty byte vector. Its bound covers the
-/// capacity parameter, the vector header, and the requested element slots.
+/// `reserve_scratch` reserves room for bytes and returns a vector with length zero.
 fn reserve_scratch(buffer_capacity: u16) -> Vec<u8>
-    resources peak(memory) <= value_size(buffer_capacity) + value_size(Vec<u8>)
-        + buffer_capacity * value_size(u8),
+    resources peak(memory) <=
+        value_size(buffer_capacity)          // The u16 parameter itself.
+        + value_size(Vec<u8>)                // The vector header.
+        + buffer_capacity * value_size(u8),  // One byte per reserved slot, even before the first push.
 {
     Vec::<u8>::with_capacity(buffer_capacity as usize)
 }

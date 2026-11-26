@@ -15,8 +15,10 @@ verus! {
 
 /// `make` reserves an empty byte buffer and returns it to the producer.
 fn make(buffer_capacity: u16) -> Vec<u8>
-    resources peak(memory) <= buffer_capacity * value_size(u8)
-        + value_size(buffer_capacity) + value_size(Vec<u8>),
+    resources peak(memory) <=
+        buffer_capacity * value_size(u8)  // The reservation the producer returns.
+        + value_size(buffer_capacity)     // The helper's capacity parameter.
+        + value_size(Vec<u8>),            // The returned vector's header.
 {
     Vec::<u8>::with_capacity(buffer_capacity as usize)
 }
@@ -27,7 +29,10 @@ type LockResult = Result<Guard, std::sync::PoisonError<Guard>>;
 
 /// `worker_frame` counts one worker's captured inputs, lock result, and completion tag.
 spec fn worker_frame() -> nat {
-    value_size(SharedCell) + value_size(u16) + value_size(u8) + value_size(LockResult)
+    value_size(SharedCell)        // This worker's handle to the shared mutex.
+        + value_size(u16)         // Its captured copy of buffer_capacity.
+        + value_size(u8)          // Its completion tag, counted until join.
+        + value_size(LockResult)  // The result of this worker's lock call.
 }
 
 /// `work_budget` counts both buffer reservations and one shared mutex when

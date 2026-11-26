@@ -10,16 +10,17 @@ verus! {
 type FinalScratch = [u8; 512];
 
 /// `build` constructs the requested number of child vectors with three reserved slots
-/// each.
-///
-/// The fixed allowance covers the input, collection handle, loop index, and a
-/// child being prepared. Each entry adds a child handle and its three-element
-/// buffer; moved children remain charged through the collection.
+/// each. Moving a child into the collection keeps its reservation live.
 fn build(n: usize) -> (buffers: Vec<Vec<u32>>)
     requires n <= 4,
     ensures buffers.len() == n,
-    resources peak(memory) <= value_size(n) + value_size(Vec<Vec<u32>>) + value_size(usize)
-        + value_size(Vec<u32>) + n * (value_size(Vec<u32>) + value_size([u32; 3])),
+    resources peak(memory) <=
+        value_size(n)                 // The requested child count.
+        + value_size(Vec<Vec<u32>>)   // The outer vector's header.
+        + value_size(usize)           // The loop index.
+        + value_size(Vec<u32>)        // The local child header before the move.
+        + n * (value_size(Vec<u32>)   // One header slot per child in the outer vector.
+            + value_size([u32; 3])),  // Three reserved integers in each child's buffer.
 {
     let mut buffers = Vec::<Vec<u32>>::with_capacity(n);
     let mut i = 0usize;

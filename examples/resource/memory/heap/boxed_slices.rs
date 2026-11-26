@@ -15,8 +15,10 @@ type FinalScratch = [u8; 96];
 /// retains only its two elements.
 fn pack() -> (b: Box<[u32]>)
     ensures b.len() == 2, b[0] == 7, b[1] == 9,
-    resources peak(memory) <= value_size(Vec<u32>) + value_size(Box<[u32]>)
-        + value_size([u32; 4]),
+    resources peak(memory) <=
+        value_size(Vec<u32>)       // The vector header before conversion.
+        + value_size(Box<[u32]>)   // The boxed slice handle returned by pack.
+        + value_size([u32; 4]),    // Four slots were reserved, even though only two are filled.
 {
     let mut v = Vec::<u32>::with_capacity(4);
     v.push(7);
