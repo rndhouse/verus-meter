@@ -2,8 +2,8 @@
 // that allocate them.
 //
 // Each of four workers puts a buffer into a shared vector. After all four
-// joins, the caller can still own four buffer reservations and their Vec
-// headers. The checkpoint in `retained` verifies that bound.
+// joins, the shared vector can still own all four buffers. The checkpoint in
+// `main` counts their reservations and Vec headers.
 use std::sync::{Arc, Mutex};
 use vstd::prelude::*;
 
@@ -65,9 +65,9 @@ spec fn retained_budget() -> nat {
         + retained_entry()   // Its local buffer before the push transfers ownership.
 }
 
-/// `retained` lets each worker add a buffer to the shared vector under the mutex.
-/// The vector can still own all four buffers after the workers finish.
-fn retained()
+/// `main` starts four workers and checks how much memory the shared vector
+/// can still own after they join.
+fn main()
     resources peak(memory) <= retained_budget(),
 {
     let cell = Arc::new(Cell::new(Vec::new()));
@@ -85,11 +85,6 @@ fn retained()
         + value_size(Cell)         // The mutex and outer vector header.
         + 4 * (value_size(Vec<u8>) + value_size(Payload)));  // Up to four inner headers and their buffers.
     drop(cell);  // Dropping the last Arc releases the collection and its buffers.
-}
-
-/// `main` runs the four workers and checks the storage retained after they join.
-fn main() {
-    retained();
 }
 
 } // verus!
