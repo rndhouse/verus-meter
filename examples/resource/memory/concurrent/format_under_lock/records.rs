@@ -68,7 +68,10 @@ type LockResult = Result<Guard, PoisonError<Guard>>;
 pub(super) fn format_batch(worker_id: u8) -> (text: Vec<u8>)
     requires worker_id <= 9,
     ensures text.len() == batch_bytes!(),
-    resources peak(memory) <= 2 * value_size(u8) + value_size(Vec<u8>) + value_size(Batch),
+    resources peak(memory) <=
+        2 * value_size(u8)     // One byte for worker_id and one for its ASCII digit.
+        + value_size(Vec<u8>)  // The header of the returned text vector.
+        + value_size(Batch),   // The 4 MiB reserved for this worker's records.
 {
     let digit = b'0' + worker_id;
     let mut text = Vec::with_capacity(batch_bytes!());
@@ -87,7 +90,9 @@ pub(super) fn format_batch(worker_id: u8) -> (text: Vec<u8>)
 /// A write replaces bytes in place, so the output size is independent of the lock scope.
 pub(super) fn blank_file() -> (file: Vec<u8>)
     ensures file.len() == 4 * batch_bytes!(),
-    resources peak(memory) <= value_size(Vec<u8>) + value_size(FileContents),
+    resources peak(memory) <=
+        value_size(Vec<u8>)          // The output vector's header.
+        + value_size(FileContents),  // The 16 MiB reserved for all four batches.
 {
     let mut file = Vec::with_capacity(4 * batch_bytes!());
     while file.len() < 4 * batch_bytes!()
@@ -102,22 +107,28 @@ pub(super) fn blank_file() -> (file: Vec<u8>)
 /// `export_budget` counts the shared output once and allows space for the
 /// given number of simultaneously live formatting buffers.
 pub(super) open spec fn export_budget(live_batches: nat) -> nat {
-    // The coordinator owns one Arc. Its backing holds the reference counts
-    // and the mutex with its vector header. FileContents counts the reserved bytes.
-    let file = value_size(Arc<File>) + 2 * value_size(usize) + value_size(File)
-        + value_size(FileContents);
+    let file = value_size(Arc<File>)  // The coordinator's handle to the shared file.
+        + 2 * value_size(usize)       // The Arc's strong and weak counters, counted once.
+        + value_size(File)            // The shared mutex, including the output vector's header.
+        + value_size(FileContents);   // The output bytes shared by all four workers.
 
-    // Each worker has a join handle and completion tag, a captured Arc,
-    // a worker ID, and the result of trying to lock the file.
-    let workers = 4 * (value_size(std::thread::JoinHandle<()>) + value_size(u8)
-        + value_size(Arc<File>) + value_size(u8) + value_size(LockResult));
+    let workers = 4 * (
+        value_size(std::thread::JoinHandle<()>)  // The coordinator's join handle for this worker.
+        + value_size(u8)                         // The worker's completion tag, counted until join.
+        + value_size(Arc<File>)                  // The worker's cloned handle to the same file.
+        + value_size(u8)                         // Its numeric worker_id.
+        + value_size(LockResult)                 // The result of its file.lock() call.
+    );
 
-    // One writer holds the guard, borrows the output, and tracks its start and index.
-    let writer = value_size(Guard) + ref_size(&mut Vec<u8>) + 2 * value_size(usize);
+    let writer = value_size(Guard)  // Only one worker can hold the file's mutex guard.
+        + ref_size(&mut Vec<u8>)    // Its mutable reference to the output vector.
+        + 2 * value_size(usize);    // Its starting offset and loop index.
 
-    // Each formatter uses its input ID, encoded digit, vector header, and reserved bytes.
-    let formatter = 2 * value_size(u8) + value_size(Vec<u8>) + value_size(Batch);
-    file + workers + writer + live_batches * formatter
+    let formatter = 2 * value_size(u8)  // The parameter and ASCII digit inside format_batch.
+        + value_size(Vec<u8>)           // One formatted vector's header.
+        + value_size(Batch);            // Its private 4 MiB reservation.
+
+    file + workers + writer + live_batches * formatter  // One formatter allowance per live batch.
 }
 
 } // verus!
