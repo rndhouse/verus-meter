@@ -49,7 +49,7 @@ fn reserve_scratch(buffer_capacity: u16) -> Vec<u8>
     resources peak(memory) <=
         value_size(buffer_capacity)          // The u16 parameter itself.
         + value_size(Vec<u8>)                // The vector header.
-        + buffer_capacity * value_size(u8),  // One byte per reserved slot, even while empty.
+        + buffer_capacity * value_size(u8),  // One byte per reserved slot, even before the first push.
 {
     Vec::<u8>::with_capacity(buffer_capacity as usize)
 }
