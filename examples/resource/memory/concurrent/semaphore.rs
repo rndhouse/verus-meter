@@ -17,23 +17,26 @@ verus! {
 type Job = std::thread::JoinHandle<()>;
 type Shared = std::sync::Arc<Semaphore>;
 
-/// `try_acquire_workspace` counts the space used when workers simultaneously
-/// try to take a permit by changing the available count from its old value to old minus one.
-spec fn try_acquire_workspace(worker_count: nat) -> nat {
-    let method_locals = worker_count * ref_size(&Semaphore)  // Each call's reference to the semaphore.
-        + worker_count * value_size(usize);                  // The available permit count it read.
+/// The three operands of the atomic operation that attempts to take one permit.
+struct CounterUpdate<'a> {
+    counter: &'a vstd::atomic::PAtomicUsize,  // The counter the operation will update.
+    expected: usize,                         // The available count the worker read.
+    replacement: usize,                      // One fewer permit if the count still matches.
+}
 
-    let counter_references =
-        worker_count * ref_size(&vstd::atomic::PAtomicUsize);  // One counter reference per attempt.
-    let expected_and_replacement =
-        2 * (worker_count * value_size(usize));  // The old and proposed counts for each attempt.
-    let macro_locals = counter_references + expected_and_replacement;
+/// Source-level storage live during one compare_exchange call inside try_acquire.
+struct PermitAttemptStorage<'a> {
+    semaphore: &'a Semaphore,           // The method's receiver.
+    available: usize,                   // The available permit count read by the method.
+    saved_operands: CounterUpdate<'a>,  // The atomic macro keeps these locals during the call.
+    call_arguments: CounterUpdate<'a>,  // The call receives its own copies of those operands.
+    result: Result<usize, usize>,       // The previous count and a success/failure tag.
+}
 
-    // The macro keeps its locals while compare_exchange receives its own arguments.
-    let call_arguments = counter_references + expected_and_replacement;
-    let results =
-        worker_count * value_size(Result<usize, usize>);  // Previous count and success/failure tag.
-    method_locals + macro_locals + call_arguments + results
+/// `permit_attempt_workspace` counts the peak workspace inside one worker's
+/// call to `try_acquire`.
+spec fn permit_attempt_workspace() -> nat {
+    value_size(PermitAttemptStorage)
 }
 
 /// `batch_budget` bounds peak memory for workers sharing a semaphore. At most
@@ -63,7 +66,7 @@ spec fn batch_budget(worker_count: u16, permit_count: u16, scratch_capacity: u16
         + count * value_size(scratch_capacity);  // Its copy of the requested capacity.
 
     // Every worker can be inside try_acquire, even if no permits are available.
-    let protocol_workspace = try_acquire_workspace(count);
+    let protocol_workspace = count * permit_attempt_workspace();
 
     // Each attempt has a result slot, including attempts that return None.
     let attempts = count * value_size(Option<vstd::resource::semaphore::Permit>);
