@@ -1,8 +1,9 @@
-// This example shows how Verus Meter proves that four workers with two permits
-// can hold at most 8 KiB of scratch at once when each requests 4 KiB.
+// This example shows how Verus Meter proves that four workers sharing two semaphore
+// permits can hold at most 8 KiB of scratch at once when each requests 4 KiB.
 //
-// Each worker tries once for a permit. On success it reserves its own buffer
-// and frees it before returning the permit. On failure it skips the allocation.
+// A permit gives one worker at a time permission to reserve its own buffer.
+// Each worker tries once to get a permit. If it gets one, it frees its buffer
+// before returning the permit for another worker to use. Otherwise it skips the allocation.
 //
 // The proof covers any worker count, permit count, and scratch capacity allowed
 // by `batch`. Each live buffer needs both a worker and a permit, so the smaller
