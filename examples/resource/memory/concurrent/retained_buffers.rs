@@ -42,25 +42,29 @@ type Payload = [u8; payload_bytes!()];
 
 /// `retained_entry` counts one inner vector's header and reserved payload in the shared collection.
 spec fn retained_entry() -> nat {
-    value_size(Vec<u8>) + value_size(Payload)
+    value_size(Vec<u8>)        // The inner vector's header, stored in one outer vector slot.
+        + value_size(Payload)  // The byte reservation owned by that inner vector.
 }
 
 /// `retained_budget` bounds the workers, the shared collection, and a buffer
 /// being added while a worker holds the mutex.
 spec fn retained_budget() -> nat {
-    // Count the caller's Arc, its two reference counts, and the mutex once.
-    // Each successful worker can leave one buffer in the shared vector.
-    let shared = value_size(SharedCell) + 2 * value_size(usize) + value_size(Cell)
-        + 4 * retained_entry();
+    let shared = value_size(SharedCell)  // The caller's Arc handle to the collection.
+        + 2 * value_size(usize)          // Strong and weak counters shared by all Arc handles.
+        + value_size(Cell)               // The mutex, including the outer vector's header.
+        + 4 * retained_entry();          // Up to one stored buffer from each worker.
 
-    // All four workers can be outstanding. Allow for each one's lock result
-    // as well as its join handle, completion tag, and captured Arc.
-    let workers = 4 * (value_size(Job) + value_size(u8) + value_size(SharedCell)
-        + value_size(LockResult));
+    let workers = 4 * (
+        value_size(Job)           // The caller's join handle for this worker.
+        + value_size(u8)          // The worker's completion tag, counted until join.
+        + value_size(SharedCell)  // The worker's cloned Arc handle to the same collection.
+        + value_size(LockResult)  // The result of this worker's lock call.
+    );
 
-    // The worker doing a push also holds a guard and supplies the new entry.
-    // Adding that entry to the full collection bound is conservative.
-    shared + workers + value_size(Guard) + retained_entry()
+    // This peak bound allows for a full collection even while a worker prepares its entry.
+    shared + workers
+        + value_size(Guard)  // The guard held by the one worker doing the push.
+        + retained_entry()   // Its local buffer before the push transfers ownership.
 }
 
 /// `retained` lets each worker add a buffer to the shared vector under the mutex.
@@ -76,11 +80,13 @@ fn retained()
         let buffer = Vec::<u8>::with_capacity(payload_bytes!());
         guard.push(buffer);
     });
-    // After the joins, the outer vector can still own four inner Vec headers
-    // and their payloads. Dropping the caller's last Arc frees the collection.
-    assert(current(memory) <= value_size(SharedCell) + 2 * value_size(usize) + value_size(Cell)
-        + 4 * (value_size(Vec<u8>) + value_size(Payload)));
-    drop(cell);
+    // After all four joins, the caller still owns the collection.
+    assert(current(memory) <=
+        value_size(SharedCell)     // The caller's remaining Arc handle.
+        + 2 * value_size(usize)    // The strong and weak counters for that allocation.
+        + value_size(Cell)         // The mutex and outer vector header.
+        + 4 * (value_size(Vec<u8>) + value_size(Payload)));  // Up to four inner headers and their buffers.
+    drop(cell);  // Dropping the last Arc releases the collection and its buffers.
 }
 
 /// `main` runs the four workers and checks the storage retained after they join.
