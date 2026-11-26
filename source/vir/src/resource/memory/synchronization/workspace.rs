@@ -120,6 +120,7 @@ impl analysis::Analysis<'_> {
             &HashMap::from([(target.clone(), u64::MAX)]),
             &HashMap::new(),
             &Default::default(),
+            self.reservation_constant,
             self.fresh_span,
         )?
         .ok_or_else(|| unsupported(span, "a workspace without checked body effects"))?;

@@ -30,6 +30,23 @@ test_verify_one_file! {
     } => Err(err) => assert_vir_error_msg(err, "peak 32 bytes exceeds budget 31 bytes")
 }
 
+#[test]
+fn named_capacity_combines_with_an_input_and_counts_element_bytes() {
+    let code = "
+        const ROWS: u16 = 2;
+        const SLOTS: u16 = ROWS * 3;
+        fn reserve(extra: usize)
+            requires extra <= 4,
+            resources peak(memory) <= value_size(extra) + value_size(Vec<u32>)
+                + extra * value_size(u32) + FIXED_BYTES,
+        {
+            let values = Vec::<u32>::with_capacity((SLOTS as usize) + extra);
+        }
+    ";
+    verifies("named_capacity", &code.replace("FIXED_BYTES", "value_size([u32; 6])"));
+    super::support::exceeds("named_capacity_short", &code.replace("FIXED_BYTES", "23"));
+}
+
 test_verify_one_file! {
     #[test] pop_reuses_capacity verus_code! {
         use vstd::prelude::*;

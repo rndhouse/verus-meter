@@ -384,9 +384,18 @@ fn collection_length(expr: &Expr, allowed: &HashSet<VarIdent>) -> Result<Expr, V
 pub(super) fn allocation_quantity(
     expr: &Expr,
     allowed: &HashSet<VarIdent>,
+    reservation_constant: &dyn Fn(&Fun) -> Option<u64>,
 ) -> Result<Expr, VirErr> {
+    if let ExprX::ConstVar(name, AutospecUsage::Final) = &expr.x
+        && matches!(&*expr.typ, TypX::Int(IntRange::U(8 | 16 | 32 | 64) | IntRange::USize))
+    {
+        let count = reservation_constant(name).ok_or_else(|| {
+            error(&expr.span, "cannot resolve this named integer constant in a vector reservation")
+        })?;
+        return Ok(literal(&expr.span, count));
+    }
     if let Some(inner) = super::model::widening_integer_cast(expr) {
-        return allocation_quantity(inner, allowed);
+        return allocation_quantity(inner, allowed, reservation_constant);
     }
     let ExprX::Binary(BinaryOp::Arith(op), left, right) = &expr.x else {
         return quantity(expr, allowed);
@@ -402,8 +411,8 @@ pub(super) fn allocation_quantity(
         &expr.typ,
         ExprX::Binary(
             BinaryOp::Arith(op),
-            allocation_quantity(left, allowed)?,
-            allocation_quantity(right, allowed)?,
+            allocation_quantity(left, allowed, reservation_constant)?,
+            allocation_quantity(right, allowed, reservation_constant)?,
         ),
     ))
 }

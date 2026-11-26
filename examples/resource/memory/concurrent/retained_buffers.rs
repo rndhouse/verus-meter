@@ -26,19 +26,17 @@ macro_rules! four_workers {
     }};
 }
 
-// One requested reservation, shared by the executable allocation and its size formula.
-macro_rules! payload_bytes {
-    () => { 256 };
-}
-
 verus! {
+
+/// Number of bytes each worker reserves for its buffer.
+const PAYLOAD_BYTES: usize = 256;
 
 type Cell = Mutex<Vec<Vec<u8>>>;
 type SharedCell = Arc<Cell>;
 type Job = std::thread::JoinHandle<()>;
 type Guard = std::sync::MutexGuard<'static, Vec<Vec<u8>>>;
 type LockResult = Result<Guard, std::sync::PoisonError<Guard>>;
-type Payload = [u8; payload_bytes!()];
+type Payload = [u8; PAYLOAD_BYTES];
 
 /// `retained_entry` counts one inner vector's header and reserved payload in the shared collection.
 spec fn retained_entry() -> nat {
@@ -77,7 +75,7 @@ fn retained()
         let result = peer.lock();
         if result.is_err() { return; }
         let mut guard = result.unwrap();
-        let buffer = Vec::<u8>::with_capacity(payload_bytes!());
+        let buffer = Vec::<u8>::with_capacity(PAYLOAD_BYTES);
         guard.push(buffer);
     });
     // After all four joins, the caller still owns the collection.

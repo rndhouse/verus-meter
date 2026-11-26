@@ -35,6 +35,8 @@ pub(super) struct FunctionAnalysis {
 
 /// One function's evolving ownership state and already checked callee facts.
 pub(super) struct Analysis<'a> {
+    /// Rust's evaluated value for a named integer used in a reservation.
+    pub(super) reservation_constant: &'a dyn Fn(&Fun) -> Option<u64>,
     /// Fresh VIR positions for proof checks at implicit source boundaries.
     pub(super) fresh_span: &'a dyn Fn(&Span) -> Span,
     /// Current actor's lexical capture bindings, used by nested constructions.
@@ -684,6 +686,7 @@ pub(super) fn check(
     budgets: &HashMap<Fun, u64>,
     summaries: &HashMap<Fun, super::summary::FunctionSummary>,
     concurrency: &super::concurrency::Evidence,
+    reservation_constant: &dyn Fn(&Fun) -> Option<u64>,
     fresh_span: &dyn Fn(&Span) -> Span,
 ) -> Result<Option<FunctionAnalysis>, VirErr> {
     let Some(&budget) = budgets.get(&function.x.name) else {
@@ -722,6 +725,7 @@ pub(super) fn check(
     })?;
     super::control::validate(body, modes)?;
     let mut analysis = Analysis {
+        reservation_constant,
         fresh_span,
         worker_inputs: vec![],
         capture_views: Default::default(),

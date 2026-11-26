@@ -1266,6 +1266,7 @@ mod tests {
             let concurrency = super::super::concurrency::Evidence::default();
             let site = span();
             let mut analysis = Analysis {
+                reservation_constant: &|_| None,
                 fresh_span: &|_| unreachable!("this test has no protocol witness"),
                 worker_inputs: vec![],
                 capture_views: Default::default(),

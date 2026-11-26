@@ -94,6 +94,8 @@ use std::sync::Arc;
 /// Call accounting uses declared bounds; together with the function proofs,
 /// their validity follows over this acyclic executable call graph. Never rely
 /// on functional termination to bound storage.
+/// `reservation_constant` resolves named capacities by item identity to the
+/// unsigned integer evaluated by Rust for the current target.
 /// `incomplete` collects mandatory deferred errors: callers must report them
 /// and prohibit export even if the generated local obligations verify. Reports
 /// for such functions describe actor-local history, not a concurrent theorem.
@@ -105,6 +107,7 @@ pub fn check_crate(
     vector: Option<Dt>,
     option: Option<Dt>,
     synchronization: &synchronization::CompilerEvidence,
+    reservation_constant: &dyn Fn(&Fun) -> Option<u64>,
     fresh_span: &dyn Fn(&Span) -> Span,
     incomplete: &mut Vec<VirErr>,
 ) -> Result<Vec<(Span, MemoryReport)>, VirErr> {
@@ -164,6 +167,7 @@ pub fn check_crate(
             &budgets,
             &summaries,
             &synchronization.concurrency,
+            reservation_constant,
             fresh_span,
         )? {
             let empty = HashMap::new();

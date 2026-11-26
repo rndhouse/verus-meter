@@ -89,9 +89,11 @@ impl Analysis<'_> {
         }
         let capacity = match (attrs.resource_intrinsic, args.as_slice()) {
             (Some(ResourceIntrinsic::VecNew), []) => contracts::literal(&expr.span, 0),
-            (Some(ResourceIntrinsic::VecWithCapacity), [arg]) => {
-                contracts::allocation_quantity(arg, &self.allocation_scalars())?
-            }
+            (Some(ResourceIntrinsic::VecWithCapacity), [arg]) => contracts::allocation_quantity(
+                arg,
+                &self.allocation_scalars(),
+                self.reservation_constant,
+            )?,
             _ => return Err(unsupported(&expr.span, "this vector constructor")),
         };
         let checked_capacity = capacity.clone();

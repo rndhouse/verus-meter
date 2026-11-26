@@ -53,7 +53,10 @@ point. [Executable cases](../source/rust_verify_test/tests/resource/memory/fixed
 When each worker pushes a 256-byte buffer into an initially empty shared vector,
 the caller can still hold 1,177 bytes after all joins. The shared cell and handle
 occupy 57 bytes, and each inner vector contributes a 24-byte slot and its
-256-byte reservation. [Retained buffers](../examples/resource/memory/concurrent/retained_buffers.rs)
+256-byte reservation. A worker can pass a named `usize` constant to
+`Vec::with_capacity` and use the same constant as the array length in its byte
+bound. The reservation counts the requested number of slots times the model
+size of the element type. [Retained buffers](../examples/resource/memory/concurrent/retained_buffers.rs)
 
 A fixed-budget section can publish workers if every descendant joins before each
 reachable section exit. The caller pays the section allowance alongside its own live

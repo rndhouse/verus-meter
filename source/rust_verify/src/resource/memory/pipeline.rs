@@ -113,6 +113,7 @@ pub(crate) fn check(
         vector,
         option,
         &synchronization,
+        &|name| reservation_constant(ctxt, name),
         &|span| {
             let mut span = span.clone();
             span.id = ctxt.spans.get_next_span_id();
@@ -140,6 +141,25 @@ pub(crate) fn check(
         Vec::new()
     };
     Ok(Checks { diagnostics, incomplete, export })
+}
+
+/// Read the target's compile-time value only when a checked reservation uses
+/// a resolved constant. Runtime calls, statics and generic substitutions do
+/// not denote a single unsigned constant through this interface.
+fn reservation_constant(ctxt: &Context<'_>, name: &Fun) -> Option<u64> {
+    use rustc_hir::def::DefKind;
+    use rustc_middle::ty::TyKind;
+
+    let id = *ctxt.name_def_id_map.borrow().get(&name.path)?;
+    let tcx = ctxt.tcx;
+    if !matches!(tcx.def_kind(id), DefKind::Const { .. } | DefKind::AssocConst { .. })
+        || tcx.generics_of(id).count() != 0
+        || !matches!(tcx.type_of(id).skip_binder().kind(), TyKind::Uint(_))
+    {
+        return None;
+    }
+    let scalar = tcx.const_eval_poly(id).ok()?.try_to_scalar_int()?;
+    scalar.to_uint(scalar.size()).try_into().ok()
 }
 
 /// Obtain cleanup only for actual runtime synchronization. Ordinary sequential
