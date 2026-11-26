@@ -1,6 +1,14 @@
-// This module proves the one-guard limit used by the custom mutex example.
-// Each lock starts with one proof token. Acquiring the lock moves its token
-// into the guard, and releasing the guard puts the token back.
+// This example shows how to prove that a user-defined lock can issue at most
+// one live guard at a time.
+//
+// Each lock starts with one proof token. When a worker sets the flag from
+// free to held, it takes the token in that same atomic step. Its guard owns
+// the whole token until it unlocks. Two live guards for the same lock would
+// both need that token.
+//
+// In `mod.rs`, Verus Meter checks that each worker reserves and frees its
+// buffer while holding a guard for the same lock. The one-guard guarantee
+// therefore lets one buffer's worth of scratch cover all the workers.
 use vstd::atomic_ghost::*;
 use vstd::prelude::*;
 use vstd::resource::Loc;
@@ -10,8 +18,11 @@ use vstd::resource::holder::{BoundedHolder, BoundedInstance, Holder, ProtocolIns
 verus! {
 
 struct_with_invariants! {
+    /// A mutex that a worker tries once. A successful attempt returns its only guard.
     pub(crate) struct Lock {
+        /// The atomic flag workers test. While it is false, its proof state holds the token.
         flag: AtomicBool<_, Option<FracGhost<()>>, _>,
+        /// The proof-only identity that ties the token to this particular lock.
         domain: Ghost<Loc>,
     }
 
@@ -26,8 +37,11 @@ struct_with_invariants! {
     }
 }
 
+/// A worker's exclusive hold on one lock. Calling `leave` consumes the guard and unlocks it.
 pub(crate) struct Guard<'lock> {
+    /// The lock whose flag this guard clears when the worker calls `leave`.
     lock: &'lock Lock,
+    /// The full proof token for that lock. It occupies no runtime storage.
     token: Tracked<FracGhost<()>>,
 }
 
