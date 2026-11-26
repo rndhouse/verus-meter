@@ -44,11 +44,12 @@ spec fn coordinator_storage() -> nat {
     setup + value_size(Job) + value_size(std::thread::Result<()>)
 }
 
-/// `reserve_scratch` returns an empty byte vector. Its bound covers the
-/// capacity parameter, the vector header, and the requested element slots.
+/// `reserve_scratch` reserves room for bytes and returns a vector with length zero.
 fn reserve_scratch(buffer_capacity: u16) -> Vec<u8>
-    resources peak(memory) <= value_size(buffer_capacity) + value_size(Vec<u8>)
-        + buffer_capacity * value_size(u8),
+    resources peak(memory) <=
+        value_size(buffer_capacity)          // The u16 parameter itself.
+        + value_size(Vec<u8>)                // The vector header.
+        + buffer_capacity * value_size(u8),  // One byte per reserved slot, even while empty.
 {
     Vec::<u8>::with_capacity(buffer_capacity as usize)
 }
