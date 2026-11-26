@@ -62,7 +62,7 @@ are included only where needed for memory verification.
 
 ## Concurrency
 
-- [Counted mutex](concurrent/counted_mutex.rs): prove that at most one scratch buffer is live at a time. Each worker allocates and frees its own buffer while holding the same mutex.
+- [Bounding peak memory with a mutex](concurrent/mutex_bounds_peak.rs): prove that at most one scratch buffer is live at a time. Each worker allocates and frees its own buffer while holding the same mutex.
 - [Unlock before drop (expected failure)](concurrent/expected-failures/unlock_before_drop.rs): reverse the two drops and see the one-buffer bound fail.
 - [Retained buffers](concurrent/retained_buffers.rs): count all four buffer reservations and their headers when the shared vector still owns them after the joins.
 - [Worker result](concurrent/worker_result.rs): account for a completed worker's returned buffer while another worker allocates scratch under the same mutex.

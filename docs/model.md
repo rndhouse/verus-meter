@@ -71,7 +71,7 @@ For up to `n` workers reserving `b` bytes each, unrestricted scratch can reach
 `n * b`. If each buffer is allocated and freed under the same mutex constructed
 outside the loop, scratch is zero for no workers and at most `b` otherwise.
 A worker can reserve the buffer in a helper and free it before unlocking. Reversing the two drops breaks the one-buffer bound.
-[Counted mutex](../examples/resource/memory/concurrent/counted_mutex.rs) ·
+[Bounding peak memory with a mutex](../examples/resource/memory/concurrent/mutex_bounds_peak.rs) ·
 [Unlock before drop](../examples/resource/memory/concurrent/expected-failures/unlock_before_drop.rs)
 
 Joining each worker before the next spawn also permits reuse. The total includes

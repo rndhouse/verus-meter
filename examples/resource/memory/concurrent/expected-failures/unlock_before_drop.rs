@@ -2,7 +2,7 @@
 // This example shows how unlocking before freeing scratch can leave a whole
 // batch of buffers live at once.
 //
-// Compare counted_mutex.rs. Only the order of the two drops changes. After
+// Compare mutex_bounds_peak.rs. Only the order of the two drops changes. After
 // unlocking, each worker can pause with its buffer still live. With four
 // workers requesting 4 KiB each, all 16 KiB can coexist.
 use std::sync::{Arc, Mutex};

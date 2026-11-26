@@ -1,7 +1,7 @@
 // This example shows how returning a worker's buffer changes the peak memory
 // bound for two workers that use the same mutex.
 //
-// In counted_mutex.rs, each worker frees its scratch before unlocking, so
+// In mutex_bounds_peak.rs, each worker frees its scratch before unlocking, so
 // the peak includes just one scratch reservation.
 //
 // Here the producer can finish first and leave its buffer in the join handle.
