@@ -89,7 +89,7 @@ fn run_workers(worker_count: u16, buffer_capacity: u16)
             let guard = peer.lock();
             let scratch = reserve_scratch(buffer_capacity);
             drop(guard);
-            // If this worker pauses here, another can acquire the mutex and
+            // FAIL: If this worker pauses here, another can acquire the mutex and
             // reserve its own buffer while this worker still owns scratch.
             drop(scratch);
         });
